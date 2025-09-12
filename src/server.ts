@@ -46,7 +46,7 @@ await app.register(cors, {
   hook: "onRequest",
   origin: originAllowlist.length ? originAllowlist : true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["content-type", "x-admin-token"],
+  allowedHeaders: ["content-type", "x-admin-token", "authorization"],
   credentials: true,
   strictPreflight: false,
   optionsSuccessStatus: 204,
@@ -61,17 +61,35 @@ app.get("/__diag", async () => ({
   time: new Date().toISOString(),
 }));
 
+app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
+
+
 /* ---------- ADMIN GUARD & AUTH PING ---------- */
-function requireAdmin(req: any, reply: any) {
-  const token = req.headers["x-admin-token"] as string | undefined;
-  if (!ADMIN_TOKEN) {
-    req.log.warn("ADMIN_TOKEN not set");
+function extractToken(req: any): string | undefined {
+  const h = req.headers as Record<string, string | undefined>;
+  const fromX = h["x-admin-token"]?.trim();
+
+  const auth = h["authorization"]?.trim();
+  const fromBearer = auth?.toLowerCase().startsWith("bearer ")
+    ? auth.slice(7).trim()
+    : undefined;
+
+  const fromQuery = (req.query as any)?.token
+    ? String((req.query as any).token).trim()
+    : undefined;
+
+  return fromX || fromBearer || fromQuery;
+}
+
+const requireAdmin = async (req: any, reply: any) => {
+  const token = extractToken(req);
+  if (!process.env.ADMIN_TOKEN) {
     return reply.code(500).send({ error: "server_not_configured" });
   }
-  if (!token || token !== ADMIN_TOKEN) {
+  if (!token || token !== process.env.ADMIN_TOKEN) {
     return reply.code(401).send({ error: "unauthorized" });
   }
-}
+};
 
 // proves header passes without touching DB
 app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
