@@ -21,7 +21,11 @@ const originAllowlist: (string | RegExp)[] = [
 
 // ----- app & db -----
 const app = Fastify({ logger: true });
-const prisma = new PrismaClient({ log: ["warn", "error"] });
+// before:
+// const prisma = new PrismaClient({ log: ["warn", "error"] });
+
+// after (TEMPORARY for debug; we’ll turn "query" off later):
+const prisma = new PrismaClient({ log: ["query", "warn", "error"] });
 
 function warnIfDbNotPooled() {
   const urlStr = process.env.DATABASE_URL;
