@@ -3,9 +3,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { PrismaClient } from "@prisma/client";
 
-/**
- * ENV + basic config
- */
+/* ---------- ENV / CONFIG ---------- */
 const PORT = Number(process.env.PORT ?? 6001);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -14,7 +12,6 @@ const allowedFromEnv = (process.env.ALLOWED_ORIGINS ?? "")
   .map(s => s.trim())
   .filter(Boolean);
 
-// Warn if runtime DB URL isn't Neon pooled
 function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
   const url = process.env.DATABASE_URL || "";
   try {
@@ -23,8 +20,7 @@ function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
     const pgbouncer = u.searchParams.get("pgbouncer") === "true";
     if (!looksPooled || !pgbouncer) {
       log.warn(
-        "DATABASE_URL may not be using Neon pooled/PgBouncer. " +
-          "Runtime should use the pooled host and include pgbouncer=true."
+        "DATABASE_URL may not be Neon pooled. Use pooled host and add pgbouncer=true."
       );
     }
   } catch {
@@ -32,21 +28,17 @@ function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
   }
 }
 
-/**
- * App + DB
- */
+/* ---------- APP / DB ---------- */
 const app = Fastify({ logger: true });
 warnIfDbNotPooled(app.log);
 
 // keep logs quiet in prod; switch to ["query","warn","error"] if you need to debug
 const prisma = new PrismaClient({ log: ["warn", "error"] });
 
-/**
- * CORS — register BEFORE routes
- */
+/* ---------- CORS (before routes) ---------- */
 const originAllowlist: (string | RegExp)[] = [
   ...allowedFromEnv,
-  // Optional: allow Vercel preview URLs for Contacts
+  // Vercel preview URLs for Contacts (optional)
   /^https:\/\/breederhq-contacts-.*\.vercel\.app$/,
 ];
 
@@ -60,9 +52,7 @@ await app.register(cors, {
   optionsSuccessStatus: 204,
 });
 
-/**
- * Health + diagnostics
- */
+/* ---------- HEALTH & DIAG ---------- */
 app.get("/health", async () => ({ ok: true }));
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/__diag", async () => ({
@@ -71,9 +61,22 @@ app.get("/__diag", async () => ({
   time: new Date().toISOString(),
 }));
 
-/**
- * DB probes
- */
+/* ---------- ADMIN GUARD & AUTH PING ---------- */
+function requireAdmin(req: any, reply: any) {
+  const token = req.headers["x-admin-token"] as string | undefined;
+  if (!ADMIN_TOKEN) {
+    req.log.warn("ADMIN_TOKEN not set");
+    return reply.code(500).send({ error: "server_not_configured" });
+  }
+  if (!token || token !== ADMIN_TOKEN) {
+    return reply.code(401).send({ error: "unauthorized" });
+  }
+}
+
+// proves header passes without touching DB
+app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
+
+/* ---------- DB PROBES ---------- */
 app.get("/db/ping", async (req, reply) => {
   try {
     await prisma.$queryRawUnsafe("SELECT 1");
@@ -96,23 +99,7 @@ app.get("/db/contacts-count", async (req, reply) => {
   }
 });
 
-/**
- * Admin guard
- */
-function requireAdmin(req: any, reply: any) {
-  const token = req.headers["x-admin-token"] as string | undefined;
-  if (!ADMIN_TOKEN) {
-    req.log.warn("ADMIN_TOKEN not set");
-    return reply.code(500).send({ error: "server_not_configured" });
-  }
-  if (!token || token !== ADMIN_TOKEN) {
-    return reply.code(401).send({ error: "unauthorized" });
-  }
-}
-
-/**
- * Helpers
- */
+/* ---------- HELPERS ---------- */
 function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`query_timeout_${ms}ms`)), ms);
@@ -128,62 +115,24 @@ function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
     );
   });
 }
-
-// sanitize field names for raw SQL (alnum + underscore only)
 const safeIdent = (s: string) => s.replace(/[^A-Za-z0-9_]/g, "");
 
-/**
- * CONTACTS — GET (paginated) + POST (create)
- */
-
+/* ---------- CONTACTS (raw-first, timeboxed) ---------- */
 // GET /api/v1/contacts?limit=50&cursor=<id>&fields=id,firstName,lastName,email
 app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => {
   const q = req.query as { limit?: string; cursor?: string; fields?: string };
-
   const limit = Math.min(Math.max(Number(q?.limit ?? 50), 1), 200);
-
-  // IMPORTANT: Contact.id is a STRING in your Prisma schema
   const cursorId: string | undefined =
     q?.cursor && String(q.cursor).length ? String(q.cursor) : undefined;
 
-  // Optional field selection to keep payloads small
   const fields = (q?.fields ?? "")
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
 
+  // RAW SQL path first (fast, no ORM quirks)
   try {
-    // optional select (duck-typed to avoid TS headaches)
-    const select = fields.length
-      ? (Object.fromEntries(fields.map(f => [f, true])) as any)
-      : undefined;
-
-    const data = await withTimeout(
-      prisma.$transaction([
-        prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-        prisma.contact.findMany({
-          take: limit,
-          ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-          orderBy: { id: "desc" },
-          ...(select ? { select } : {}),
-        }),
-      ]).then(([, rows]) => rows),
-      12_000
-    );
-
-    const nextCursor =
-      Array.isArray(data) && data.length
-        ? String((data[data.length - 1] as any).id ?? "")
-        : null;
-
-    return reply.send({ data, nextCursor });
-  } catch (e) {
-    req.log.warn({ err: e }, "findMany failed; using raw fallback");
-
-    const cols =
-      fields.length > 0
-        ? fields.map(f => `"${safeIdent(f)}"`).join(",")
-        : "*";
+    const cols = fields.length ? fields.map(f => `"${safeIdent(f)}"`).join(",") : "*";
     const where = cursorId ? `WHERE "id" < $1` : "";
     const params = cursorId ? [cursorId] : [];
 
@@ -202,16 +151,45 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
       rows.length ? String((rows[rows.length - 1] as any).id ?? "") : null;
 
     return reply.send({ data: rows, nextCursor });
+  } catch (e) {
+    // Fallback to Prisma model (still timeboxed)
+    req.log.warn({ err: e }, "raw list failed; trying Prisma model");
+
+    try {
+      const select =
+        fields.length > 0
+          ? (Object.fromEntries(fields.map(f => [f, true])) as any)
+          : undefined;
+
+      const data = await withTimeout(
+        prisma.$transaction([
+          prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
+          prisma.contact.findMany({
+            take: limit,
+            ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+            orderBy: { id: "desc" },
+            ...(select ? { select } : {}),
+          }),
+        ]).then(([, rows]) => rows),
+        12_000
+      );
+
+      const nextCursor =
+        Array.isArray(data) && data.length
+          ? String((data[data.length - 1] as any).id ?? "")
+          : null;
+
+      return reply.send({ data, nextCursor });
+    } catch (e2) {
+      req.log.error({ err: e2 }, "contacts list failed (raw and model)");
+      return reply.code(504).send({ error: "db_timeout" });
+    }
   }
 });
 
 // POST /api/v1/contacts  { firstName, lastName, email? }
 app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, reply) => {
-  const b = req.body as {
-    firstName?: string;
-    lastName?: string;
-    email?: string | null;
-  };
+  const b = req.body as { firstName?: string; lastName?: string; email?: string | null };
 
   if (!b?.firstName || !b?.lastName) {
     return reply
@@ -219,24 +197,8 @@ app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, repl
       .send({ error: "validation_error", details: "firstName and lastName are required" });
   }
 
+  // RAW insert first (fast), fallback to Prisma
   try {
-    const created = await withTimeout(
-      prisma.$transaction([
-        prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-        prisma.contact.create({
-          data: {
-            firstName: b.firstName,
-            lastName: b.lastName,
-            email: b.email ?? null,
-          } as any,
-        }),
-      ]).then(([, row]) => row),
-      12_000
-    );
-    return reply.code(201).send(created);
-  } catch (e) {
-    req.log.warn({ err: e }, "contact.create failed; falling back to raw SQL");
-
     const rows = await withTimeout(
       prisma.$transaction([
         prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
@@ -249,14 +211,32 @@ app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, repl
       ]).then(([, r]) => r as any[]),
       12_000
     );
-
     return reply.code(201).send(rows[0]);
+  } catch (e) {
+    req.log.warn({ err: e }, "raw create failed; trying Prisma model");
+    try {
+      const created = await withTimeout(
+        prisma.$transaction([
+          prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
+          prisma.contact.create({
+            data: {
+              firstName: b.firstName,
+              lastName: b.lastName,
+              email: b.email ?? null,
+            } as any,
+          }),
+        ]).then(([, row]) => row),
+        12_000
+      );
+      return reply.code(201).send(created);
+    } catch (e2) {
+      req.log.error({ err: e2 }, "create failed (raw and model)");
+      return reply.code(400).send({ error: "bad_request" });
+    }
   }
 });
 
-/**
- * Shutdown
- */
+/* ---------- SHUTDOWN ---------- */
 const shutdown = async () => {
   app.log.info("Shutting down…");
   try { await prisma.$disconnect(); } catch {}
@@ -266,9 +246,7 @@ const shutdown = async () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-/**
- * Startup (fail fast if DB unreachable)
- */
+/* ---------- STARTUP ---------- */
 async function connectPrismaOrExit() {
   const timer = setTimeout(() => {
     app.log.error("Prisma connect timed out");
@@ -289,5 +267,5 @@ await connectPrismaOrExit();
 await app.listen({ port: PORT, host: HOST });
 app.log.info(`API running on http://${HOST}:${PORT}`);
 if (allowedFromEnv.length === 0) {
-  app.log.warn("ALLOWED_ORIGINS is empty; browser requests with Origin will be blocked.");
+  app.log.warn("ALLOWED_ORIGINS is empty; browser Origins will be blocked.");
 }
