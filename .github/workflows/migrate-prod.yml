@@ -1,0 +1,28 @@
+mkdir -Force .github\workflows
+Set-Content -Path .github\workflows\migrate-prod.yml -Value @"
+name: Prisma Migrate Deploy (Prod)
+on:
+  workflow_dispatch: {}
+  # optional: auto-run when migrations change
+  # push:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'prisma/migrations/**'
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Deploy Prisma migrations to PROD
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.NEON_PROD_MIGRATOR_URL }}
+"@
+git add .github/workflows/migrate-prod.yml
+git commit -m "ci: add Prisma migrate deploy workflow (prod)"
+git push origin main
