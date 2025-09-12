@@ -1,44 +1,103 @@
+// src/server.ts
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import contactsRoutes from "./routes/contacts.js";
+import { PrismaClient } from "@prisma/client";
 
 const app = Fastify({ logger: true });
+const prisma = new PrismaClient();
 
-// CORS so Vite apps on 6003/6004/6005 can call this API
+const PORT = Number(process.env.PORT ?? 6001);
+const HOST = "0.0.0.0";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+
+// Build allowlist from env (comma-separated)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// --- CORS (must be registered BEFORE routes) ---
 await app.register(cors, {
-  origin: [
-    "http://localhost:6003", // contacts app
-    "http://localhost:6004", // animals app
-    "http://localhost:6005", // breeding app
-  ],
+  origin: (origin, cb) => {
+    // allow curl/server-to-server (no Origin)
+    if (!origin) return cb(null, true);
+
+    // exact allowlist from env
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+
+    // optional: allow Vercel preview URLs for Contacts (comment out if not desired)
+    if (/^https:\/\/breederhq-contacts-.*\.vercel\.app$/.test(origin)) return cb(null, true);
+
+    cb(new Error("Not allowed by CORS"), false);
+  },
+  // allow common verbs + preflight
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x-admin-token"],
+  // allow our custom header used by admin routes
+  allowedHeaders: ["Content-Type", "x-admin-token", "X-Admin-Token"],
+  credentials: true
 });
+// ------------------------------------------------
 
-// Log the admin token once so you can verify it matches your client
-console.log("ADMIN_TOKEN (server):", JSON.stringify(process.env.ADMIN_TOKEN));
-
-// Health
+// Health endpoints
+app.get("/health", async () => ({ ok: true }));
 app.get("/healthz", async () => ({ ok: true }));
-app.get("/health", async (_, reply) => reply.redirect(308, "/healthz"));
 
-// Versioned API
-app.register(contactsRoutes, { prefix: "/api/v1" });
+// Simple admin header guard
+function requireAdmin(req: any, reply: any) {
+  const token = (req.headers["x-admin-token"] ??
+    req.headers["X-Admin-Token"]) as string | undefined;
 
-// Backward compatibility: keep old /contacts working for now
-app.all("/contacts", async (req, reply) => {
-  const url = "/api/v1/contacts";
-  if (req.method === "GET") return reply.redirect(308, url);
-  return reply.redirect(308, url);
+  if (!ADMIN_TOKEN) {
+    req.log.warn("ADMIN_TOKEN is not set; rejecting admin route");
+    return reply.code(500).send({ error: "server_not_configured" });
+  }
+  if (!token || token !== ADMIN_TOKEN) {
+    return reply.code(401).send({ error: "unauthorized" });
+  }
+}
+
+// Contacts routes (adjust to your Prisma schema as needed)
+app.get("/api/v1/contacts", { preHandler: requireAdmin }, async () => {
+  const contacts = await prisma.contact.findMany(); // assumes model Contact exists
+  return contacts; // [] if none
 });
 
-// Print mounted routes once everything is ready
-app.ready().then(() => app.printRoutes());
+// (optional) example create route
+app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, reply) => {
+  try {
+    const body = req.body as {
+      firstName?: string;
+      lastName?: string;
+      email?: string | null;
+      [k: string]: unknown;
+    };
+    // TODO: add zod validation when ready
+    const created = await prisma.contact.create({ data: body as any });
+    return reply.code(201).send(created);
+  } catch (err) {
+    req.log.error(err);
+    return reply.code(400).send({ error: "bad_request" });
+  }
+});
 
-const port = Number(process.env.PORT ?? 6001); // use 6001 for new dev
-app.listen({ port, host: "0.0.0.0" })
-  .then(() => console.log(`API listening on :${port}`))
-  .catch(err => {
-    app.log.error(err);
-    process.exit(1);
-  });
+// Graceful shutdown
+const shutdown = async () => {
+  app.log.info("Shutting down…");
+  await prisma.$disconnect().catch(() => {});
+  await app.close().catch(() => {});
+  process.exit(0);
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+// Start server
+try {
+  await app.listen({ port: PORT, host: HOST });
+  app.log.info(`API running on http://${HOST}:${PORT}`);
+  if (allowedOrigins.length === 0) {
+    app.log.warn("ALLOWED_ORIGINS is empty; browser requests with Origin will be blocked.");
+  }
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}
