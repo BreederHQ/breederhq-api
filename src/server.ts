@@ -1,276 +1,150 @@
 // src/server.ts
-import Fastify from "fastify";
+import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import { PrismaClient } from "@prisma/client";
 
-/* ===================== ENV / CONFIG ===================== */
-const PORT = Number(process.env.PORT ?? 6001);
-const HOST = process.env.HOST ?? "0.0.0.0";
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
-const allowedFromEnv = (process.env.ALLOWED_ORIGINS ?? "")
+const prisma = new PrismaClient();
+
+// ---------- Env ----------
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
 
-function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
-  const url = process.env.DATABASE_URL || "";
-  try {
-    const u = new URL(url);
-    const looksPooled = u.hostname.includes("pooler");
-    const pgbouncer = u.searchParams.get("pgbouncer") === "true";
-    if (!looksPooled || !pgbouncer) {
-      log.warn(
-        "DATABASE_URL may not be Neon pooled. Use pooled host and add pgbouncer=true."
-      );
-    }
-  } catch {
-    if (!url) log.warn("DATABASE_URL is not set.");
-  }
-}
+// Allow all *.vercel.app previews in addition to explicit allowlist
+const VERCEL_PREVIEW_RE = /\.vercel\.app$/i;
 
-/* ===================== APP / DB ===================== */
-const app = Fastify({ logger: true });
-warnIfDbNotPooled(app.log);
-
-// keep logs quiet in prod; switch to ["query","warn","error"] when debugging
-const prisma = new PrismaClient({ log: ["warn", "error"] });
-
-/* ===================== CORS (before routes) ===================== */
-const originAllowlist: (string | RegExp)[] = [
-  ...allowedFromEnv,
-  // Optional: allow Vercel preview URLs for Contacts
-  /^https:\/\/breederhq-contacts-.*\.vercel\.app$/,
-];
-
-await app.register(cors, {
-  hook: "onRequest",
-  origin: originAllowlist.length ? originAllowlist : true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["content-type", "x-admin-token", "authorization"], // include "authorization"
-  credentials: true,
-  strictPreflight: false,
-  optionsSuccessStatus: 204,
+// ---------- App ----------
+const app: FastifyInstance = Fastify({
+  logger: true,
+  trustProxy: true,
 });
 
-/* ===================== HELPERS ===================== */
-function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`query_timeout_${ms}ms`)), ms);
-    p.then(
-      v => { clearTimeout(t); resolve(v); },
-      e => { clearTimeout(t); reject(e); }
-    );
-  });
-}
-const safeIdent = (s: string) => s.replace(/[^A-Za-z0-9_]/g, "");
+// ---------- Security ----------
+await app.register(helmet, {
+  contentSecurityPolicy: false,
+});
 
-/* ---- auth helpers (HOISTED) ---- */
-function extractToken(req: any): string | undefined {
-  const h = req.headers as Record<string, string | undefined>;
-  const fromX = h["x-admin-token"]?.trim();
+// ---------- CORS ----------
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // No origin in server-to-server or curl: allow
+    if (!origin) return cb(null, true);
 
-  const auth = h["authorization"]?.trim();
-  const fromBearer = auth?.toLowerCase().startsWith("bearer ")
-    ? auth.slice(7).trim()
-    : undefined;
+    const allowed =
+      ALLOWED_ORIGINS.includes(origin) || VERCEL_PREVIEW_RE.test(origin);
 
-  const fromQuery = (req.query as any)?.token
-    ? String((req.query as any).token).trim()
-    : undefined;
+    if (allowed) return cb(null, true);
+    return cb(new Error("CORS: origin not allowed"), false);
+  },
+  credentials: true,
+});
 
-  return fromX || fromBearer || fromQuery;
-}
+// ---------- Health & Diagnostics ----------
+app.get("/healthz", async () => ({ ok: true }));
+app.get("/__diag", async () => ({
+  ok: true,
+  time: new Date().toISOString(),
+  env: {
+    BHQ_ENV: process.env.BHQ_ENV || "unknown",
+    NODE_ENV: process.env.NODE_ENV || "unknown",
+  },
+}));
 
-async function requireAdmin(req: any, reply: any) {
-  const token = extractToken(req);
-  if (!ADMIN_TOKEN) {
-    return reply.code(500).send({ error: "server_not_configured" });
+// ---------- Auth helpers ----------
+function extractToken(req: FastifyRequest): string | null {
+  const header = req.headers["authorization"];
+  if (header && typeof header === "string" && header.toLowerCase().startsWith("bearer ")) {
+    return header.slice(7).trim();
   }
+  const x = req.headers["x-admin-token"];
+  if (typeof x === "string" && x.trim()) return x.trim();
+  return null;
+}
+
+async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
+  const token = extractToken(req);
   if (!token || token !== ADMIN_TOKEN) {
     return reply.code(401).send({ error: "unauthorized" });
   }
 }
 
-/* ===================== HEALTH / DIAG ===================== */
-app.get("/health", async () => ({ ok: true }));
-app.get("/healthz", async () => ({ ok: true }));
-app.get("/__diag", async () => ({
-  tag: "bhq-api-v1",
-  commit: process.env.RENDER_GIT_COMMIT ?? null,
-  time: new Date().toISOString(),
-}));
-
-/* auth-only ping (no DB) */
+// Uptime check that requires Bearer/x-admin-token
 app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
 
-/* ===================== DB PROBES ===================== */
-app.get("/db/ping", async (req, reply) => {
+// ---------- Route registration utility ----------
+async function safeRegisterRoute(
+  modulePath: string,
+  label: string
+): Promise<void> {
   try {
-    await prisma.$queryRawUnsafe("SELECT 1");
-    return reply.code(200).send({ ok: true });
-  } catch (e) {
-    req.log.error(e);
-    return reply.code(500).send({ ok: false });
-  }
-});
-
-app.get("/db/contacts-count", async (req, reply) => {
-  try {
-    const rows = await prisma.$queryRawUnsafe<{ count: string }[]>(
-      'SELECT COUNT(*)::text AS count FROM "Contact";'
+    const mod = await import(modulePath);
+    const plugin = mod.default ?? mod;
+    if (typeof plugin !== "function") {
+      app.log.warn(`${label} route not a function, skipping`);
+      return;
+    }
+    await app.register(plugin);
+    app.log.info(`Registered ${label} routes`);
+  } catch (err: any) {
+    app.log.warn(
+      { err: String(err?.message || err) },
+      `Could not register ${label} routes (ok to skip if not ready)`
     );
-    return reply.code(200).send({ count: Number(rows?.[0]?.count ?? "0") });
-  } catch (e) {
-    req.log.error(e);
-    return reply.code(500).send({ ok: false, error: "count_failed" });
   }
-});
+}
 
-/* ===================== CONTACTS ===================== */
-/* GET /api/v1/contacts?limit=50&cursor=<id>&fields=id,firstName,lastName,email  */
-app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => {
-  const q = req.query as { limit?: string; cursor?: string; fields?: string };
-  const limit = Math.min(Math.max(Number(q?.limit ?? 50), 1), 200);
-  const cursorId: string | undefined =
-    q?.cursor && String(q.cursor).length ? String(q.cursor) : undefined;
-
-  const fields = (q?.fields ?? "")
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  // RAW-first (fast, no ORM quirks), timeboxed
-  try {
-    const cols = fields.length ? fields.map(f => `"${safeIdent(f)}"`).join(",") : "*";
-    const where = cursorId ? `WHERE "id" < $1` : "";
-    const params = cursorId ? [cursorId] : [];
-
-    const rows = await withTimeout(
-      prisma.$transaction([
-        prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-        prisma.$queryRawUnsafe(
-          `SELECT ${cols} FROM "Contact" ${where} ORDER BY "id" DESC LIMIT ${limit};`,
-          ...params
-        ),
-      ]).then(([, r]) => r as unknown[]),
-      12_000
-    );
-
-    const nextCursor = rows.length ? String((rows[rows.length - 1] as any).id ?? "") : null;
-    return reply.send({ data: rows, nextCursor });
-  } catch (e) {
-    // Prisma model fallback, also timeboxed
-    req.log.warn({ err: e }, "raw list failed; trying Prisma model");
-    try {
-      const select = fields.length
-        ? (Object.fromEntries(fields.map(f => [f, true])) as any)
-        : undefined;
-
-      const data = await withTimeout(
-        prisma.$transaction([
-          prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-          prisma.contact.findMany({
-            take: limit,
-            ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-            orderBy: { id: "desc" },
-            ...(select ? { select } : {}),
-          }),
-        ]).then(([, rows]) => rows),
-        12_000
-      );
-
-      const nextCursor =
-        Array.isArray(data) && data.length
-          ? String((data[data.length - 1] as any).id ?? "")
-          : null;
-
-      return reply.send({ data, nextCursor });
-    } catch (e2) {
-      req.log.error({ err: e2 }, "contacts list failed (raw and model)");
-      return reply.code(504).send({ error: "db_timeout" });
+// ---------- Global auth for API routes ----------
+// Require token for all /api/v1/* routes
+app.addHook("onRequest", async (req, reply) => {
+  if (req.url.startsWith("/api/v1/")) {
+    const token = extractToken(req);
+    if (!token || token !== ADMIN_TOKEN) {
+      return reply.code(401).send({ error: "unauthorized" });
     }
   }
 });
 
-/* POST /api/v1/contacts  { firstName, lastName, email? } */
-app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, reply) => {
-  const b = req.body as { firstName?: string; lastName?: string; email?: string | null };
+// ---------- Register feature modules ----------
+// Contacts (existing, required)
+// Keep your current contacts implementation in src/routes/contacts.ts
+await safeRegisterRoute("./routes/contacts", "contacts");
 
-  if (!b?.firstName || !b?.lastName) {
-    return reply
-      .code(400)
-      .send({ error: "validation_error", details: "firstName and lastName are required" });
-  }
+// Animals (new, optional until file exists)
+await safeRegisterRoute("./routes/animals", "animals");
 
-  // RAW insert first (fast), fallback to Prisma; both timeboxed
+// Breeding (new, optional until file exists)
+await safeRegisterRoute("./routes/breeding", "breeding");
+
+// ---------- Start ----------
+export async function start() {
   try {
-    const rows = await withTimeout(
-      prisma.$transaction([
-        prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-        prisma.$queryRawUnsafe(
-          'INSERT INTO "Contact" ("firstName","lastName","email") VALUES ($1,$2,$3) RETURNING *',
-          b.firstName,
-          b.lastName,
-          b.email ?? null
-        ),
-      ]).then(([, r]) => r as any[]),
-      12_000
-    );
-    return reply.code(201).send(rows[0]);
-  } catch (e) {
-    req.log.warn({ err: e }, "raw create failed; trying Prisma model");
-    try {
-      const created = await withTimeout(
-        prisma.$transaction([
-          prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
-          prisma.contact.create({
-            data: {
-              firstName: b.firstName,
-              lastName: b.lastName,
-              email: b.email ?? null,
-            } as any,
-          }),
-        ]).then(([, row]) => row),
-        12_000
-      );
-      return reply.code(201).send(created);
-    } catch (e2) {
-      req.log.error({ err: e2 }, "create failed (raw and model)");
-      return reply.code(400).send({ error: "bad_request" });
-    }
+    await app.listen({ port: PORT, host: "0.0.0.0" });
+    app.log.info(`API listening on :${PORT}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
   }
-});
+}
 
-/* ===================== SHUTDOWN ===================== */
-const shutdown = async () => {
-  app.log.info("Shutting down…");
-  try { await prisma.$disconnect(); } catch {}
-  try { await app.close(); } catch {}
+// Only start if run directly
+if (require.main === module) {
+  start();
+}
+
+// ---------- Graceful shutdown ----------
+process.on("SIGTERM", async () => {
+  app.log.info("SIGTERM received, closing");
+  await app.close();
+  await prisma.$disconnect();
   process.exit(0);
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-
-/* ===================== STARTUP ===================== */
-async function connectPrismaOrExit() {
-  const timer = setTimeout(() => {
-    app.log.error("Prisma connect timed out");
-    process.exit(1);
-  }, 10_000);
-  try {
-    await prisma.$connect();
-    app.log.info("Prisma connected");
-  } catch (e) {
-    app.log.error({ err: e }, "Prisma connect failed");
-    process.exit(1);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-await connectPrismaOrExit();
-await app.listen({ port: PORT, host: HOST });
-app.log.info(`API running on http://${HOST}:${PORT}`);
-if (allowedFromEnv.length === 0) {
-  app.log.warn("ALLOWED_ORIGINS is empty; browser Origins will be blocked.");
-}
+});
+process.on("SIGINT", async () => {
+  app.log.info("SIGINT received, closing");
+  await app.close();
+  await prisma.$disconnect();
+  process.exit(0);
+});
