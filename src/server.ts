@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import contactsRoutes from "./routes/contacts";
+import contactsRoutes from "./routes/contacts.js";
 
 const app = Fastify({ logger: true });
 
