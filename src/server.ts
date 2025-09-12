@@ -116,11 +116,13 @@ function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
 }
 
 // ---------- CONTACTS ROUTES ----------
-// GET /api/v1/contacts?limit=50&cursor=123&id,firstName,lastName via fields=...
+// GET /api/v1/contacts?limit=50&cursor=<id>&fields=id,firstName,lastName,email
 app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => {
   const q = req.query as { limit?: string; cursor?: string; fields?: string };
+
   const limit = Math.min(Math.max(Number(q?.limit ?? 50), 1), 200);
-  const cursorId = q?.cursor ? Number(q.cursor) : undefined;
+  const cursorId: string | undefined =
+    q?.cursor && String(q.cursor).length ? String(q.cursor) : undefined;
 
   // fields=id,firstName,lastName,email
   const fields = (q?.fields ?? "")
@@ -128,7 +130,6 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
     .map(s => s.trim())
     .filter(Boolean);
 
-  // Try Prisma model first (with optional select); fall back to raw if needed.
   try {
     const select =
       fields.length > 0
@@ -148,28 +149,32 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
       12_000
     );
 
-    const nextCursor = (data as any[])?.length
-      ? (data as any[])[(data as any[]).length - 1]?.id ?? null
-      : null;
+    const nextCursor =
+      Array.isArray(data) && data.length
+        ? String((data[data.length - 1] as any).id ?? "")
+        : null;
 
     return reply.send({ data, nextCursor });
   } catch (e) {
     req.log.warn({ err: e }, "findMany failed; using raw fallback");
 
     const cols = fields.length ? fields.map(f => `"${f}"`).join(",") : "*";
-    const where = cursorId ? `WHERE id < ${cursorId}` : "";
+    const where = cursorId ? `WHERE "id" < $1` : "";
+    const params = cursorId ? [cursorId] : [];
+
     const rows = await withTimeout(
       prisma.$transaction([
         prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
         prisma.$queryRawUnsafe(
-          `SELECT ${cols} FROM "Contact" ${where} ORDER BY id DESC LIMIT ${limit};`
+          `SELECT ${cols} FROM "Contact" ${where} ORDER BY "id" DESC LIMIT ${limit};`,
+          ...params
         )
       ]).then(([, r]) => r as unknown[]),
       12_000
     );
 
     const nextCursor =
-      rows.length > 0 ? (rows[rows.length - 1] as any).id ?? null : null;
+      rows.length ? String((rows[rows.length - 1] as any).id ?? "") : null;
 
     return reply.send({ data: rows, nextCursor });
   }
