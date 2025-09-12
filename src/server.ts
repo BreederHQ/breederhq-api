@@ -15,20 +15,23 @@ const allowedOriginsFromEnv = (process.env.ALLOWED_ORIGINS ?? "")
   .map(s => s.trim())
   .filter(Boolean);
 
-// Allow prod Contacts + any preview URLs for Contacts on Vercel
+// Allow prod Contacts + preview URLs
 const originAllowlist: (string | RegExp)[] = [
   ...allowedOriginsFromEnv,
-  /^https:\/\/breederhq-contacts-.*\.vercel\.app$/ // previews (optional; keep if you want them)
+  /^https:\/\/breederhq-contacts-.*\.vercel\.app$/ // previews (keep if useful)
 ];
 
-// ---- CORS (must be before routes) ----
+// CORS (must be registered before any routes)
 await app.register(cors, {
-  origin: originAllowlist.length > 0 ? originAllowlist : true, // allow all if empty (dev only)
-  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["content-type","x-admin-token"],
+  hook: "onRequest",                  // handle preflight as early as possible
+  origin: originAllowlist.length ? originAllowlist : true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["content-type", "x-admin-token"],
   credentials: true,
+  strictPreflight: false,             // don’t be picky about preflight headers
   optionsSuccessStatus: 204
 });
+
 // --------------------------------------
 
 // Health
