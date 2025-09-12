@@ -3,7 +3,9 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { PrismaClient } from "@prisma/client";
 
-// ---------- ENV / CONFIG ----------
+/**
+ * ENV + basic config
+ */
 const PORT = Number(process.env.PORT ?? 6001);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -12,8 +14,7 @@ const allowedFromEnv = (process.env.ALLOWED_ORIGINS ?? "")
   .map(s => s.trim())
   .filter(Boolean);
 
-// For production, DATABASE_URL should be Neon **pooled** and include:
-// sslmode=require&pgbouncer=true&connect_timeout=5&pool_timeout=15&connection_limit=5&statement_timeout=10000
+// Warn if runtime DB URL isn't Neon pooled
 function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
   const url = process.env.DATABASE_URL || "";
   try {
@@ -23,7 +24,7 @@ function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
     if (!looksPooled || !pgbouncer) {
       log.warn(
         "DATABASE_URL may not be using Neon pooled/PgBouncer. " +
-          "Use pooled host and add pgbouncer=true for runtime."
+          "Runtime should use the pooled host and include pgbouncer=true."
       );
     }
   } catch {
@@ -31,17 +32,22 @@ function warnIfDbNotPooled(log: ReturnType<typeof Fastify>["log"]) {
   }
 }
 
-// ---------- APP / DB ----------
+/**
+ * App + DB
+ */
 const app = Fastify({ logger: true });
 warnIfDbNotPooled(app.log);
 
+// keep logs quiet in prod; switch to ["query","warn","error"] if you need to debug
 const prisma = new PrismaClient({ log: ["warn", "error"] });
 
-// ---------- CORS (register BEFORE routes) ----------
+/**
+ * CORS — register BEFORE routes
+ */
 const originAllowlist: (string | RegExp)[] = [
   ...allowedFromEnv,
-  // Optional: allow Contacts preview URLs on Vercel (comment out if not desired)
-  /^https:\/\/breederhq-contacts-.*\.vercel\.app$/
+  // Optional: allow Vercel preview URLs for Contacts
+  /^https:\/\/breederhq-contacts-.*\.vercel\.app$/,
 ];
 
 await app.register(cors, {
@@ -51,19 +57,23 @@ await app.register(cors, {
   allowedHeaders: ["content-type", "x-admin-token"],
   credentials: true,
   strictPreflight: false,
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 204,
 });
 
-// ---------- HEALTH & DIAG ----------
+/**
+ * Health + diagnostics
+ */
 app.get("/health", async () => ({ ok: true }));
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/__diag", async () => ({
   tag: "bhq-api-v1",
   commit: process.env.RENDER_GIT_COMMIT ?? null,
-  time: new Date().toISOString()
+  time: new Date().toISOString(),
 }));
 
-// ---------- DB PROBES ----------
+/**
+ * DB probes
+ */
 app.get("/db/ping", async (req, reply) => {
   try {
     await prisma.$queryRawUnsafe("SELECT 1");
@@ -86,7 +96,9 @@ app.get("/db/contacts-count", async (req, reply) => {
   }
 });
 
-// ---------- ADMIN GUARD ----------
+/**
+ * Admin guard
+ */
 function requireAdmin(req: any, reply: any) {
   const token = req.headers["x-admin-token"] as string | undefined;
   if (!ADMIN_TOKEN) {
@@ -98,7 +110,9 @@ function requireAdmin(req: any, reply: any) {
   }
 }
 
-// ---------- HELPERS ----------
+/**
+ * Helpers
+ */
 function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`query_timeout_${ms}ms`)), ms);
@@ -115,26 +129,34 @@ function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
   });
 }
 
-// ---------- CONTACTS ROUTES ----------
+// sanitize field names for raw SQL (alnum + underscore only)
+const safeIdent = (s: string) => s.replace(/[^A-Za-z0-9_]/g, "");
+
+/**
+ * CONTACTS — GET (paginated) + POST (create)
+ */
+
 // GET /api/v1/contacts?limit=50&cursor=<id>&fields=id,firstName,lastName,email
 app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => {
   const q = req.query as { limit?: string; cursor?: string; fields?: string };
 
   const limit = Math.min(Math.max(Number(q?.limit ?? 50), 1), 200);
+
+  // IMPORTANT: Contact.id is a STRING in your Prisma schema
   const cursorId: string | undefined =
     q?.cursor && String(q.cursor).length ? String(q.cursor) : undefined;
 
-  // fields=id,firstName,lastName,email
+  // Optional field selection to keep payloads small
   const fields = (q?.fields ?? "")
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
 
   try {
-    const select =
-      fields.length > 0
-        ? (Object.fromEntries(fields.map(f => [f, true])) as any)
-        : undefined;
+    // optional select (duck-typed to avoid TS headaches)
+    const select = fields.length
+      ? (Object.fromEntries(fields.map(f => [f, true])) as any)
+      : undefined;
 
     const data = await withTimeout(
       prisma.$transaction([
@@ -143,8 +165,8 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
           take: limit,
           ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
           orderBy: { id: "desc" },
-          ...(select ? { select } : {})
-        })
+          ...(select ? { select } : {}),
+        }),
       ]).then(([, rows]) => rows),
       12_000
     );
@@ -158,7 +180,10 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
   } catch (e) {
     req.log.warn({ err: e }, "findMany failed; using raw fallback");
 
-    const cols = fields.length ? fields.map(f => `"${f}"`).join(",") : "*";
+    const cols =
+      fields.length > 0
+        ? fields.map(f => `"${safeIdent(f)}"`).join(",")
+        : "*";
     const where = cursorId ? `WHERE "id" < $1` : "";
     const params = cursorId ? [cursorId] : [];
 
@@ -168,7 +193,7 @@ app.get("/api/v1/contacts", { preHandler: requireAdmin }, async (req, reply) => 
         prisma.$queryRawUnsafe(
           `SELECT ${cols} FROM "Contact" ${where} ORDER BY "id" DESC LIMIT ${limit};`,
           ...params
-        )
+        ),
       ]).then(([, r]) => r as unknown[]),
       12_000
     );
@@ -202,15 +227,16 @@ app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, repl
           data: {
             firstName: b.firstName,
             lastName: b.lastName,
-            email: b.email ?? null
-          } as any
-        })
+            email: b.email ?? null,
+          } as any,
+        }),
       ]).then(([, row]) => row),
       12_000
     );
     return reply.code(201).send(created);
   } catch (e) {
     req.log.warn({ err: e }, "contact.create failed; falling back to raw SQL");
+
     const rows = await withTimeout(
       prisma.$transaction([
         prisma.$executeRawUnsafe("SET LOCAL statement_timeout = 10000"),
@@ -219,15 +245,18 @@ app.post("/api/v1/contacts", { preHandler: requireAdmin }, async (req: any, repl
           b.firstName,
           b.lastName,
           b.email ?? null
-        )
+        ),
       ]).then(([, r]) => r as any[]),
       12_000
     );
+
     return reply.code(201).send(rows[0]);
   }
 });
 
-// ---------- SHUTDOWN ----------
+/**
+ * Shutdown
+ */
 const shutdown = async () => {
   app.log.info("Shutting down…");
   try { await prisma.$disconnect(); } catch {}
@@ -237,7 +266,9 @@ const shutdown = async () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-// ---------- STARTUP ----------
+/**
+ * Startup (fail fast if DB unreachable)
+ */
 async function connectPrismaOrExit() {
   const timer = setTimeout(() => {
     app.log.error("Prisma connect timed out");
