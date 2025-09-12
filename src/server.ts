@@ -24,6 +24,12 @@ await app.register(cors, {
 // Health
 app.get("/health", async () => ({ ok: true }));
 app.get("/healthz", async () => ({ ok: true }));
+app.get("/__diag", async () => ({
+  tag: "bhq-diag-v1",
+  commit: process.env.RENDER_GIT_COMMIT ?? null,
+  time: new Date().toISOString()
+}));
+
 
 // Admin guard
 function requireAdmin(req: any, reply: any) {
