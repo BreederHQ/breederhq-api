@@ -1,12 +1,10 @@
 node_modules
 dist
-.env
-.env.*
-!.env.example
 npm-debug.log*
 .DS_Store
 coverage
-
+# Ignore real environment files
 .env
-.env.*
-!.env.example
+.env.*.local
+.env.dev.migrate
+.env.prod.migrate
