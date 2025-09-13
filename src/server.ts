@@ -102,11 +102,8 @@ export async function start() {
   }
 }
 
-// Only start if run directly
-// @ts-ignore
-if (typeof require !== "undefined" && require.main === module) {
-  start();
-}
+// Always start when this file is run directly (ESM safe for Render)
+start();
 
 // ---------- Shutdown ----------
 process.on("SIGTERM", async () => {
