@@ -80,9 +80,9 @@ app.addHook("onRequest", async (req, reply) => {
 });
 
 // ---------- Routes (static imports) ----------
-import contactsRoutes from "./routes/contacts";
-import animalsRoutes from "./routes/animals";
-import breedingRoutes from "./routes/breeding";
+import contactsRoutes from "./routes/contacts.js";
+import animalsRoutes from "./routes/animals.js";
+import breedingRoutes from "./routes/breeding.js";
 
 app.register(contactsRoutes);
 app.register(animalsRoutes);
