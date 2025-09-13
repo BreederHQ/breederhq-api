@@ -1,7 +1,7 @@
 // ----------------------------------------------------
-// Prisma schema for BreederHQ
+// Prisma schema for BreederHQ core modules
 // Contacts, Organizations, Animals, Breeding, Offspring
-// Finance (Invoices, Payments), Tags, Documents, Custom Fields
+// Finance (Invoice, Payment), Tags, Custom Fields, Documents
 // ----------------------------------------------------
 
 generator client {
@@ -92,7 +92,7 @@ enum TagScope {
 
 enum TransactionDirection {
   INCOMING   // customer pays breeder
-  OUTGOING   // breeder pays vendor or refund to customer
+  OUTGOING   // breeder pays vendor or refund
 }
 
 enum PaymentKind {
@@ -237,11 +237,12 @@ model Organization {
   customFields   CustomFieldValue[] @relation("OrganizationCFV")
 }
 
+// Contact <-> Organization join with role
 model ContactOrganization {
   id             String        @id @default(uuid())
   contactId      String
   organizationId String
-  role           String?
+  role           String?       // Owner, Manager, Billing
 
   contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -253,48 +254,48 @@ model ContactOrganization {
 // -------------------- Animals -----------------------
 
 model Animal {
-  id                  String        @id @default(uuid())
-  createdAt           DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime      @updatedAt @db.Timestamptz(6)
-  deletedAt           DateTime?     @db.Timestamptz(6)
+  id                   String            @id @default(uuid())
+  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?         @db.Timestamptz(6)
 
-  species             Species
-  sex                 Sex           @default(UNKNOWN)
+  species              Species
+  sex                  Sex               @default(UNKNOWN)
 
   // Names
-  officialName        String?
-  callName            String?
+  officialName         String?
+  callName             String?
 
   // Breed and identifiers
-  breed               String?
-  color               String?
-  registrationNo      String?
-  microchipId         String?
-  tattooId            String?
+  breed                String?
+  color                String?
+  registrationNo       String?
+  microchipId          String?
+  tattooId             String?
 
-  dateOfBirth         DateTime?
-  status              AnimalStatus  @default(ACTIVE)
+  dateOfBirth          DateTime?
+  status               AnimalStatus      @default(ACTIVE)
 
   // Parentage
-  damId               String?
-  sireId              String?
-  dam                 Animal?       @relation("DamChildren", fields: [damId], references: [id])
-  sire                Animal?       @relation("SireChildren", fields: [sireId], references: [id])
-  damChildren         Animal[]      @relation("DamChildren")
-  sireChildren        Animal[]      @relation("SireChildren")
+  damId                String?
+  sireId               String?
+  dam                  Animal?           @relation("DamChildren", fields: [damId], references: [id])
+  sire                 Animal?           @relation("SireChildren", fields: [sireId], references: [id])
+  damChildren          Animal[]          @relation("DamChildren")
+  sireChildren         Animal[]          @relation("SireChildren")
 
   // Ownership and people links
-  contactRoles        AnimalContactRole[]
-  organizationId      String?
-  organization        Organization?  @relation(fields: [organizationId], references: [id])
+  contactRoles         AnimalContactRole[]
+  organizationId       String?
+  organization         Organization?     @relation(fields: [organizationId], references: [id])
 
   // Breeding linkage
-  breedingsFemale     Breeding[]     @relation("FemaleBreedings")
-  breedingsMale       Breeding[]     @relation("MaleBreedings")
+  breedingsFemale      Breeding[]        @relation("FemaleBreedings")
+  breedingsMale        Breeding[]        @relation("MaleBreedings")
 
   // Offspring membership
-  offspringGroupId    String?
-  offspringGroup      OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
+  offspringGroupId     String?
+  offspringGroup       OffspringGroup?   @relation(fields: [offspringGroupId], references: [id])
 
   // Cycle history for females
   lastCycleStartDate   DateTime?
@@ -302,11 +303,11 @@ model Animal {
   speciesCycleLenDays  Int?
 
   // Polymorphic attaches
-  tagAssignments      TagAssignment[]     @relation("AnimalTags")
-  documents           Document[]          @relation("AnimalDocuments")
-  customFields        CustomFieldValue[]  @relation("AnimalCFV")
+  tagAssignments       TagAssignment[]   @relation("AnimalTags")
+  documents            Document[]        @relation("AnimalDocuments")
+  customFields         CustomFieldValue[] @relation("AnimalCFV")
 
-  notes               String?
+  notes                String?
 
   @@index([species, status])
   @@index([officialName])
@@ -318,7 +319,7 @@ model AnimalContactRole {
   id         String   @id @default(uuid())
   animalId   String
   contactId  String
-  role       String
+  role       String   // Owner, CoOwner, Breeder, Handler, Vet, etc.
 
   animal     Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
   contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -337,63 +338,61 @@ model CycleHistory {
   @@index([animalId, startDate])
 }
 
-// -------------------- Breeding ----------------------
+// -------------------- Breeding (plans and records) --
 
 model Breeding {
-  id                  String         @id @default(uuid())
-  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
-  deletedAt           DateTime?      @db.Timestamptz(6)
+  id                   String         @id @default(uuid())
+  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?      @db.Timestamptz(6)
 
-  species             Species
-  status              BreedingStatus @default(PLANNING)
+  species              Species
+  status               BreedingStatus @default(PLANNING)
 
   // Pair
-  femaleId            String
-  maleId              String
-  female              Animal         @relation("FemaleBreedings", fields: [femaleId], references: [id])
-  male                Animal         @relation("MaleBreedings", fields: [maleId], references: [id])
+  femaleId             String
+  maleId               String
+  female               Animal         @relation("FemaleBreedings", fields: [femaleId], references: [id])
+  male                 Animal         @relation("MaleBreedings", fields: [maleId], references: [id])
 
   // Planning windows and key dates
-  cycleStartEarliest  DateTime?
-  cycleStartLatest    DateTime?
-  ovulationExpected   DateTime?
+  cycleStartEarliest   DateTime?
+  cycleStartLatest     DateTime?
+  ovulationExpected    DateTime?
 
-  hormoneStart        DateTime?
-  hormoneEnd          DateTime?
-  breedingStart       DateTime?
-  breedingEnd         DateTime?
+  hormoneStart         DateTime?
+  hormoneEnd           DateTime?
+  breedingStart        DateTime?
+  breedingEnd          DateTime?
 
-  whelpWindowStart    DateTime?
-  whelpWindowEnd      DateTime?
-  whelpDateActual     DateTime?
+  whelpWindowStart     DateTime?
+  whelpWindowEnd       DateTime?
+  whelpDateActual      DateTime?
 
-  weaningStart        DateTime?
-  weaningEnd          DateTime?
+  weaningStart         DateTime?
+  weaningEnd           DateTime?
 
-  goHomeNormalStart   DateTime?
-  goHomeNormalEnd     DateTime?
-  goHomeExtendedEnd   DateTime?
+  goHomeNormalStart    DateTime?
+  goHomeNormalEnd      DateTime?
+  goHomeExtendedEnd    DateTime?
 
   // Links
-  offspringGroup      OffspringGroup?
+  offspringGroup       OffspringGroup?
 
-  // Travel derived values
-  travelRiskyStart    DateTime?
-  travelRiskyEnd      DateTime?
-  travelUnlikelyStart DateTime?
-  travelUnlikelyEnd   DateTime?
+  // Travel window snapshots
+  travelRiskyStart     DateTime?
+  travelRiskyEnd       DateTime?
+  travelUnlikelyStart  DateTime?
+  travelUnlikelyEnd    DateTime?
 
   // Admin
-  title               String?
-  notes               String?
+  title                String?
+  notes                String?
 
   // Polymorphic attaches
-  tagAssignments      TagAssignment[]     @relation("BreedingTags")
-  documents           Document[]          @relation("BreedingDocuments")
-  customFields        CustomFieldValue[]  @relation("BreedingCFV")
-
-  // Finance backrefs via InvoiceLine or Invoice/Payment relations exist below
+  tagAssignments       TagAssignment[]     @relation("BreedingTags")
+  documents            Document[]          @relation("BreedingDocuments")
+  customFields         CustomFieldValue[]  @relation("BreedingCFV")
 
   @@index([species, status])
   @@index([femaleId])
@@ -450,6 +449,7 @@ model Invoice {
   totalCents       Int            @default(0)
   dueAt            DateTime?      @db.Timestamptz(6)
   issuedAt         DateTime?      @db.Timestamptz(6)
+  memo             String?
 
   // Who is billed
   contactId        String
@@ -458,7 +458,7 @@ model Invoice {
   organizationId   String?
   organization     Organization?  @relation(fields: [organizationId], references: [id])
 
-  // Optional targeting for context
+  // Optional targeting for context in UI
   species          Species?
   breedingId       String?
   breeding         Breeding?      @relation(fields: [breedingId], references: [id])
@@ -477,8 +477,6 @@ model Invoice {
   processor        Processor?
   externalId       String?
   externalUrl      String?
-
-  memo             String?
 
   // Attachments and metadata
   tagAssignments   TagAssignment[]     @relation("InvoiceTags")
@@ -507,15 +505,15 @@ model InvoiceLine {
 
   // Optional targeting at the line level
   breedingId       String?
-  breeding         Breeding?       @relation(fields: [breedingId], references: [id])
+  breeding         Breeding?      @relation(fields: [breedingId], references: [id])
 
   offspringGroupId String?
   offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
 
   animalId         String?
-  animal           Animal?         @relation(fields: [animalId], references: [id])
+  animal           Animal?        @relation(fields: [animalId], references: [id])
 
-  allocations      PaymentAllocation[]
+  allocations     PaymentAllocation[]
 
   @@index([invoiceId])
   @@index([breedingId])
@@ -523,6 +521,7 @@ model InvoiceLine {
   @@index([animalId])
 }
 
+// Money movement
 model Payment {
   id                 String        @id @default(uuid())
   createdAt          DateTime      @default(now()) @db.Timestamptz(6)
@@ -530,33 +529,33 @@ model Payment {
   deletedAt          DateTime?     @db.Timestamptz(6)
 
   direction          TransactionDirection
-  kind               PaymentKind     @default(OTHER)
-  status             PaymentStatus   @default(PENDING)
+  kind               PaymentKind           @default(OTHER)
+  status             PaymentStatus         @default(PENDING)
 
   amountCents        Int
-  currency           String          @default("USD")
-  receivedAt         DateTime?       @db.Timestamptz(6)
+  currency           String        @default("USD")
+  receivedAt         DateTime?     @db.Timestamptz(6)
   reference          String?
 
-  // Party
+  // Who it is from or to
   contactId          String?
-  contact            Contact?        @relation(fields: [contactId], references: [id])
+  contact            Contact?      @relation(fields: [contactId], references: [id])
 
   organizationId     String?
-  organization       Organization?   @relation(fields: [organizationId], references: [id])
+  organization       Organization? @relation(fields: [organizationId], references: [id])
 
-  // Optional targeting for context
+  // Optional targeting
   species            Species?
   breedingId         String?
-  breeding           Breeding?       @relation(fields: [breedingId], references: [id])
+  breeding           Breeding?     @relation(fields: [breedingId], references: [id])
 
   offspringGroupId   String?
   offspringGroup     OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
 
   animalId           String?
-  animal             Animal?         @relation(fields: [animalId], references: [id])
+  animal             Animal?       @relation(fields: [animalId], references: [id])
 
-  // Movement details
+  // How the money moved
   method             PaymentMethod?
   processor          Processor?
   processorPaymentId String?
@@ -565,6 +564,7 @@ model Payment {
   brand              String?
   bankName           String?
 
+  // Applications to invoices
   allocations        PaymentAllocation[]
 
   memo               String?
@@ -582,6 +582,7 @@ model Payment {
   @@index([direction, status])
 }
 
+// Many to many between payments and invoices
 model PaymentAllocation {
   id             String      @id @default(uuid())
   createdAt      DateTime    @default(now()) @db.Timestamptz(6)
@@ -620,33 +621,33 @@ model Tag {
 }
 
 model TagAssignment {
-  id               String     @id @default(uuid())
-  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+  id               String       @id @default(uuid())
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
 
   tagId            String
-  tag              Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tag              Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-  // Polymorphic target
+  // Polymorphic targets
   contactId        String?
-  contact          Contact?        @relation("ContactTags", fields: [contactId], references: [id], onDelete: Cascade)
+  contact          Contact?         @relation("ContactTags", fields: [contactId], references: [id], onDelete: Cascade)
 
   organizationId   String?
-  organization     Organization?   @relation("OrganizationTags", fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization?    @relation("OrganizationTags", fields: [organizationId], references: [id], onDelete: Cascade)
 
   animalId         String?
-  animal           Animal?         @relation("AnimalTags", fields: [animalId], references: [id], onDelete: Cascade)
+  animal           Animal?          @relation("AnimalTags", fields: [animalId], references: [id], onDelete: Cascade)
 
   breedingId       String?
-  breeding         Breeding?       @relation("BreedingTags", fields: [breedingId], references: [id], onDelete: Cascade)
+  breeding         Breeding?        @relation("BreedingTags", fields: [breedingId], references: [id], onDelete: Cascade)
 
   offspringGroupId String?
-  offspringGroup   OffspringGroup? @relation("OffspringGroupTags", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  offspringGroup   OffspringGroup?  @relation("OffspringGroupTags", fields: [offspringGroupId], references: [id], onDelete: Cascade)
 
   invoiceId        String?
-  invoice          Invoice?        @relation("InvoiceTags", fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice          Invoice?         @relation("InvoiceTags", fields: [invoiceId], references: [id], onDelete: Cascade)
 
   paymentId        String?
-  payment          Payment?        @relation("PaymentTags", fields: [paymentId], references: [id], onDelete: Cascade)
+  payment          Payment?         @relation("PaymentTags", fields: [paymentId], references: [id], onDelete: Cascade)
 
   note             String?
 
@@ -673,30 +674,29 @@ model Document {
   url              String
   mimeType         String?
   sizeBytes        Int?
+  notes            String?
 
-  // Polymorphic target
+  // Polymorphic targets
   contactId        String?
-  contact          Contact?        @relation("ContactDocuments", fields: [contactId], references: [id], onDelete: Cascade)
+  contact          Contact?         @relation("ContactDocuments", fields: [contactId], references: [id], onDelete: Cascade)
 
   organizationId   String?
-  organization     Organization?   @relation("OrganizationDocuments", fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization?    @relation("OrganizationDocuments", fields: [organizationId], references: [id], onDelete: Cascade)
 
   animalId         String?
-  animal           Animal?         @relation("AnimalDocuments", fields: [animalId], references: [id], onDelete: Cascade)
+  animal           Animal?          @relation("AnimalDocuments", fields: [animalId], references: [id], onDelete: Cascade)
 
   breedingId       String?
-  breeding         Breeding?       @relation("BreedingDocuments", fields: [breedingId], references: [id], onDelete: Cascade)
+  breeding         Breeding?        @relation("BreedingDocuments", fields: [breedingId], references: [id], onDelete: Cascade)
 
   offspringGroupId String?
-  offspringGroup   OffspringGroup? @relation("OffspringGroupDocuments", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  offspringGroup   OffspringGroup?  @relation("OffspringGroupDocuments", fields: [offspringGroupId], references: [id], onDelete: Cascade)
 
   invoiceId        String?
-  invoice          Invoice?        @relation("InvoiceDocuments", fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice          Invoice?         @relation("InvoiceDocuments", fields: [invoiceId], references: [id], onDelete: Cascade)
 
   paymentId        String?
-  payment          Payment?        @relation("PaymentDocuments", fields: [paymentId], references: [id], onDelete: Cascade)
-
-  notes            String?
+  payment          Payment?         @relation("PaymentDocuments", fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@index([contactId])
   @@index([organizationId])
@@ -716,7 +716,7 @@ model CustomFieldTemplate {
 
   name        String
   key         String
-  scope       TagScope   // reuse scope enum
+  scope       TagScope   // reuse for target type
   fieldType   String     // text, number, date, select, multiselect, bool
   optionsJson String?
 
@@ -738,25 +738,25 @@ model CustomFieldValue {
 
   // Scoped FKs to target
   contactId        String?
-  contact          Contact?        @relation("ContactCFV", fields: [contactId], references: [id], onDelete: Cascade)
+  contact          Contact?         @relation("ContactCFV", fields: [contactId], references: [id], onDelete: Cascade)
 
   organizationId   String?
-  organization     Organization?   @relation("OrganizationCFV", fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization?    @relation("OrganizationCFV", fields: [organizationId], references: [id], onDelete: Cascade)
 
   animalId         String?
-  animal           Animal?         @relation("AnimalCFV", fields: [animalId], references: [id], onDelete: Cascade)
+  animal           Animal?          @relation("AnimalCFV", fields: [animalId], references: [id], onDelete: Cascade)
 
   breedingId       String?
-  breeding         Breeding?       @relation("BreedingCFV", fields: [breedingId], references: [id], onDelete: Cascade)
+  breeding         Breeding?        @relation("BreedingCFV", fields: [breedingId], references: [id], onDelete: Cascade)
 
   offspringGroupId String?
-  offspringGroup   OffspringGroup? @relation("OffspringGroupCFV", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  offspringGroup   OffspringGroup?  @relation("OffspringGroupCFV", fields: [offspringGroupId], references: [id], onDelete: Cascade)
 
   invoiceId        String?
-  invoice          Invoice?        @relation("InvoiceCFV", fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice          Invoice?         @relation("InvoiceCFV", fields: [invoiceId], references: [id], onDelete: Cascade)
 
   paymentId        String?
-  payment          Payment?        @relation("PaymentCFV", fields: [paymentId], references: [id], onDelete: Cascade)
+  payment          Payment?         @relation("PaymentCFV", fields: [paymentId], references: [id], onDelete: Cascade)
 
   // Values
   valueText        String?
