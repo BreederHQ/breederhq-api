@@ -1,3 +1,9 @@
+// ----------------------------------------------------
+// Prisma schema for BreederHQ
+// Contacts, Organizations, Animals, Breeding, Offspring
+// Finance (Invoices, Payments), Tags, Documents, Custom Fields
+// ----------------------------------------------------
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,54 +13,764 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// -------------------- Enums -------------------------
+
+enum Species {
+  DOG
+  CAT
+  HORSE
+}
+
+enum Sex {
+  MALE
+  FEMALE
+  UNKNOWN
+}
+
+enum AnimalStatus {
+  ACTIVE
+  RETIRED
+  DECEASED
+  TRANSFERRED
+  PLACED
+  UNKNOWN
+}
+
+enum BreedingStatus {
+  PLANNING
+  HORMONE_TESTING
+  BREEDING
+  CONFIRMED_PREGNANT
+  NOT_PREGNANT
+  WHELPED
+  WEANING
+  COMPLETE
+  CANCELED
+}
+
+enum OffspringStatus {
+  HOLD
+  COMMITTED
+  RESERVED
+  AVAILABLE
+  PLACED
+  RETAINED
+  DECEASED
+}
+
+enum EmailType {
+  PERSONAL
+  WORK
+  OTHER
+}
+
+enum PhoneType {
+  MOBILE
+  HOME
+  WORK
+  OTHER
+}
+
+enum DocumentType {
+  IMAGE
+  PDF
+  TEXT
+  OTHER
+}
+
+enum TagScope {
+  CONTACT
+  ORGANIZATION
+  ANIMAL
+  BREEDING
+  OFFSPRING_GROUP
+  INVOICE
+  PAYMENT
+}
+
+// -------------------- Finance Enums -----------------
+
+enum TransactionDirection {
+  INCOMING   // customer pays breeder
+  OUTGOING   // breeder pays vendor or refund to customer
+}
+
+enum PaymentKind {
+  DEPOSIT
+  BALANCE
+  FINAL
+  REFUND
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  SETTLED
+  FAILED
+  CANCELED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  VOID
+  CANCELED
+}
+
+enum PaymentMethod {
+  CARD
+  ACH
+  WIRE
+  CASH
+  CHECK
+  OTHER
+}
+
+enum Processor {
+  STRIPE
+  PAYPAL
+  SQUARE
+  QUICKBOOKS_ONLINE
+  OFFLINE
+  OTHER
+}
+
+// -------------------- Core: Contacts ----------------
+
 model Contact {
-  id           String   @id @default(cuid())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  firstName    String
-  lastName     String
-  email        String?  @unique
-  phone        String?
-  organizations OrganizationOnContact[]
-  deposits     Deposit[]
+  id             String            @id @default(uuid())
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime?         @db.Timestamptz(6)
+
+  // Identity
+  firstName      String
+  lastName       String
+  preferredName  String?
+  fullName       String            @default("")
+
+  // Communications
+  emails         ContactEmail[]
+  phones         ContactPhone[]
+
+  // Address
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?
+  postalCode     String?
+  country        String?
+
+  // Associations
+  organizations  ContactOrganization[]
+  animalRoles    AnimalContactRole[]
+
+  // Finance
+  invoices       Invoice[]
+  payments       Payment[]
+
+  // Polymorphic attaches
+  tagAssignments TagAssignment[]   @relation("ContactTags")
+  documents      Document[]        @relation("ContactDocuments")
+  customFields   CustomFieldValue[] @relation("ContactCFV")
+
+  notes          String?
+
+  @@index([lastName, firstName])
+}
+
+model ContactEmail {
+  id         String    @id @default(uuid())
+  contactId  String
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type       EmailType @default(PERSONAL)
+  email      String
+  isPrimary  Boolean   @default(false)
+
+  @@unique([contactId, email])
+}
+
+model ContactPhone {
+  id         String    @id @default(uuid())
+  contactId  String
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type       PhoneType @default(MOBILE)
+  number     String
+  isPrimary  Boolean   @default(false)
+
+  @@index([number])
 }
 
 model Organization {
-  id         String   @id @default(cuid())
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  name       String
-  website    String?
-  contacts   OrganizationOnContact[]
-  deposits   Deposit[]
+  id             String            @id @default(uuid())
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime?         @db.Timestamptz(6)
+
+  name           String
+  website        String?
+  email          String?
+  phone          String?
+
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?
+  postalCode     String?
+  country        String?
+
+  contacts       ContactOrganization[]
+
+  // Finance
+  invoices       Invoice[]
+  payments       Payment[]
+
+  // Polymorphic attaches
+  tagAssignments TagAssignment[]   @relation("OrganizationTags")
+  documents      Document[]        @relation("OrganizationDocuments")
+  customFields   CustomFieldValue[] @relation("OrganizationCFV")
 }
 
-model OrganizationOnContact {
+model ContactOrganization {
+  id             String        @id @default(uuid())
   contactId      String
   organizationId String
   role           String?
 
-  contact        Contact      @relation(fields: [contactId], references: [id])
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@id([contactId, organizationId])
+  @@unique([contactId, organizationId])
+  @@index([organizationId])
 }
 
-model Deposit {
-  id              String   @id @default(cuid())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  amountCents     Int
-  status          DepositStatus @default(PENDING)
-  contactId       String
-  organizationId  String?          // optional
+// -------------------- Animals -----------------------
 
-  contact         Contact      @relation(fields: [contactId], references: [id])
-  organization    Organization? @relation(fields: [organizationId], references: [id]) // <- add ?
+model Animal {
+  id                  String        @id @default(uuid())
+  createdAt           DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?     @db.Timestamptz(6)
+
+  species             Species
+  sex                 Sex           @default(UNKNOWN)
+
+  // Names
+  officialName        String?
+  callName            String?
+
+  // Breed and identifiers
+  breed               String?
+  color               String?
+  registrationNo      String?
+  microchipId         String?
+  tattooId            String?
+
+  dateOfBirth         DateTime?
+  status              AnimalStatus  @default(ACTIVE)
+
+  // Parentage
+  damId               String?
+  sireId              String?
+  dam                 Animal?       @relation("DamChildren", fields: [damId], references: [id])
+  sire                Animal?       @relation("SireChildren", fields: [sireId], references: [id])
+  damChildren         Animal[]      @relation("DamChildren")
+  sireChildren        Animal[]      @relation("SireChildren")
+
+  // Ownership and people links
+  contactRoles        AnimalContactRole[]
+  organizationId      String?
+  organization        Organization?  @relation(fields: [organizationId], references: [id])
+
+  // Breeding linkage
+  breedingsFemale     Breeding[]     @relation("FemaleBreedings")
+  breedingsMale       Breeding[]     @relation("MaleBreedings")
+
+  // Offspring membership
+  offspringGroupId    String?
+  offspringGroup      OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
+
+  // Cycle history for females
+  lastCycleStartDate   DateTime?
+  computedCycleAvgDays Int?
+  speciesCycleLenDays  Int?
+
+  // Polymorphic attaches
+  tagAssignments      TagAssignment[]     @relation("AnimalTags")
+  documents           Document[]          @relation("AnimalDocuments")
+  customFields        CustomFieldValue[]  @relation("AnimalCFV")
+
+  notes               String?
+
+  @@index([species, status])
+  @@index([officialName])
+  @@index([callName])
+  @@index([registrationNo], map: "animal_registration_idx")
 }
 
-enum DepositStatus {
-  PENDING
-  COMMITTED
-  REFUNDED
+model AnimalContactRole {
+  id         String   @id @default(uuid())
+  animalId   String
+  contactId  String
+  role       String
+
+  animal     Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([animalId, contactId, role])
+  @@index([contactId])
+}
+
+model CycleHistory {
+  id         String   @id @default(uuid())
+  animalId   String
+  animal     Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  startDate  DateTime @db.Timestamptz(6)
+  notes      String?
+
+  @@index([animalId, startDate])
+}
+
+// -------------------- Breeding ----------------------
+
+model Breeding {
+  id                  String         @id @default(uuid())
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?      @db.Timestamptz(6)
+
+  species             Species
+  status              BreedingStatus @default(PLANNING)
+
+  // Pair
+  femaleId            String
+  maleId              String
+  female              Animal         @relation("FemaleBreedings", fields: [femaleId], references: [id])
+  male                Animal         @relation("MaleBreedings", fields: [maleId], references: [id])
+
+  // Planning windows and key dates
+  cycleStartEarliest  DateTime?
+  cycleStartLatest    DateTime?
+  ovulationExpected   DateTime?
+
+  hormoneStart        DateTime?
+  hormoneEnd          DateTime?
+  breedingStart       DateTime?
+  breedingEnd         DateTime?
+
+  whelpWindowStart    DateTime?
+  whelpWindowEnd      DateTime?
+  whelpDateActual     DateTime?
+
+  weaningStart        DateTime?
+  weaningEnd          DateTime?
+
+  goHomeNormalStart   DateTime?
+  goHomeNormalEnd     DateTime?
+  goHomeExtendedEnd   DateTime?
+
+  // Links
+  offspringGroup      OffspringGroup?
+
+  // Travel derived values
+  travelRiskyStart    DateTime?
+  travelRiskyEnd      DateTime?
+  travelUnlikelyStart DateTime?
+  travelUnlikelyEnd   DateTime?
+
+  // Admin
+  title               String?
+  notes               String?
+
+  // Polymorphic attaches
+  tagAssignments      TagAssignment[]     @relation("BreedingTags")
+  documents           Document[]          @relation("BreedingDocuments")
+  customFields        CustomFieldValue[]  @relation("BreedingCFV")
+
+  // Finance backrefs via InvoiceLine or Invoice/Payment relations exist below
+
+  @@index([species, status])
+  @@index([femaleId])
+  @@index([maleId])
+  @@index([whelpWindowStart, whelpWindowEnd])
+}
+
+model OffspringGroup {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime?     @db.Timestamptz(6)
+
+  species        Species
+  breedingId     String?
+  breeding       Breeding?     @relation(fields: [breedingId], references: [id])
+
+  birthDate      DateTime?
+  countTotal     Int?
+  countAlive     Int?
+  countPlaced    Int?
+
+  weaningDate    DateTime?
+  goHomeStart    DateTime?
+  goHomeEnd      DateTime?
+
+  // Children as Animal rows
+  offspring      Animal[]
+
+  selectionNotes String?
+
+  // Polymorphic attaches
+  tagAssignments TagAssignment[]     @relation("OffspringGroupTags")
+  documents      Document[]          @relation("OffspringGroupDocuments")
+  customFields   CustomFieldValue[]  @relation("OffspringGroupCFV")
+
+  notes          String?
+}
+
+// -------------------- Finance Core ------------------
+
+// Request to pay
+model Invoice {
+  id               String        @id @default(uuid())
+  createdAt        DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?     @db.Timestamptz(6)
+
+  status           InvoiceStatus  @default(DRAFT)
+  currency         String         @default("USD")
+  subtotalCents    Int            @default(0)
+  taxCents         Int            @default(0)
+  discountCents    Int            @default(0)
+  totalCents       Int            @default(0)
+  dueAt            DateTime?      @db.Timestamptz(6)
+  issuedAt         DateTime?      @db.Timestamptz(6)
+
+  // Who is billed
+  contactId        String
+  contact          Contact        @relation(fields: [contactId], references: [id])
+
+  organizationId   String?
+  organization     Organization?  @relation(fields: [organizationId], references: [id])
+
+  // Optional targeting for context
+  species          Species?
+  breedingId       String?
+  breeding         Breeding?      @relation(fields: [breedingId], references: [id])
+
+  offspringGroupId String?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
+
+  animalId         String?
+  animal           Animal?        @relation(fields: [animalId], references: [id])
+
+  // Lines and applications
+  lines            InvoiceLine[]
+  allocations      PaymentAllocation[]
+
+  // External system mapping
+  processor        Processor?
+  externalId       String?
+  externalUrl      String?
+
+  memo             String?
+
+  // Attachments and metadata
+  tagAssignments   TagAssignment[]     @relation("InvoiceTags")
+  documents        Document[]          @relation("InvoiceDocuments")
+  customFields     CustomFieldValue[]  @relation("InvoiceCFV")
+
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([animalId])
+}
+
+model InvoiceLine {
+  id              String     @id @default(uuid())
+  invoiceId       String
+  invoice         Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  name            String
+  description     String?
+  quantity        Decimal    @db.Decimal(10, 2) @default(1.00)
+  unitPriceCents  Int
+  taxCents        Int        @default(0)
+  discountCents   Int        @default(0)
+  totalCents      Int        @default(0)
+
+  // Optional targeting at the line level
+  breedingId       String?
+  breeding         Breeding?       @relation(fields: [breedingId], references: [id])
+
+  offspringGroupId String?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
+
+  animalId         String?
+  animal           Animal?         @relation(fields: [animalId], references: [id])
+
+  allocations      PaymentAllocation[]
+
+  @@index([invoiceId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([animalId])
+}
+
+model Payment {
+  id                 String        @id @default(uuid())
+  createdAt          DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt          DateTime?     @db.Timestamptz(6)
+
+  direction          TransactionDirection
+  kind               PaymentKind     @default(OTHER)
+  status             PaymentStatus   @default(PENDING)
+
+  amountCents        Int
+  currency           String          @default("USD")
+  receivedAt         DateTime?       @db.Timestamptz(6)
+  reference          String?
+
+  // Party
+  contactId          String?
+  contact            Contact?        @relation(fields: [contactId], references: [id])
+
+  organizationId     String?
+  organization       Organization?   @relation(fields: [organizationId], references: [id])
+
+  // Optional targeting for context
+  species            Species?
+  breedingId         String?
+  breeding           Breeding?       @relation(fields: [breedingId], references: [id])
+
+  offspringGroupId   String?
+  offspringGroup     OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
+
+  animalId           String?
+  animal             Animal?         @relation(fields: [animalId], references: [id])
+
+  // Movement details
+  method             PaymentMethod?
+  processor          Processor?
+  processorPaymentId String?
+  processorTxnId     String?
+  last4              String?
+  brand              String?
+  bankName           String?
+
+  allocations        PaymentAllocation[]
+
+  memo               String?
+
+  // Attachments and metadata
+  tagAssignments     TagAssignment[]     @relation("PaymentTags")
+  documents          Document[]          @relation("PaymentDocuments")
+  customFields       CustomFieldValue[]  @relation("PaymentCFV")
+
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([animalId])
+  @@index([direction, status])
+}
+
+model PaymentAllocation {
+  id             String      @id @default(uuid())
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+
+  paymentId      String
+  payment        Payment     @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  invoiceId      String
+  invoice        Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  invoiceLineId  String?
+  invoiceLine    InvoiceLine? @relation(fields: [invoiceLineId], references: [id], onDelete: SetNull)
+
+  amountCents    Int
+
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@index([invoiceLineId])
+}
+
+// -------------------- Tags --------------------------
+
+model Tag {
+  id          String     @id @default(uuid())
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(6)
+
+  name        String
+  colorHex    String?
+  scope       TagScope
+
+  assignments TagAssignment[]
+
+  @@unique([name, scope])
+  @@index([scope])
+}
+
+model TagAssignment {
+  id               String     @id @default(uuid())
+  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+
+  tagId            String
+  tag              Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  // Polymorphic target
+  contactId        String?
+  contact          Contact?        @relation("ContactTags", fields: [contactId], references: [id], onDelete: Cascade)
+
+  organizationId   String?
+  organization     Organization?   @relation("OrganizationTags", fields: [organizationId], references: [id], onDelete: Cascade)
+
+  animalId         String?
+  animal           Animal?         @relation("AnimalTags", fields: [animalId], references: [id], onDelete: Cascade)
+
+  breedingId       String?
+  breeding         Breeding?       @relation("BreedingTags", fields: [breedingId], references: [id], onDelete: Cascade)
+
+  offspringGroupId String?
+  offspringGroup   OffspringGroup? @relation("OffspringGroupTags", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+
+  invoiceId        String?
+  invoice          Invoice?        @relation("InvoiceTags", fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  paymentId        String?
+  payment          Payment?        @relation("PaymentTags", fields: [paymentId], references: [id], onDelete: Cascade)
+
+  note             String?
+
+  @@index([tagId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([animalId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([invoiceId])
+  @@index([paymentId])
+}
+
+// -------------------- Documents ---------------------
+
+model Document {
+  id               String       @id @default(uuid())
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?    @db.Timestamptz(6)
+
+  type             DocumentType  @default(OTHER)
+  name             String
+  url              String
+  mimeType         String?
+  sizeBytes        Int?
+
+  // Polymorphic target
+  contactId        String?
+  contact          Contact?        @relation("ContactDocuments", fields: [contactId], references: [id], onDelete: Cascade)
+
+  organizationId   String?
+  organization     Organization?   @relation("OrganizationDocuments", fields: [organizationId], references: [id], onDelete: Cascade)
+
+  animalId         String?
+  animal           Animal?         @relation("AnimalDocuments", fields: [animalId], references: [id], onDelete: Cascade)
+
+  breedingId       String?
+  breeding         Breeding?       @relation("BreedingDocuments", fields: [breedingId], references: [id], onDelete: Cascade)
+
+  offspringGroupId String?
+  offspringGroup   OffspringGroup? @relation("OffspringGroupDocuments", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+
+  invoiceId        String?
+  invoice          Invoice?        @relation("InvoiceDocuments", fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  paymentId        String?
+  payment          Payment?        @relation("PaymentDocuments", fields: [paymentId], references: [id], onDelete: Cascade)
+
+  notes            String?
+
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([animalId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([invoiceId])
+  @@index([paymentId])
+}
+
+// -------------------- Custom Fields -----------------
+
+model CustomFieldTemplate {
+  id          String     @id @default(uuid())
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(6)
+
+  name        String
+  key         String
+  scope       TagScope   // reuse scope enum
+  fieldType   String     // text, number, date, select, multiselect, bool
+  optionsJson String?
+
+  isRequired  Boolean    @default(false)
+  isActive    Boolean    @default(true)
+
+  values      CustomFieldValue[]
+
+  @@unique([scope, key])
+}
+
+model CustomFieldValue {
+  id               String     @id @default(uuid())
+  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime   @updatedAt @db.Timestamptz(6)
+
+  templateId       String
+  template         CustomFieldTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  // Scoped FKs to target
+  contactId        String?
+  contact          Contact?        @relation("ContactCFV", fields: [contactId], references: [id], onDelete: Cascade)
+
+  organizationId   String?
+  organization     Organization?   @relation("OrganizationCFV", fields: [organizationId], references: [id], onDelete: Cascade)
+
+  animalId         String?
+  animal           Animal?         @relation("AnimalCFV", fields: [animalId], references: [id], onDelete: Cascade)
+
+  breedingId       String?
+  breeding         Breeding?       @relation("BreedingCFV", fields: [breedingId], references: [id], onDelete: Cascade)
+
+  offspringGroupId String?
+  offspringGroup   OffspringGroup? @relation("OffspringGroupCFV", fields: [offspringGroupId], references: [id], onDelete: Cascade)
+
+  invoiceId        String?
+  invoice          Invoice?        @relation("InvoiceCFV", fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  paymentId        String?
+  payment          Payment?        @relation("PaymentCFV", fields: [paymentId], references: [id], onDelete: Cascade)
+
+  // Values
+  valueText        String?
+  valueNumber      Float?
+  valueBool        Boolean?
+  valueDate        DateTime?  @db.Timestamptz(6)
+  valueJson        Json?
+
+  @@index([templateId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([animalId])
+  @@index([breedingId])
+  @@index([offspringGroupId])
+  @@index([invoiceId])
+  @@index([paymentId])
 }
