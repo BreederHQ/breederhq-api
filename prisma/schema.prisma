@@ -235,7 +235,9 @@ model Organization {
   tagAssignments TagAssignment[]   @relation("OrganizationTags")
   documents      Document[]        @relation("OrganizationDocuments")
   customFields   CustomFieldValue[] @relation("OrganizationCFV")
+  animals   Animal[]
 }
+
 
 // Contact <-> Organization join with role
 model ContactOrganization {
@@ -313,7 +315,16 @@ model Animal {
   @@index([officialName])
   @@index([callName])
   @@index([registrationNo], map: "animal_registration_idx")
+  @@index([organizationId])
+  cycleHistories  CycleHistory[]
+  invoices   Invoice[] @relation("AnimalToInvoices")
+  invoiceLines InvoiceLine[] @relation("AnimalToInvoiceLines")
+  payments Payment[] @relation("AnimalToPayments")
 }
+
+
+
+
 
 model AnimalContactRole {
   id         String   @id @default(uuid())
@@ -398,7 +409,13 @@ model Breeding {
   @@index([femaleId])
   @@index([maleId])
   @@index([whelpWindowStart, whelpWindowEnd])
+  invoices   Invoice[] @relation("BreedingToInvoices")
+  invoiceLines InvoiceLine[] @relation("BreedingToInvoiceLines")
+  payments Payment[] @relation("BreedingToPayments")
 }
+
+
+
 
 model OffspringGroup {
   id             String        @id @default(uuid())
@@ -407,8 +424,8 @@ model OffspringGroup {
   deletedAt      DateTime?     @db.Timestamptz(6)
 
   species        Species
-  breedingId     String?
-  breeding       Breeding?     @relation(fields: [breedingId], references: [id])
+  breedingId     String? @unique
+  breeding       Breeding?     @relation("BreedingToOffspringGroup", fields: [breedingId], references: [id])
 
   birthDate      DateTime?
   countTotal     Int?
@@ -430,7 +447,13 @@ model OffspringGroup {
   customFields   CustomFieldValue[]  @relation("OffspringGroupCFV")
 
   notes          String?
+  invoices   Invoice[] @relation("OffspringGroupToInvoices")
+  invoiceLines InvoiceLine[] @relation("OffspringGroupToInvoiceLines")
+  payments Payment[] @relation("OffspringGroupToPayments")
 }
+
+
+
 
 // -------------------- Finance Core ------------------
 
