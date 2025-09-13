@@ -39,6 +39,7 @@ await app.register(cors, {
 
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
+app.get("/", async () => ({ ok: true }));
 app.get("/__diag", async () => ({
   ok: true,
   time: new Date().toISOString(),
@@ -70,14 +71,16 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
 app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
 
 // Protect all /api/v1/* routes
-app.addHook("onRequest", async (req, reply) => {
-  if (req.url.startsWith("/api/v1/")) {
-    const token = extractToken(req);
-    if (!token || token !== ADMIN_TOKEN) {
-      return reply.code(401).send({ error: "unauthorized" });
+if (ADMIN_TOKEN) {
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.url.startsWith("/api/v1/")) {
+      const token = extractToken(req);
+      if (!token || token !== ADMIN_TOKEN) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
     }
-  }
-});
+  });
+}
 
 // ---------- Routes (static imports) ----------
 import contactsRoutes from "./routes/contacts.js";
