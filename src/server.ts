@@ -11,11 +11,6 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
-app.get("/healthz", async () => {
-  return { status: "ok" };
-});
-
-
 // Allow *.vercel.app previews
 const VERCEL_PREVIEW_RE = /\.vercel\.app$/i;
 
@@ -91,6 +86,7 @@ if (ADMIN_TOKEN) {
 import contactsRoutes from "./routes/contacts.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
+
 
 app.register(contactsRoutes);
 app.register(animalsRoutes);
