@@ -11,6 +11,9 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
+// Allow *.vercel.app previews
+const VERCEL_PREVIEW_RE = /\.vercel\.app$/i;
+
 // ---------- App ----------
 const app: FastifyInstance = Fastify({
   logger: true,
@@ -36,13 +39,14 @@ await app.register(cors, {
 
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
-app.get("/__diag", { preHandler: requireAdmin }, async () => ({
+app.get("/", async () => ({ ok: true }));
+app.get("/__diag", async () => ({
   ok: true,
   time: new Date().toISOString(),
   env: {
     BHQ_ENV: process.env.BHQ_ENV || "unknown",
-    NODE_ENV: process.env.NODE_ENV || "unknown"
-  }
+    NODE_ENV: process.env.NODE_ENV || "unknown",
+  },
 }));
 
 // ---------- Auth helpers ----------
@@ -82,7 +86,6 @@ if (ADMIN_TOKEN) {
 import contactsRoutes from "./routes/contacts.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
-
 
 app.register(contactsRoutes);
 app.register(animalsRoutes);
