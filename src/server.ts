@@ -3,8 +3,6 @@ import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 
-
-
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
@@ -15,6 +13,10 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
 
 // Allow *.vercel.app previews
 const VERCEL_PREVIEW_RE = /\.vercel\.app$/i;
+
+// Dev helpers for CORS
+const IS_DEV = (process.env.BHQ_ENV || process.env.NODE_ENV) === "dev";
+const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
 
 // ---------- App ----------
 const app: FastifyInstance = Fastify({
@@ -31,13 +33,33 @@ await app.register(helmet, {
 await app.register(cors, {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true); // curl / server-to-server
+
     const allowed =
-      ALLOWED_ORIGINS.includes(origin) || VERCEL_PREVIEW_RE.test(origin);
+      ALLOWED_ORIGINS.includes(origin) ||
+      VERCEL_PREVIEW_RE.test(origin) ||
+      (IS_DEV && LOCALHOST_RE.test(origin));
+
     if (allowed) return cb(null, true);
     return cb(new Error("CORS: origin not allowed"), false);
   },
   credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],   // 👈 preflight
+  allowedHeaders: ["authorization","content-type"],            // 👈 allow token
 });
+
+if (ADMIN_TOKEN) {
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method === "OPTIONS") return; // 👈 let preflight through
+    if (req.url === "/healthz" || req.url === "/__diag") return;
+
+    if (req.url.startsWith("/api/v1/")) {
+      const token = extractToken(req);
+      if (!token || token !== ADMIN_TOKEN) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+    }
+  });
+}
 
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
@@ -48,6 +70,8 @@ app.get("/__diag", async () => ({
   env: {
     BHQ_ENV: process.env.BHQ_ENV || "unknown",
     NODE_ENV: process.env.NODE_ENV || "unknown",
+    ALLOWED_ORIGINS,
+    IS_DEV,
   },
 }));
 
@@ -72,7 +96,7 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
 // Auth check endpoint
 app.get("/auth/ping", { preHandler: requireAdmin }, async () => ({ ok: true }));
 
-// Protect all /api/v1/* routes
+// Protect all /api/v1/* routes if ADMIN_TOKEN is configured
 if (ADMIN_TOKEN) {
   app.addHook("onRequest", async (req, reply) => {
     if (req.url.startsWith("/api/v1/")) {
@@ -85,9 +109,10 @@ if (ADMIN_TOKEN) {
 }
 
 // ---------- Routes (static imports) ----------
-import contactsRoutes from "./routes/contacts.js";
-import animalsRoutes from "./routes/animals.js";
-import breedingRoutes from "./routes/breeding.js";
+import contactsRoutes from "./routes/contacts";
+import animalsRoutes from "./routes/animals";
+import breedingRoutes from "./routes/breeding";
+import offspringRoutes from "./routes/offspring";
 
 app.register(contactsRoutes);
 app.register(animalsRoutes);
@@ -104,7 +129,7 @@ export async function start() {
   }
 }
 
-// Always start when this file is run directly (ESM safe for Render)
+// Always start when this file is run directly (ESM-safe for Render)
 start();
 
 // ---------- Shutdown ----------

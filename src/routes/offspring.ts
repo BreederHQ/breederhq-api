@@ -1,8 +1,9 @@
 // src/routes/contacts.ts
-import { PrismaClient } from "@prisma/client";
+import prisma from "../prisma.js";
 import type { FastifyPluginCallback } from "fastify";
+import prisma from "../prisma.ts";
 
-const prisma = new PrismaClient();
+
 
 const contactsRoutes: FastifyPluginCallback = (app, _opts, done) => {
   // GET /api/v1/contacts
@@ -29,3 +30,4 @@ const contactsRoutes: FastifyPluginCallback = (app, _opts, done) => {
 };
 
 export default contactsRoutes;
+

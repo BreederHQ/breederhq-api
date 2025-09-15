@@ -1,130 +1,42 @@
-import { FastifyInstance, FastifyPluginAsync } from "fastify";
-import { PrismaClient } from "@prisma/client";
-import crypto from "node:crypto";
+// src/routes/breeding.ts
+import type { FastifyPluginAsync } from "fastify";
+import prisma from "../prisma.ts";
+import prisma from "../prisma.js";
 
-const prisma = new PrismaClient();
+/**
+ * Breeding routes.
+ * - GET /api/v1/breeding/plans : canonical endpoint the frontend calls
+ * - (optional) GET /api/v1/breeding : fallback simple list
+ *
+ * NOTE: We avoid brittle `select` until schema fields are confirmed. Later you
+ * can tighten with a select/map that matches your UI types.
+ */
+const breedingRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/api/v1/breeding/plans", async (req) => {
+    const q = req.query as Partial<{ limit: string }>;
+    const limit = Math.min(Math.max(Number(q?.limit ?? 50), 1), 200);
 
-const ALLOWED_FIELDS = new Set([
-  "id",
-  "femaleId",
-  "maleId",
-  "status",
-  "plannedOvulationDate",
-  "plannedWhelpDate",
-  "notes",
-  "createdAt",
-  "updatedAt",
-]);
+    const rows = await prisma.breeding.findMany({
+      take: limit,
+      orderBy: { id: "asc" },
+    });
 
-function sanitizeFields(fields?: string) {
-  if (!fields) return Array.from(ALLOWED_FIELDS);
-  return fields
-    .split(",")
-    .map(f => f.trim())
-    .filter(f => ALLOWED_FIELDS.has(f));
-}
-
-function toSelectSQL(cols: string[]) {
-  if (!cols.length) cols = Array.from(ALLOWED_FIELDS);
-  return cols.map(c => `"${c}"`).join(", ");
-}
-
-function withTimeout<T>(p: Promise<T>, ms = 400) {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), ms)
-    ),
-  ]);
-}
-
-const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  // GET /api/v1/breeding?limit=&cursor=&fields=
-  app.get("/api/v1/breeding", async (req, reply) => {
-    const { limit = "25", cursor, fields } = (req.query || {}) as Record<
-      string,
-      string
-    >;
-
-    const lim = Math.min(Math.max(parseInt(String(limit)) || 25, 1), 200);
-    const cols = sanitizeFields(fields);
-    const selectSQL = toSelectSQL(cols);
-
-    try {
-      const rows = await withTimeout(
-        prisma.$queryRawUnsafe<any[]>(
-          `
-          SELECT ${selectSQL}
-          FROM "Breeding"
-          WHERE ($1::text IS NULL OR "id" > $1)
-          ORDER BY "id" ASC
-          LIMIT $2
-        `,
-          cursor || null,
-          lim
-        )
-      );
-      const nextCursor = rows.length === lim ? rows[rows.length - 1].id : null;
-      return reply.send({ data: rows, nextCursor });
-    } catch {
-      const data = await prisma.breeding.findMany({
-        where: cursor ? { id: { gt: String(cursor) } } : undefined,
-        orderBy: { id: "asc" },
-        take: lim,
-        select: Object.fromEntries(cols.map(c => [c, true])) as any,
-      });
-      const nextCursor = data.length === lim ? data[data.length - 1].id : null;
-      return reply.send({ data, nextCursor });
-    }
+    return rows;
   });
 
-  // POST /api/v1/breeding
-  app.post("/api/v1/breeding", async (req, reply) => {
-    const body = (req.body as any) || {};
-    const now = new Date();
-    const id = body.id || crypto.randomUUID();
+  // Optional: keep a simple list at /api/v1/breeding as well
+  app.get("/api/v1/breeding", async (req) => {
+    const q = req.query as Partial<{ limit: string }>;
+    const limit = Math.min(Math.max(Number(q?.limit ?? 25), 1), 200);
 
-    const rec = {
-      id,
-      femaleId: body.femaleId ?? null,
-      maleId: body.maleId ?? null,
-      status: body.status ?? "planned",
-      plannedOvulationDate: body.plannedOvulationDate
-        ? new Date(body.plannedOvulationDate)
-        : null,
-      plannedWhelpDate: body.plannedWhelpDate
-        ? new Date(body.plannedWhelpDate)
-        : null,
-      notes: body.notes ?? null,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const rows = await prisma.breeding.findMany({
+      take: limit,
+      orderBy: { id: "asc" },
+    });
 
-    try {
-      const rows = await withTimeout(
-        prisma.$queryRawUnsafe<any[]>(
-          `
-          INSERT INTO "Breeding" ("id","femaleId","maleId","status","plannedOvulationDate","plannedWhelpDate","notes","createdAt","updatedAt")
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-          RETURNING "id","femaleId","maleId","status","plannedOvulationDate","plannedWhelpDate","notes","createdAt","updatedAt"
-        `,
-          rec.id,
-          rec.femaleId,
-          rec.maleId,
-          rec.status,
-          rec.plannedOvulationDate,
-          rec.plannedWhelpDate,
-          rec.notes,
-          rec.createdAt,
-          rec.updatedAt
-        )
-      );
-      return reply.code(201).send(rows[0]);
-    } catch {
-      const created = await prisma.breeding.create({ data: rec });
-      return reply.code(201).send(created);
-    }
+    return rows;
   });
 };
 
 export default breedingRoutes;
+

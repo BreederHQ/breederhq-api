@@ -1,8 +1,8 @@
 import { FastifyInstance, FastifyPluginAsync } from "fastify";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../prisma.js";
 import crypto from "node:crypto";
 
-const prisma = new PrismaClient();
+
 
 const ALLOWED_FIELDS = new Set([
   "id",
@@ -120,3 +120,4 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 };
 
 export default animalsRoutes;
+
