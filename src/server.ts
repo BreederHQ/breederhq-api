@@ -109,10 +109,10 @@ if (ADMIN_TOKEN) {
 }
 
 // ---------- Routes (static imports) ----------
-import contactsRoutes from "./routes/contacts";
-import animalsRoutes from "./routes/animals";
-import breedingRoutes from "./routes/breeding";
-import offspringRoutes from "./routes/offspring";
+import contactsRoutes from "./routes/contacts.js";
+import animalsRoutes from "./routes/animals.js";
+import breedingRoutes from "./routes/breeding.js";
+import offspringRoutes from "./routes/offspring.js";
 
 app.register(contactsRoutes);
 app.register(animalsRoutes);

@@ -1,13 +1,12 @@
+// src/prisma.ts
 import { PrismaClient } from "@prisma/client";
 
-// single Prisma instance for the whole process (safe in dev + prod)
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma =
+const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    // optional logging:
-    // log: ["query", "info", "warn", "error"],
+    // log: ["query", "info", "warn", "error"], // optional
   });
 
 if (process.env.NODE_ENV !== "production") {
