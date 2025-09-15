@@ -18,7 +18,8 @@
     "prisma:migrate:prod": "dotenv -e .env.prod.migrate -- prisma migrate deploy",
     "prisma:status:dev": "dotenv -e .env.dev.migrate -- prisma migrate status",
     "prisma:status:prod": "dotenv -e .env.prod.migrate -- prisma migrate status",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "dev:env": "dotenv -e .env.dev -- tsx watch src/server.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

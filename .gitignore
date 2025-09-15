@@ -1,10 +1,39 @@
-node_modules
-dist
+# Node dependencies
+node_modules/
 npm-debug.log*
-.DS_Store
-coverage
-# Ignore real environment files
-.env
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Local env files (never commit secrets)
+.env.local
 .env.*.local
-.env.dev.migrate
+.env.dev
+.env.dev.*
+.env.test
+.env.test.*
+.env.production.local
 .env.prod.migrate
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Other files
+*repo-structure*
