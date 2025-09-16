@@ -1,7 +1,6 @@
 // src/routes/contacts.ts
 import prisma from "../prisma.js";
 import type { FastifyPluginCallback } from "fastify";
-import prisma from "../prisma.js";
 
 
 
