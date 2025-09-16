@@ -114,9 +114,10 @@ import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
 import offspringRoutes from "./routes/offspring.js";
 
-app.register(contactsRoutes);
-app.register(animalsRoutes);
-app.register(breedingRoutes);
+app.register(contactsRoutes, { prefix: "/api/v1" });
+app.register(animalsRoutes, { prefix: "/api/v1" });
+app.register(breedingRoutes, { prefix: "/api/v1" });
+app.register(offspringRoutes, { prefix: "/api/v1" });
 
 // ---------- Start ----------
 export async function start() {
