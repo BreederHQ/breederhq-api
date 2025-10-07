@@ -5,35 +5,54 @@
   "type": "module",
   "main": "dist/server.js",
   "engines": {
-    "node": "20.x"
+    "node": ">=20 <23"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed/seed-breeds.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "db:seed:registries": "cross-env ENV_FILE=.env.dev.migrate tsx prisma/seed/seed-registries.ts",
+    "db:seed:breeds:json": "cross-env ENV_FILE=.env.dev tsx prisma/seed/seed-breeds-json.ts",
+    "db:purge:breeds": "cross-env ENV_FILE=.env.dev.migrate prisma db execute --file prisma/sql/purge-breeds.sql --schema prisma/schema.prisma",
+    "dev": "cross-env ENV_FILE=.env.dev tsx watch src/server.ts",
     "build": "tsc -p .",
     "start": "node dist/server.js",
     "start:render": "bash -lc \"DATABASE_URL=$MIGRATE_DATABASE_URL npx prisma migrate deploy && npm run start\"",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
-    "prisma:migrate:dev": "dotenv -e .env.dev.migrate -- prisma migrate dev",
-    "prisma:migrate:prod": "dotenv -e .env.prod.migrate -- prisma migrate deploy",
-    "prisma:status:dev": "dotenv -e .env.dev.migrate -- prisma migrate status",
-    "prisma:status:prod": "dotenv -e .env.prod.migrate -- prisma migrate status",
+    "prisma:migrate:dev": "cross-env ENV_FILE=.env.dev.migrate prisma migrate dev",
+    "prisma:migrate:prod": "cross-env ENV_FILE=.env.prod.migrate prisma migrate deploy",
+    "prisma:status:dev": "cross-env ENV_FILE=.env.dev.migrate prisma migrate status",
+    "prisma:status:prod": "cross-env ENV_FILE=.env.prod.migrate prisma migrate status",
     "prisma:studio": "prisma studio",
-    "dev:env": "dotenv -e .env.dev -- tsx watch src/server.ts"
+    "prisma:studio:dev": "cross-env ENV_FILE=.env.dev prisma studio --schema prisma/schema.prisma",
+    "dev:env": "cross-env ENV_FILE=.env.dev tsx watch src/server.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.1.0",
     "@fastify/helmet": "^13.0.1",
-    "@prisma/client": "^6.16.1",
+    "@prisma/client": "^6.16.2",
+    "bcryptjs": "^3.0.2",
+    "date-fns": "^4.1.0",
     "fastify": "^5.6.0",
-    "zod": "^4.1.8"
+    "nanoid": "^5.1.6",
+    "node-fetch": "^3.3.2",
+    "rate-limiter-flexible": "^8.0.1",
+    "resend": "^6.1.0",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/nanoid": "^2.1.0",
     "@types/node": "^24.3.1",
-    "dotenv-cli": "^7.4.2",
+    "cheerio": "^1.1.2",
+    "cross-env": "^10.1.0",
     "prisma": "^6.16.1",
+    "slugify": "^1.6.6",
     "ts-node": "^10.9.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.9.2"
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2",
+    "undici": "^7.16.0"
   }
 }
