@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+set -e
+expected="admin@breederhq.com"
+author=$(git config user.email)
+[ "$author" = "$expected" ] || {
+  echo "Blocked: user.email is '$author' (expected $expected)." >&2
+  echo "Run: git config user.email $expected" >&2
+  exit 1
+}
+if git diff --cached --name-status | grep -E "^[D].*src/routes/"; then
+  echo "Blocked: deleting files under src/routes/ (use --no-verify if intentional)." >&2
+  exit 1
+fi
