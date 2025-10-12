@@ -1,0 +1,2 @@
+-- Baseline: Tag moved to tenant scope (tenantId) and org link removed.
+-- Database already reflects this; this migration is intentionally empty.

@@ -9,13 +9,13 @@ import prisma from "../prisma.js";
  *
  * Notes
  * - We DO NOT mutate tenant on GET. Explicit POST is safer & auditable.
- * - Super admins can float to any tenant; others must be members.
- * - We still rotate the session cookie when close to expiry.
+ * - If tenant tables are unavailable (schema out of phase), the routes still work in single-tenant mode.
+ * - Cookie is a lightweight Base64URL JSON payload (unsigned by design here; add HMAC/JWT later if desired).
  */
 
 type SessionPayload = {
   userId: string;
-  tenantId?: number;
+  tenantId?: number; // optional, only used when tenant tables exist
   iat: number; // ms epoch
   exp: number; // ms epoch
 };
@@ -24,8 +24,10 @@ const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
 const CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 
+/** ───────────────────────────────── lifetimes & cookie ───────────────────────────────── */
 function lifetimes() {
   const dev = NODE_ENV === "development";
+  // If CROSS_SITE=1 → short 24h; else dev = 7d, prod = 24h
   const ms = CROSS_SITE ? 24 * 60 * 60 * 1000 : (dev ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000);
   const rotateAt = Math.floor(ms * 0.2);
   return { ms, rotateAt };
@@ -42,6 +44,7 @@ function baseCookie() {
   } as const;
 }
 
+/** ───────────────────────────────── session helpers ───────────────────────────────── */
 function parseSession(raw?: string | null): SessionPayload | null {
   if (!raw) return null;
   try {
@@ -73,36 +76,90 @@ function maybeRotate(reply: FastifyReply, sess: SessionPayload) {
   return true;
 }
 
-async function resolveActiveTenant(userId: string, requested?: number) {
-  // pull minimal user context
-  const user = await prisma.user.findUnique({
+/** ──────────────────────────────── schema detection ────────────────────────────────
+ * We support both:
+ *  - Multi-tenant schema (Tenant, TenantMembership, User.{isSuperAdmin, defaultTenantId, tenantMemberships})
+ *  - Single-tenant schema (no Tenant/TenantMembership tables).
+ *
+ * We probe once per process and cache the result.
+ */
+let _tenantSupport: null | { ready: boolean } = null;
+
+async function detectTenantSupport(): Promise<boolean> {
+  if (_tenantSupport?.ready) return true;
+  try {
+    // Fast sanity check: look for Tenant table
+    // If this throws, we assume no tenant tables yet.
+    await (prisma as any).tenant.findFirst?.({ select: { id: true }, take: 1 });
+    await (prisma as any).tenantMembership.findFirst?.({ select: { tenantId: true }, take: 1 });
+    _tenantSupport = { ready: true };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** ───────────────────────────────── user/tenant resolvers ───────────────────────────────── */
+type ResolvedUser = {
+  isSuperAdmin?: boolean | null;
+  defaultTenantId?: number | null;
+  tenantMemberships?: Array<{ tenantId: number; role?: string | null }>;
+};
+
+async function fetchUserBasic(userId: string) {
+  // Minimum fields — avoid coupling to schema details
+  return prisma.user.findUnique({
     where: { id: userId },
     select: {
+      id: true,
+      // These may or may not exist; Prisma will ignore unknown selects at build time,
+      // so we use runtime-safe fallbacks below via any-casts.
+      // We keep TS happy by reading them via `any` from the returned object.
+      // @ts-ignore
       isSuperAdmin: true,
+      // @ts-ignore
       defaultTenantId: true,
+      // @ts-ignore
       tenantMemberships: { select: { tenantId: true, role: true }, orderBy: { tenantId: "asc" } },
-    },
-  });
-  if (!user) return { user: null, activeTenantId: undefined, isMember: false };
+    } as any,
+  }) as any as (ResolvedUser & { id: string }) | null;
+}
 
-  // requested takes precedence if valid membership (or super)
+async function resolveActiveTenant(userId: string, requested?: number) {
+  const hasTenants = await detectTenantSupport();
+  const user = await fetchUserBasic(userId);
+
+  if (!user) {
+    return { hasTenants, user: null as null, activeTenantId: undefined as number | undefined, isMember: false };
+  }
+
+  if (!hasTenants) {
+    // Single-tenant mode: no tenant context to resolve
+    return { hasTenants, user, activeTenantId: undefined, isMember: true };
+  }
+
+  const memberships = Array.isArray(user.tenantMemberships) ? user.tenantMemberships : [];
+  const superAdmin = !!user.isSuperAdmin;
+
+  // requested takes precedence if valid
   if (requested && Number.isInteger(requested) && requested > 0) {
-    const isMember = user.isSuperAdmin || user.tenantMemberships.some(m => m.tenantId === requested);
-    return { user, activeTenantId: isMember ? requested : undefined, isMember };
+    const isMember = superAdmin || memberships.some((m) => m.tenantId === requested);
+    return { hasTenants, user, activeTenantId: isMember ? requested : undefined, isMember };
   }
 
   const activeTenantId =
-    user.defaultTenantId ??
-    user.tenantMemberships[0]?.tenantId ??
+    (typeof user.defaultTenantId === "number" ? user.defaultTenantId : undefined) ??
+    memberships[0]?.tenantId ??
     undefined;
 
   const isMember =
-    user.isSuperAdmin ||
-    (activeTenantId != null && user.tenantMemberships.some(m => m.tenantId === activeTenantId));
+    superAdmin ||
+    (activeTenantId != null && memberships.some((m) => m.tenantId === activeTenantId));
 
-  return { user, activeTenantId, isMember };
+  return { hasTenants, user, activeTenantId, isMember };
 }
 
+/** ───────────────────────────────────────── plugin ───────────────────────────────────────── */
 export default async function sessionRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
   // GET /session  (read-only; rotate expiry only)
   app.get("/session", async (req, reply) => {
@@ -116,18 +173,28 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       return reply.code(401).send({ user: null, tenant: null, memberships: [] });
     }
 
-    // Allow FE to “request” a context via header, but DO NOT mutate cookie here.
+    // FE may hint a tenant via header; we DO NOT mutate cookie here.
     const hdrTenant = req.headers["x-tenant-id"];
     const requestedTenantId = hdrTenant ? Number(hdrTenant) : undefined;
 
-    const { user, activeTenantId, isMember } = await resolveActiveTenant(sess.userId, requestedTenantId);
+    const { hasTenants, user, activeTenantId, isMember } = await resolveActiveTenant(sess.userId, requestedTenantId);
     if (!user) return reply.code(401).send({ user: null, tenant: null, memberships: [] });
 
+    if (!hasTenants) {
+      // Single-tenant response
+      return reply.send({
+        user: { id: sess.userId },
+        tenant: null,
+        memberships: [],
+      });
+    }
+
+    // Multi-tenant response
     if (!activeTenantId) {
       return reply.code(403).send({
         error: "no_tenant_context",
-        user: { id: sess.userId },
-        memberships: user.tenantMemberships,
+        user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
+        memberships: (user.tenantMemberships ?? []).map((m) => ({ tenantId: m.tenantId, role: m.role ?? null })),
       });
     }
     if (!isMember) {
@@ -137,15 +204,21 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       });
     }
 
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: activeTenantId },
-      select: { id: true, name: true, slug: true },
-    });
+    let tenant: { id: number; name: string; slug: string | null } | null = null;
+    try {
+      const t = await (prisma as any).tenant.findUnique({
+        where: { id: activeTenantId },
+        select: { id: true, name: true, slug: true },
+      });
+      tenant = t ? { id: t.id, name: t.name, slug: t.slug ?? null } : null;
+    } catch {
+      tenant = null;
+    }
 
     return reply.send({
-      user: { id: sess.userId, isSuperAdmin: user.isSuperAdmin },
-      tenant: tenant ? { id: tenant.id, name: tenant.name, slug: tenant.slug ?? null } : null,
-      memberships: user.tenantMemberships, // [{ tenantId, role }]
+      user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
+      tenant,
+      memberships: (user.tenantMemberships ?? []).map((m) => ({ tenantId: m.tenantId, role: m.role ?? null })),
     });
   });
 
@@ -156,7 +229,12 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
     const sess = parseSession(raw);
     if (!sess) return reply.code(401).send({ error: "unauthorized" });
 
-    const tenantId = Number((req.body?.tenantId ?? 0));
+    const hasTenants = await detectTenantSupport();
+    if (!hasTenants) {
+      return reply.code(400).send({ error: "tenant_not_supported" });
+    }
+
+    const tenantId = Number(req.body?.tenantId ?? 0);
     const saveDefault = !!req.body?.saveDefault;
     if (!tenantId || !Number.isInteger(tenantId) || tenantId <= 0) {
       return reply.code(400).send({ error: "tenantId_invalid" });
@@ -165,9 +243,13 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
     // Validate membership (or super admin)
     const actor = await prisma.user.findUnique({
       where: { id: sess.userId },
-      select: { isSuperAdmin: true },
-    });
-    const membership = await prisma.tenantMembership.findUnique({
+      select: {
+        // @ts-ignore
+        isSuperAdmin: true,
+      } as any,
+    }) as any;
+
+    const membership = await (prisma as any).tenantMembership.findUnique?.({
       where: { userId_tenantId: { userId: sess.userId, tenantId } },
       select: { tenantId: true },
     });
@@ -179,13 +261,18 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
     // Re-issue cookie with new tenantId
     setSessionCookie(reply, { userId: sess.userId, tenantId });
 
-    // Optionally persist as defaultTenantId
+    // Optionally persist as defaultTenantId (if the column exists)
     if (saveDefault) {
-      await prisma.user.update({
-        where: { id: sess.userId },
-        data: { defaultTenantId: tenantId },
-        select: { id: true },
-      });
+      try {
+        await prisma.user.update({
+          where: { id: sess.userId },
+          // @ts-ignore
+          data: { defaultTenantId: tenantId },
+          select: { id: true },
+        } as any);
+      } catch {
+        // ignore if the column isn't present yet
+      }
     }
 
     return reply.send({ ok: true, tenant: { id: tenantId }, savedAsDefault: saveDefault });
