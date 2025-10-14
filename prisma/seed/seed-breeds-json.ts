@@ -30,7 +30,12 @@ const FILES = [
   path.join(root, "prisma/seed/data/horses.json"),
 ];
 
-const toSlug = (s: string) => slugify(s, { lower: true, strict: true, locale: "en" });
+const breed = await prisma.breed.upsert({
+  where: { name: row.name },
+  update: { species: row.species, slug: toSlug(row.name) },
+  create: { name: row.name, species: row.species, slug: toSlug(row.name) },
+  select: { id: true, name: true },
+});
 
 async function upsertBreed(row: Row) {
   // breed by unique name
@@ -48,36 +53,35 @@ async function upsertBreed(row: Row) {
     if (!code) continue;
 
     // ensure registry exists (do NOT create; we respect your separate registries seed)
-    const registry = await prisma.registryCatalog.findUnique({ where: { code } });
+const registry = await prisma.registry.findUnique({ where: { code } });
     if (!registry) {
       console.warn(`Skipped link for ${breed.name}: registry code ${code} not found in RegistryCatalog`);
       continue;
     }
 
-    await prisma.breedRegistryLink.upsert({
-      where: { breedId_registryCode: { breedId: breed.id, registryCode: code } } as any,
-      update: {
-        registryCode: code,
-        statusText: reg.status ?? null,         // <-- store EXACT text from JSON
-        registryId: reg.registryId ?? null,
-        url: reg.url ?? null,
-        primary: typeof reg.primary === "boolean" ? reg.primary : null,
-        since: typeof reg.since === "number" ? reg.since : null,
-        notes: reg.notes ?? null,
-        proofUrl: reg.proofUrl ?? null,
-      },
-      create: {
-        breedId: breed.id,
-        registryCode: code,
-        statusText: reg.status ?? null,         // <-- store EXACT text from JSON
-        registryId: reg.registryId ?? null,
-        url: reg.url ?? null,
-        primary: typeof reg.primary === "boolean" ? reg.primary : null,
-        since: typeof reg.since === "number" ? reg.since : null,
-        notes: reg.notes ?? null,
-        proofUrl: reg.proofUrl ?? null,
-      },
-    });
+await prisma.breedRegistryLink.upsert({
+  where: { breedId_registryId: { breedId: breed.id, registryId: registry.id } },
+  update: {
+    statusText: reg.status ?? null,
+    registryRef: reg.registryId ?? null, // optional field for external id text
+    url: reg.url ?? null,
+    primary: typeof reg.primary === "boolean" ? reg.primary : null,
+    since: typeof reg.since === "number" ? reg.since : null,
+    notes: reg.notes ?? null,
+    proofUrl: reg.proofUrl ?? null,
+  },
+  create: {
+    breedId: breed.id,
+    registryId: registry.id,
+    statusText: reg.status ?? null,
+    registryRef: reg.registryId ?? null,
+    url: reg.url ?? null,
+    primary: typeof reg.primary === "boolean" ? reg.primary : null,
+    since: typeof reg.since === "number" ? reg.since : null,
+    notes: reg.notes ?? null,
+    proofUrl: reg.proofUrl ?? null,
+  },
+});
   }
 }
 

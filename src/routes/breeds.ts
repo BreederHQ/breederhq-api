@@ -2,25 +2,25 @@
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
 
-// Helper: ensure organization exists and belongs to the active tenant
+/** ───────────────────────────────────────────────────────────────────────────
+ * Helpers
+ * ─────────────────────────────────────────────────────────────────────────── */
 async function assertOrgInTenant(orgId: number, tenantId: number) {
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
     select: { id: true, tenantId: true },
   });
   if (!org) throw Object.assign(new Error("not_found"), { statusCode: 404 });
-  // Enforce tenancy even if tenantId is nullable in the current schema
   if (org.tenantId !== tenantId) {
     throw Object.assign(new Error("forbidden"), { statusCode: 403 });
   }
   return org;
 }
 
-// Validate Species enum (DOG | CAT | HORSE)
-const Species = new Set(["DOG", "CAT", "HORSE"]);
+const SPECIES_SET = new Set(["DOG", "CAT", "HORSE"]);
 function assertSpecies(s?: string) {
   const val = String(s || "").toUpperCase();
-  if (!Species.has(val)) {
+  if (!SPECIES_SET.has(val)) {
     const err = new Error("invalid_species");
     (err as any).statusCode = 400;
     throw err;
@@ -28,21 +28,116 @@ function assertSpecies(s?: string) {
   return val as "DOG" | "CAT" | "HORSE";
 }
 
+/** Minimal canonical lists for now. You can expand or replace with a DB table later. */
+const CANONICAL_BREEDS: Record<"DOG" | "CAT" | "HORSE", string[]> = {
+  DOG: [
+    "Labrador Retriever", "Golden Retriever", "German Shepherd", "French Bulldog", "Poodle",
+    "Bulldog", "Beagle", "Rottweiler", "Dachshund", "Australian Shepherd",
+    "Yorkshire Terrier", "Boxer", "Cavalier King Charles Spaniel", "Doberman Pinscher",
+    "Great Dane", "Miniature Schnauzer", "Pembroke Welsh Corgi", "Siberian Husky",
+    "Shih Tzu", "Boston Terrier"
+  ],
+  CAT: [
+    "Domestic Shorthair", "Domestic Longhair", "Maine Coon", "Ragdoll", "Siamese",
+    "British Shorthair", "Bengal", "Persian", "Sphynx", "Scottish Fold"
+  ],
+  HORSE: [
+    "Quarter Horse", "Thoroughbred", "Arabian", "Paint Horse", "Appaloosa",
+    "Morgan", "Tennessee Walking Horse", "Warmblood", "Friesian", "Mustang"
+  ]
+};
+
+function searchCanonical(species: "DOG" | "CAT" | "HORSE", q: string, limit: number) {
+  const list = CANONICAL_BREEDS[species] || [];
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? list.filter(n => n.toLowerCase().includes(needle))
+    : list.slice();
+  return filtered
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, limit)
+    .map(name => ({ name, species, source: "canonical" as const }));
+}
+
+function dedupeByName(items: Array<{ name: string }>) {
+  const seen = new Set<string>();
+  const out: typeof items = [];
+  for (const it of items) {
+    const k = it.name.trim().toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(it);
+    }
+  }
+  return out;
+}
+
+/** Response row shape the UI can consume easily */
+type BreedRow = {
+  id?: number;                     // present for custom breeds
+  name: string;
+  species: "DOG" | "CAT" | "HORSE";
+  source: "canonical" | "custom";
+};
+
+/** ───────────────────────────────────────────────────────────────────────────
+ * Routes
+ * ─────────────────────────────────────────────────────────────────────────── */
 export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
-  // ───────────────────────────────────────────────────────────────────────────
-  // Canonical breeds search (placeholder until a CanonicalBreed model exists)
-  // GET /breeds/search?q=&species=
-  // ───────────────────────────────────────────────────────────────────────────
+  // GET /species  → enum values
+  app.get("/species", async (_req, reply) => {
+    reply.header("Cache-Control", "public, max-age=86400, immutable");
+    const items = Array.from(SPECIES_SET).sort(); // ["CAT","DOG","HORSE"]
+    return reply.send({ items, total: items.length });
+  });
+
+  // Canonical + Custom search
+  // GET /breeds/search?species=DOG&q=&limit=200&organizationId=123&registries=AKC,FCI
   app.get("/breeds/search", async (req, reply) => {
-    const { q = "", species = "" } = (req.query || {}) as { q?: string; species?: string };
-    // Not implemented because schema has no CanonicalBreed table yet.
-    return reply.code(501).send({
-      ok: false,
-      error: "not_implemented",
-      message:
-        "Canonical breed search requires a CanonicalBreed model or external provider. Add the model, then wire this route.",
-      echo: { q, species },
-    });
+    const { q = "", species = "", limit = "100", organizationId, registries } = (req.query || {}) as {
+      q?: string;
+      species?: string;
+      limit?: string | number;
+      organizationId?: string | number;
+      registries?: string; // comma list, not used yet
+    };
+
+    const sp = assertSpecies(species);
+    const take = Math.min(200, Math.max(1, Number(limit) || 100));
+
+    // Always provide canonical suggestions
+    const canon = searchCanonical(sp, String(q), take);
+
+    // Optionally merge org custom breeds when org is provided
+    let custom: BreedRow[] = [];
+    const tenantId = Number((req as any).tenantId);
+    if (organizationId != null) {
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+      const orgId = Number(organizationId);
+      if (!orgId) return reply.code(400).send({ error: "organizationId_required" });
+      await assertOrgInTenant(orgId, tenantId);
+
+      const where: any = { organizationId: orgId, species: sp };
+      if (q) where.name = { contains: String(q), mode: "insensitive" as const };
+
+      const rows = await prisma.customBreed.findMany({
+        where,
+        orderBy: [{ name: "asc" }],
+        take: take,
+        select: { id: true, name: true, species: true },
+      });
+
+      custom = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        species: r.species as "DOG" | "CAT" | "HORSE",
+        source: "custom",
+      }));
+    }
+
+    // Merge and dedupe by name, prefer custom entries on conflict
+    const merged = dedupeByName([...custom, ...canon]).slice(0, take);
+    return reply.send({ items: merged, total: merged.length });
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -132,7 +227,6 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
       });
       return reply.code(201).send(created);
     } catch (e: any) {
-      // Handle @@unique([organizationId, species, name])
       if (e?.code === "P2002") {
         return reply.code(409).send({ error: "duplicate_breed", details: { organizationId: orgId, species, name } });
       }
@@ -169,7 +263,6 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
         data,
         select: { id: true, organizationId: true, species: true, name: true, createdAt: true, updatedAt: true },
       });
-      // sanity: make sure it still belongs to the same org/tenant
       if (updated.organizationId !== orgId) {
         return reply.code(403).send({ error: "forbidden" });
       }
@@ -185,15 +278,6 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     }
   });
 
-
-// GET /species  → enum values for Species (DOG | CAT | HORSE)
-app.get("/species", async (_req, reply) => {
-  // cache for a day; change if you expect enum updates during a deploy
-  reply.header("Cache-Control", "public, max-age=86400, immutable");
-  const items = Array.from(SpeciesSet).sort(); // ["CAT","DOG","HORSE"]
-  return reply.send({ items, total: items.length });
-});
-
   // DELETE: DELETE /breeds/custom/:id?organizationId=
   app.delete("/breeds/custom/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -207,7 +291,6 @@ app.get("/species", async (_req, reply) => {
     await assertOrgInTenant(orgId, tenantId);
 
     try {
-      // Delete only if the record belongs to this org
       const rec = await prisma.customBreed.findUnique({ where: { id: Number(id) }, select: { organizationId: true } });
       if (!rec) return reply.code(404).send({ error: "not_found" });
       if (rec.organizationId !== orgId) return reply.code(403).send({ error: "forbidden" });

@@ -81,6 +81,51 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // GET /contacts/:id/tags  → list tags assigned to a contact
+app.get("/contacts/:id/tags", async (req, reply) => {
+  try {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const { id } = req.params as { id: string };
+    const contactId = Number(id);
+    if (!Number.isInteger(contactId) || contactId <= 0) {
+      return reply.code(400).send({ error: "invalid_contact_id" });
+    }
+
+    // Ensure contact exists and belongs to the tenant (optional but nice for safety)
+    const contact = await prisma.contact.findFirst({
+      where: { id: contactId, tenantId },
+      select: { id: true },
+    });
+    if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+
+    // Pull assignments and include the Tag; order by Tag.name asc
+    const rows = await prisma.tagAssignment.findMany({
+      where: { contactId: contactId },
+      include: { tag: true },
+      orderBy: [{ tag: { name: "asc" } }],
+    });
+
+    const items = rows
+      .filter(r => r.tag && r.tag.tenantId === tenantId) // guard cross-tenant just in case
+      .map(r => ({
+        id: r.tag.id,
+        name: r.tag.name,
+        module: r.tag.module,
+        color: r.tag.color ?? null,
+        createdAt: r.tag.createdAt,
+        updatedAt: r.tag.updatedAt,
+      }));
+
+    return reply.send({ items, total: items.length });
+  } catch (err) {
+    const { status, payload } = errorReply(err);
+    reply.status(status).send(payload);
+  }
+});
+
+
   // POST /tags  body: { name, module, color? }
   app.post("/tags", async (req, reply) => {
     try {
