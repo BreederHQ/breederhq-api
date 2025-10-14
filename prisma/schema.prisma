@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 enum MembershipRole {
@@ -343,7 +344,9 @@ model Animal {
   notes            String?
   breed            String?
   canonicalBreedId Int?
+  canonicalBreed   Breed?                     @relation(fields: [canonicalBreedId], references: [id], onDelete: SetNull)
   customBreedId    Int?
+  customBreed      CustomBreed?               @relation(fields: [customBreedId], references: [id], onDelete: SetNull)
   tagAssignments   TagAssignment[]
   owners           AnimalOwner[]
   registryIds      AnimalRegistryIdentifier[]
@@ -359,6 +362,8 @@ model Animal {
   @@index([species])
   @@index([status])
   @@index([archived])
+  @@index([canonicalBreedId])
+  @@index([customBreedId])
 }
 
 model AnimalOwner {
@@ -383,15 +388,16 @@ model AnimalOwner {
 }
 
 model Registry {
-  id          Int                        @id @default(autoincrement())
-  name        String
-  code        String?                    @unique
-  url         String?
-  country     String?
-  species     Species?
-  createdAt   DateTime                   @default(now())
-  updatedAt   DateTime                   @updatedAt
-  identifiers AnimalRegistryIdentifier[]
+  id                Int                        @id @default(autoincrement())
+  name              String
+  code              String?                    @unique
+  url               String?
+  country           String?
+  species           Species?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  identifiers       AnimalRegistryIdentifier[]
+  BreedRegistryLink BreedRegistryLink[]
 }
 
 model AnimalRegistryIdentifier {
@@ -483,6 +489,41 @@ model TagAssignment {
   @@index([animalId])
 }
 
+model Breed {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  slug      String   @unique
+  species   Species
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // relations
+  registries BreedRegistryLink[]
+  Animal     Animal[]
+
+  @@index([species])
+}
+
+model BreedRegistryLink {
+  breedId    Int
+  registryId Int
+
+  statusText  String?
+  registryRef String?
+  url         String?
+  primary     Boolean?
+  since       Int?
+  notes       String?
+  proofUrl    String?
+
+  // relations
+  breed    Breed    @relation(fields: [breedId], references: [id], onDelete: Cascade)
+  registry Registry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+
+  @@id([breedId, registryId])
+  @@index([registryId])
+}
+
 model CustomBreed {
   id             Int          @id @default(autoincrement())
   organizationId Int
@@ -491,6 +532,7 @@ model CustomBreed {
   name           String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  Animal         Animal[]
 
   @@unique([organizationId, species, name])
   @@index([organizationId, species])

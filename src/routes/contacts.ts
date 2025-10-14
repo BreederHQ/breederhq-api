@@ -86,11 +86,11 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (search) {
         where.OR = [
           { display_name: { contains: search, mode: "insensitive" } },
-          { first_name:   { contains: search, mode: "insensitive" } }, // ← added
-          { last_name:    { contains: search, mode: "insensitive" } }, // ← added
-          { nickname:     { contains: search, mode: "insensitive" } }, // ← added
-          { email:        { contains: search, mode: "insensitive" } },
-          { phoneE164:    { contains: search, mode: "insensitive" } },
+          { first_name: { contains: search, mode: "insensitive" } }, // ← added
+          { last_name: { contains: search, mode: "insensitive" } }, // ← added
+          { nickname: { contains: search, mode: "insensitive" } }, // ← added
+          { email: { contains: search, mode: "insensitive" } },
+          { phoneE164: { contains: search, mode: "insensitive" } },
           { whatsappE164: { contains: search, mode: "insensitive" } },
         ];
       }
@@ -202,8 +202,8 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           organizationId,
           display_name,
           first_name: body.first_name ?? null,  // ← added
-          last_name:  body.last_name ?? null,   // ← added
-          nickname:   body.nickname ?? null,    // ← added
+          last_name: body.last_name ?? null,   // ← added
+          nickname: body.nickname ?? null,    // ← added
           email: body.email ?? null,
           phoneE164: body.phoneE164 ?? null,
           whatsappE164: body.whatsappE164 ?? null,
@@ -246,72 +246,151 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // PATCH /contacts/:id
-  app.patch("/contacts/:id", async (req, reply) => {
-    try {
-      ensureAuth(req);
+  // helpers at top of file (or near this route)
+  function contactDTO(row: any) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      displayName: row.display_name,
+      firstName: row.first_name ?? null,
+      lastName: row.last_name ?? null,
+      nickname: row.nickname ?? null,
+      email: row.email ?? null,
+      phone: row.phoneE164 ?? null,
+      whatsapp: row.whatsappE164 ?? null,
+      street: row.street ?? null,
+      street2: row.street2 ?? null,
+      city: row.city ?? null,
+      state: row.state ?? null,
+      postalCode: row.zip ?? null,
+      country: row.country ?? null,
+      notes: row.notes ?? null,           // if you don’t have notes, drop this line
+      archived: row.archived,
+      organizationId: row.organizationId ?? null,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
 
-      const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+  function setIfProvidedCamel(
+    src: Record<string, any>,
+    dst: Record<string, any>,
+    camelKey: string,
+    dbKey: string,
+    transform?: (v: any) => any
+  ) {
+    if (Object.prototype.hasOwnProperty.call(src, camelKey)) {
+      const v = src[camelKey];
+      dst[dbKey] = transform ? transform(v) : v;
+    }
+  }
 
-      const id = idNum((req.params as any).id);
-      if (!id) return reply.code(400).send({ error: "bad_id" });
+  // ---------- PATCH /contacts/:id ----------
+  app.patch<{
+    Params: { id: string };
+    Body: Partial<{
+      firstName: string | null;
+      lastName: string | null;
+      displayName: string | null;
+      nickname: string | null;
+      email: string | null;
+      phone: string | null;         // maps to phoneE164
+      whatsapp: string | null;      // maps to whatsappE164
+      street: string | null;
+      street2: string | null;
+      city: string | null;
+      state: string | null;
+      postalCode: string | null;    // maps to zip
+      country: string | null;
+      notes: string | null;         // drop if your schema doesn’t have a notes column
+      archived: boolean;
+      organizationId: number | null;
+    }>;
+  }>("/contacts/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const existing = await prisma.contact.findFirst({ where: { id, tenantId }, select: { id: true } });
-      if (!existing) return reply.code(404).send({ error: "not_found" });
+    const contactId = Number(req.params.id);
+    if (!Number.isInteger(contactId) || contactId <= 0) {
+      return reply.code(400).send({ error: "invalid_contact_id" });
+    }
 
-      const body = (req.body as any) ?? {};
-      const data: any = {};
+    // Ensure contact exists in this tenant
+    const existing = await app.prisma.contact.findFirst({
+      where: { id: contactId, tenantId },
+      select: { id: true, organizationId: true },
+    });
+    if (!existing) return reply.code(404).send({ error: "contact_not_found" });
 
-      if ("display_name" in body) {
-        const dn = String(body.display_name || "").trim();
-        if (!dn) return reply.code(400).send({ error: "display_name_required" });
-        data.display_name = dn;
-      }
+    const body = (req.body || {}) as Record<string, any>;
 
-      // Allow partial updates of new fields
-      if ("first_name" in body) data.first_name = body.first_name ?? null;  // ← added
-      if ("last_name" in body)  data.last_name  = body.last_name ?? null;   // ← added
-      if ("nickname" in body)   data.nickname   = body.nickname ?? null;    // ← added
+    // Build Prisma data (snake_case) from camelCase body
+    const dataCore: Record<string, any> = {};
+    const trimOrNull = (v: any) => (v == null ? null : String(v).trim());
 
-      if ("email" in body) data.email = body.email ?? null;
-      if ("phoneE164" in body) data.phoneE164 = body.phoneE164 ?? null;
-      if ("whatsappE164" in body) data.whatsappE164 = body.whatsappE164 ?? null;
-      if ("street" in body) data.street = body.street ?? null;
-      if ("street2" in body) data.street2 = body.street2 ?? null;
-      if ("city" in body) data.city = body.city ?? null;
-      if ("state" in body) data.state = body.state ?? null;
-      if ("zip" in body) data.zip = body.zip ?? null;
-      if ("country" in body) data.country = body.country ?? null;
-      if ("archived" in body) data.archived = !!body.archived;
+    setIfProvidedCamel(body, dataCore, "displayName", "display_name", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "firstName", "first_name", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "lastName", "last_name", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "nickname", "nickname", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "email", "email", trimOrNull);
 
-      // Prevent cross-tenant moves / PK edits
-      delete (body as any).id;
-      delete (body as any).tenantId;
+    // special mappings
+    setIfProvidedCamel(body, dataCore, "phone", "phoneE164", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "whatsapp", "whatsappE164", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "postalCode", "zip", trimOrNull);
 
-      // Organization reassignment (same-tenant)
-      if ("organizationId" in body) {
-        if (body.organizationId == null) {
-          data.organizationId = null;
-        } else {
-          const orgId = idNum(body.organizationId);
-          if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-          const org = await prisma.organization.findFirst({ where: { id: orgId, tenantId }, select: { id: true } });
-          if (!org) return reply.code(404).send({ error: "organization_not_found" });
-          data.organizationId = org.id;
+    // address
+    setIfProvidedCamel(body, dataCore, "street", "street", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "street2", "street2", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "city", "city", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "state", "state", trimOrNull);
+    setIfProvidedCamel(body, dataCore, "country", "country", trimOrNull);
+
+    // optional notes (remove if not in DB)
+    setIfProvidedCamel(body, dataCore, "notes", "notes", (v) => (v == null ? null : String(v)));
+
+    if (Object.prototype.hasOwnProperty.call(body, "archived")) {
+      dataCore.archived = Boolean(body.archived);
+    }
+
+    // Handle organizationId separately (validate tenant, allow null to clear)
+    if (Object.prototype.hasOwnProperty.call(body, "organizationId")) {
+      const orgVal = body.organizationId;
+      if (orgVal === null) {
+        dataCore.organizationId = null; // clear link
+      } else {
+        const orgId = Number(orgVal);
+        if (!Number.isInteger(orgId) || orgId <= 0) {
+          return reply.code(400).send({ error: "organizationId_invalid" });
         }
+        const org = await app.prisma.organization.findFirst({
+          where: { id: orgId, tenantId },
+          select: { id: true },
+        });
+        if (!org) {
+          return reply.code(404).send({ error: "organization_not_found_or_wrong_tenant" });
+        }
+        dataCore.organizationId = org.id;
       }
+    }
 
-      const updated = await prisma.contact.update({
+    if (Object.keys(dataCore).length === 0) {
+      return reply.code(400).send({ error: "no_update_fields" });
+    }
+
+    try {
+      const updatedDb = await app.prisma.contact.update({
         where: { id: existing.id },
-        data,
+        data: dataCore,
+        // select snake_case, then map to camelCase DTO
         select: {
           id: true,
           tenantId: true,
-          organizationId: true,
           display_name: true,
-          first_name: true,   // ← added
-          last_name: true,    // ← added
-          nickname: true,     // ← added
+          first_name: true,
+          last_name: true,
+          nickname: true,
           email: true,
           phoneE164: true,
           whatsappE164: true,
@@ -321,16 +400,24 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           state: true,
           zip: true,
           country: true,
+          // notes: true, // uncomment if you have this field in your schema
           archived: true,
+          organizationId: true,
           createdAt: true,
           updatedAt: true,
         },
       });
 
-      return reply.send(updated);
-    } catch (err) {
-      const { status, payload } = errorReply(err);
-      return reply.code(status).send(payload);
+      return reply.send(contactDTO(updatedDb));
+    } catch (err: any) {
+      req.log.error({ err }, "contacts.patch failed");
+      if (err?.code === "P2002") {
+        return reply.code(409).send({ error: "conflict", detail: "unique_constraint_violation" });
+      }
+      if (err?.code === "P2003") {
+        return reply.code(400).send({ error: "foreign_key_violation" });
+      }
+      return reply.code(500).send({ error: "internal_error", detail: err?.message || "unexpected" });
     }
   });
 
