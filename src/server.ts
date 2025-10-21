@@ -200,6 +200,7 @@ async function requireTenantMembership(
 // ---------- Route imports ----------
 import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
+import breedingRoutes from "./routes/breeding.js";
 import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
@@ -237,20 +238,54 @@ app.register(
     api.decorateRequest("tenantId", null as unknown as number);
 
     api.addHook("preHandler", async (req, reply) => {
-      // 1) Resolve tenant: header → session fallback
+      // Normalize path (strip query) and be tolerant of prefixes
+      const full = req.url || "/";
+      const pathOnly = full.split("?")[0] || "/";
+      const m = req.method.toUpperCase();
+
+      // Allow-list paths (works whether path has /api/v1 or not)
+      const isSpeciesPath =
+        pathOnly === "/species" || pathOnly.endsWith("/api/v1/species") || pathOnly.endsWith("/species");
+
+      const isBreedsSearchPath =
+        pathOnly === "/breeds/search" ||
+        pathOnly.endsWith("/api/v1/breeds/search") ||
+        pathOnly.endsWith("/breeds/search");
+
+      // 1) /species is always public (GET only)
+      if (m === "GET" && isSpeciesPath) {
+        (req as any).tenantId = null;
+        return;
+      }
+
+      // 2) /breeds/search is public only when organizationId is NOT present
+      if (m === "GET" && isBreedsSearchPath) {
+        const q: any = (req as any).query || {};
+        const hasOrgId =
+          q.organizationId != null ||
+          /(^|[?&])organizationId=/.test(full);
+        if (!hasOrgId) {
+          (req as any).tenantId = null;
+          return;
+        }
+        // if orgId present → require tenant/membership below
+      }
+
+      // ---------- normal tenant resolution + membership ----------
+      let tId: number | undefined;
       const headerVal = req.headers["x-tenant-id"];
-      let tId = headerVal ? Number(headerVal) : undefined;
-      if (!tId || !Number.isInteger(tId) || tId <= 0) {
+      if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
+
+      if (!tId) {
         const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
         if (sess?.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
           tId = sess.tenantId;
         }
       }
 
-      // If tenant tables are missing, tolerate null tenant in single-tenant mode
       if (!(await detectTenants())) {
         (req as any).tenantId = tId || null;
-        return; // no membership enforcement
+        return;
       }
 
       if (!tId) {
@@ -259,7 +294,6 @@ app.register(
           .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
       }
 
-      // 2) Enforce membership (unless super admin)
       const ok = await requireTenantMembership(app, req, reply, tId);
       if (!ok) return;
 
@@ -269,6 +303,7 @@ app.register(
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
     api.register(organizationsRoutes); // /api/v1/organizations/*
+    api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
