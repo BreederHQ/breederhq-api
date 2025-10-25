@@ -23,7 +23,7 @@ const REGISTRIES = [
 async function main() {
   console.log(`Upserting ${REGISTRIES.length} registries …`);
   for (const r of REGISTRIES) {
-    await prisma.registryCatalog.upsert({
+    await prisma.registry.upsert({
       where: { code: r.code },
       update: { name: r.name, country: r.country, url: r.url ?? undefined },
       create: { code: r.code, name: r.name, country: r.country, url: r.url ?? undefined },
@@ -32,9 +32,11 @@ async function main() {
   console.log("Registries seeded ✅");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-}).finally(async () => {
-  await prisma.$disconnect();
-});
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

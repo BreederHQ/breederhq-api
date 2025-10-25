@@ -614,8 +614,18 @@ model CustomBreed {
   createdByOrganizationId Int?
   createdByOrganization   Organization? @relation("CreatedByOrganization", fields: [createdByOrganizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
 
-  species   Species
-  name      String
+  species Species
+  name    String
+
+  /// Optional structured breakdown of this custom breed.
+  /// Example (JSON):
+  /// [
+  ///   { "source":"canonical", "name":"Bernese Mountain Dog", "canonicalBreedId": 123, "percentage": 50 },
+  ///   { "source":"canonical", "name":"Australian Shepherd",   "canonicalBreedId": 456, "percentage": 25 },
+  ///   { "source":"canonical", "name":"Poodle",               "canonicalBreedId": 789, "percentage": 25 }
+  /// ]
+  composition Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   Animal    Animal[]
@@ -623,6 +633,7 @@ model CustomBreed {
   @@unique([id, tenantId])
   @@unique([tenantId, species, name])
   @@index([tenantId, species])
+  @@index([tenantId, createdByOrganizationId])
 }
 
 /**

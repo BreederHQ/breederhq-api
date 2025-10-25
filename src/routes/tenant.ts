@@ -18,7 +18,11 @@ function makeRawToken(nBytes = 32) {
 function hashToken(raw: string) {
   return crypto.createHash("sha256").update(raw, "utf8").digest("base64url");
 }
-function inviteIdentifier(tenantId: number, emailLower: string, role: "OWNER"|"ADMIN"|"MEMBER"|"BILLING"|"VIEWER"="MEMBER") {
+function inviteIdentifier(
+  tenantId: number,
+  emailLower: string,
+  role: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER" = "MEMBER"
+) {
   // You can extend this (e.g., add inviter id). Keep short & deterministic.
   return `invite:t=${tenantId};e=${emailLower};r=${role}`;
 }
@@ -34,7 +38,7 @@ function parseSort(sortParam?: string) {
   if (!sortParam) return undefined as undefined | { [k in SortKey]?: "asc" | "desc" }[];
   const parts = String(sortParam)
     .split(",")
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 
   const orderBy: { [k in SortKey]?: "asc" | "desc" }[] = [];
@@ -51,12 +55,8 @@ function parseSort(sortParam?: string) {
 function errorReply(err: unknown) {
   const any = err as any;
   const code = any?.code;
-  if (code === "P2002") {
-    return { status: 409, payload: { error: "conflict", detail: "Unique constraint violation" } };
-  }
-  if (code === "P2025") {
-    return { status: 404, payload: { error: "not_found" } };
-  }
+  if (code === "P2002") return { status: 409, payload: { error: "conflict", detail: "Unique constraint violation" } };
+  if (code === "P2025") return { status: 404, payload: { error: "not_found" } };
   return { status: 500, payload: { error: "internal_error", detail: any?.message || "Unexpected error" } };
 }
 
@@ -81,6 +81,19 @@ function getActorId(req: any): string | null {
   const raw = req.cookies?.[getCookieName()];
   const sess = decodeSessionCookie(raw);
   return (sess && String(sess.userId)) || null;
+}
+async function requireSuperAdmin(req: any, reply: any) {
+  const actorId = getActorId(req);
+  if (!actorId) {
+    reply.code(401).send({ error: "unauthorized" });
+    return null;
+  }
+  const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+  if (!actor?.isSuperAdmin) {
+    reply.code(403).send({ error: "forbidden" });
+    return null;
+  }
+  return actorId;
 }
 
 const normEmail = (v?: string | null) => String(v || "").trim().toLowerCase();
@@ -160,9 +173,60 @@ async function buildCountMaps(tenantIds: number[]) {
   };
 }
 
-/* ───────────────────────── routes ───────────────────────── */
+/* ───────────────────────── routes (plugin) ───────────────────────── */
 
 const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  /** GET /admin/tenants — Super Admin only, UNscoped (all tenants) */
+  fastify.get("/admin/tenants", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const { page, limit, skip } = parsePaging((req as any).query);
+      const q = (req as any).query?.q ? String((req as any).query.q) : undefined;
+      const orderBy = parseSort((req as any).query?.sort);
+
+      const where = q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { slug: { contains: q, mode: "insensitive" } },
+              { primaryEmail: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : undefined;
+
+      const [total, itemsRaw] = await Promise.all([
+        prisma.tenant.count({ where }),
+        prisma.tenant.findMany({
+          where,
+          take: limit,
+          skip,
+          orderBy: orderBy ?? [{ createdAt: "desc" }],
+          include: { billing: true },
+        }),
+      ]);
+
+      const ids = itemsRaw.map((t) => t.id);
+      const maps = await buildCountMaps(ids);
+
+      const items = itemsRaw.map((t) =>
+        tenantDTO({
+          ...t,
+          usersCount: maps.users.get(t.id) ?? 0,
+          organizationsCount: maps.orgs.get(t.id) ?? 0,
+          contactsCount: maps.contacts.get(t.id) ?? 0,
+          animalsCount: maps.animals.get(t.id) ?? 0,
+        })
+      );
+
+      return reply.send({ items, total, page, limit });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
   /** GET /tenants */
   fastify.get("/tenants", async (req, reply) => {
     try {
@@ -297,7 +361,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
 
-    const billing = await prisma.billingAccount.findUnique({ where: { tenantId: id } });
+      const billing = await prisma.billingAccount.findUnique({ where: { tenantId: id } });
       return reply.send(billing ?? null);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -327,7 +391,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           data.currentPeriodEnd = null;
         } else if (typeof data.currentPeriodEnd === "string") {
           const d = new Date(data.currentPeriodEnd);
-          if (Number.isNaN(+d)) return reply.status(400).send({ error: "bad_request", detail: "Invalid currentPeriodEnd" });
+          if (Number.isNaN(+d))
+            return reply.status(400).send({ error: "bad_request", detail: "Invalid currentPeriodEnd" });
           data.currentPeriodEnd = d;
         }
       }
@@ -347,11 +412,17 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   /** GET /tenants/:tenantId/users */
   fastify.get<{
     Params: { tenantId: string };
-    Querystring: { q?: string; role?: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER"; page?: string; limit?: string };
+    Querystring: {
+      q?: string;
+      role?: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER";
+      page?: string;
+      limit?: string;
+    };
   }>("/tenants/:tenantId/users", async (req, reply) => {
     try {
       const tenantId = Number(req.params.tenantId);
-      if (!Number.isFinite(tenantId)) return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      if (!Number.isFinite(tenantId))
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
 
       const { page, limit, skip } = parsePaging(req.query);
       const role = req.query.role;
@@ -411,16 +482,77 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-// POST /tenants/:tenantId/invites  { email, role? }
-fastify.post<{
-  Params: { tenantId: string };
-  Body: { email: string; role?: "OWNER"|"ADMIN"|"MEMBER"|"BILLING"|"VIEWER" }
-}>("/tenants/:tenantId/invites", async (req, reply) => {
-  try {
+  // POST /tenants/:tenantId/invites  { email, role? }
+  fastify.post<{
+    Params: { tenantId: string };
+    Body: { email: string; role?: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER" };
+  }>("/tenants/:tenantId/invites", async (req, reply) => {
+    try {
+      const tenantId = Number(req.params.tenantId);
+      if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
+
+      // AuthZ: super admin OR OWNER/ADMIN of tenant
+      const actorId = getActorId(req);
+      if (!actorId) return reply.code(401).send({ error: "unauthorized" });
+      const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+      let allowed = !!actor?.isSuperAdmin;
+      if (!allowed) {
+        const mem = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: actorId, tenantId } },
+          select: { role: true },
+        });
+        allowed = !!mem && (mem.role === "OWNER" || mem.role === "ADMIN");
+      }
+      if (!allowed) return reply.code(403).send({ error: "forbidden" });
+
+      const { email, role = "MEMBER" } = (req.body || {}) as any;
+      const emailLower = String(email || "").trim().toLowerCase();
+      if (!emailLower) return reply.code(400).send({ error: "email_required" });
+
+      // create token (hash-at-rest)
+      const raw = makeRawToken(32);
+      const tokenHash = hashToken(raw);
+      const identifier = inviteIdentifier(tenantId, emailLower, role);
+      const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7); // 7d
+
+      // Clean out any old invites for same identifier to keep “latest wins”
+      await prisma.verificationToken.deleteMany({ where: { identifier, purpose: "INVITE" } });
+
+      const vt = await prisma.verificationToken.create({
+        data: {
+          identifier,
+          tokenHash,
+          purpose: "INVITE",
+          expires,
+          userId: null, // may be linked later; leave null now
+        },
+        select: { identifier: true, expires: true, createdAt: true },
+      });
+
+      // (send email out-of-band) — include `raw` in link:
+      // e.g. https://app.example.com/accept-invite?token=${raw}
+
+      return reply.code(201).send({
+        ok: true,
+        previewLink: process.env.APP_ORIGIN
+          ? `${process.env.APP_ORIGIN}/accept-invite?token=${raw}`
+          : undefined,
+        expires: vt.expires.toISOString(),
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  // POST /tenants/:tenantId/invites/revoke  { email }
+  fastify.post<{
+    Params: { tenantId: string };
+    Body: { email: string };
+  }>("/tenants/:tenantId/invites/revoke", async (req, reply) => {
     const tenantId = Number(req.params.tenantId);
     if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
 
-    // AuthZ: super admin OR OWNER/ADMIN of tenant
     const actorId = getActorId(req);
     if (!actorId) return reply.code(401).send({ error: "unauthorized" });
     const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
@@ -434,180 +566,129 @@ fastify.post<{
     }
     if (!allowed) return reply.code(403).send({ error: "forbidden" });
 
-    const { email, role = "MEMBER" } = (req.body || {}) as any;
-    const emailLower = String(email || "").trim().toLowerCase();
+    const emailLower = String((req.body as any)?.email || "").trim().toLowerCase();
     if (!emailLower) return reply.code(400).send({ error: "email_required" });
 
-    // create token (hash-at-rest)
-    const raw = makeRawToken(32);
-    const tokenHash = hashToken(raw);
-    const identifier = inviteIdentifier(tenantId, emailLower, role);
-    const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7); // 7d
+    await prisma.verificationToken.deleteMany({
+      where: { purpose: "INVITE", identifier: { startsWith: `invite:t=${tenantId};e=${emailLower};` } },
+    });
 
-    // Clean out any old invites for same identifier to keep “latest wins”
-    await prisma.verificationToken.deleteMany({ where: { identifier, purpose: "INVITE" } });
+    reply.send({ ok: true });
+  });
 
-    const vt = await prisma.verificationToken.create({
-      data: {
-        identifier,
-        tokenHash,
-        purpose: "INVITE",
-        expires,
-        userId: null, // may be linked later; leave null now
-      },
+  // POST /invites/accept  { token, name?, password? }
+  fastify.post("/invites/accept", async (req, reply) => {
+    try {
+      const { token, name, password } = (req.body || {}) as {
+        token?: string;
+        name?: string | null;
+        password?: string | null;
+      };
+      const raw = String(token || "").trim();
+      if (!raw) return reply.code(400).send({ error: "token_required" });
+
+      const tokenHash = hashToken(raw);
+      const vt = await prisma.verificationToken.findFirst({
+        where: { tokenHash, purpose: "INVITE", expires: { gt: new Date() } },
+        select: { identifier: true, expires: true },
+      });
+      if (!vt) return reply.code(400).send({ error: "invalid_or_expired" });
+
+      // identifier format: invite:t=<tenantId>;e=<emailLower>;r=<role>
+      const match = vt.identifier.match(/^invite:t=(\d+);e=([^;]+);r=(OWNER|ADMIN|MEMBER|BILLING|VIEWER)$/);
+      if (!match) return reply.code(400).send({ error: "malformed_identifier" });
+      const tenantId = Number(match[1]);
+      const emailLower = match[2];
+      const role = match[3] as "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER";
+
+      // sanity check tenant still exists
+      const ten = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+      if (!ten) return reply.code(404).send({ error: "tenant_not_found" });
+
+      const dataUser: any = {
+        email: emailLower,
+        name: name ? String(name).trim() || null : undefined,
+        emailVerifiedAt: new Date(),
+      };
+      if (password && String(password).trim().length >= 8) {
+        dataUser.passwordHash = await bcrypt.hash(String(password).trim(), 12);
+        dataUser.passwordUpdatedAt = new Date();
+      }
+
+      const user = await prisma.user.upsert({
+        where: { email: emailLower },
+        update: dataUser,
+        create: {
+          email: emailLower,
+          name: dataUser.name ?? null,
+          emailVerifiedAt: new Date(),
+          passwordHash: dataUser.passwordHash ?? undefined,
+          passwordUpdatedAt: dataUser.passwordUpdatedAt ?? undefined,
+        },
+        select: { id: true, email: true, defaultTenantId: true },
+      });
+
+      // create or update membership
+      await prisma.tenantMembership.upsert({
+        where: { userId_tenantId: { userId: user.id, tenantId } },
+        update: { role }, // if already a member, you can choose NOT to elevate role here; tweak if needed
+        create: { userId: user.id, tenantId, role },
+      });
+
+      // optional: set defaultTenantId if none
+      if (!user.defaultTenantId) {
+        await prisma.user.update({ where: { id: user.id }, data: { defaultTenantId: tenantId } });
+      }
+
+      // single-use: delete token
+      await prisma.verificationToken.deleteMany({ where: { tokenHash, purpose: "INVITE" } });
+
+      return reply.send({ ok: true, tenantId, email: user.email });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  // GET /tenants/:tenantId/invites
+  fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", async (req, reply) => {
+    const tenantId = Number(req.params.tenantId);
+    if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
+
+    const actorId = getActorId(req);
+    if (!actorId) return reply.code(401).send({ error: "unauthorized" });
+    const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+    let allowed = !!actor?.isSuperAdmin;
+    if (!allowed) {
+      const mem = await prisma.tenantMembership.findUnique({
+        where: { userId_tenantId: { userId: actorId, tenantId } },
+        select: { role: true },
+      });
+      allowed = !!mem && (mem.role === "OWNER" || mem.role === "ADMIN");
+    }
+    if (!allowed) return reply.code(403).send({ error: "forbidden" });
+
+    const rows = await prisma.verificationToken.findMany({
+      where: { purpose: "INVITE", identifier: { startsWith: `invite:t=${tenantId};` }, expires: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
       select: { identifier: true, expires: true, createdAt: true },
     });
 
-    // (send email out-of-band) — include `raw` in link:
-    // e.g. https://app.example.com/accept-invite?token=${raw}
-
-    return reply.code(201).send({
-      ok: true,
-      // return metadata only; DO NOT return raw in real admin UI unless you truly intend to show the copyable link.
-      previewLink: process.env.APP_ORIGIN
-        ? `${process.env.APP_ORIGIN}/accept-invite?token=${raw}`
-        : undefined,
-      expires: vt.expires.toISOString(),
+    const items = rows.map((r) => {
+      const m = r.identifier.match(
+        /^invite:t=(\d+);e=([^;]+);r=(OWNER|ADMIN|MEMBER|BILLING|VIEWER)$/
+      );
+      return {
+        tenantId: Number(m?.[1] || tenantId),
+        email: m?.[2] || "",
+        role: (m?.[3] as any) || "MEMBER",
+        createdAt: r.createdAt.toISOString(),
+        expires: r.expires.toISOString(),
+      };
     });
-  } catch (err) {
-    const { status, payload } = errorReply(err);
-    return reply.status(status).send(payload);
-  }
-});
 
-// POST /tenants/:tenantId/invites/revoke  { email }
-fastify.post<{
-  Params: { tenantId: string };
-  Body: { email: string }
-}>("/tenants/:tenantId/invites/revoke", async (req, reply) => {
-  const tenantId = Number(req.params.tenantId);
-  if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
-
-  const actorId = getActorId(req);
-  if (!actorId) return reply.code(401).send({ error: "unauthorized" });
-  const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
-  let allowed = !!actor?.isSuperAdmin;
-  if (!allowed) {
-    const mem = await prisma.tenantMembership.findUnique({
-      where: { userId_tenantId: { userId: actorId, tenantId } },
-      select: { role: true },
-    });
-    allowed = !!mem && (mem.role === "OWNER" || mem.role === "ADMIN");
-  }
-  if (!allowed) return reply.code(403).send({ error: "forbidden" });
-
-  const emailLower = String((req.body as any)?.email || "").trim().toLowerCase();
-  if (!emailLower) return reply.code(400).send({ error: "email_required" });
-
-  await prisma.verificationToken.deleteMany({
-    where: { purpose: "INVITE", identifier: { startsWith: `invite:t=${tenantId};e=${emailLower};` } },
+    reply.send({ items });
   });
-
-  reply.send({ ok: true });
-});
-
-// POST /invites/accept  { token, name?, password? }
-fastify.post("/invites/accept", async (req, reply) => {
-  try {
-    const { token, name, password } = (req.body || {}) as { token?: string; name?: string | null; password?: string | null };
-    const raw = String(token || "").trim();
-    if (!raw) return reply.code(400).send({ error: "token_required" });
-
-    const tokenHash = hashToken(raw);
-    const vt = await prisma.verificationToken.findFirst({
-      where: { tokenHash, purpose: "INVITE", expires: { gt: new Date() } },
-      select: { identifier: true, expires: true },
-    });
-    if (!vt) return reply.code(400).send({ error: "invalid_or_expired" });
-
-    // identifier format: invite:t=<tenantId>;e=<emailLower>;r=<role>
-    const match = vt.identifier.match(/^invite:t=(\d+);e=([^;]+);r=(OWNER|ADMIN|MEMBER|BILLING|VIEWER)$/);
-    if (!match) return reply.code(400).send({ error: "malformed_identifier" });
-    const tenantId = Number(match[1]);
-    const emailLower = match[2];
-    const role = match[3] as "OWNER"|"ADMIN"|"MEMBER"|"BILLING"|"VIEWER";
-
-    // sanity check tenant still exists
-    const ten = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
-    if (!ten) return reply.code(404).send({ error: "tenant_not_found" });
-
-    const dataUser: any = {
-      email: emailLower,
-      name: name ? String(name).trim() || null : undefined,
-      emailVerifiedAt: new Date(),
-    };
-    if (password && String(password).trim().length >= 8) {
-      dataUser.passwordHash = await bcrypt.hash(String(password).trim(), 12);
-      dataUser.passwordUpdatedAt = new Date();
-    }
-
-    const user = await prisma.user.upsert({
-      where: { email: emailLower },
-      update: dataUser,
-      create: { email: emailLower, name: dataUser.name ?? null, emailVerifiedAt: new Date(), passwordHash: dataUser.passwordHash ?? undefined, passwordUpdatedAt: dataUser.passwordUpdatedAt ?? undefined },
-      select: { id: true, email: true, defaultTenantId: true },
-    });
-
-    // create or update membership
-    await prisma.tenantMembership.upsert({
-      where: { userId_tenantId: { userId: user.id, tenantId } },
-      update: { role }, // if already a member, you can choose NOT to elevate role here; tweak if needed
-      create: { userId: user.id, tenantId, role },
-    });
-
-    // optional: set defaultTenantId if none
-    if (!user.defaultTenantId) {
-      await prisma.user.update({ where: { id: user.id }, data: { defaultTenantId: tenantId } });
-    }
-
-    // single-use: delete token
-    await prisma.verificationToken.deleteMany({ where: { tokenHash, purpose: "INVITE" } });
-
-    return reply.send({ ok: true, tenantId, email: user.email });
-  } catch (err) {
-    const { status, payload } = errorReply(err);
-    return reply.status(status).send(payload);
-  }
-});
-
-// GET /tenants/:tenantId/invites
-fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", async (req, reply) => {
-  const tenantId = Number(req.params.tenantId);
-  if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
-
-  const actorId = getActorId(req);
-  if (!actorId) return reply.code(401).send({ error: "unauthorized" });
-  const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
-  let allowed = !!actor?.isSuperAdmin;
-  if (!allowed) {
-    const mem = await prisma.tenantMembership.findUnique({
-      where: { userId_tenantId: { userId: actorId, tenantId } },
-      select: { role: true },
-    });
-    allowed = !!mem && (mem.role === "OWNER" || mem.role === "ADMIN");
-  }
-  if (!allowed) return reply.code(403).send({ error: "forbidden" });
-
-  const rows = await prisma.verificationToken.findMany({
-    where: { purpose: "INVITE", identifier: { startsWith: `invite:t=${tenantId};` }, expires: { gt: new Date() } },
-    orderBy: { createdAt: "desc" },
-    select: { identifier: true, expires: true, createdAt: true },
-  });
-
-  const items = rows.map(r => {
-    const m = r.identifier.match(/^invite:t=(\d+);e=([^;]+);r=(OWNER|ADMIN|MEMBER|BILLING|VIEWER)$/);
-    return {
-      tenantId: Number(m?.[1] || tenantId),
-      email: m?.[2] || "",
-      role: (m?.[3] as any) || "MEMBER",
-      createdAt: r.createdAt.toISOString(),
-      expires: r.expires.toISOString(),
-    };
-  });
-
-  reply.send({ items });
-});
-
 
   /** POST /tenants/:tenantId/users */
   fastify.post<{
@@ -696,7 +777,9 @@ fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", asyn
 
       const { tenant, owner, billing } = req.body || {};
       if (!tenant?.name || !owner?.email) {
-        return reply.status(400).send({ error: "bad_request", detail: "tenant.name and owner.email are required" });
+        return reply
+          .status(400)
+          .send({ error: "bad_request", detail: "tenant.name and owner.email are required" });
       }
 
       const ownerEmail = normEmail(owner.email);
@@ -724,7 +807,12 @@ fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", asyn
             ...(owner.verify ? { emailVerifiedAt: new Date() } : {}),
           },
           select: {
-            id: true, email: true, name: true, createdAt: true, emailVerifiedAt: true, isSuperAdmin: true,
+            id: true,
+            email: true,
+            name: true,
+            createdAt: true,
+            emailVerifiedAt: true,
+            isSuperAdmin: true,
           },
         });
 
@@ -901,7 +989,8 @@ fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", asyn
     async (req, reply) => {
       const tenantId = Number(req.params.tenantId);
       const { userId } = req.params;
-      if (!Number.isFinite(tenantId)) return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      if (!Number.isFinite(tenantId))
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
 
       const membership = await prisma.tenantMembership.findUnique({
         where: { userId_tenantId: { userId, tenantId } },
@@ -924,7 +1013,8 @@ fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", asyn
     async (req, reply) => {
       const tenantId = Number(req.params.tenantId);
       const { userId } = req.params;
-      if (!Number.isFinite(tenantId)) return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      if (!Number.isFinite(tenantId))
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
 
       const membership = await prisma.tenantMembership.findUnique({
         where: { userId_tenantId: { userId, tenantId } },
@@ -944,7 +1034,8 @@ fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", asyn
       try {
         const tenantId = Number(req.params.tenantId);
         const { userId } = req.params;
-        if (!Number.isFinite(tenantId)) return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+        if (!Number.isFinite(tenantId))
+          return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
 
         const mem = await prisma.tenantMembership.findUnique({
           where: { userId_tenantId: { userId, tenantId } },
