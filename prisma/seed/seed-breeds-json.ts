@@ -8,6 +8,25 @@ import { PrismaClient, Species } from "@prisma/client";
 const prisma = new PrismaClient();
 const root = process.cwd();
 
+/** Resolve the registries model on this Prisma Client, regardless of naming */
+function getRegistryModel() {
+  const anyPrisma = prisma as any;
+  const model =
+    anyPrisma.registryCatalog ??
+    anyPrisma.RegistryCatalog ??
+    anyPrisma.registry ??
+    anyPrisma.Registry;
+  if (!model) {
+    throw new Error(
+      "Could not find a registries model on Prisma Client. " +
+        "Tried registryCatalog/RegistryCatalog/registry/Registry. " +
+        "Run `npx prisma generate` and verify the model name in schema.prisma."
+    );
+  }
+  return model;
+}
+const RegistryModel = getRegistryModel();
+
 /**
  * Options via env or CLI
  * CLEAR_BEFORE=true  → delete existing registry links then delete breeds not present in JSON files
@@ -16,9 +35,9 @@ const root = process.cwd();
  * DRY_RUN=true       → log actions, do not write
  */
 const CLEAR_BEFORE = readBool(envOrArg("CLEAR_BEFORE", "false"));
-const DRY_RUN       = readBool(envOrArg("DRY_RUN", "false"));
-const CHUNK_SIZE    = Number(envOrArg("CHUNK", "200")) || 200;
-const ONLY_SPECIES  = parseOnlySpecies(envOrArg("ONLY", ""));
+const DRY_RUN = readBool(envOrArg("DRY_RUN", "false"));
+const CHUNK_SIZE = Number(envOrArg("CHUNK", "200")) || 200;
+const ONLY_SPECIES = parseOnlySpecies(envOrArg("ONLY", ""));
 
 type Row = {
   name: string;
@@ -83,7 +102,6 @@ async function readRows(): Promise<Row[]> {
 }
 
 async function clearBefore(rows: Row[]) {
-  // Limit clear to the species present in the seed rows
   const speciesSet = Array.from(new Set(rows.map((r) => r.species))) as Species[];
 
   console.log(`CLEAR_BEFORE enabled. Target species: ${speciesSet.join(", ")}`);
@@ -100,11 +118,10 @@ async function clearBefore(rows: Row[]) {
     select: { id: true, name: true, species: true, slug: true },
   });
 
-  // Rows we intend to keep (by normalized uniqueness). Prefer slug when present
   const keepKey = (r: Row) => `${r.species}::${toSlug(r.name)}`;
   const keepSet = new Set(rows.map(keepKey));
 
-  // Links for all existing of these species can be dropped first
+  // Drop links first
   const existingIds = existing.map((b) => b.id);
   if (existingIds.length) {
     await prisma.breedRegistryLink.deleteMany({ where: { breedId: { in: existingIds } } });
@@ -121,13 +138,7 @@ async function clearBefore(rows: Row[]) {
 
 async function upsertBreed(row: Row) {
   const slug = toSlug(row.name);
-  // Prefer a composite unique like @@unique([species, slug]) if you have it
-  // Fallback uses unique name. Adjust where/update/create to your actual schema.
-  const where =
-    // If you have composite unique:
-    // { species_slug: { species: row.species, slug } }
-    // Else fallback:
-    { name: row.name };
+  const where = { name: row.name }; // adjust if you use composite unique
 
   if (DRY_RUN) {
     console.log(`[DRY_RUN] Upsert Breed: ${row.species} :: ${row.name}`);
@@ -152,9 +163,13 @@ async function upsertBreed(row: Row) {
     const code = reg.code?.toUpperCase?.() || "";
     if (!code) continue;
 
-    const registry = await prisma.registry.findUnique({ where: { code } });
+    // Resolve registry by code using whatever the model is named in this client
+    const registry = await RegistryModel.findUnique?.({ where: { code } });
     if (!registry) {
-      console.warn(`Skipped link for ${breed.name}: registry code ${code} not found in RegistryCatalog`);
+      console.warn(
+        `Skipped link for ${breed.name}: registry code ${code} not found on this client. ` +
+          `Did you run seed-registries against the same DB & schema?`
+      );
       continue;
     }
 
