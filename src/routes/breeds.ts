@@ -76,6 +76,8 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
    * - If tenant present (x-tenant-id), merges in tenant’s CustomBreed rows.
    * - Never 400s for missing tenant (so typeahead works before tenant resolve).
    */
+
+
   app.get("/breeds/search", async (req, reply) => {
     const { q = "", species = "", limit = "100" } = (req.query || {}) as {
       q?: string; species?: string; limit?: string | number;
@@ -84,38 +86,76 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     const sp = assertSpecies(species);
     const take = Math.min(200, Math.max(1, Number(limit) || 100));
 
-    const tenantId = Number((req as any).tenantId);
+    const tenantId = readTenantId(req);
     if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
     const canonWhere: any = { species: sp };
     if (q) Object.assign(canonWhere, nameContainsAllTokens(q));
 
-    const [canonRows, customRows] = await Promise.all([
-      prisma.breed.findMany({
+    // --- Step 1: canonical breeds (MUST NOT crash) ---------------------------
+    let canonRows: Array<{ id: number; name: string; species: "DOG" | "CAT" | "HORSE" }> = [];
+    try {
+      canonRows = await prisma.breed.findMany({
         where: canonWhere,
         orderBy: [{ name: "asc" }],
         take,
-        select: {
-          id: true,
-          name: true,
-          species: true,
-          breedRegistryLinks: {
-            select: {
-              statusText: true,
-              primary: true,
-              registryCatalog: { select: { code: true, name: true } },
-            },
-          },
-        },
-      }),
-      prisma.customBreed.findMany({
+        select: { id: true, name: true, species: true },
+      });
+    } catch (err) {
+      req.log.error({ err }, "breeds.search: canonical query failed");
+      // If even canon fails, bail fast with a readable error in dev
+      return reply.code(500).send({ error: "server_error_canonical" });
+    }
+
+    // --- Step 2: tenant custom breeds (if this fails, just skip) -------------
+    let customRows: Array<{ id: number; name: string; species: "DOG" | "CAT" | "HORSE" }> = [];
+    try {
+      customRows = await prisma.customBreed.findMany({
         where: { tenantId, species: sp, ...(q ? nameContainsAllTokens(q) : {}) },
         orderBy: [{ name: "asc" }],
         take,
         select: { id: true, name: true, species: true },
-      }),
-    ]);
+      });
+    } catch (err) {
+      req.log.warn({ err }, "breeds.search: custom query failed — continuing without custom");
+      customRows = [];
+    }
 
+    // --- Step 3: registries (safe join using the real relation name) -----------
+    let regsByBreed = new Map<number, Array<{ code: string; status?: string | null; primary?: boolean | null }>>();
+    try {
+      const breedIds = canonRows.map(b => b.id);
+      if (breedIds.length) {
+        const links = await prisma.breedRegistryLink.findMany({
+          where: { breedId: { in: breedIds } },
+          select: {
+            breedId: true,
+            statusText: true,
+            primary: true,
+            // THIS is the correct relation name according to Prisma's error hint:
+            registry: { select: { id: true, code: true, name: true } },
+          },
+        });
+
+        regsByBreed = new Map();
+        for (const l of links) {
+          // l.registry can be null if the FK is optional — guard it
+          if (!l.registry) continue;
+          const arr = regsByBreed.get(l.breedId) || [];
+          arr.push({
+            code: l.registry.code,
+            status: l.statusText ?? null,
+            primary: l.primary ?? null,
+          });
+          regsByBreed.set(l.breedId, arr);
+        }
+      }
+    } catch (err) {
+      req.log.warn({ err }, "breeds.search: registries join failed — continuing without registries");
+      regsByBreed = new Map();
+    }
+
+    // --- Build outputs --------------------------------------------------------
     type OutRow = {
       id?: number;
       name: string;
@@ -127,25 +167,21 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
 
     const canon: OutRow[] = canonRows.map(r => ({
       name: r.name,
-      species: r.species as any,
+      species: r.species,
       source: "canonical",
       canonicalBreedId: r.id,
-      registries: (r.breedRegistryLinks || []).map(link => ({
-        code: link.registryCatalog.code,
-        status: link.statusText ?? null,
-        primary: link.primary ?? null,
-      })),
+      registries: regsByBreed.get(r.id) || [],
     }));
 
     const custom: OutRow[] = customRows.map(r => ({
       id: r.id,
       name: r.name,
-      species: r.species as any,
+      species: r.species,
       source: "custom",
-      registries: [], // user breeds won't have official registries
+      registries: [],
     }));
 
-    // Prefer custom when names collide (keep first occurrence)
+    // Prefer custom on name collisions
     const merged: OutRow[] = [];
     const seen = new Set<string>();
     for (const it of [...custom, ...canon]) {
