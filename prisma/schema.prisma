@@ -686,6 +686,7 @@ model BreedingPlan {
   weanedDateActual     DateTime?
   goHomeDateActual     DateTime?
   lastGoHomeDateActual DateTime?
+  completedDateActual  DateTime?
 
   // status and notes
   status BreedingPlanStatus @default(PLANNING)
