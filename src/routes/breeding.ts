@@ -10,6 +10,24 @@ function parsePaging(q: any) {
   return { page, limit, skip };
 }
 
+function parseArchivedMode(q: any): "exclude" | "include" | "only" {
+  const s = String(q?.archived ?? "").toLowerCase();
+  if (s === "include" || s === "only" || s === "exclude") return s;
+
+  // accept common boolean-ish flags too
+  const truthy =
+    q?.includeArchived === "true" ||
+    q?.include_archived === "true" ||
+    q?.withArchived === "true" ||
+    q?.showArchived === "true" ||
+    q?.includeArchived === true ||
+    q?.include_archived === true ||
+    q?.withArchived === true ||
+    q?.showArchived === true;
+
+  return truthy ? "include" : "exclude";
+}
+
 function idNum(v: any) {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
@@ -37,6 +55,77 @@ function includeFlags(qInclude: any) {
     organization: has("org") ? true : false,
   };
 }
+
+/* ───────────────────────── lock invariants ───────────────────────── */
+
+/** Convert possibly-undefined ISO string to Date|null without throwing. */
+function toDateOrNull(v: any): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  const d = new Date(v);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/** Validate that lock fields are consistent.
+ * Rules:
+ *  - EITHER all lock fields are NULL (unlocked)
+ *  - OR ALL FOUR are non-null (locked) → start/ovulation/due/goHome must be provided together
+ *  - Reject partial updates that would violate the invariant.
+ *
+ * Returns normalized lock dates or throws fastify-style 400 error.
+ */
+function validateAndNormalizeLockPayload(body: any) {
+  // Only consider fields that were provided in the payload (so PATCH can be partial).
+  const provided = {
+    start: body.hasOwnProperty("lockedCycleStart") ? toDateOrNull(body.lockedCycleStart) : undefined,
+    ov: body.hasOwnProperty("lockedOvulationDate") ? toDateOrNull(body.lockedOvulationDate) : undefined,
+    due: body.hasOwnProperty("lockedDueDate") ? toDateOrNull(body.lockedDueDate) : undefined,
+    home: body.hasOwnProperty("lockedGoHomeDate") ? toDateOrNull(body.lockedGoHomeDate) : undefined,
+  };
+
+  // If none of the 4 fields are present in payload, caller isn’t touching lock state.
+  const touched = [provided.start, provided.ov, provided.due, provided.home].some((v) => v !== undefined);
+  if (!touched) return { touched: false as const };
+
+  // Count non-null among the fields that *were provided*.
+  const nonNullCount = [provided.start, provided.ov, provided.due, provided.home].filter((v) => v instanceof Date).length;
+  const providedCount = [provided.start, provided.ov, provided.due, provided.home].filter((v) => v !== undefined).length;
+
+  // If caller is explicitly unlocking → all provided must be null.
+  const allProvidedNull = providedCount > 0 && nonNullCount === 0;
+  if (allProvidedNull) {
+    return {
+      touched: true as const,
+      lockedCycleStart: null,
+      lockedOvulationDate: null,
+      lockedDueDate: null,
+      lockedGoHomeDate: null,
+    };
+  }
+
+  // If caller is locking → all 4 must be provided and non-null.
+  const allProvidedAndNonNull = providedCount === 4 && nonNullCount === 4;
+  if (!allProvidedAndNonNull) {
+    // Build a nice error message for the client
+    const missing = [];
+    if (provided.start === undefined || provided.start === null) missing.push("lockedCycleStart");
+    if (provided.ov === undefined || provided.ov === null) missing.push("lockedOvulationDate");
+    if (provided.due === undefined || provided.due === null) missing.push("lockedDueDate");
+    if (provided.home === undefined || provided.home === null) missing.push("lockedGoHomeDate");
+    const msg = `lock_invariant: when locking a cycle you must provide all of: lockedCycleStart, lockedOvulationDate, lockedDueDate, lockedGoHomeDate. Missing/empty: ${missing.join(", ")}`;
+    const err: any = new Error(msg);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return {
+    touched: true as const,
+    lockedCycleStart: provided.start!,
+    lockedOvulationDate: provided.ov!,
+    lockedDueDate: provided.due!,
+    lockedGoHomeDate: provided.home!,
+  };
+}
+
 
 async function getPlanInTenant(planId: number, tenantId: number) {
   const plan = await prisma.breedingPlan.findFirst({
@@ -147,9 +236,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         include: string;
         page: string;
         limit: string;
+        archived: "include" | "only" | "exclude";
+        includeArchived: string | boolean;
+        include_archived: string | boolean;
+        withArchived: string | boolean;
+        showArchived: string | boolean;
       }>;
 
-      const where: any = { tenantId, archived: false };
+      const archivedMode = parseArchivedMode(q);
+      const where: any = { tenantId };
+      if (archivedMode === "exclude") where.archived = false;
+      if (archivedMode === "only") where.archived = true;
       if (q.status) where.status = q.status;
       if (q.damId) where.damId = Number(q.damId);
       if (q.sireId) where.sireId = Number(q.sireId);
@@ -203,56 +300,152 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /breeding/plans
+  // POST /breeding/plans
   app.post("/breeding/plans", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const b = (req.body || {}) as any;
+
+      // required basics
       const name = String(b.name || "").trim();
       if (!name) return reply.code(400).send({ error: "name_required" });
       if (!b.species) return reply.code(400).send({ error: "species_required" });
+
       const damId = idNum(b.damId);
       if (!damId) return reply.code(400).send({ error: "damId_required" });
 
+      // parent/species checks
       const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId }, select: { species: true } });
       if (!dam) return reply.code(400).send({ error: "dam_not_found" });
-      if (String(dam.species) !== String(b.species)) return reply.code(400).send({ error: "dam_species_mismatch" });
+      if (String(dam.species) !== String(b.species)) {
+        return reply.code(400).send({ error: "dam_species_mismatch" });
+      }
       if (b.sireId) {
         const sire = await prisma.animal.findFirst({ where: { id: Number(b.sireId), tenantId }, select: { species: true } });
         if (!sire) return reply.code(400).send({ error: "sire_not_found" });
-        if (String(sire.species) !== String(b.species)) return reply.code(400).send({ error: "sire_species_mismatch" });
+        if (String(sire.species) !== String(b.species)) {
+          return reply.code(400).send({ error: "sire_species_mismatch" });
+        }
       }
 
-      const created = await prisma.breedingPlan.create({
-        data: {
-          tenantId,
-          organizationId: b.organizationId ?? null,
-          code: b.code ?? null,
-          name,
-          nickname: b.nickname ?? null,
-          species: b.species,
-          breedText: b.breedText ?? null,
-          damId,
-          sireId: b.sireId ?? null,
-          lockedCycleKey: b.lockedCycleKey ?? null,
-          lockedCycleStart: b.lockedCycleStart ? new Date(b.lockedCycleStart) : null,
-          lockedOvulationDate: b.lockedOvulationDate ? new Date(b.lockedOvulationDate) : null,
-          lockedDueDate: b.lockedDueDate ? new Date(b.lockedDueDate) : null,
-          lockedGoHomeDate: b.lockedGoHomeDate ? new Date(b.lockedGoHomeDate) : null,
-          expectedDue: b.expectedDue ? new Date(b.expectedDue) : null,
-          expectedGoHome: b.expectedGoHome ? new Date(b.expectedGoHome) : null,
-          breedDateActual: b.breedDateActual ? new Date(b.breedDateActual) : null,
-          birthDateActual: b.birthDateActual ? new Date(b.birthDateActual) : null,
-          weanedDateActual: b.weanedDateActual ? new Date(b.weanedDateActual) : null,
-          goHomeDateActual: b.goHomeDateActual ? new Date(b.goHomeDateActual) : null,
-          lastGoHomeDateActual: b.lastGoHomeDateActual ? new Date(b.lastGoHomeDateActual) : null,
-          status: b.status ?? "PLANNING",
-          notes: b.notes ?? null,
-          depositsCommittedCents: b.depositsCommittedCents ?? null,
-          depositsPaidCents: b.depositsPaidCents ?? null,
-          depositRiskScore: b.depositRiskScore ?? null,
-        },
+      // ── ENFORCE LOCK INVARIANTS ─────────────────────────────────────────────
+      // All four lock fields must travel together (or all null to unlock).
+      // Also seed expected* from lock if not provided.
+      let lockNorm:
+        | { touched: false }
+        | {
+          touched: true;
+          lockedCycleStart: Date | null;
+          lockedOvulationDate: Date | null;
+          lockedDueDate: Date | null;
+          lockedGoHomeDate: Date | null;
+        };
+
+      try {
+        lockNorm = validateAndNormalizeLockPayload(b);
+      } catch (e) {
+        const { status, payload } = errorReply(e);
+        return reply.status(status).send(payload);
+      }
+
+      // Build create payload (normalize all dates with Date or null)
+      const data: any = {
+        tenantId,
+        organizationId: b.organizationId ?? null,
+
+        // identity
+        code: b.code ?? null,
+        name,
+        nickname: b.nickname ?? null,
+        species: b.species,
+        breedText: b.breedText ?? null,
+
+        // parents
+        damId,
+        sireId: b.sireId ?? null,
+
+        // lock snapshot (from normalized lock if touched; else from body)
+        lockedCycleKey: b.lockedCycleKey ?? null,
+        lockedCycleStart: lockNorm.touched
+          ? lockNorm.lockedCycleStart
+          : (b.lockedCycleStart ? new Date(b.lockedCycleStart) : null),
+        lockedOvulationDate: lockNorm.touched
+          ? lockNorm.lockedOvulationDate
+          : (b.lockedOvulationDate ? new Date(b.lockedOvulationDate) : null),
+        lockedDueDate: lockNorm.touched
+          ? lockNorm.lockedDueDate
+          : (b.lockedDueDate ? new Date(b.lockedDueDate) : null),
+        lockedGoHomeDate: lockNorm.touched
+          ? lockNorm.lockedGoHomeDate
+          : (b.lockedGoHomeDate ? new Date(b.lockedGoHomeDate) : null),
+
+        // expected dates (seed from lock when locking on create if not provided)
+        expectedDue:
+          b.expectedDue
+            ? new Date(b.expectedDue)
+            : lockNorm.touched && lockNorm.lockedDueDate
+              ? lockNorm.lockedDueDate
+              : null,
+        expectedGoHome:
+          b.expectedGoHome
+            ? new Date(b.expectedGoHome)
+            : lockNorm.touched && lockNorm.lockedGoHomeDate
+              ? lockNorm.lockedGoHomeDate
+              : null,
+
+        // actuals (all six supported)
+        breedDateActual: b.breedDateActual ? new Date(b.breedDateActual) : null,
+        birthDateActual: b.birthDateActual ? new Date(b.birthDateActual) : null,
+        weanedDateActual: b.weanedDateActual ? new Date(b.weanedDateActual) : null,
+        goHomeDateActual: b.goHomeDateActual ? new Date(b.goHomeDateActual) : null,          // "Homing Started"
+        lastGoHomeDateActual: b.lastGoHomeDateActual ? new Date(b.lastGoHomeDateActual) : null, // "Homing Extended End"
+        completedDateActual: b.completedDateActual ? new Date(b.completedDateActual) : null, // <-- Plan Completed (ACTUAL)
+
+        // status/notes/finance
+        status: b.status ?? "PLANNING",
+        notes: b.notes ?? null,
+        depositsCommittedCents: b.depositsCommittedCents ?? null,
+        depositsPaidCents: b.depositsPaidCents ?? null,
+        depositRiskScore: b.depositRiskScore ?? null,
+      };
+
+      // Create in a transaction so we can optionally write an audit event
+      const userId = (req as any).user?.id ?? null;
+      const created = await prisma.$transaction(async (tx) => {
+        const plan = await tx.breedingPlan.create({ data });
+
+        // If a lock was set on create, record an audit event with timestamp
+        const lockedOnCreate =
+          lockNorm.touched &&
+          lockNorm.lockedCycleStart &&
+          lockNorm.lockedOvulationDate &&
+          lockNorm.lockedDueDate &&
+          lockNorm.lockedGoHomeDate;
+
+        if (lockedOnCreate) {
+          await tx.breedingPlanEvent.create({
+            data: {
+              tenantId,
+              planId: plan.id,
+              type: "CYCLE_LOCKED",
+              occurredAt: new Date(),
+              label: "Cycle locked on plan creation",
+              recordedByUserId: userId,
+              data: {
+                lockedCycleStart: lockNorm.lockedCycleStart,
+                lockedOvulationDate: lockNorm.lockedOvulationDate,
+                lockedDueDate: lockNorm.lockedDueDate,
+                lockedGoHomeDate: lockNorm.lockedGoHomeDate,
+                expectedDue: plan.expectedDue,
+                expectedGoHome: plan.expectedGoHome,
+              },
+            },
+          });
+        }
+
+        return plan;
       });
 
       reply.code(201).send(created);
@@ -336,6 +529,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "weanedDateActual",
         "goHomeDateActual",
         "lastGoHomeDateActual",
+        "completedDateActual",
       ];
       for (const k of dateKeys) {
         if (b[k] !== undefined) data[k] = b[k] ? new Date(b[k]) : null;
@@ -353,6 +547,36 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
       for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
 
+
+      // ENFORCE lock invariants on update
+      try {
+        const lockNorm = validateAndNormalizeLockPayload(b);
+        if (lockNorm.touched) {
+          data.lockedCycleStart = lockNorm.lockedCycleStart;
+          data.lockedOvulationDate = lockNorm.lockedOvulationDate;
+          data.lockedDueDate = lockNorm.lockedDueDate;
+          data.lockedGoHomeDate = lockNorm.lockedGoHomeDate;
+
+          // Keep expected* in sync on lock/unlock (optional but recommended)
+          if (lockNorm.lockedDueDate === null && lockNorm.lockedGoHomeDate === null) {
+            // unlocking → clear expected (your UI expects this)
+            data.expectedDue = null;
+            data.expectedGoHome = null;
+          } else {
+            // locking → seed expected if missing in payload
+            if (!b.hasOwnProperty("expectedDue")) data.expectedDue = lockNorm.lockedDueDate;
+            if (!b.hasOwnProperty("expectedGoHome")) data.expectedGoHome = lockNorm.lockedGoHomeDate;
+          }
+        } else {
+          // Caller didn’t touch lock fields this PATCH.
+          // If they tried to set any one of the other 3 without start via "dateKeys" earlier,
+          // validate based on the *payload* combination (already handled in validate function).
+        }
+      } catch (e) {
+        const { status, payload } = errorReply(e);
+        return reply.status(status).send(payload);
+      }
+
       const updated = await prisma.breedingPlan.update({ where: { id }, data });
       reply.send(updated);
     } catch (err) {
@@ -362,16 +586,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
 
-  // POST /breeding/plans/:id/commit  ← server-side commit + immutable code
+  // POST /breeding/plans/:id/commit  ← server-side commit + immutable code + full-lock enforcement
   app.post("/breeding/plans/:id/commit", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
       const b = (req.body || {}) as Partial<{ codeHint: string }>;
 
+      // Pull all fields we need to validate and to seed expected*
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
         select: {
@@ -382,46 +608,98 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           damId: true,
           sireId: true,
           lockedCycleStart: true,
-          expectedDue: true,
-          expectedGoHome: true,
+          lockedOvulationDate: true,
           lockedDueDate: true,
           lockedGoHomeDate: true,
+          expectedDue: true,
+          expectedGoHome: true,
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      // validate commit preconditions
-      const terminalStatuses = ["BRED", "PREGNANT", "WHELPED", "WEANED", "HOMING_STARTED", "COMPLETE", "CANCELED", "COMMITTED"];
-      if (terminalStatuses.includes(String(plan.status))) {
+      // Disallow committing once already committed or terminal
+      const terminal = new Set([
+        "COMMITTED",
+        "BRED",
+        "PREGNANT",
+        "WHELPED",
+        "WEANED",
+        "HOMING",          // if your enum uses HOMING (not HOMING_STARTED)
+        "HOMING_STARTED",  // in case older rows use this label in app logic
+        "COMPLETE",
+        "CANCELED",
+      ]);
+      if (terminal.has(String(plan.status))) {
         return reply.code(409).send({ error: "already_in_terminal_state" });
       }
-      if (!plan.damId || !plan.sireId || !plan.lockedCycleStart) {
-        return reply.code(400).send({ error: "dam_sire_lockedCycle_required" });
+
+      // Must have parents
+      if (!plan.damId || !plan.sireId) {
+        return reply.code(400).send({ error: "dam_sire_required" });
       }
 
-      // do commit in a transaction
+      // === FULL-LOCK ENFORCEMENT ===
+      // Require ALL FOUR lock fields (start, ovulation, due, goHome)
+      const missingLock: string[] = [];
+      if (!plan.lockedCycleStart) missingLock.push("lockedCycleStart");
+      if (!plan.lockedOvulationDate) missingLock.push("lockedOvulationDate");
+      if (!plan.lockedDueDate) missingLock.push("lockedDueDate");
+      if (!plan.lockedGoHomeDate) missingLock.push("lockedGoHomeDate");
+      if (missingLock.length) {
+        return reply.code(400).send({
+          error: "full_lock_required",
+          detail: `Commit requires a locked cycle with all fields present. Missing: ${missingLock.join(", ")}`,
+        });
+      }
+
+      const userId = (req as any).user?.id ?? null;
+
       const updated = await prisma.$transaction(async (tx) => {
-        // 1) set code if missing (immutable thereafter)
+        // 1) set immutable code if missing (make it tenant-unique)
         let code = plan.code;
         if (!code) {
           code = await buildFriendlyPlanCode(plan.tenantId, plan.id);
         }
 
-        // 2) ensure expected dates are set from locked if missing
+        // 2) Ensure expected dates are set from the lock if missing
         const expectedDue = plan.expectedDue ?? plan.lockedDueDate ?? null;
         const expectedGoHome = plan.expectedGoHome ?? plan.lockedGoHomeDate ?? null;
 
-        // 3) flip status → COMMITTED (requires enum migration below)
+        // 3) Flip status → COMMITTED, record who/when
         const saved = await tx.breedingPlan.update({
           where: { id: plan.id },
           data: {
             code,
-            status: "COMMITTED" as any, // add to enum in schema (see below)
+            status: "COMMITTED" as any,
             expectedDue,
             expectedGoHome,
-            committedAt: new Date(),     // add field in schema (see below)
+            committedAt: new Date(),
+            committedByUserId: userId,
           },
         });
+
+        // 4) Audit trail (so we have a durable commit record)
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId: plan.tenantId,
+            planId: plan.id,
+            type: "PLAN_COMMITTED",
+            occurredAt: new Date(),
+            label: "Plan committed",
+            data: {
+              code,
+              fromStatus: String(plan.status),
+              lockedCycleStart: plan.lockedCycleStart,
+              lockedOvulationDate: plan.lockedOvulationDate,
+              lockedDueDate: plan.lockedDueDate,
+              lockedGoHomeDate: plan.lockedGoHomeDate,
+              expectedDue,
+              expectedGoHome,
+            },
+            recordedByUserId: userId,
+          },
+        });
+
         return saved;
       });
 
