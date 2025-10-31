@@ -65,30 +65,61 @@ function toDateOrNull(v: any): Date | null {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+/** Accept old payload keys and map to the new placement keys when missing. */
+function mapLegacyDates(body: any) {
+  // expected → placement
+  if (body.expectedGoHome !== undefined && body.expectedPlacementStart === undefined) {
+    body.expectedPlacementStart = body.expectedGoHome;
+  }
+  if (body.expectedGoHomeExtendedEnd !== undefined && body.expectedPlacementCompleted === undefined) {
+    body.expectedPlacementCompleted = body.expectedGoHomeExtendedEnd;
+  }
+
+  // locked → placement
+  if (body.lockedGoHomeDate !== undefined && body.lockedPlacementStartDate === undefined) {
+    body.lockedPlacementStartDate = body.lockedGoHomeDate;
+  }
+
+  // actuals → placement
+  if (body.goHomeDateActual !== undefined && body.placementStartDateActual === undefined) {
+    body.placementStartDateActual = body.goHomeDateActual;
+  }
+  if (body.lastGoHomeDateActual !== undefined && body.placementCompletedDateActual === undefined) {
+    body.placementCompletedDateActual = body.lastGoHomeDateActual;
+  }
+
+  return body;
+}
+
 /** Validate that lock fields are consistent.
  * Rules:
  *  - EITHER all lock fields are NULL (unlocked)
- *  - OR ALL FOUR are non-null (locked) → start/ovulation/due/goHome must be provided together
+ *  - OR ALL FOUR are non-null (locked) → start/ovulation/due/placementStart must be provided together
  *  - Reject partial updates that would violate the invariant.
- *
- * Returns normalized lock dates or throws fastify-style 400 error.
  */
 function validateAndNormalizeLockPayload(body: any) {
+  // Allow legacy keys in payload
+  mapLegacyDates(body);
+
   // Only consider fields that were provided in the payload (so PATCH can be partial).
   const provided = {
     start: body.hasOwnProperty("lockedCycleStart") ? toDateOrNull(body.lockedCycleStart) : undefined,
     ov: body.hasOwnProperty("lockedOvulationDate") ? toDateOrNull(body.lockedOvulationDate) : undefined,
     due: body.hasOwnProperty("lockedDueDate") ? toDateOrNull(body.lockedDueDate) : undefined,
-    home: body.hasOwnProperty("lockedGoHomeDate") ? toDateOrNull(body.lockedGoHomeDate) : undefined,
+    placement: body.hasOwnProperty("lockedPlacementStartDate") ? toDateOrNull(body.lockedPlacementStartDate) : undefined,
   };
 
   // If none of the 4 fields are present in payload, caller isn’t touching lock state.
-  const touched = [provided.start, provided.ov, provided.due, provided.home].some((v) => v !== undefined);
+  const touched = [provided.start, provided.ov, provided.due, provided.placement].some((v) => v !== undefined);
   if (!touched) return { touched: false as const };
 
   // Count non-null among the fields that *were provided*.
-  const nonNullCount = [provided.start, provided.ov, provided.due, provided.home].filter((v) => v instanceof Date).length;
-  const providedCount = [provided.start, provided.ov, provided.due, provided.home].filter((v) => v !== undefined).length;
+  const nonNullCount = [provided.start, provided.ov, provided.due, provided.placement].filter(
+    (v) => v instanceof Date
+  ).length;
+  const providedCount = [provided.start, provided.ov, provided.due, provided.placement].filter(
+    (v) => v !== undefined
+  ).length;
 
   // If caller is explicitly unlocking → all provided must be null.
   const allProvidedNull = providedCount > 0 && nonNullCount === 0;
@@ -98,7 +129,7 @@ function validateAndNormalizeLockPayload(body: any) {
       lockedCycleStart: null,
       lockedOvulationDate: null,
       lockedDueDate: null,
-      lockedGoHomeDate: null,
+      lockedPlacementStartDate: null,
     };
   }
 
@@ -110,8 +141,8 @@ function validateAndNormalizeLockPayload(body: any) {
     if (provided.start === undefined || provided.start === null) missing.push("lockedCycleStart");
     if (provided.ov === undefined || provided.ov === null) missing.push("lockedOvulationDate");
     if (provided.due === undefined || provided.due === null) missing.push("lockedDueDate");
-    if (provided.home === undefined || provided.home === null) missing.push("lockedGoHomeDate");
-    const msg = `lock_invariant: when locking a cycle you must provide all of: lockedCycleStart, lockedOvulationDate, lockedDueDate, lockedGoHomeDate. Missing/empty: ${missing.join(", ")}`;
+    if (provided.placement === undefined || provided.placement === null) missing.push("lockedPlacementStartDate");
+    const msg = `lock_invariant: when locking a cycle you must provide all of: lockedCycleStart, lockedOvulationDate, lockedDueDate, lockedPlacementStartDate. Missing/empty: ${missing.join(", ")}`;
     const err: any = new Error(msg);
     err.statusCode = 400;
     throw err;
@@ -122,10 +153,9 @@ function validateAndNormalizeLockPayload(body: any) {
     lockedCycleStart: provided.start!,
     lockedOvulationDate: provided.ov!,
     lockedDueDate: provided.due!,
-    lockedGoHomeDate: provided.home!,
+    lockedPlacementStartDate: provided.placement!,
   };
 }
-
 
 async function getPlanInTenant(planId: number, tenantId: number) {
   const plan = await prisma.breedingPlan.findFirst({
@@ -151,10 +181,7 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
-/** Generate a tenant-unique, user-friendly plan code.
- * Pattern: PLN-YYYY-00001 (based on plan id)
- * - You can later swap this to include org slug or a per-tenant sequence.
- */
+/** Generate a tenant-unique, user-friendly plan code. */
 function buildCodeFromId(planId: number, d = new Date()) {
   const yyyy = d.getFullYear();
   return `PLN-${yyyy}-${String(planId).padStart(5, "0")}`;
@@ -172,16 +199,20 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
     where: { id: planId, tenantId },
     include: { dam: { select: { name: true } } },
   });
-  const damFirst = String(plan?.dam?.name || "")
-    .trim()
-    .split(/\s+/)[0]
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase()
-    .slice(0, 12) || "DAM";
+  const damFirst =
+    String(plan?.dam?.name || "")
+      .trim()
+      .split(/\s+/)[0]
+      .replace(/[^A-Za-z0-9]/g, "")
+      .toUpperCase()
+      .slice(0, 12) || "DAM";
 
   const commitYmd = ymd(new Date());
-  const dueYmd = plan?.lockedDueDate ? ymd(new Date(plan.lockedDueDate)) :
-    plan?.expectedDue ? ymd(new Date(plan.expectedDue)) : "TBD";
+  const dueYmd = plan?.lockedDueDate
+    ? ymd(new Date(plan.lockedDueDate))
+    : plan?.expectedDue
+    ? ymd(new Date(plan.expectedDue))
+    : "TBD";
 
   const base = `PLN-${damFirst}-${commitYmd}-${dueYmd}`;
 
@@ -189,7 +220,9 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
   let candidate = base;
   let suffix = 2;
   // eslint-disable-next-line no-constant-condition
-  while (await prisma.breedingPlan.findFirst({ where: { tenantId, code: candidate }, select: { id: true } })) {
+  while (
+    await prisma.breedingPlan.findFirst({ where: { tenantId, code: candidate }, select: { id: true } })
+  ) {
     candidate = `${base}-${suffix++}`;
   }
   return candidate;
@@ -300,13 +333,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /breeding/plans
-  // POST /breeding/plans
   app.post("/breeding/plans", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const b = (req.body || {}) as any;
+      const b = mapLegacyDates((req.body || {}) as any);
 
       // required basics
       const name = String(b.name || "").trim();
@@ -331,17 +363,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // ── ENFORCE LOCK INVARIANTS ─────────────────────────────────────────────
-      // All four lock fields must travel together (or all null to unlock).
-      // Also seed expected* from lock if not provided.
       let lockNorm:
         | { touched: false }
         | {
-          touched: true;
-          lockedCycleStart: Date | null;
-          lockedOvulationDate: Date | null;
-          lockedDueDate: Date | null;
-          lockedGoHomeDate: Date | null;
-        };
+            touched: true;
+            lockedCycleStart: Date | null;
+            lockedOvulationDate: Date | null;
+            lockedDueDate: Date | null;
+            lockedPlacementStartDate: Date | null;
+          };
 
       try {
         lockNorm = validateAndNormalizeLockPayload(b);
@@ -370,38 +400,51 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         lockedCycleKey: b.lockedCycleKey ?? null,
         lockedCycleStart: lockNorm.touched
           ? lockNorm.lockedCycleStart
-          : (b.lockedCycleStart ? new Date(b.lockedCycleStart) : null),
+          : b.lockedCycleStart
+          ? new Date(b.lockedCycleStart)
+          : null,
         lockedOvulationDate: lockNorm.touched
           ? lockNorm.lockedOvulationDate
-          : (b.lockedOvulationDate ? new Date(b.lockedOvulationDate) : null),
+          : b.lockedOvulationDate
+          ? new Date(b.lockedOvulationDate)
+          : null,
         lockedDueDate: lockNorm.touched
           ? lockNorm.lockedDueDate
-          : (b.lockedDueDate ? new Date(b.lockedDueDate) : null),
-        lockedGoHomeDate: lockNorm.touched
-          ? lockNorm.lockedGoHomeDate
-          : (b.lockedGoHomeDate ? new Date(b.lockedGoHomeDate) : null),
+          : b.lockedDueDate
+          ? new Date(b.lockedDueDate)
+          : null,
+        lockedPlacementStartDate: lockNorm.touched
+          ? lockNorm.lockedPlacementStartDate
+          : b.lockedPlacementStartDate
+          ? new Date(b.lockedPlacementStartDate)
+          : null,
 
         // expected dates (seed from lock when locking on create if not provided)
-        expectedDue:
-          b.expectedDue
-            ? new Date(b.expectedDue)
-            : lockNorm.touched && lockNorm.lockedDueDate
-              ? lockNorm.lockedDueDate
-              : null,
-        expectedGoHome:
-          b.expectedGoHome
-            ? new Date(b.expectedGoHome)
-            : lockNorm.touched && lockNorm.lockedGoHomeDate
-              ? lockNorm.lockedGoHomeDate
-              : null,
+        expectedDue: b.expectedDue
+          ? new Date(b.expectedDue)
+          : lockNorm.touched && lockNorm.lockedDueDate
+          ? lockNorm.lockedDueDate
+          : null,
+        expectedPlacementStart: b.expectedPlacementStart
+          ? new Date(b.expectedPlacementStart)
+          : lockNorm.touched && lockNorm.lockedPlacementStartDate
+          ? lockNorm.lockedPlacementStartDate
+          : null,
+        expectedWeaned: b.expectedWeaned ? new Date(b.expectedWeaned) : null,
+        expectedPlacementCompleted: b.expectedPlacementCompleted ? new Date(b.expectedPlacementCompleted) : null,
 
-        // actuals (all six supported)
+        // actuals
+        hormoneTestingStartDateActual: b.hormoneTestingStartDateActual
+          ? new Date(b.hormoneTestingStartDateActual)
+          : null,
         breedDateActual: b.breedDateActual ? new Date(b.breedDateActual) : null,
         birthDateActual: b.birthDateActual ? new Date(b.birthDateActual) : null,
         weanedDateActual: b.weanedDateActual ? new Date(b.weanedDateActual) : null,
-        goHomeDateActual: b.goHomeDateActual ? new Date(b.goHomeDateActual) : null,          // "Homing Started"
-        lastGoHomeDateActual: b.lastGoHomeDateActual ? new Date(b.lastGoHomeDateActual) : null, // "Homing Extended End"
-        completedDateActual: b.completedDateActual ? new Date(b.completedDateActual) : null, // <-- Plan Completed (ACTUAL)
+        placementStartDateActual: b.placementStartDateActual ? new Date(b.placementStartDateActual) : null,
+        placementCompletedDateActual: b.placementCompletedDateActual
+          ? new Date(b.placementCompletedDateActual)
+          : null,
+        completedDateActual: b.completedDateActual ? new Date(b.completedDateActual) : null,
 
         // status/notes/finance
         status: b.status ?? "PLANNING",
@@ -422,7 +465,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           lockNorm.lockedCycleStart &&
           lockNorm.lockedOvulationDate &&
           lockNorm.lockedDueDate &&
-          lockNorm.lockedGoHomeDate;
+          lockNorm.lockedPlacementStartDate;
 
         if (lockedOnCreate) {
           await tx.breedingPlanEvent.create({
@@ -437,9 +480,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 lockedCycleStart: lockNorm.lockedCycleStart,
                 lockedOvulationDate: lockNorm.lockedOvulationDate,
                 lockedDueDate: lockNorm.lockedDueDate,
-                lockedGoHomeDate: lockNorm.lockedGoHomeDate,
+                lockedPlacementStartDate: lockNorm.lockedPlacementStartDate,
                 expectedDue: plan.expectedDue,
-                expectedGoHome: plan.expectedGoHome,
+                expectedPlacementStart: plan.expectedPlacementStart,
+                expectedWeaned: plan.expectedWeaned,
+                expectedPlacementCompleted: plan.expectedPlacementCompleted,
               },
             },
           });
@@ -470,7 +515,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
-      const b = (req.body || {}) as any;
+      const raw = (req.body || {}) as any;
+      const b = mapLegacyDates(raw);
       const data: any = {};
 
       if (b.name !== undefined) {
@@ -518,21 +564,28 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const dateKeys = [
+        // locked
         "lockedCycleStart",
         "lockedOvulationDate",
         "lockedDueDate",
-        "lockedGoHomeDate",
+        "lockedPlacementStartDate",
+        // expected
         "expectedDue",
-        "expectedGoHome",
+        "expectedPlacementStart",
+        "expectedWeaned",
+        "expectedPlacementCompleted",
+        // actuals
+        "hormoneTestingStartDateActual",
         "breedDateActual",
         "birthDateActual",
         "weanedDateActual",
-        "goHomeDateActual",
-        "lastGoHomeDateActual",
+        "placementStartDateActual",
+        "placementCompletedDateActual",
         "completedDateActual",
-      ];
+      ] as const;
+
       for (const k of dateKeys) {
-        if (b[k] !== undefined) data[k] = b[k] ? new Date(b[k]) : null;
+        if (b[k] !== undefined) (data as any)[k] = b[k] ? new Date(b[k]) : null;
       }
 
       const passthrough = [
@@ -545,8 +598,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "depositRiskScore",
         "archived",
       ];
-      for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
-
+      for (const k of passthrough) if (b[k] !== undefined) (data as any)[k] = b[k];
 
       // ENFORCE lock invariants on update
       try {
@@ -555,22 +607,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data.lockedCycleStart = lockNorm.lockedCycleStart;
           data.lockedOvulationDate = lockNorm.lockedOvulationDate;
           data.lockedDueDate = lockNorm.lockedDueDate;
-          data.lockedGoHomeDate = lockNorm.lockedGoHomeDate;
+          data.lockedPlacementStartDate = lockNorm.lockedPlacementStartDate;
 
-          // Keep expected* in sync on lock/unlock (optional but recommended)
-          if (lockNorm.lockedDueDate === null && lockNorm.lockedGoHomeDate === null) {
-            // unlocking → clear expected (your UI expects this)
+          // Keep expected* in sync on lock/unlock
+          if (lockNorm.lockedDueDate === null && lockNorm.lockedPlacementStartDate === null) {
+            // unlocking → clear expected (UI expects this)
             data.expectedDue = null;
-            data.expectedGoHome = null;
+            data.expectedPlacementStart = null;
+            data.expectedWeaned = null;
+            data.expectedPlacementCompleted = null;
           } else {
             // locking → seed expected if missing in payload
             if (!b.hasOwnProperty("expectedDue")) data.expectedDue = lockNorm.lockedDueDate;
-            if (!b.hasOwnProperty("expectedGoHome")) data.expectedGoHome = lockNorm.lockedGoHomeDate;
+            if (!b.hasOwnProperty("expectedPlacementStart"))
+              data.expectedPlacementStart = lockNorm.lockedPlacementStartDate;
           }
-        } else {
-          // Caller didn’t touch lock fields this PATCH.
-          // If they tried to set any one of the other 3 without start via "dateKeys" earlier,
-          // validate based on the *payload* combination (already handled in validate function).
         }
       } catch (e) {
         const { status, payload } = errorReply(e);
@@ -584,7 +635,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.status(status).send(payload);
     }
   });
-
 
   // POST /breeding/plans/:id/commit  ← server-side commit + immutable code + full-lock enforcement
   app.post("/breeding/plans/:id/commit", async (req, reply) => {
@@ -610,9 +660,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           lockedCycleStart: true,
           lockedOvulationDate: true,
           lockedDueDate: true,
-          lockedGoHomeDate: true,
+          lockedPlacementStartDate: true,
           expectedDue: true,
-          expectedGoHome: true,
+          expectedPlacementStart: true,
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
@@ -624,8 +674,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "PREGNANT",
         "WHELPED",
         "WEANED",
-        "HOMING",          // if your enum uses HOMING (not HOMING_STARTED)
-        "HOMING_STARTED",  // in case older rows use this label in app logic
+        "PLACEMENT",
+        // legacy safety
+        "HOMING",
+        "HOMING_STARTED",
         "COMPLETE",
         "CANCELED",
       ]);
@@ -639,12 +691,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // === FULL-LOCK ENFORCEMENT ===
-      // Require ALL FOUR lock fields (start, ovulation, due, goHome)
+      // Require ALL FOUR lock fields (start, ovulation, due, placementStart)
       const missingLock: string[] = [];
       if (!plan.lockedCycleStart) missingLock.push("lockedCycleStart");
       if (!plan.lockedOvulationDate) missingLock.push("lockedOvulationDate");
       if (!plan.lockedDueDate) missingLock.push("lockedDueDate");
-      if (!plan.lockedGoHomeDate) missingLock.push("lockedGoHomeDate");
+      if (!plan.lockedPlacementStartDate) missingLock.push("lockedPlacementStartDate");
       if (missingLock.length) {
         return reply.code(400).send({
           error: "full_lock_required",
@@ -663,7 +715,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // 2) Ensure expected dates are set from the lock if missing
         const expectedDue = plan.expectedDue ?? plan.lockedDueDate ?? null;
-        const expectedGoHome = plan.expectedGoHome ?? plan.lockedGoHomeDate ?? null;
+        const expectedPlacementStart =
+          plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
 
         // 3) Flip status → COMMITTED, record who/when
         const saved = await tx.breedingPlan.update({
@@ -672,7 +725,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             code,
             status: "COMMITTED" as any,
             expectedDue,
-            expectedGoHome,
+            expectedPlacementStart,
             committedAt: new Date(),
             committedByUserId: userId,
           },
@@ -692,9 +745,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               lockedCycleStart: plan.lockedCycleStart,
               lockedOvulationDate: plan.lockedOvulationDate,
               lockedDueDate: plan.lockedDueDate,
-              lockedGoHomeDate: plan.lockedGoHomeDate,
+              lockedPlacementStartDate: plan.lockedPlacementStartDate,
               expectedDue,
-              expectedGoHome,
+              expectedPlacementStart,
             },
             recordedByUserId: userId,
           },
@@ -744,7 +797,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  /* ───────────── Reproductive Cycles (unchanged) ───────────── */
+  /* ───────────── Reproductive Cycles (placement naming) ───────────── */
 
   app.get("/breeding/cycles", async (req, reply) => {
     try {
@@ -786,6 +839,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const female = await prisma.animal.findFirst({ where: { id: femaleId, tenantId }, select: { id: true } });
       if (!female) return reply.code(400).send({ error: "female_not_found" });
 
+      // legacy acceptor: map goHomeDate → placementStartDate if present
+      const placementStartDate =
+        b.placementStartDate ?? b.goHomeDate ?? null;
+
       const created = await prisma.reproductiveCycle.create({
         data: {
           tenantId,
@@ -793,7 +850,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           cycleStart: new Date(b.cycleStart),
           ovulation: b.ovulation ? new Date(b.ovulation) : null,
           dueDate: b.dueDate ? new Date(b.dueDate) : null,
-          goHomeDate: b.goHomeDate ? new Date(b.goHomeDate) : null,
+          placementStartDate: placementStartDate ? new Date(placementStartDate) : null,
           status: b.status ?? null,
           notes: b.notes ?? null,
         },
@@ -829,7 +886,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data.femaleId = fid;
         }
       }
-      for (const k of ["cycleStart", "ovulation", "dueDate", "goHomeDate"] as const) {
+      // legacy acceptor: goHomeDate → placementStartDate
+      if (b.goHomeDate !== undefined && b.placementStartDate === undefined) {
+        b.placementStartDate = b.goHomeDate;
+      }
+
+      for (const k of ["cycleStart", "ovulation", "dueDate", "placementStartDate"] as const) {
         if (b[k] !== undefined) data[k] = b[k] ? new Date(b[k]) : null;
       }
       if (b.status !== undefined) data.status = b.status;
@@ -875,6 +937,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!b.type || !b.occurredAt) return reply.code(400).send({ error: "type_and_occurredAt_required" });
 
       await getPlanInTenant(planId, tenantId);
+      if (b.animalId) {
+        const a = await prisma.animal.findFirst({ where: { id: Number(b.animalId), tenantId }, select: { id: true } });
+        if (!a) return reply.code(400).send({ error: "animal_not_in_tenant" });
+      }
+
       const created = await prisma.breedingPlanEvent.create({
         data: {
           tenantId,
@@ -1004,8 +1071,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ───────────── Litter / Reservations / Attachments / Shares / Parties (unchanged) ───────────── */
-
-  // ... (your existing litter/reservation/attachment/share/party routes remain unchanged)
 };
 
 export default breedingRoutes;

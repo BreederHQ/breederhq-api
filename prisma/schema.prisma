@@ -81,14 +81,14 @@ enum VerificationPurpose {
 
 enum BreedingPlanStatus {
   PLANNING
-  COMMITTED // NEW: explicitly track user-acknowledged commitment
+  COMMITTED
   CYCLE_EXPECTED
   HORMONE_TESTING
   BRED
   PREGNANT
   WHELPED
   WEANED
-  HOMING // NEW: “Homing Started”
+  PLACEMENT // renamed from HOMING
   COMPLETE
   CANCELED
 }
@@ -184,9 +184,7 @@ model Session {
 
 model VerificationToken {
   identifier String
-  // legacy raw token (nullable during cutover)
   token      String? @unique
-  // new hashed token
   tokenHash  String  @unique
 
   purpose VerificationPurpose @default(VERIFY_EMAIL)
@@ -270,7 +268,9 @@ model Tenant {
   reservations       Reservation[]
   attachments        Attachment[]
   planParties        PlanParty[]
-  planCodeCounters   PlanCodeCounter[] // NEW: per-tenant code sequencer
+  planCodeCounters   PlanCodeCounter[]
+
+  availabilityPrefs Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -336,7 +336,7 @@ model Organization {
   Invitation    Invitation[]
   PlanParty     PlanParty[]
 
-  @@unique([id, tenantId]) // supports composite references
+  @@unique([id, tenantId])
   @@unique([tenantId, name])
   @@index([archived])
   @@index([name])
@@ -620,16 +620,8 @@ model CustomBreed {
   createdByOrganizationId Int?
   createdByOrganization   Organization? @relation("CreatedByOrganization", fields: [createdByOrganizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
 
-  species Species
-  name    String
-
-  /// Optional structured breakdown of this custom breed.
-  /// Example (JSON):
-  /// [
-  ///   { "source":"canonical", "name":"Bernese Mountain Dog", "canonicalBreedId": 123, "percentage": 50 },
-  ///   { "source":"canonical", "name":"Australian Shepherd",   "canonicalBreedId": 456, "percentage": 25 },
-  ///   { "source":"canonical", "name":"Poodle",               "canonicalBreedId": 789, "percentage": 25 }
-  /// ]
+  species     Species
+  name        String
   composition Json?
 
   createdAt DateTime @default(now())
@@ -657,7 +649,7 @@ model BreedingPlan {
   organization   Organization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
 
   // identity
-  code      String? // human-friendly, unique per tenant; assigned on commit
+  code      String? // unique per tenant; assigned on commit
   name      String
   nickname  String?
   species   Species
@@ -670,31 +662,34 @@ model BreedingPlan {
   sire   Animal? @relation("PlanSire", fields: [sireId], references: [id], onDelete: SetNull)
 
   // locked cycle snapshot for UI
-  lockedCycleKey      String?
-  lockedCycleStart    DateTime?
-  lockedOvulationDate DateTime?
-  lockedDueDate       DateTime?
-  lockedGoHomeDate    DateTime?
+  lockedCycleKey           String?
+  lockedCycleStart         DateTime?
+  lockedOvulationDate      DateTime?
+  lockedDueDate            DateTime?
+  lockedPlacementStartDate DateTime? // renamed from lockedGoHomeDate
 
   // expected dates
-  expectedDue    DateTime?
-  expectedGoHome DateTime?
+  expectedDue                DateTime?
+  expectedWeaned             DateTime?
+  expectedPlacementStart     DateTime? // renamed from expectedGoHome
+  expectedPlacementCompleted DateTime? // renamed from expectedGoHomeExtendedEnd
 
   // actuals
-  breedDateActual      DateTime?
-  birthDateActual      DateTime?
-  weanedDateActual     DateTime?
-  goHomeDateActual     DateTime?
-  lastGoHomeDateActual DateTime?
-  completedDateActual  DateTime?
+  hormoneTestingStartDateActual DateTime? // new
+  breedDateActual               DateTime?
+  birthDateActual               DateTime?
+  weanedDateActual              DateTime?
+  placementStartDateActual      DateTime? // renamed from goHomeDateActual
+  placementCompletedDateActual  DateTime? // renamed from lastGoHomeDateActual
+  completedDateActual           DateTime?
 
   // status and notes
   status BreedingPlanStatus @default(PLANNING)
   notes  String?
 
-  // commitment (immutable code after this point; enforce in app)
-  committedAt       DateTime? // NEW: when the user committed the plan
-  committedByUserId String? // NEW
+  // commitment
+  committedAt       DateTime?
+  committedByUserId String?
   committedByUser   User?     @relation("CommittedByUser", fields: [committedByUserId], references: [id], onDelete: SetNull)
 
   // finance rollups for UI
@@ -722,8 +717,13 @@ model BreedingPlan {
   @@index([organizationId])
   @@index([damId])
   @@index([sireId])
-  @@index([status]) // NEW: handy for views
-  @@index([committedAt]) // NEW: quick filtering
+  @@index([status])
+  @@index([committedAt])
+  @@index([expectedWeaned])
+  @@index([expectedPlacementCompleted])
+  @@index([expectedPlacementStart])
+  @@index([placementStartDateActual])
+  @@index([placementCompletedDateActual])
 }
 
 model ReproductiveCycle {
@@ -734,10 +734,10 @@ model ReproductiveCycle {
   femaleId Int
   female   Animal @relation(fields: [femaleId], references: [id], onDelete: Cascade)
 
-  cycleStart DateTime
-  ovulation  DateTime?
-  dueDate    DateTime?
-  goHomeDate DateTime?
+  cycleStart         DateTime
+  ovulation          DateTime?
+  dueDate            DateTime?
+  placementStartDate DateTime? // renamed from goHomeDate
 
   status String?
   notes  String?
@@ -852,7 +852,7 @@ model BreedingAttempt {
   studOwnerContactId Int?
   studOwnerContact   Contact? @relation("StudOwnerContact", fields: [studOwnerContactId], references: [id], onDelete: SetNull)
 
-  semenBatchId Int? // future relation
+  semenBatchId Int?
 
   success Boolean?
   notes   String?
@@ -907,7 +907,6 @@ model Litter {
   notes String?
   data  Json?
 
-  // offspring animals connected via Animal.litterId
   Animals Animal[]
 
   createdAt   DateTime      @default(now())

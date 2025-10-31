@@ -13,7 +13,7 @@ function b64url(bytes: Buffer) {
   return bytes.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 function makeRawToken(nBytes = 32) {
-  return b64url(crypto.randomBytes(nBytes)); // raw shown to user via email link
+  return b64url(crypto.randomBytes(nBytes));
 }
 function hashToken(raw: string) {
   return crypto.createHash("sha256").update(raw, "utf8").digest("base64url");
@@ -23,7 +23,6 @@ function inviteIdentifier(
   emailLower: string,
   role: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER" = "MEMBER"
 ) {
-  // You can extend this (e.g., add inviter id). Keep short & deterministic.
   return `invite:t=${tenantId};e=${emailLower};r=${role}`;
 }
 
@@ -96,6 +95,29 @@ async function requireSuperAdmin(req: any, reply: any) {
   return actorId;
 }
 
+/** Availability prefs shape stored on Tenant.availabilityPrefs */
+type AvailabilityPrefs = {
+  testing_risky_from_full_start: number;
+  testing_risky_to_full_end: number;
+  testing_unlikely_from_likely_start: number;
+  testing_unlikely_to_likely_end: number;
+  post_risky_from_full_start: number;
+  post_risky_to_full_end: number;
+  post_unlikely_from_likely_start: number;
+  post_unlikely_to_likely_end: number;
+};
+
+const DEFAULT_AVAILABILITY_PREFS: AvailabilityPrefs = {
+  testing_risky_from_full_start: 0,
+  testing_risky_to_full_end: 0,
+  testing_unlikely_from_likely_start: 0,
+  testing_unlikely_to_likely_end: 0,
+  post_risky_from_full_start: 0,
+  post_risky_to_full_end: 0,
+  post_unlikely_from_likely_start: 0,
+  post_unlikely_to_likely_end: 0,
+};
+
 const normEmail = (v?: string | null) => String(v || "").trim().toLowerCase();
 
 /** Shape returned to Admin UI */
@@ -121,7 +143,6 @@ function tenantDTO(t: any) {
           updatedAt: t.billing.updatedAt ?? null,
         }
       : null,
-    // convenience for current Admin UI (Plan column)
     plan: t.billing?.plan ?? null,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
@@ -176,7 +197,69 @@ async function buildCountMaps(tenantIds: number[]) {
 /* ───────────────────────── routes (plugin) ───────────────────────── */
 
 const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  /** GET /admin/tenants — Super Admin only, UNscoped (all tenants) */
+  /** GET /tenants/:id/availability */
+  fastify.get<{ Params: { id: string } }>("/tenants/:id/availability", async (req, reply) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const t = await prisma.tenant.findUnique({
+        where: { id },
+        select: { availabilityPrefs: true },
+      });
+      return reply.send(t?.availabilityPrefs ?? DEFAULT_AVAILABILITY_PREFS);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** PATCH /tenants/:id/availability */
+  fastify.patch<{
+    Params: { id: string };
+    Body: Partial<AvailabilityPrefs>;
+  }>("/tenants/:id/availability", async (req, reply) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const actorId = getActorId(req);
+      if (!actorId) return reply.code(401).send({ error: "unauthorized" });
+      const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+      let allowed = !!actor?.isSuperAdmin;
+      if (!allowed) {
+        const mem = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: actorId, tenantId: id } },
+          select: { role: true },
+        });
+        allowed = !!mem && (mem.role === "OWNER" || mem.role === "ADMIN");
+      }
+      if (!allowed) return reply.code(403).send({ error: "forbidden" });
+
+      const body = req.body || {};
+      if (typeof body !== "object") return reply.status(400).send({ error: "bad_request", detail: "Invalid payload" });
+
+      const existing = await prisma.tenant.findUnique({
+        where: { id },
+        select: { availabilityPrefs: true },
+      });
+
+      const merged = { ...(existing?.availabilityPrefs ?? DEFAULT_AVAILABILITY_PREFS), ...body };
+
+      const updated = await prisma.tenant.update({
+        where: { id },
+        data: { availabilityPrefs: merged as any },
+        select: { availabilityPrefs: true },
+      });
+
+      return reply.send(updated.availabilityPrefs);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** GET /admin/tenants */
   fastify.get("/admin/tenants", async (req, reply) => {
     const actorId = await requireSuperAdmin(req, reply);
     if (!actorId) return;
@@ -254,7 +337,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         }),
       ]);
 
-      // roll-up counts in bulk
       const ids = itemsRaw.map((t) => t.id);
       const maps = await buildCountMaps(ids);
 
@@ -482,7 +564,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  // POST /tenants/:tenantId/invites  { email, role? }
+  // POST /tenants/:tenantId/invites
   fastify.post<{
     Params: { tenantId: string };
     Body: { email: string; role?: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER" };
@@ -491,7 +573,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const tenantId = Number(req.params.tenantId);
       if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
 
-      // AuthZ: super admin OR OWNER/ADMIN of tenant
       const actorId = getActorId(req);
       if (!actorId) return reply.code(401).send({ error: "unauthorized" });
       const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
@@ -509,13 +590,11 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const emailLower = String(email || "").trim().toLowerCase();
       if (!emailLower) return reply.code(400).send({ error: "email_required" });
 
-      // create token (hash-at-rest)
       const raw = makeRawToken(32);
       const tokenHash = hashToken(raw);
       const identifier = inviteIdentifier(tenantId, emailLower, role);
-      const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7); // 7d
+      const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
 
-      // Clean out any old invites for same identifier to keep “latest wins”
       await prisma.verificationToken.deleteMany({ where: { identifier, purpose: "INVITE" } });
 
       const vt = await prisma.verificationToken.create({
@@ -524,13 +603,10 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           tokenHash,
           purpose: "INVITE",
           expires,
-          userId: null, // may be linked later; leave null now
+          userId: null,
         },
         select: { identifier: true, expires: true, createdAt: true },
       });
-
-      // (send email out-of-band) — include `raw` in link:
-      // e.g. https://app.example.com/accept-invite?token=${raw}
 
       return reply.code(201).send({
         ok: true,
@@ -545,7 +621,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  // POST /tenants/:tenantId/invites/revoke  { email }
+  // POST /tenants/:tenantId/invites/revoke
   fastify.post<{
     Params: { tenantId: string };
     Body: { email: string };
@@ -576,7 +652,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
-  // POST /invites/accept  { token, name?, password? }
+  // POST /invites/accept
   fastify.post("/invites/accept", async (req, reply) => {
     try {
       const { token, name, password } = (req.body || {}) as {
@@ -594,14 +670,12 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       });
       if (!vt) return reply.code(400).send({ error: "invalid_or_expired" });
 
-      // identifier format: invite:t=<tenantId>;e=<emailLower>;r=<role>
       const match = vt.identifier.match(/^invite:t=(\d+);e=([^;]+);r=(OWNER|ADMIN|MEMBER|BILLING|VIEWER)$/);
       if (!match) return reply.code(400).send({ error: "malformed_identifier" });
       const tenantId = Number(match[1]);
       const emailLower = match[2];
       const role = match[3] as "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER";
 
-      // sanity check tenant still exists
       const ten = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
       if (!ten) return reply.code(404).send({ error: "tenant_not_found" });
 
@@ -628,19 +702,16 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         select: { id: true, email: true, defaultTenantId: true },
       });
 
-      // create or update membership
       await prisma.tenantMembership.upsert({
         where: { userId_tenantId: { userId: user.id, tenantId } },
-        update: { role }, // if already a member, you can choose NOT to elevate role here; tweak if needed
+        update: { role },
         create: { userId: user.id, tenantId, role },
       });
 
-      // optional: set defaultTenantId if none
       if (!user.defaultTenantId) {
         await prisma.user.update({ where: { id: user.id }, data: { defaultTenantId: tenantId } });
       }
 
-      // single-use: delete token
       await prisma.verificationToken.deleteMany({ where: { tokenHash, purpose: "INVITE" } });
 
       return reply.send({ ok: true, tenantId, email: user.email });
@@ -650,7 +721,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  // GET /tenants/:tenantId/invites
+  /** GET /tenants/:tenantId/invites */
   fastify.get<{ Params: { tenantId: string } }>("/tenants/:tenantId/invites", async (req, reply) => {
     const tenantId = Number(req.params.tenantId);
     if (!Number.isFinite(tenantId)) return reply.code(400).send({ error: "tenantId_invalid" });
@@ -753,7 +824,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** POST /tenants/admin-provision  (Super Admin only) */
+  /** POST /tenants/admin-provision */
   fastify.post<{
     Body: {
       tenant: { name: string; primaryEmail?: string | null };
@@ -785,7 +856,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const ownerEmail = normEmail(owner.email);
 
       const result = await prisma.$transaction(async (tx) => {
-        // 1) Tenant
         const createdTenant = await tx.tenant.create({
           data: {
             name: tenant.name,
@@ -794,7 +864,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           include: { billing: true },
         });
 
-        // 2) Owner user
         const user = await tx.user.upsert({
           where: { email: ownerEmail },
           update: {
@@ -816,14 +885,12 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           },
         });
 
-        // 3) OWNER membership
         await tx.tenantMembership.upsert({
           where: { userId_tenantId: { userId: user.id, tenantId: createdTenant.id } },
           update: { role: "OWNER" },
           create: { userId: user.id, tenantId: createdTenant.id, role: "OWNER" },
         });
 
-        // 4) Optional default tenant
         if (owner.makeDefault) {
           await tx.user.update({
             where: { id: user.id },
@@ -831,7 +898,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           });
         }
 
-        // 5) Optional billing
         let savedBilling = null as any;
         if (billing) {
           const data: any = { ...billing };
@@ -897,7 +963,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         return reply.status(400).send({ error: "bad_request", detail: "Password must be at least 8 characters" });
       }
 
-      // authz: Super Admin OR tenant OWNER/ADMIN
       const actorId = getActorId(req);
       if (!actorId) return reply.status(401).send({ error: "unauthorized" });
 
@@ -916,7 +981,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       }
       if (!allowed) return reply.status(403).send({ error: "forbidden" });
 
-      // ensure target is in this tenant
       const targetMembership = await prisma.tenantMembership.findUnique({
         where: { userId_tenantId: { userId, tenantId } },
         select: { userId: true },
@@ -926,11 +990,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const passwordHash = await bcrypt.hash(password, 12);
       await prisma.user.update({
         where: { id: userId },
-        data: { passwordHash, passwordUpdatedAt: new Date() }, // ← aligns with schema
+        data: { passwordHash, passwordUpdatedAt: new Date() },
       });
-
-      // Optional: revoke existing sessions for the user
-      // await prisma.session.deleteMany({ where: { userId } });
 
       return reply.send({ ok: true });
     } catch (err) {
@@ -955,7 +1016,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         return reply.status(400).send({ error: "bad_request", detail: "role is required" });
       }
 
-      // Protect against demoting the last OWNER
       if (role !== "OWNER") {
         const current = await prisma.tenantMembership.findUnique({
           where: { userId_tenantId: { userId, tenantId } },
@@ -983,7 +1043,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** POST /tenants/:tenantId/users/:userId/verify-email (stub) */
+  /** POST /tenants/:tenantId/users/:userId/verify-email */
   fastify.post<{ Params: { tenantId: string; userId: string } }>(
     "/tenants/:tenantId/users/:userId/verify-email",
     async (req, reply) => {
@@ -1007,7 +1067,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   );
 
-  /** POST /tenants/:tenantId/users/:userId/reset-password (stub) */
+  /** POST /tenants/:tenantId/users/:userId/reset-password */
   fastify.post<{ Params: { tenantId: string; userId: string } }>(
     "/tenants/:tenantId/users/:userId/reset-password",
     async (req, reply) => {
@@ -1022,7 +1082,6 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       });
       if (!membership) return reply.status(404).send({ error: "not_found" });
 
-      // TODO: generate verification token (purpose=RESET_PASSWORD, hash-at-rest) and email it.
       return reply.send({ ok: true });
     }
   );
