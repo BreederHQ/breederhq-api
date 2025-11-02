@@ -2,10 +2,13 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 
-// Keep these in sync with Prisma enums
+/* Keep these in sync with Prisma enums */
 type Species = "DOG" | "CAT" | "HORSE";
 type Sex = "FEMALE" | "MALE";
 type AnimalStatus = "ACTIVE" | "BREEDING" | "UNAVAILABLE" | "RETIRED" | "DECEASED" | "PROSPECT";
+type OwnerPartyType = "Organization" | "Contact";
+
+/* ───────── utils ───────── */
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -47,7 +50,7 @@ async function assertTenant(req: any, reply: any): Promise<number | null> {
   return tenantId;
 }
 
-// Guard: organization must exist AND be in the active tenant
+/* Guards */
 async function assertOrgInTenant(orgId: number, tenantId: number) {
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
@@ -57,7 +60,6 @@ async function assertOrgInTenant(orgId: number, tenantId: number) {
   if (org.tenantId !== tenantId) throw Object.assign(new Error("forbidden"), { statusCode: 403 });
   return org;
 }
-// Guard: contact must exist AND be in the active tenant
 async function assertContactInTenant(contactId: number, tenantId: number) {
   const c = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -67,7 +69,6 @@ async function assertContactInTenant(contactId: number, tenantId: number) {
   if (c.tenantId !== tenantId) throw Object.assign(new Error("forbidden"), { statusCode: 403 });
   return c;
 }
-// Guard: animal must exist AND be in tenant
 async function assertAnimalInTenant(animalId: number, tenantId: number) {
   const a = await prisma.animal.findFirst({
     where: { id: animalId, tenantId },
@@ -77,10 +78,25 @@ async function assertAnimalInTenant(animalId: number, tenantId: number) {
   return a;
 }
 
+/* Cross refs validation matching schema relations */
+async function validateCanonicalBreedId(canonicalBreedId: number | null | undefined) {
+  if (canonicalBreedId == null) return;
+  const exists = await prisma.breed.findUnique({ where: { id: canonicalBreedId }, select: { id: true } });
+  if (!exists) throw Object.assign(new Error("canonical_breed_not_found"), { statusCode: 404 });
+}
+async function validateCustomBreedId(customBreedId: number | null | undefined, tenantId: number) {
+  if (customBreedId == null) return;
+  const exists = await prisma.customBreed.findFirst({
+    where: { id: customBreedId, tenantId },
+    select: { id: true, tenantId: true },
+  });
+  if (!exists) throw Object.assign(new Error("custom_breed_not_in_tenant"), { statusCode: 404 });
+}
+
+/* ───────── routes ───────── */
+
 const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  // ───────────────────────────────────────────────────────────────────────────
   // GET /animals?q=&species=&sex=&status=&organizationId=&includeArchived=&page=&limit=&sort=
-  // ───────────────────────────────────────────────────────────────────────────
   app.get("/animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -166,6 +182,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           breed: true,
           canonicalBreedId: true,
           customBreedId: true,
+          litterId: true,
           archived: true,
           createdAt: true,
           updatedAt: true,
@@ -177,9 +194,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ items, total, page: pageNum, limit: take });
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
   // GET /animals/:id
-  // ───────────────────────────────────────────────────────────────────────────
   app.get("/animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -203,6 +218,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         breed: true,
         canonicalBreedId: true,
         customBreedId: true,
+        litterId: true,
         archived: true,
         createdAt: true,
         updatedAt: true,
@@ -212,9 +228,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send(rec);
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
   // POST /animals
-  // ───────────────────────────────────────────────────────────────────────────
   app.post("/animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -254,6 +268,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       orgId = parsed;
     }
 
+    await validateCanonicalBreedId(b.canonicalBreedId ?? null);
+    await validateCustomBreedId(b.customBreedId ?? null, tenantId);
+
     try {
       const created = await prisma.animal.create({
         data: {
@@ -284,6 +301,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           breed: true,
           canonicalBreedId: true,
           customBreedId: true,
+          litterId: true,
           archived: true,
           createdAt: true,
           updatedAt: true,
@@ -292,15 +310,19 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
-        return reply.code(409).send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
+        // @@unique([tenantId, microchip])
+        return reply
+          .code(409)
+          .send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
+      }
+      if (e?.code === "P2003") {
+        return reply.code(409).send({ error: "foreign_key_conflict" });
       }
       throw e;
     }
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
   // PATCH /animals/:id
-  // ───────────────────────────────────────────────────────────────────────────
   app.patch("/animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -325,6 +347,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       archived: boolean;
     }>;
+
+    // Pre-validate cross refs to match schema constraints
+    if (b.canonicalBreedId !== undefined && b.canonicalBreedId !== null) {
+      await validateCanonicalBreedId(b.canonicalBreedId);
+    }
+    if (b.customBreedId !== undefined && b.customBreedId !== null) {
+      await validateCustomBreedId(b.customBreedId, tenantId);
+    }
 
     const data: any = {};
     if (b.name !== undefined) {
@@ -387,6 +417,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           breed: true,
           canonicalBreedId: true,
           customBreedId: true,
+          litterId: true,
           archived: true,
           createdAt: true,
           updatedAt: true,
@@ -395,18 +426,21 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.send(updated);
     } catch (e: any) {
       if (e?.code === "P2002") {
-        return reply.code(409).send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
+        return reply
+          .code(409)
+          .send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
       }
       if (e?.code === "P2025") {
         return reply.code(404).send({ error: "not_found" });
+      }
+      if (e?.code === "P2003") {
+        return reply.code(409).send({ error: "foreign_key_conflict" });
       }
       throw e;
     }
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // POST /animals/:id/archive  |  /animals/:id/restore
-  // ───────────────────────────────────────────────────────────────────────────
+  // POST /animals/:id/archive
   app.post("/animals/:id/archive", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -418,6 +452,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
+  // POST /animals/:id/restore
   app.post("/animals/:id/restore", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -429,9 +464,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
   // DELETE /animals/:id
-  // ───────────────────────────────────────────────────────────────────────────
   app.delete("/animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -444,12 +477,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // TAGS (parity with tags module from the animal side)
+  /* TAGS */
   // GET /animals/:id/tags
-  // POST /animals/:id/tags { tagId }
-  // DELETE /animals/:id/tags/:tagId
-  // ───────────────────────────────────────────────────────────────────────────
   app.get("/animals/:id/tags", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -470,6 +499,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
   });
 
+  // POST /animals/:id/tags { tagId }
   app.post("/animals/:id/tags", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -497,6 +527,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DELETE /animals/:id/tags/:tagId
   app.delete("/animals/:id/tags/:tagId", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -510,13 +541,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // OWNERS CRUD
+  /* OWNERS */
   // GET /animals/:id/owners
-  // POST /animals/:id/owners
-  // PATCH /animals/:id/owners/:ownerId
-  // DELETE /animals/:id/owners/:ownerId
-  // ───────────────────────────────────────────────────────────────────────────
   app.get("/animals/:id/owners", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -558,6 +584,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
   });
 
+  // POST /animals/:id/owners
   app.post("/animals/:id/owners", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -567,7 +594,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await assertAnimalInTenant(animalId, tenantId);
 
     const b = (req.body || {}) as {
-      partyType: "Organization" | "Contact";
+      partyType: OwnerPartyType;
       organizationId?: number | null;
       contactId?: number | null;
       percent: number;
@@ -626,6 +653,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // PATCH /animals/:id/owners/:ownerId
   app.patch("/animals/:id/owners/:ownerId", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -646,7 +674,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const b = (req.body || {}) as Partial<{
       percent: number;
       isPrimary: boolean;
-      partyType: "Organization" | "Contact";
+      partyType: OwnerPartyType;
       organizationId: number | null;
       contactId: number | null;
     }>;
@@ -662,7 +690,6 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.partyType !== undefined) {
       if (!["Organization", "Contact"].includes(b.partyType)) return reply.code(400).send({ error: "partyType_invalid" });
       data.partyType = b.partyType;
-      // When changing partyType, require appropriate target
       if (b.partyType === "Organization") {
         const orgId = parseIntStrict(b.organizationId);
         if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
@@ -677,7 +704,6 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data.organizationId = null;
       }
     } else {
-      // Same partyType; allow changing specific target IDs
       if (existing.partyType === "Organization" && b.organizationId !== undefined) {
         if (b.organizationId === null) return reply.code(400).send({ error: "organizationId_required" });
         const orgId = parseIntStrict(b.organizationId);
@@ -718,6 +744,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DELETE /animals/:id/owners/:ownerId
   app.delete("/animals/:id/owners/:ownerId", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -739,13 +766,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // REGISTRY IDENTIFIERS CRUD
+  /* REGISTRY IDENTIFIERS */
   // GET /animals/:id/registries
-  // POST /animals/:id/registries
-  // PATCH /animals/:id/registries/:identifierId
-  // DELETE /animals/:id/registries/:identifierId
-  // ───────────────────────────────────────────────────────────────────────────
   app.get("/animals/:id/registries", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -772,6 +794,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ items: rows, total: rows.length });
   });
 
+  // POST /animals/:id/registries
   app.post("/animals/:id/registries", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -792,7 +815,6 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!registryId) return reply.code(400).send({ error: "registryId_invalid" });
     const registry = await prisma.registry.findUnique({ where: { id: registryId }, select: { id: true, species: true } });
     if (!registry) return reply.code(404).send({ error: "registry_not_found" });
-    // Optional species sanity check (if registry.species set)
     if (registry.species && registry.species !== a.species) {
       return reply.code(400).send({ error: "registry_species_mismatch" });
     }
@@ -820,6 +842,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // PATCH /animals/:id/registries/:identifierId
   app.patch("/animals/:id/registries/:identifierId", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -874,6 +897,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DELETE /animals/:id/registries/:identifierId
   app.delete("/animals/:id/registries/:identifierId", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;

@@ -1,3 +1,4 @@
+// apps/api/src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 
@@ -56,7 +57,7 @@ function includeFlags(qInclude: any) {
   };
 }
 
-/* ───────────────────────── lock invariants ───────────────────────── */
+/* ───────────────────────── normalization ───────────────────────── */
 
 /** Convert possibly-undefined ISO string to Date|null without throwing. */
 function toDateOrNull(v: any): Date | null {
@@ -65,9 +66,9 @@ function toDateOrNull(v: any): Date | null {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
-/** Accept old payload keys and map to the new placement keys when missing. */
+/** Accept old payload keys and map to the current schema field names. */
 function mapLegacyDates(body: any) {
-  // expected → placement
+  // expected → placement (legacy "GoHome" keys)
   if (body.expectedGoHome !== undefined && body.expectedPlacementStart === undefined) {
     body.expectedPlacementStart = body.expectedGoHome;
   }
@@ -86,6 +87,19 @@ function mapLegacyDates(body: any) {
   }
   if (body.lastGoHomeDateActual !== undefined && body.placementCompletedDateActual === undefined) {
     body.placementCompletedDateActual = body.lastGoHomeDateActual;
+  }
+
+  // legacy "expectedDue" → new "expectedBirthDate"
+  if (body.expectedDue !== undefined && body.expectedBirthDate === undefined) {
+    body.expectedBirthDate = body.expectedDue;
+  }
+
+  // very old "whelp" aliases (just in case)
+  if (body.whelpDateActual !== undefined && body.birthDateActual === undefined) {
+    body.birthDateActual = body.whelpDateActual;
+  }
+  if (body.expectedWhelpDate !== undefined && body.expectedBirthDate === undefined) {
+    body.expectedBirthDate = body.expectedWhelpDate;
   }
 
   return body;
@@ -210,8 +224,8 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
   const commitYmd = ymd(new Date());
   const dueYmd = plan?.lockedDueDate
     ? ymd(new Date(plan.lockedDueDate))
-    : plan?.expectedDue
-    ? ymd(new Date(plan.expectedDue))
+    : plan?.expectedBirthDate
+    ? ymd(new Date(plan.expectedBirthDate))
     : "TBD";
 
   const base = `PLN-${damFirst}-${commitYmd}-${dueYmd}`;
@@ -419,9 +433,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           ? new Date(b.lockedPlacementStartDate)
           : null,
 
-        // expected dates (seed from lock when locking on create if not provided)
-        expectedDue: b.expectedDue
-          ? new Date(b.expectedDue)
+        // expected dates
+        expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
+        expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
+        expectedBreedDate: b.expectedBreedDate ? new Date(b.expectedBreedDate) : null,
+        expectedBirthDate: b.expectedBirthDate
+          ? new Date(b.expectedBirthDate)
           : lockNorm.touched && lockNorm.lockedDueDate
           ? lockNorm.lockedDueDate
           : null,
@@ -434,6 +451,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         expectedPlacementCompleted: b.expectedPlacementCompleted ? new Date(b.expectedPlacementCompleted) : null,
 
         // actuals
+        cycleStartDateActual: b.cycleStartDateActual ? new Date(b.cycleStartDateActual) : null,
         hormoneTestingStartDateActual: b.hormoneTestingStartDateActual
           ? new Date(b.hormoneTestingStartDateActual)
           : null,
@@ -481,7 +499,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 lockedOvulationDate: lockNorm.lockedOvulationDate,
                 lockedDueDate: lockNorm.lockedDueDate,
                 lockedPlacementStartDate: lockNorm.lockedPlacementStartDate,
-                expectedDue: plan.expectedDue,
+                expectedBirthDate: plan.expectedBirthDate,
                 expectedPlacementStart: plan.expectedPlacementStart,
                 expectedWeaned: plan.expectedWeaned,
                 expectedPlacementCompleted: plan.expectedPlacementCompleted,
@@ -569,12 +587,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "lockedOvulationDate",
         "lockedDueDate",
         "lockedPlacementStartDate",
-        // expected
-        "expectedDue",
+        // expected (new set)
+        "expectedCycleStart",
+        "expectedHormoneTestingStart",
+        "expectedBreedDate",
+        "expectedBirthDate",
         "expectedPlacementStart",
         "expectedWeaned",
         "expectedPlacementCompleted",
         // actuals
+        "cycleStartDateActual",
         "hormoneTestingStartDateActual",
         "breedDateActual",
         "birthDateActual",
@@ -612,13 +634,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           // Keep expected* in sync on lock/unlock
           if (lockNorm.lockedDueDate === null && lockNorm.lockedPlacementStartDate === null) {
             // unlocking → clear expected (UI expects this)
-            data.expectedDue = null;
+            data.expectedBirthDate = null;
             data.expectedPlacementStart = null;
             data.expectedWeaned = null;
             data.expectedPlacementCompleted = null;
           } else {
             // locking → seed expected if missing in payload
-            if (!b.hasOwnProperty("expectedDue")) data.expectedDue = lockNorm.lockedDueDate;
+            if (!b.hasOwnProperty("expectedBirthDate")) data.expectedBirthDate = lockNorm.lockedDueDate;
             if (!b.hasOwnProperty("expectedPlacementStart"))
               data.expectedPlacementStart = lockNorm.lockedPlacementStartDate;
           }
@@ -661,7 +683,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           lockedOvulationDate: true,
           lockedDueDate: true,
           lockedPlacementStartDate: true,
-          expectedDue: true,
+          expectedBirthDate: true,
           expectedPlacementStart: true,
         },
       });
@@ -672,7 +694,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "COMMITTED",
         "BRED",
         "PREGNANT",
-        "WHELPED",
+        "BIRTHED",
         "WEANED",
         "PLACEMENT",
         // legacy safety
@@ -714,7 +736,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
 
         // 2) Ensure expected dates are set from the lock if missing
-        const expectedDue = plan.expectedDue ?? plan.lockedDueDate ?? null;
+        const expectedBirthDate = plan.expectedBirthDate ?? plan.lockedDueDate ?? null;
         const expectedPlacementStart =
           plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
 
@@ -724,7 +746,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: {
             code,
             status: "COMMITTED" as any,
-            expectedDue,
+            expectedBirthDate,
             expectedPlacementStart,
             committedAt: new Date(),
             committedByUserId: userId,
@@ -746,7 +768,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               lockedOvulationDate: plan.lockedOvulationDate,
               lockedDueDate: plan.lockedDueDate,
               lockedPlacementStartDate: plan.lockedPlacementStartDate,
-              expectedDue,
+              expectedBirthDate,
               expectedPlacementStart,
             },
             recordedByUserId: userId,
