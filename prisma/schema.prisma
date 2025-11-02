@@ -86,7 +86,7 @@ enum BreedingPlanStatus {
   HORMONE_TESTING
   BRED
   PREGNANT
-  WHELPED
+  BIRTHED
   WEANED
   PLACEMENT // renamed from HOMING
   COMPLETE
@@ -668,19 +668,23 @@ model BreedingPlan {
   lockedDueDate            DateTime?
   lockedPlacementStartDate DateTime? // renamed from lockedGoHomeDate
 
-  // expected dates
-  expectedDue                DateTime?
-  expectedWeaned             DateTime?
-  expectedPlacementStart     DateTime? // renamed from expectedGoHome
-  expectedPlacementCompleted DateTime? // renamed from expectedGoHomeExtendedEnd
+  // ===== Expected dates (new + normalized) =====
+  expectedCycleStart          DateTime?
+  expectedHormoneTestingStart DateTime?
+  expectedBreedDate           DateTime?
+  expectedBirthDate           DateTime?
+  expectedWeaned              DateTime?
+  expectedPlacementStart      DateTime?
+  expectedPlacementCompleted  DateTime?
 
-  // actuals
-  hormoneTestingStartDateActual DateTime? // new
+  // ===== Actual dates (complete set) =====
+  cycleStartDateActual          DateTime?
+  hormoneTestingStartDateActual DateTime?
   breedDateActual               DateTime?
   birthDateActual               DateTime?
   weanedDateActual              DateTime?
-  placementStartDateActual      DateTime? // renamed from goHomeDateActual
-  placementCompletedDateActual  DateTime? // renamed from lastGoHomeDateActual
+  placementStartDateActual      DateTime?
+  placementCompletedDateActual  DateTime?
   completedDateActual           DateTime?
 
   // status and notes
@@ -724,6 +728,11 @@ model BreedingPlan {
   @@index([expectedPlacementStart])
   @@index([placementStartDateActual])
   @@index([placementCompletedDateActual])
+  @@index([expectedBirthDate])
+  @@index([expectedCycleStart])
+  @@index([expectedHormoneTestingStart])
+  @@index([expectedBreedDate])
+  @@index([cycleStartDateActual])
 }
 
 model ReproductiveCycle {
@@ -784,7 +793,7 @@ model BreedingPlanEvent {
   planId Int
   plan   BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
-  // examples: CYCLE_OBSERVED, PROGESTERONE_TEST, BREEDING_ATTEMPT, PREGNANCY_CHECK, WHELPING_START, WHELPING_END, WEANING, NOTE, VACCINATION
+  // examples: CYCLE_OBSERVED, PROGESTERONE_TEST, BREEDING_ATTEMPT, PREGNANCY_CHECK, WEANING, NOTE, VACCINATION
   type String
 
   occurredAt DateTime
@@ -895,8 +904,8 @@ model Litter {
   plan   BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   identifier     String?
-  whelpedStartAt DateTime?
-  whelpedEndAt   DateTime?
+  birthedStartAt DateTime?
+  birthedEndAt   DateTime?
 
   countBorn      Int?
   countLive      Int?
