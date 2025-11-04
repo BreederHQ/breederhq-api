@@ -8,6 +8,12 @@ datasource db {
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Core enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -39,6 +45,7 @@ enum TagModule {
   CONTACT
   ORGANIZATION
   ANIMAL
+  WAITLIST_ENTRY
 }
 
 enum OwnerPartyType {
@@ -88,7 +95,7 @@ enum BreedingPlanStatus {
   PREGNANT
   BIRTHED
   WEANED
-  PLACEMENT // renamed from HOMING
+  PLACEMENT
   COMPLETE
   CANCELED
 }
@@ -108,15 +115,30 @@ enum PregnancyCheckMethod {
   OTHER
 }
 
+enum WaitlistStatus {
+  INQUIRY
+  DEPOSIT_DUE
+  DEPOSIT_PAID
+  READY
+  ALLOCATED
+  COMPLETED
+  CANCELED
+}
+
 /**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Users & Auth
  * ────────────────────────────────────────────────────────────────────────────
  */
 
 model User {
-  id    String  @id @default(cuid())
-  email String  @unique @db.Citext
-  name  String?
-  image String?
+  id        String  @id @default(cuid())
+  email     String  @unique @db.Citext
+  name      String?
+  firstName String?
+  lastName  String?
+  nickname  String?
+  image     String?
 
   // auth
   passwordHash      String?
@@ -237,6 +259,12 @@ model Invitation {
   @@index([organizationId])
 }
 
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Multi-tenancy & Orgs
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 model Tenant {
   id           Int     @id @default(autoincrement())
   name         String
@@ -265,7 +293,7 @@ model Tenant {
   breedingAttempts   BreedingAttempt[]
   pregnancyChecks    PregnancyCheck[]
   litters            Litter[]
-  reservations       Reservation[]
+  waitlist           WaitlistEntry[]
   attachments        Attachment[]
   planParties        PlanParty[]
   planCodeCounters   PlanCodeCounter[]
@@ -335,6 +363,7 @@ model Organization {
   TagAssignment TagAssignment[]
   Invitation    Invitation[]
   PlanParty     PlanParty[]
+  WaitlistEntry WaitlistEntry[]
 
   @@unique([id, tenantId])
   @@unique([tenantId, name])
@@ -387,7 +416,7 @@ model Contact {
 
   // breeding additions
   breedingAttemptsAsStudOwner BreedingAttempt[] @relation("StudOwnerContact")
-  reservations                Reservation[]
+  waitlistEntries             WaitlistEntry[]
 
   archived   Boolean      @default(false)
   createdAt  DateTime     @default(now())
@@ -404,6 +433,12 @@ model Contact {
   @@index([first_name])
   @@index([nickname])
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Animals & Ownership
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 
 model Animal {
   id               Int           @id @default(autoincrement())
@@ -431,6 +466,11 @@ model Animal {
   breedingPlansAsSire BreedingPlan[]      @relation("PlanSire")
   litterId            Int?
   litter              Litter?             @relation(fields: [litterId], references: [id], onDelete: SetNull)
+
+  // Waitlist back-refs (explicit and uniquely named)
+  waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
+  waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
+  waitlistDamPrefs    WaitlistEntry[] @relation("WaitlistDamPref")
 
   tagAssignments TagAssignment[]
   owners         AnimalOwner[]
@@ -542,6 +582,12 @@ model AnimalPublicListing {
   @@index([tenantId])
 }
 
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Tags
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 model Tag {
   id          Int             @id @default(autoincrement())
   tenantId    Int
@@ -558,24 +604,39 @@ model Tag {
 }
 
 model TagAssignment {
-  id             Int           @id @default(autoincrement())
-  tagId          Int
-  tag            Tag           @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  contactId      Int?
-  contact        Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  id    Int @id @default(autoincrement())
+  tagId Int
+  tag   Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  contactId Int?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  animalId       Int?
-  animal         Animal?       @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  createdAt      DateTime      @default(now())
+
+  animalId Int?
+  animal   Animal? @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  waitlistEntryId Int?
+  waitlistEntry   WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 
   @@unique([tagId, contactId])
   @@unique([tagId, organizationId])
   @@unique([tagId, animalId])
+  @@unique([tagId, waitlistEntryId])
   @@index([contactId])
   @@index([organizationId])
   @@index([animalId])
+  @@index([waitlistEntryId])
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Breeds
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 
 model Breed {
   id        Int      @id @default(autoincrement())
@@ -636,7 +697,7 @@ model CustomBreed {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
- * Breeding additions: core models
+ * Breeding core
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -666,7 +727,7 @@ model BreedingPlan {
   lockedCycleStart         DateTime?
   lockedOvulationDate      DateTime?
   lockedDueDate            DateTime?
-  lockedPlacementStartDate DateTime? // renamed from lockedGoHomeDate
+  lockedPlacementStartDate DateTime?
 
   // ===== Expected dates (new + normalized) =====
   expectedCycleStart          DateTime?
@@ -704,7 +765,7 @@ model BreedingPlan {
   // relations
   Litter           Litter?
   Events           BreedingPlanEvent[]
-  Reservations     Reservation[]
+  Waitlist         WaitlistEntry[]
   Shares           BreedingPlanShare[]
   TestResults      TestResult[]
   BreedingAttempts BreedingAttempt[]
@@ -746,7 +807,7 @@ model ReproductiveCycle {
   cycleStart         DateTime
   ovulation          DateTime?
   dueDate            DateTime?
-  placementStartDate DateTime? // renamed from goHomeDate
+  placementStartDate DateTime?
 
   status String?
   notes  String?
@@ -781,7 +842,7 @@ model BreedingPlanShare {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
- * Breeding additions: plug-ins
+ * Breeding plug-ins
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -895,6 +956,12 @@ model PregnancyCheck {
   @@index([planId, checkedAt])
 }
 
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Offspring Group (Litter) + Waitlist
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 model Litter {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -913,49 +980,99 @@ model Litter {
   countMale      Int?
   countFemale    Int?
 
+  // Offspring Group timeline (PLACEMENT terminology)
+  weanedAt             DateTime?
+  placementStartAt     DateTime?
+  placementCompletedAt DateTime?
+
+  // Optional marketing/publishing helpers
+  published     Boolean @default(false)
+  coverImageUrl String?
+  themeName     String?
+
   notes String?
   data  Json?
 
-  Animals Animal[]
+  Animals    Animal[]
+  Waitlist   WaitlistEntry[]
+  Attachment Attachment[]
 
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  Reservation Reservation[]
-  Attachment  Attachment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+  @@index([tenantId, weanedAt])
+  @@index([tenantId, placementStartAt])
+  @@index([tenantId, placementCompletedAt])
 }
 
-model Reservation {
+model WaitlistEntry {
   id       Int    @id @default(autoincrement())
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  planId Int?
-  plan   BreedingPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
-
+  // Association (null = global waitlist / parking lot)
+  planId   Int?
+  plan     BreedingPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
   litterId Int?
-  litter   Litter? @relation(fields: [litterId], references: [id], onDelete: SetNull)
+  litter   Litter?       @relation(fields: [litterId], references: [id], onDelete: SetNull)
 
-  contactId Int
-  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  // Buyer can be a Contact or an Organization (enforce one-or-the-other in app layer)
+  partyType      OwnerPartyType
+  contactId      Int?
+  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  organizationId Int?
+  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
-  status   String
-  priority Int?
+  // Preferences for matching (breed/species + specific parents)
+  speciesPref Species?
+  breedPrefs  Json? // array of breed names/ids (flexible)
+  sirePrefId  Int?
+  sirePref    Animal?  @relation("WaitlistSirePref", fields: [sirePrefId], references: [id], onDelete: SetNull)
+  damPrefId   Int?
+  damPref     Animal?  @relation("WaitlistDamPref", fields: [damPrefId], references: [id], onDelete: SetNull)
 
+  // Selection & finance references (no billing logic here)
+  status               WaitlistStatus @default(INQUIRY)
+  priority             Int?
+  depositInvoiceId     String?
+  balanceInvoiceId     String?
+  depositPaidAt        DateTime?
+  // optional display-only snapshots
   depositRequiredCents Int?
   depositPaidCents     Int?
   balanceDueCents      Int?
 
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Allocation to a specific animal when selected
+  animalId Int?
+  animal   Animal? @relation("WaitlistAllocation", fields: [animalId], references: [id], onDelete: SetNull)
+
+  // Skip policy tracking
+  skipCount  Int?
+  lastSkipAt DateTime?
+
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  TagAssignment TagAssignment[]
 
   @@index([tenantId])
   @@index([planId])
   @@index([litterId])
   @@index([contactId])
+  @@index([organizationId])
+  @@index([tenantId, speciesPref])
+  @@index([sirePrefId])
+  @@index([damPrefId])
+  @@index([animalId])
+  @@index([tenantId, depositPaidAt])
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Attachments, Parties, Counters
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 
 model Attachment {
   id       Int    @id @default(autoincrement())

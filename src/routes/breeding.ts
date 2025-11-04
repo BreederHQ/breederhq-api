@@ -2,6 +2,92 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 
+/* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
+
+function toNum(v: any): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function readCookie(rawCookie: string | undefined, name: string): string | null {
+  if (!rawCookie) return null;
+  const esc = name.replace(/[-[\]/{}()*+?.\\^$|]/g, "\\$&");
+  const m = rawCookie.match(new RegExp(`(?:^|; )${esc}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function parseBHQSessionTenant(cookieVal: string | null): number | null {
+  if (!cookieVal) return null;
+  try {
+    const payloadB64 = cookieVal.includes(".") ? cookieVal.split(".")[1] : cookieVal; // JWT payload or raw
+    // atob safe polyfill
+    const jsonStr =
+      typeof Buffer !== "undefined"
+        ? Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+        : (globalThis as any).atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
+    const obj = JSON.parse(jsonStr || "{}");
+    return (
+      toNum((obj as any)?.tenantId) ??
+      toNum((obj as any)?.orgId) ??
+      toNum((obj as any)?.tenantID) ??
+      toNum((obj as any)?.tenant_id) ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function resolveTenantIdFromRequest(req: any): number | null {
+  // 1) Header (prefer explicit header)
+  // Fastify lower-cases header names, but be defensive.
+  const h = req.headers || {};
+  const headerTenant =
+    toNum(h["x-tenant-id"]) ??
+    toNum(h["X-Tenant-Id"]) ??
+    toNum(h["x-tenantid"]) ??
+    null;
+  if (headerTenant) return headerTenant;
+
+  // 2) Cookie (supports JWT or plain base64 JSON)
+  const cookieHeader: string | undefined = (req.headers?.cookie as string | undefined) ?? undefined;
+  const bhq = readCookie(cookieHeader, "bhq_s");
+  const cookieTenant = parseBHQSessionTenant(bhq);
+  if (cookieTenant) return cookieTenant;
+
+  // 3) Common server session/user shapes
+  const fromReq =
+    toNum(req.tenantId) ??
+    toNum(req.session?.tenantId) ??
+    toNum(req.user?.tenantId) ??
+    toNum(req.user?.defaultTenantId) ??
+    null;
+  if (fromReq) return fromReq;
+
+  // 4) Arrays of memberships (pick a sensible default if present)
+  const memberships =
+    req.user?.memberships ||
+    req.user?.tenantMemberships ||
+    req.session?.memberships ||
+    [];
+  if (Array.isArray(memberships) && memberships.length) {
+    // Prefer default/primary/owner if present
+    const scored = [...memberships].sort((a: any, b: any) => {
+      const score = (m: any) =>
+        (m?.isDefault || m?.default ? 3 : 0) +
+        (m?.isPrimary ? 2 : 0) +
+        (String(m?.role || "").toUpperCase() === "OWNER" ? 1 : 0);
+      return score(b) - score(a);
+    });
+    for (const m of scored) {
+      const t = toNum(m?.tenantId ?? m?.id);
+      if (t) return t;
+    }
+  }
+
+  return null;
+}
+
 /* ───────────────────────── helpers ───────────────────────── */
 
 function parsePaging(q: any) {
@@ -39,10 +125,21 @@ function includeFlags(qInclude: any) {
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+
   const has = (k: string) => list.includes(k) || list.includes("all");
+  const wantsWaitlist = has("waitlist") || has("reservations"); // back-compat
+
   return {
     Litter: has("litter") ? true : false,
-    Reservations: has("reservations") ? true : false,
+    Waitlist: wantsWaitlist
+      ? {
+          orderBy: [
+            { depositPaidAt: "desc" as const },
+            { createdAt: "asc" as const },
+          ],
+          take: 200,
+        }
+      : false,
     Events: has("events") ? { orderBy: { occurredAt: "asc" as const }, take: 200 } : false,
     TestResults: has("tests") ? { orderBy: { collectedAt: "asc" as const }, take: 200 } : false,
     BreedingAttempts: has("attempts")
@@ -59,14 +156,12 @@ function includeFlags(qInclude: any) {
 
 /* ───────────────────────── normalization ───────────────────────── */
 
-/** Convert possibly-undefined ISO string to Date|null without throwing. */
 function toDateOrNull(v: any): Date | null {
   if (v === null || v === undefined || v === "") return null;
   const d = new Date(v);
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
-/** Accept old payload keys and map to the current schema field names. */
 function mapLegacyDates(body: any) {
   // expected → placement (legacy "GoHome" keys)
   if (body.expectedGoHome !== undefined && body.expectedPlacementStart === undefined) {
@@ -75,12 +170,10 @@ function mapLegacyDates(body: any) {
   if (body.expectedGoHomeExtendedEnd !== undefined && body.expectedPlacementCompleted === undefined) {
     body.expectedPlacementCompleted = body.expectedGoHomeExtendedEnd;
   }
-
   // locked → placement
   if (body.lockedGoHomeDate !== undefined && body.lockedPlacementStartDate === undefined) {
     body.lockedPlacementStartDate = body.lockedGoHomeDate;
   }
-
   // actuals → placement
   if (body.goHomeDateActual !== undefined && body.placementStartDateActual === undefined) {
     body.placementStartDateActual = body.goHomeDateActual;
@@ -88,34 +181,23 @@ function mapLegacyDates(body: any) {
   if (body.lastGoHomeDateActual !== undefined && body.placementCompletedDateActual === undefined) {
     body.placementCompletedDateActual = body.lastGoHomeDateActual;
   }
-
-  // legacy "expectedDue" → new "expectedBirthDate"
+  // expectedDue → expectedBirthDate
   if (body.expectedDue !== undefined && body.expectedBirthDate === undefined) {
     body.expectedBirthDate = body.expectedDue;
   }
-
-  // very old "whelp" aliases (just in case)
+  // very old "whelp" aliases
   if (body.whelpDateActual !== undefined && body.birthDateActual === undefined) {
     body.birthDateActual = body.whelpDateActual;
   }
   if (body.expectedWhelpDate !== undefined && body.expectedBirthDate === undefined) {
     body.expectedBirthDate = body.expectedWhelpDate;
   }
-
   return body;
 }
 
-/** Validate that lock fields are consistent.
- * Rules:
- *  - EITHER all lock fields are NULL (unlocked)
- *  - OR ALL FOUR are non-null (locked) → start/ovulation/due/placementStart must be provided together
- *  - Reject partial updates that would violate the invariant.
- */
 function validateAndNormalizeLockPayload(body: any) {
-  // Allow legacy keys in payload
   mapLegacyDates(body);
 
-  // Only consider fields that were provided in the payload (so PATCH can be partial).
   const provided = {
     start: body.hasOwnProperty("lockedCycleStart") ? toDateOrNull(body.lockedCycleStart) : undefined,
     ov: body.hasOwnProperty("lockedOvulationDate") ? toDateOrNull(body.lockedOvulationDate) : undefined,
@@ -123,11 +205,9 @@ function validateAndNormalizeLockPayload(body: any) {
     placement: body.hasOwnProperty("lockedPlacementStartDate") ? toDateOrNull(body.lockedPlacementStartDate) : undefined,
   };
 
-  // If none of the 4 fields are present in payload, caller isn’t touching lock state.
   const touched = [provided.start, provided.ov, provided.due, provided.placement].some((v) => v !== undefined);
   if (!touched) return { touched: false as const };
 
-  // Count non-null among the fields that *were provided*.
   const nonNullCount = [provided.start, provided.ov, provided.due, provided.placement].filter(
     (v) => v instanceof Date
   ).length;
@@ -135,7 +215,6 @@ function validateAndNormalizeLockPayload(body: any) {
     (v) => v !== undefined
   ).length;
 
-  // If caller is explicitly unlocking → all provided must be null.
   const allProvidedNull = providedCount > 0 && nonNullCount === 0;
   if (allProvidedNull) {
     return {
@@ -147,10 +226,8 @@ function validateAndNormalizeLockPayload(body: any) {
     };
   }
 
-  // If caller is locking → all 4 must be provided and non-null.
   const allProvidedAndNonNull = providedCount === 4 && nonNullCount === 4;
   if (!allProvidedAndNonNull) {
-    // Build a nice error message for the client
     const missing = [];
     if (provided.start === undefined || provided.start === null) missing.push("lockedCycleStart");
     if (provided.ov === undefined || provided.ov === null) missing.push("lockedOvulationDate");
@@ -195,7 +272,6 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
-/** Generate a tenant-unique, user-friendly plan code. */
 function buildCodeFromId(planId: number, d = new Date()) {
   const yyyy = d.getFullYear();
   return `PLN-${yyyy}-${String(planId).padStart(5, "0")}`;
@@ -230,7 +306,6 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
 
   const base = `PLN-${damFirst}-${commitYmd}-${dueYmd}`;
 
-  // ensure tenant-unique by suffixing on collision
   let candidate = base;
   let suffix = 2;
   // eslint-disable-next-line no-constant-condition
@@ -242,11 +317,9 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
   return candidate;
 }
 
-/** Attempt to set a unique code, retrying with a suffix on collision. */
 async function generatePlanCode(opts: { planId: number; tenantId: number; codeHint?: string | null }) {
   const base = String(opts.codeHint || buildCodeFromId(opts.planId)).toUpperCase().replace(/\s+/g, "");
   const tryCodes = [base];
-  // up to 5 suffix attempts if uniqueness fails
   for (let i = 2; i <= 6; i++) tryCodes.push(`${base}-${i}`);
 
   for (const code of tryCodes) {
@@ -257,8 +330,8 @@ async function generatePlanCode(opts: { planId: number; tenantId: number; codeHi
       });
       return updated.code!;
     } catch (err: any) {
-      if (err?.code === "P2002") continue; // unique violation → try next suffix
-      throw err; // other errors bubble up
+      if (err?.code === "P2002") continue;
+      throw err;
     }
   }
   throw Object.assign(new Error("could_not_assign_unique_code"), { statusCode: 409 });
@@ -267,13 +340,28 @@ async function generatePlanCode(opts: { planId: number; tenantId: number; codeHi
 /* ───────────────────────── routes ───────────────────────── */
 
 const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Enforce tenant context for all routes in this plugin
+  app.addHook("preHandler", async (req, reply) => {
+    // Already set by upstream middleware? keep it.
+    let tenantId: number | null = toNum((req as any).tenantId);
+
+    if (!tenantId) {
+      tenantId = resolveTenantIdFromRequest(req);
+      if (tenantId) (req as any).tenantId = tenantId;
+    }
+
+    if (!tenantId) {
+      return reply
+        .code(400)
+        .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
+    }
+  });
+
   /* ───────────── Breeding Plans ───────────── */
 
-  // GET /breeding/plans?status=&damId=&sireId=&q=&include=&page=&limit=
   app.get("/breeding/plans", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const q = (req.query || {}) as Partial<{
         status: string;
@@ -327,12 +415,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // GET /breeding/plans/:id?include=
   app.get("/breeding/plans/:id", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
@@ -346,15 +431,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /breeding/plans
   app.post("/breeding/plans", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const b = mapLegacyDates((req.body || {}) as any);
 
-      // required basics
       const name = String(b.name || "").trim();
       if (!name) return reply.code(400).send({ error: "name_required" });
       if (!b.species) return reply.code(400).send({ error: "species_required" });
@@ -362,7 +444,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const damId = idNum(b.damId);
       if (!damId) return reply.code(400).send({ error: "damId_required" });
 
-      // parent/species checks
       const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId }, select: { species: true } });
       if (!dam) return reply.code(400).send({ error: "dam_not_found" });
       if (String(dam.species) !== String(b.species)) {
@@ -376,7 +457,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // ── ENFORCE LOCK INVARIANTS ─────────────────────────────────────────────
       let lockNorm:
         | { touched: false }
         | {
@@ -394,23 +474,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(status).send(payload);
       }
 
-      // Build create payload (normalize all dates with Date or null)
       const data: any = {
         tenantId,
         organizationId: b.organizationId ?? null,
-
-        // identity
         code: b.code ?? null,
         name,
         nickname: b.nickname ?? null,
         species: b.species,
         breedText: b.breedText ?? null,
-
-        // parents
         damId,
         sireId: b.sireId ?? null,
 
-        // lock snapshot (from normalized lock if touched; else from body)
         lockedCycleKey: b.lockedCycleKey ?? null,
         lockedCycleStart: lockNorm.touched
           ? lockNorm.lockedCycleStart
@@ -433,7 +507,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           ? new Date(b.lockedPlacementStartDate)
           : null,
 
-        // expected dates
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
         expectedBreedDate: b.expectedBreedDate ? new Date(b.expectedBreedDate) : null,
@@ -450,7 +523,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         expectedWeaned: b.expectedWeaned ? new Date(b.expectedWeaned) : null,
         expectedPlacementCompleted: b.expectedPlacementCompleted ? new Date(b.expectedPlacementCompleted) : null,
 
-        // actuals
         cycleStartDateActual: b.cycleStartDateActual ? new Date(b.cycleStartDateActual) : null,
         hormoneTestingStartDateActual: b.hormoneTestingStartDateActual
           ? new Date(b.hormoneTestingStartDateActual)
@@ -464,7 +536,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : null,
         completedDateActual: b.completedDateActual ? new Date(b.completedDateActual) : null,
 
-        // status/notes/finance
         status: b.status ?? "PLANNING",
         notes: b.notes ?? null,
         depositsCommittedCents: b.depositsCommittedCents ?? null,
@@ -472,12 +543,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         depositRiskScore: b.depositRiskScore ?? null,
       };
 
-      // Create in a transaction so we can optionally write an audit event
       const userId = (req as any).user?.id ?? null;
       const created = await prisma.$transaction(async (tx) => {
         const plan = await tx.breedingPlan.create({ data });
 
-        // If a lock was set on create, record an audit event with timestamp
         const lockedOnCreate =
           lockNorm.touched &&
           lockNorm.lockedCycleStart &&
@@ -518,12 +587,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // PATCH /breeding/plans/:id
   app.patch("/breeding/plans/:id", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
@@ -544,7 +610,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       if (b.organizationId !== undefined) data.organizationId = b.organizationId;
 
-      // IMMUTABLE CODE: once set, it cannot change
       if (b.code !== undefined) {
         if (existing.code && b.code !== existing.code) {
           return reply.code(409).send({ error: "code_immutable" });
@@ -559,7 +624,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.nickname !== undefined) data.nickname = b.nickname ?? null;
       if (b.species !== undefined) data.species = b.species;
 
-      // parent/species checks if any of dam/sire/species change
       const targetSpecies = (b.species ?? existing.species) as string;
       if (b.damId !== undefined) {
         const damId = idNum(b.damId);
@@ -582,12 +646,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const dateKeys = [
-        // locked
         "lockedCycleStart",
         "lockedOvulationDate",
         "lockedDueDate",
         "lockedPlacementStartDate",
-        // expected (new set)
         "expectedCycleStart",
         "expectedHormoneTestingStart",
         "expectedBreedDate",
@@ -595,7 +657,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "expectedPlacementStart",
         "expectedWeaned",
         "expectedPlacementCompleted",
-        // actuals
         "cycleStartDateActual",
         "hormoneTestingStartDateActual",
         "breedDateActual",
@@ -622,7 +683,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
       for (const k of passthrough) if (b[k] !== undefined) (data as any)[k] = b[k];
 
-      // ENFORCE lock invariants on update
       try {
         const lockNorm = validateAndNormalizeLockPayload(b);
         if (lockNorm.touched) {
@@ -631,15 +691,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data.lockedDueDate = lockNorm.lockedDueDate;
           data.lockedPlacementStartDate = lockNorm.lockedPlacementStartDate;
 
-          // Keep expected* in sync on lock/unlock
           if (lockNorm.lockedDueDate === null && lockNorm.lockedPlacementStartDate === null) {
-            // unlocking → clear expected (UI expects this)
             data.expectedBirthDate = null;
             data.expectedPlacementStart = null;
             data.expectedWeaned = null;
             data.expectedPlacementCompleted = null;
           } else {
-            // locking → seed expected if missing in payload
             if (!b.hasOwnProperty("expectedBirthDate")) data.expectedBirthDate = lockNorm.lockedDueDate;
             if (!b.hasOwnProperty("expectedPlacementStart"))
               data.expectedPlacementStart = lockNorm.lockedPlacementStartDate;
@@ -658,18 +715,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /breeding/plans/:id/commit  ← server-side commit + immutable code + full-lock enforcement
   app.post("/breeding/plans/:id/commit", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
       const b = (req.body || {}) as Partial<{ codeHint: string }>;
 
-      // Pull all fields we need to validate and to seed expected*
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
         select: {
@@ -689,7 +742,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      // Disallow committing once already committed or terminal
       const terminal = new Set([
         "COMMITTED",
         "BRED",
@@ -697,7 +749,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "BIRTHED",
         "WEANED",
         "PLACEMENT",
-        // legacy safety
         "HOMING",
         "HOMING_STARTED",
         "COMPLETE",
@@ -707,13 +758,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "already_in_terminal_state" });
       }
 
-      // Must have parents
       if (!plan.damId || !plan.sireId) {
         return reply.code(400).send({ error: "dam_sire_required" });
       }
 
-      // === FULL-LOCK ENFORCEMENT ===
-      // Require ALL FOUR lock fields (start, ovulation, due, placementStart)
       const missingLock: string[] = [];
       if (!plan.lockedCycleStart) missingLock.push("lockedCycleStart");
       if (!plan.lockedOvulationDate) missingLock.push("lockedOvulationDate");
@@ -729,18 +777,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const userId = (req as any).user?.id ?? null;
 
       const updated = await prisma.$transaction(async (tx) => {
-        // 1) set immutable code if missing (make it tenant-unique)
         let code = plan.code;
         if (!code) {
           code = await buildFriendlyPlanCode(plan.tenantId, plan.id);
         }
 
-        // 2) Ensure expected dates are set from the lock if missing
         const expectedBirthDate = plan.expectedBirthDate ?? plan.lockedDueDate ?? null;
         const expectedPlacementStart =
           plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
 
-        // 3) Flip status → COMMITTED, record who/when
         const saved = await tx.breedingPlan.update({
           where: { id: plan.id },
           data: {
@@ -753,7 +798,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // 4) Audit trail (so we have a durable commit record)
         await tx.breedingPlanEvent.create({
           data: {
             tenantId: plan.tenantId,
@@ -785,11 +829,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /breeding/plans/:id/archive
   app.post("/breeding/plans/:id/archive", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
@@ -802,11 +844,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /breeding/plans/:id/restore
   app.post("/breeding/plans/:id/restore", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
@@ -819,12 +859,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  /* ───────────── Reproductive Cycles (placement naming) ───────────── */
+  /* ───────────── Reproductive Cycles ───────────── */
 
   app.get("/breeding/cycles", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const q = (req.query || {}) as Partial<{ femaleId: string; from: string; to: string; page: string; limit: string }>;
       const femaleId = q.femaleId ? idNum(q.femaleId) : null;
@@ -851,7 +890,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/breeding/cycles", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const b = (req.body || {}) as any;
       const femaleId = idNum(b.femaleId);
@@ -861,9 +899,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const female = await prisma.animal.findFirst({ where: { id: femaleId, tenantId }, select: { id: true } });
       if (!female) return reply.code(400).send({ error: "female_not_found" });
 
-      // legacy acceptor: map goHomeDate → placementStartDate if present
       const placementStartDate =
-        b.placementStartDate ?? b.goHomeDate ?? null;
+        b.placementStartDate ?? b.goHomeDate ?? null; // legacy acceptor
 
       const created = await prisma.reproductiveCycle.create({
         data: {
@@ -888,7 +925,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.patch("/breeding/cycles/:id", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
@@ -908,7 +944,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data.femaleId = fid;
         }
       }
-      // legacy acceptor: goHomeDate → placementStartDate
       if (b.goHomeDate !== undefined && b.placementStartDate === undefined) {
         b.placementStartDate = b.goHomeDate;
       }
@@ -927,12 +962,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  /* ───────────── Events / Tests / Attempts / Pregnancy Checks / etc. (unchanged) ───────────── */
+  /* ───────────── Events / Tests / Attempts / Pregnancy Checks / etc. ───────────── */
 
   app.get("/breeding/plans/:id/events", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const planId = idNum((req.params as any).id);
       if (!planId) return reply.code(400).send({ error: "bad_id" });
 
@@ -951,7 +985,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/breeding/plans/:id/events", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const planId = idNum((req.params as any).id);
       if (!planId) return reply.code(400).send({ error: "bad_id" });
 
@@ -986,7 +1019,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/breeding/plans/:id/tests", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const planId = idNum((req.params as any).id);
       if (!planId) return reply.code(400).send({ error: "bad_id" });
 
@@ -1027,7 +1059,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/breeding/plans/:id/attempts", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const planId = idNum((req.params as any).id);
       if (!planId) return reply.code(400).send({ error: "bad_id" });
 
@@ -1065,7 +1096,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/breeding/plans/:id/pregnancy-checks", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
       const planId = idNum((req.params as any).id);
       if (!planId) return reply.code(400).send({ error: "bad_id" });
 
@@ -1091,8 +1121,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.status(status).send(payload);
     }
   });
-
-  /* ───────────── Litter / Reservations / Attachments / Shares / Parties (unchanged) ───────────── */
 };
 
 export default breedingRoutes;
