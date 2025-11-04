@@ -5,12 +5,31 @@ import bcrypt from "bcryptjs";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-type SortKey = "createdAt" | "updatedAt" | "email" | "name";
+// ⬇️ expanded to support new sortable fields
+type SortKey =
+  | "createdAt"
+  | "updatedAt"
+  | "email"
+  | "name"
+  | "firstName"
+  | "lastName"
+  | "nickname";
 
 function parseSort(sort?: string) {
   if (!sort) return [{ createdAt: "desc" } as any];
-  const allowed = new Set<SortKey>(["createdAt", "updatedAt", "email", "name"]);
-  const parts = String(sort).split(",").map(s => s.trim()).filter(Boolean);
+  const allowed = new Set<SortKey>([
+    "createdAt",
+    "updatedAt",
+    "email",
+    "name",
+    "firstName",
+    "lastName",
+    "nickname",
+  ]);
+  const parts = String(sort)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const orderBy: any[] = [];
   for (const p of parts) {
     const desc = p.startsWith("-");
@@ -54,18 +73,28 @@ async function requireSession(req: any, reply: any) {
 async function requireSuperAdmin(req: any, reply: any) {
   const actorId = await requireSession(req, reply);
   if (!actorId) return null;
-  const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { isSuperAdmin: true },
+  });
   if (!actor?.isSuperAdmin) {
     reply.code(403).send({ error: "forbidden" });
     return null;
   }
   return actorId;
 }
-async function requireSelfOrSuperAdmin(req: any, reply: any, targetUserId: string) {
+async function requireSelfOrSuperAdmin(
+  req: any,
+  reply: any,
+  targetUserId: string
+) {
   const actorId = await requireSession(req, reply);
   if (!actorId) return null;
   if (actorId === targetUserId) return actorId;
-  const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { isSuperAdmin: true },
+  });
   if (!actor?.isSuperAdmin) {
     reply.code(403).send({ error: "forbidden" });
     return null;
@@ -91,7 +120,10 @@ const STRING_ID_SEG = ":id([A-Za-z0-9_-]{16,})";
 
 /* ───────────────────────── routes ───────────────────────── */
 
-export default async function userRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
+export default async function userRoutes(
+  app: FastifyInstance,
+  _opts: FastifyPluginOptions
+) {
   // GET /user → current session user (minimal)
   app.get("/user", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -102,8 +134,17 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
     const user = await prisma.user.findUnique({
       where: { id: String(sess.userId) },
       select: {
-        id: true, email: true, name: true, image: true, defaultTenantId: true,
-        isSuperAdmin: true, emailVerifiedAt: true,
+        id: true,
+        email: true,
+        name: true,
+        image: true,
+        defaultTenantId: true,
+        isSuperAdmin: true,
+        emailVerifiedAt: true,
+        // ⬇️ NEW FIELDS
+        firstName: true,
+        lastName: true,
+        nickname: true,
       },
     });
     if (!user) return reply.code(401).send({ user: null });
@@ -115,6 +156,10 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
         image: user.image ?? null,
         defaultTenantId: user.defaultTenantId ?? null,
         emailVerifiedAt: user.emailVerifiedAt ?? null,
+        // ⬇️ ensure nulls not undefined
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
+        nickname: user.nickname ?? null,
       },
     });
   });
@@ -133,7 +178,11 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       limit = "25",
       sort = "-createdAt",
     } = (req.query || {}) as {
-      q?: string; tenantId?: string; page?: string; limit?: string; sort?: string;
+      q?: string;
+      tenantId?: string;
+      page?: string;
+      limit?: string;
+      sort?: string;
     };
 
     const take = Math.min(100, Math.max(1, Number(limit) || 25));
@@ -142,14 +191,19 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
 
     const where: any = {};
     if (q) {
+      // ⬇️ broadened to include new fields
       where.OR = [
         { email: { contains: q, mode: "insensitive" } },
         { name: { contains: q, mode: "insensitive" } },
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { nickname: { contains: q, mode: "insensitive" } },
       ];
     }
     if (tenantId) {
       const tId = Number(tenantId);
-      if (!Number.isFinite(tId) || tId <= 0) return reply.code(400).send({ error: "tenantId_invalid" });
+      if (!Number.isFinite(tId) || tId <= 0)
+        return reply.code(400).send({ error: "tenantId_invalid" });
       where.tenantMemberships = { some: { tenantId: tId } };
     }
 
@@ -160,22 +214,38 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
         take,
         orderBy,
         select: {
-          id: true, email: true, name: true, image: true, isSuperAdmin: true,
-          defaultTenantId: true, tenantMemberships: { select: { tenantId: true, role: true } },
-          createdAt: true, updatedAt: true,
+          id: true,
+          email: true,
+          name: true,
+          image: true,
+          isSuperAdmin: true,
+          defaultTenantId: true,
+          tenantMemberships: { select: { tenantId: true, role: true } },
+          createdAt: true,
+          updatedAt: true,
+          // ⬇️ NEW FIELDS
+          firstName: true,
+          lastName: true,
+          nickname: true,
         },
       }),
       prisma.user.count({ where }),
     ]);
 
-    const items = rows.map(u => ({
+    const items = rows.map((u) => ({
       id: u.id,
       email: u.email,
       name: u.name ?? null,
+      firstName: u.firstName ?? null,
+      lastName: u.lastName ?? null,
+      nickname: u.nickname ?? null,
       image: u.image ?? null,
       isSuperAdmin: !!u.isSuperAdmin,
       defaultTenantId: u.defaultTenantId ?? null,
-      memberships: u.tenantMemberships.map(m => ({ tenantId: m.tenantId, role: m.role })),
+      memberships: u.tenantMemberships.map((m) => ({
+        tenantId: m.tenantId,
+        role: m.role,
+      })),
       createdAt: u.createdAt.toISOString(),
       updatedAt: u.updatedAt.toISOString(),
     }));
@@ -190,7 +260,13 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       schema: {
         params: {
           type: "object",
-          properties: { id: { type: "string", minLength: 16, pattern: "^[A-Za-z0-9_-]{16,}$" } },
+          properties: {
+            id: {
+              type: "string",
+              minLength: 16,
+              pattern: "^[A-Za-z0-9_-]{16,}$",
+            },
+          },
           required: ["id"],
           additionalProperties: false,
         },
@@ -205,12 +281,29 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       const u = await prisma.user.findUnique({
         where: { id },
         select: {
-          id: true, email: true, name: true, image: true, isSuperAdmin: true,
-          defaultTenantId: true, tenantMemberships: { select: { tenantId: true, role: true } },
-          createdAt: true, updatedAt: true,
-          phoneE164: true, whatsappE164: true, street: true, street2: true,
-          city: true, state: true, postalCode: true, country: true,
-          contactId: true, emailVerifiedAt: true,
+          id: true,
+          email: true,
+          name: true,
+          image: true,
+          isSuperAdmin: true,
+          defaultTenantId: true,
+          tenantMemberships: { select: { tenantId: true, role: true } },
+          createdAt: true,
+          updatedAt: true,
+          phoneE164: true,
+          whatsappE164: true,
+          street: true,
+          street2: true,
+          city: true,
+          state: true,
+          postalCode: true,
+          country: true,
+          contactId: true,
+          emailVerifiedAt: true,
+          // ⬇️ NEW FIELDS
+          firstName: true,
+          lastName: true,
+          nickname: true,
         },
       });
       if (!u) return reply.code(404).send({ error: "not_found" });
@@ -219,10 +312,16 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
         id: u.id,
         email: u.email,
         name: u.name ?? null,
+        firstName: u.firstName ?? null,
+        lastName: u.lastName ?? null,
+        nickname: u.nickname ?? null,
         image: u.image ?? null,
         isSuperAdmin: !!u.isSuperAdmin,
         defaultTenantId: u.defaultTenantId ?? null,
-        memberships: u.tenantMemberships.map(m => ({ tenantId: m.tenantId, role: m.role })),
+        memberships: u.tenantMemberships.map((m) => ({
+          tenantId: m.tenantId,
+          role: m.role,
+        })),
         createdAt: u.createdAt.toISOString(),
         updatedAt: u.updatedAt.toISOString(),
         phoneE164: u.phoneE164 ?? null,
@@ -245,7 +344,15 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
     if (!actorId) return;
 
     const body = (req.body || {}) as {
-      email?: string; name?: string | null; image?: string | null; isSuperAdmin?: boolean; country?: string | null;
+      email?: string;
+      name?: string | null;
+      image?: string | null;
+      isSuperAdmin?: boolean;
+      country?: string | null;
+      // ⬇️ NEW FIELDS
+      firstName?: string | null;
+      lastName?: string | null;
+      nickname?: string | null;
     };
     const email = normEmail(body.email);
     if (!email) return reply.code(400).send({ error: "email_required" });
@@ -254,6 +361,10 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       email,
       name: nonEmptyOrNull(body.name),
       image: nonEmptyOrNull(body.image),
+      // ⬇️ NEW
+      firstName: nonEmptyOrNull(body.firstName),
+      lastName: nonEmptyOrNull(body.lastName),
+      nickname: nonEmptyOrNull(body.nickname),
     };
     if (body.isSuperAdmin !== undefined) data.isSuperAdmin = !!body.isSuperAdmin;
     if (body.country !== undefined) data.country = normCountry(body.country);
@@ -262,34 +373,60 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       const created = await prisma.user.create({
         data,
         select: {
-          id: true, email: true, name: true, image: true,
-          isSuperAdmin: true, defaultTenantId: true, createdAt: true, updatedAt: true,
+          id: true,
+          email: true,
+          name: true,
+          image: true,
+          isSuperAdmin: true,
+          defaultTenantId: true,
+          createdAt: true,
+          updatedAt: true,
+          // ⬇️ NEW FIELDS
+          firstName: true,
+          lastName: true,
+          nickname: true,
         },
       });
       return reply.code(201).send({
         ...created,
         name: created.name ?? null,
+        firstName: created.firstName ?? null,
+        lastName: created.lastName ?? null,
+        nickname: created.nickname ?? null,
         image: created.image ?? null,
         defaultTenantId: created.defaultTenantId ?? null,
         createdAt: created.createdAt.toISOString(),
         updatedAt: created.updatedAt.toISOString(),
       });
     } catch (e: any) {
-      if (e?.code === "P2002") return reply.code(409).send({ error: "email_already_exists" });
+      if (e?.code === "P2002")
+        return reply.code(409).send({ error: "email_already_exists" });
       throw e;
     }
   });
 
   // PATCH /users/:id — update core/profile (self or Super Admin)
   app.patch<{
-    Params: { id: string },
+    Params: { id: string };
     Body: Partial<{
-      email: string; name: string | null; image: string | null; isSuperAdmin: boolean;
-      phoneE164: string | null; whatsappE164: string | null;
-      street: string | null; street2: string | null; city: string | null; state: string | null;
-      postalCode: string | null; country: string | null;
+      email: string;
+      name: string | null;
+      image: string | null;
+      isSuperAdmin: boolean;
+      phoneE164: string | null;
+      whatsappE164: string | null;
+      street: string | null;
+      street2: string | null;
+      city: string | null;
+      state: string | null;
+      postalCode: string | null;
+      country: string | null;
       defaultTenantId: number | null;
-    }>
+      // ⬇️ NEW FIELDS
+      firstName: string | null;
+      lastName: string | null;
+      nickname: string | null;
+    }>;
   }>(`/users/${STRING_ID_SEG}`, async (req, reply) => {
     const { id } = req.params;
     const actorId = await requireSelfOrSuperAdmin(req, reply, id);
@@ -297,12 +434,17 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
     const b = req.body || {};
 
     if (actorId === id && b.isSuperAdmin === false) {
-      return reply.code(400).send({ error: "cannot_self_demote_super_admin" });
+      return reply
+        .code(400)
+        .send({ error: "cannot_self_demote_super_admin" });
     }
 
     let oldEmail: string | null = null;
     if (b.email !== undefined) {
-      const cur = await prisma.user.findUnique({ where: { id }, select: { email: true } });
+      const cur = await prisma.user.findUnique({
+        where: { id },
+        select: { email: true },
+      });
       oldEmail = cur?.email?.toLowerCase() || null;
     }
 
@@ -311,19 +453,29 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
     if (b.name !== undefined) data.name = nonEmptyOrNull(b.name);
     if (b.image !== undefined) data.image = nonEmptyOrNull(b.image);
 
+    // ⬇️ NEW assignments
+    if (b.firstName !== undefined) data.firstName = nonEmptyOrNull(b.firstName);
+    if (b.lastName !== undefined) data.lastName = nonEmptyOrNull(b.lastName);
+    if (b.nickname !== undefined) data.nickname = nonEmptyOrNull(b.nickname);
+
     if (b.isSuperAdmin !== undefined) {
-      const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+      const actor = await prisma.user.findUnique({
+        where: { id: actorId },
+        select: { isSuperAdmin: true },
+      });
       if (!actor?.isSuperAdmin) return reply.code(403).send({ error: "forbidden" });
       data.isSuperAdmin = !!b.isSuperAdmin;
     }
 
     if (b.phoneE164 !== undefined) data.phoneE164 = nonEmptyOrNull(b.phoneE164);
-    if (b.whatsappE164 !== undefined) data.whatsappE164 = nonEmptyOrNull(b.whatsappE164);
+    if (b.whatsappE164 !== undefined)
+      data.whatsappE164 = nonEmptyOrNull(b.whatsappE164);
     if (b.street !== undefined) data.street = nonEmptyOrNull(b.street);
     if (b.street2 !== undefined) data.street2 = nonEmptyOrNull(b.street2);
     if (b.city !== undefined) data.city = nonEmptyOrNull(b.city);
     if (b.state !== undefined) data.state = nonEmptyOrNull(b.state);
-    if (b.postalCode !== undefined) data.postalCode = nonEmptyOrNull(b.postalCode);
+    if (b.postalCode !== undefined)
+      data.postalCode = nonEmptyOrNull(b.postalCode);
     if (b.country !== undefined) data.country = normCountry(b.country);
 
     if (b.defaultTenantId !== undefined) {
@@ -336,17 +488,25 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
           where: { userId_tenantId: { userId: id, tenantId: tId } },
           select: { userId: true },
         });
-        if (!membership) return reply.code(403).send({ error: "not_a_member_of_tenant" });
+        if (!membership)
+          return reply.code(403).send({ error: "not_a_member_of_tenant" });
       }
       data.defaultTenantId = tId;
     }
 
     if (b.isSuperAdmin === false) {
-      const target = await prisma.user.findUnique({ where: { id }, select: { isSuperAdmin: true } });
+      const target = await prisma.user.findUnique({
+        where: { id },
+        select: { isSuperAdmin: true },
+      });
       if (target?.isSuperAdmin) {
-        const others = await prisma.user.count({ where: { isSuperAdmin: true, NOT: { id } } });
+        const others = await prisma.user.count({
+          where: { isSuperAdmin: true, NOT: { id } },
+        });
         if (others === 0) {
-          return reply.code(409).send({ error: "cannot_remove_last_super_admin" });
+          return reply
+            .code(409)
+            .send({ error: "cannot_remove_last_super_admin" });
         }
       }
     }
@@ -356,19 +516,40 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
         where: { id },
         data,
         select: {
-          id: true, email: true, name: true, image: true, isSuperAdmin: true,
-          defaultTenantId: true, createdAt: true, updatedAt: true,
-          phoneE164: true, whatsappE164: true, street: true, street2: true,
-          city: true, state: true, postalCode: true, country: true,
+          id: true,
+          email: true,
+          name: true,
+          image: true,
+          isSuperAdmin: true,
+          defaultTenantId: true,
+          createdAt: true,
+          updatedAt: true,
+          phoneE164: true,
+          whatsappE164: true,
+          street: true,
+          street2: true,
+          city: true,
+          state: true,
+          postalCode: true,
+          country: true,
+          // ⬇️ NEW FIELDS
+          firstName: true,
+          lastName: true,
+          nickname: true,
         },
       });
 
       if (b.email !== undefined) {
         await prisma.$transaction(async (tx) => {
-          await tx.user.update({ where: { id }, data: { emailVerifiedAt: null } });
+          await tx.user.update({
+            where: { id },
+            data: { emailVerifiedAt: null },
+          });
           const newEmail = u.email.toLowerCase();
           await tx.verificationToken.deleteMany({
-            where: { OR: [{ identifier: oldEmail ?? "" }, { identifier: newEmail }] },
+            where: {
+              OR: [{ identifier: oldEmail ?? "" }, { identifier: newEmail }],
+            },
           });
         });
       }
@@ -376,20 +557,25 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
       return reply.send({
         ...u,
         name: u.name ?? null,
+        firstName: u.firstName ?? null,
+        lastName: u.lastName ?? null,
+        nickname: u.nickname ?? null,
         image: u.image ?? null,
         defaultTenantId: u.defaultTenantId ?? null,
         createdAt: u.createdAt.toISOString(),
         updatedAt: u.updatedAt.toISOString(),
       });
     } catch (e: any) {
-      if (e?.code === "P2002") return reply.code(409).send({ error: "email_already_exists" });
-      if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
+      if (e?.code === "P2002")
+        return reply.code(409).send({ error: "email_already_exists" });
+      if (e?.code === "P2025")
+        return reply.code(404).send({ error: "not_found" });
       throw e;
     }
   });
 
   // PATCH /users/:id/default-tenant — self or Super Admin
-  app.patch<{ Params: { id: string }, Body: { tenantId: number | null } }>(
+  app.patch<{ Params: { id: string }; Body: { tenantId: number | null } }>(
     `/users/${STRING_ID_SEG}/default-tenant`,
     async (req, reply) => {
       const { id } = req.params;
@@ -400,13 +586,15 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
 
       if (body.tenantId != null) {
         const tId = Number(body.tenantId);
-        if (!Number.isFinite(tId) || tId <= 0) return reply.code(400).send({ error: "tenantId_invalid" });
+        if (!Number.isFinite(tId) || tId <= 0)
+          return reply.code(400).send({ error: "tenantId_invalid" });
 
         const membership = await prisma.tenantMembership.findUnique({
           where: { userId_tenantId: { userId: id, tenantId: tId } },
           select: { userId: true },
         });
-        if (!membership) return reply.code(403).send({ error: "not_a_member_of_tenant" });
+        if (!membership)
+          return reply.code(403).send({ error: "not_a_member_of_tenant" });
       }
 
       const u = await prisma.user.update({
@@ -425,7 +613,7 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
   );
 
   // PATCH /users/:id/contact — set/clear contactId (self or Super Admin)
-  app.patch<{ Params: { id: string }, Body: { contactId: number | null } }>(
+  app.patch<{ Params: { id: string }; Body: { contactId: number | null } }>(
     `/users/${STRING_ID_SEG}/contact`,
     async (req, reply) => {
       const { id } = req.params;
@@ -437,7 +625,8 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
 
       if (body.contactId != null) {
         const cid = Number(body.contactId);
-        if (!Number.isFinite(cid) || cid <= 0) return reply.code(400).send({ error: "contactId_invalid" });
+        if (!Number.isFinite(cid) || cid <= 0)
+          return reply.code(400).send({ error: "contactId_invalid" });
         const contact = await prisma.contact.findUnique({
           where: { id: cid },
           select: { id: true, tenantId: true },
@@ -448,7 +637,8 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
           where: { userId_tenantId: { userId: id, tenantId: contact.tenantId } },
           select: { userId: true },
         });
-        if (!membership) return reply.code(403).send({ error: "not_a_member_of_contact_tenant" });
+        if (!membership)
+          return reply.code(403).send({ error: "not_a_member_of_contact_tenant" });
 
         setId = cid;
       }
@@ -473,7 +663,7 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
   );
 
   // PATCH /users/:id/password — set passwordHash (self or Super Admin) + audit
-  app.patch<{ Params: { id: string }, Body: { password: string } }>(
+  app.patch<{ Params: { id: string }; Body: { password: string } }>(
     `/users/${STRING_ID_SEG}/password`,
     async (req, reply) => {
       const { id } = req.params;
@@ -495,7 +685,11 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
         // Optional: revoke sessions
         // await prisma.session.deleteMany({ where: { userId: id } });
 
-        return reply.send({ id: u.id, email: u.email, updatedAt: u.updatedAt.toISOString() });
+        return reply.send({
+          id: u.id,
+          email: u.email,
+          updatedAt: u.updatedAt.toISOString(),
+        });
       } catch (e: any) {
         if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
         throw e;
@@ -504,25 +698,38 @@ export default async function userRoutes(app: FastifyInstance, _opts: FastifyPlu
   );
 
   // DELETE /users/:id (Super Admin only; cannot delete self; cannot remove last super admin)
-  app.delete<{ Params: { id: string } }>(`/users/${STRING_ID_SEG}`, async (req, reply) => {
-    const { id } = req.params;
+  app.delete<{ Params: { id: string } }>(
+    `/users/${STRING_ID_SEG}`,
+    async (req, reply) => {
+      const { id } = req.params;
 
-    const actorId = await requireSuperAdmin(req, reply);
-    if (!actorId) return;
-    if (actorId === id) return reply.code(400).send({ error: "cannot_delete_self" });
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+      if (actorId === id)
+        return reply.code(400).send({ error: "cannot_delete_self" });
 
-    const target = await prisma.user.findUnique({ where: { id }, select: { isSuperAdmin: true } });
-    if (target?.isSuperAdmin) {
-      const others = await prisma.user.count({ where: { isSuperAdmin: true, NOT: { id } } });
-      if (others === 0) return reply.code(409).send({ error: "cannot_delete_last_super_admin" });
+      const target = await prisma.user.findUnique({
+        where: { id },
+        select: { isSuperAdmin: true },
+      });
+      if (target?.isSuperAdmin) {
+        const others = await prisma.user.count({
+          where: { isSuperAdmin: true, NOT: { id } },
+        });
+        if (others === 0)
+          return reply
+            .code(409)
+            .send({ error: "cannot_delete_last_super_admin" });
+      }
+
+      try {
+        await prisma.user.delete({ where: { id } });
+        return reply.send({ ok: true });
+      } catch (e: any) {
+        if (e?.code === "P2025")
+          return reply.code(404).send({ error: "not_found" });
+        throw e;
+      }
     }
-
-    try {
-      await prisma.user.delete({ where: { id } });
-      return reply.send({ ok: true });
-    } catch (e: any) {
-      if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
-      throw e;
-    }
-  });
+  );
 }

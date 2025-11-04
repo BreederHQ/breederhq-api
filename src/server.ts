@@ -59,7 +59,8 @@ await app.register(cors, {
     "x-org-id",
     "x-csrf-token",
     "x-xsrf-token",
-    "x-requested-with", // <— add this to fix preflight failures from fetch/axios
+    "x-requested-with", // fix preflight failures from fetch/axios
+    "x-admin-token",    // <— NEW: required for admin-protected routes
   ],
   exposedHeaders: ["set-cookie"],
 });
@@ -116,7 +117,7 @@ app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req
 app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
   if (!body || body.trim() === "") return done(null, {});
   const obj: Record<string, string> = {};
-  for (const pair of body.split("&")) {
+  for (const pair of (body || "").split("&")) {
     if (!pair) continue;
     const [k, v = ""] = pair.split("=");
     obj[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, " "));
@@ -175,13 +176,10 @@ async function requireTenantMembership(
     return sess;
   }
 
-  const actor = await app.prisma.user.findUnique({
+  const actor = (await app.prisma.user.findUnique({
     where: { id: sess.userId },
-    select: {
-      // @ts-ignore
-      isSuperAdmin: true,
-    } as any,
-  }) as any;
+    select: { isSuperAdmin: true } as any,
+  })) as any;
 
   if (actor?.isSuperAdmin) return sess; // super admin floats across tenants
 
@@ -205,10 +203,12 @@ import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
+import offspringRoutes from "./routes/offspring.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
 import tenantRoutes from "./routes/tenant.js";
 import userRoutes from "./routes/user.js";
+import waitlistRoutes from "./routes/waitlist.js"; // <— NEW
 
 // ---------- TS typing: prisma + req.tenantId/req.userId ----------
 declare module "fastify" {
@@ -261,9 +261,7 @@ app.register(
       // 2) /breeds/search is public only when organizationId is NOT present
       if (m === "GET" && isBreedsSearchPath) {
         const q: any = (req as any).query || {};
-        const hasOrgId =
-          q.organizationId != null ||
-          /(^|[?&])organizationId=/.test(full);
+        const hasOrgId = q.organizationId != null || /(^|[?&])organizationId=/.test(full);
         if (!hasOrgId) {
           (req as any).tenantId = null;
           return;
@@ -306,6 +304,8 @@ app.register(
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
+    api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
     api.register(tagsRoutes);
   },
