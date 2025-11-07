@@ -7,17 +7,7 @@ import prisma from "../prisma.js";
 function getTenantId(req: any) {
   const raw = req.headers["x-tenant-id"] ?? req.query.tenantId;
   const id = Number(raw);
-  if (!Number.isFinite(id)) return null;
-  return id;
-}
-
-function requireAdmin(req: any, reply: any) {
-  const token = req.headers["x-admin-token"];
-  if (!token || token !== process.env.ADMIN_TOKEN) {
-    reply.code(401).send({ error: "unauthorized" });
-    return false;
-  }
-  return true;
+  return Number.isFinite(id) ? id : null;
 }
 
 function parseISO(v: any): Date | null {
@@ -74,6 +64,7 @@ function serializeEntry(w: any) {
 /* ───────── router ───────── */
 
 const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
+  // tenant scope; no admin requirements anywhere in this file
   app.addHook("preHandler", async (req, reply) => {
     const tid = getTenantId(req);
     if (!tid) return reply.code(400).send({ error: "missing x-tenant-id" });
@@ -84,23 +75,26 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
    * GET /api/v1/waitlist
    * Filters: q, status, species, limit, cursor
    * Returns: { items, total }
+   * (Global parking-lot by default; you can pass other filters, but FE uses parking lot.)
    */
   app.get("/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    const q = String(req.query["q"] ?? "").trim();
-    const status = String(req.query["status"] ?? "").trim();
-    const species = String(req.query["species"] ?? "").trim();
-    const limit = Math.min(250, Math.max(1, Number(req.query["limit"] ?? 25)));
-    const cursorId = req.query["cursor"] ? Number(req.query["cursor"]) : undefined;
+    const q = String((req.query as any)["q"] ?? "").trim();
+    const status = String((req.query as any)["status"] ?? "").trim();
+    const species = String((req.query as any)["species"] ?? "").trim();
+    const limit = Math.min(250, Math.max(1, Number((req.query as any)["limit"] ?? 25)));
+    const cursorId = (req.query as any)["cursor"] ? Number((req.query as any)["cursor"]) : undefined;
 
     const where: any = {
       tenantId,
+      litterId: null, // parking lot
       ...(status ? { status } : null),
       ...(species ? { speciesPref: species } : null),
       ...(cursorId ? { id: { lt: cursorId } } : null),
       ...(q
         ? {
             OR: [
+              { notes: { contains: q, mode: "insensitive" } },
               { contact: { display_name: { contains: q, mode: "insensitive" } } },
               { contact: { email: { contains: q, mode: "insensitive" } } },
               { organization: { name: { contains: q, mode: "insensitive" } } },
@@ -111,7 +105,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const rows = await prisma.waitlistEntry.findMany({
       where,
-      orderBy: { id: "desc" },
+      orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }, { id: "asc" }],
       take: limit,
       include: {
         contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
@@ -122,7 +116,10 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       },
     });
 
-    const total = await prisma.waitlistEntry.count({ where: { tenantId, ...(status ? { status } : null) } });
+    // Count without cursor to give a stable aggregate for UI; still scoped to parking-lot, status/species
+    const total = await prisma.waitlistEntry.count({
+      where: { tenantId, litterId: null, ...(status ? { status } : null), ...(species ? { speciesPref: species } : null) },
+    });
 
     reply.send({ items: rows.map(serializeEntry), total });
   });
@@ -151,28 +148,29 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * POST /api/v1/waitlist
-   * Create a global (parking lot) waitlist entry
+   * Create a global (parking lot) waitlist entry (no admin required)
+   * FE sends: contactId|organizationId, speciesPref, breedPrefs, sirePrefId, damPrefId, etc.
    */
   app.post("/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
-
     const b = (req.body as any) ?? {};
-    if (!b.partyType || !["Organization", "Contact"].includes(b.partyType)) {
-      return reply.code(400).send({ error: "partyType must be Contact or Organization" });
+
+    // Require at least one party reference; infer partyType from presence
+    if (!b.contactId && !b.organizationId) {
+      return reply.code(400).send({ error: "contactId or organizationId required" });
     }
-    if (b.partyType === "Contact" && !b.contactId) return reply.code(400).send({ error: "contactId required for Contact partyType" });
-    if (b.partyType === "Organization" && !b.organizationId) return reply.code(400).send({ error: "organizationId required for Organization partyType" });
+
+    const partyType = b.organizationId ? "Organization" : "Contact";
 
     const created = await prisma.waitlistEntry.create({
       data: {
         tenantId,
         planId: b.planId ?? null,
-        litterId: b.litterId ?? null,
+        litterId: null, // parking-lot by design
 
-        partyType: b.partyType,
-        contactId: b.partyType === "Contact" ? Number(b.contactId) : null,
-        organizationId: b.partyType === "Organization" ? Number(b.organizationId) : null,
+        partyType,
+        contactId: partyType === "Contact" ? Number(b.contactId) : null,
+        organizationId: partyType === "Organization" ? Number(b.organizationId) : null,
 
         speciesPref: b.speciesPref ?? null,
         breedPrefs: b.breedPrefs ?? null,
@@ -210,10 +208,10 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * PATCH /api/v1/waitlist/:id
+   * Update an entry (no admin required)
    */
   app.patch("/waitlist/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const b = (req.body as any) ?? {};
 
@@ -221,21 +219,28 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if (!existing) return reply.code(404).send({ error: "not found" });
 
     const data: any = {};
-    if ("partyType" in b) data.partyType = b.partyType;
+
+    // party
     if ("contactId" in b) data.contactId = b.contactId ? Number(b.contactId) : null;
     if ("organizationId" in b) data.organizationId = b.organizationId ? Number(b.organizationId) : null;
+    if ("partyType" in b) data.partyType = b.partyType; // optional; typically inferred
 
+    // relations
     if ("planId" in b) data.planId = b.planId ?? null;
-    if ("litterId" in b) data.litterId = b.litterId ?? null;
+    if ("litterId" in b) data.litterId = b.litterId ?? null; // allows moving out of parking lot if ever needed
+    if ("animalId" in b) data.animalId = b.animalId ? Number(b.animalId) : null;
 
+    // prefs
     if ("speciesPref" in b) data.speciesPref = b.speciesPref ?? null;
     if ("breedPrefs" in b) data.breedPrefs = b.breedPrefs ?? null;
     if ("sirePrefId" in b) data.sirePrefId = b.sirePrefId ? Number(b.sirePrefId) : null;
     if ("damPrefId" in b) data.damPrefId = b.damPrefId ? Number(b.damPrefId) : null;
 
+    // status/priority
     if ("status" in b) data.status = b.status;
     if ("priority" in b) data.priority = b.priority ?? null;
 
+    // money
     if ("depositInvoiceId" in b) data.depositInvoiceId = b.depositInvoiceId ?? null;
     if ("balanceInvoiceId" in b) data.balanceInvoiceId = b.balanceInvoiceId ?? null;
     if ("depositPaidAt" in b) data.depositPaidAt = parseISO(b.depositPaidAt);
@@ -243,11 +248,11 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("depositPaidCents" in b) data.depositPaidCents = b.depositPaidCents ?? null;
     if ("balanceDueCents" in b) data.balanceDueCents = b.balanceDueCents ?? null;
 
-    if ("animalId" in b) data.animalId = b.animalId ? Number(b.animalId) : null;
-
+    // skip meta
     if ("skipCount" in b) data.skipCount = b.skipCount ?? null;
     if ("lastSkipAt" in b) data.lastSkipAt = parseISO(b.lastSkipAt);
 
+    // notes
     if ("notes" in b) data.notes = b.notes ?? null;
 
     const updated = await prisma.waitlistEntry.update({
@@ -267,10 +272,10 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * DELETE /api/v1/waitlist/:id
+   * No admin required
    */
   app.delete("/waitlist/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
 
     const existing = await prisma.waitlistEntry.findFirst({ where: { id, tenantId } });
@@ -282,11 +287,10 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * POST /api/v1/waitlist/:id/skip
-   * Increments skipCount and sets lastSkipAt to now
+   * Increments skipCount and sets lastSkipAt to now (no admin required)
    */
   app.post("/waitlist/:id/skip", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
 
     const existing = await prisma.waitlistEntry.findFirst({ where: { id, tenantId } });
@@ -298,6 +302,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         skipCount: (existing.skipCount ?? 0) + 1,
         lastSkipAt: new Date(),
       },
+      select: { skipCount: true },
     });
 
     reply.send({ skipCount: updated.skipCount ?? 0 });

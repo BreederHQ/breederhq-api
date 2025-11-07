@@ -194,6 +194,60 @@ async function buildCountMaps(tenantIds: number[]) {
   };
 }
 
+/* ───────────────────────── settings helpers (new) ───────────────────────── */
+
+const BREEDING_NS = "breeding";
+
+/** Minimal program defaults; extend as needed in app code */
+const DEFAULT_BREEDING_PROGRAM = {
+  program: {
+    defaultMethod: "NATURAL",
+    codeFormat: "YYYY-SEQ3",
+    weaningWeeks: 8,
+    placementPolicy: "AFTER_WEANED",
+  },
+  cycleHeuristics: {
+    gestationDays: 63,
+    weanDays: 56,
+    placementStartOffsetDays: 60,
+  },
+};
+
+async function requireTenantMemberOrAdmin(req: any, tenantId: number) {
+  const actorId = getActorId(req);
+  if (!actorId) return { ok: false as const, code: 401 as const };
+  const user = await prisma.user.findUnique({ where: { id: actorId }, select: { isSuperAdmin: true } });
+  if (user?.isSuperAdmin) return { ok: true as const, role: "OWNER" as const };
+
+  const mem = await prisma.tenantMembership.findUnique({
+    where: { userId_tenantId: { userId: actorId, tenantId } },
+    select: { role: true },
+  });
+  if (!mem) return { ok: false as const, code: 403 as const };
+  return { ok: true as const, role: mem.role };
+}
+function isAdminLike(role?: string | null) {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+async function readTenantSetting(tenantId: number, namespace: string, fallback: any) {
+  const row = await prisma.tenantSetting.findUnique({
+    where: { tenantId_namespace: { tenantId, namespace } },
+    select: { data: true, version: true, updatedAt: true, updatedBy: true },
+  });
+  if (!row) return { data: fallback, version: 1, updatedAt: null as Date | null, updatedBy: null as string | null };
+  return { data: row.data ?? fallback, version: row.version, updatedAt: row.updatedAt, updatedBy: row.updatedBy };
+}
+async function writeTenantSetting(tenantId: number, namespace: string, data: any, userId: string | null) {
+  const row = await prisma.tenantSetting.upsert({
+    where: { tenantId_namespace: { tenantId, namespace } },
+    update: { data, version: { increment: 1 }, updatedBy: userId ?? undefined },
+    create: { tenantId, namespace, data, version: 1, updatedBy: userId ?? undefined },
+    select: { data: true, version: true, updatedAt: true, updatedBy: true },
+  });
+  return row;
+}
+
 /* ───────────────────────── routes (plugin) ───────────────────────── */
 
 const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -258,6 +312,97 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       return reply.status(status).send(payload);
     }
   });
+
+  /** ─────────────── NEW: Breeding program settings (namespace: "breeding") ─────────────── */
+
+  /** GET /tenants/:id/breeding-program */
+  fastify.get<{ Params: { id: string } }>("/tenants/:id/breeding-program", async (req, reply) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const gate = await requireTenantMemberOrAdmin(req, id);
+      if (!gate.ok) return reply.code(gate.code).send({ error: gate.code === 401 ? "unauthorized" : "forbidden" });
+
+      const setting = await readTenantSetting(id, BREEDING_NS, DEFAULT_BREEDING_PROGRAM);
+      return reply.send(setting.data);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** PUT /tenants/:id/breeding-program (OWNER/ADMIN) */
+  fastify.put<{ Params: { id: string }; Body: Record<string, any> }>(
+    "/tenants/:id/breeding-program",
+    async (req, reply) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+        const gate = await requireTenantMemberOrAdmin(req, id);
+        if (!gate.ok) return reply.code(gate.code).send({ error: gate.code === 401 ? "unauthorized" : "forbidden" });
+        if (!isAdminLike(gate.role)) return reply.code(403).send({ error: "forbidden" });
+
+        const raw = (req.body ?? {}) as any;
+        if (typeof raw !== "object") return reply.status(400).send({ error: "bad_request", detail: "Invalid payload" });
+
+        const saved = await writeTenantSetting(id, BREEDING_NS, raw, getActorId(req));
+        return reply.send(saved.data);
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        return reply.status(status).send(payload);
+      }
+    }
+  );
+
+  /** ─────────────── NEW: Generic tenant settings storage ─────────────── */
+
+  /** GET /tenants/:id/settings/:namespace */
+  fastify.get<{ Params: { id: string; namespace: string } }>(
+    "/tenants/:id/settings/:namespace",
+    async (req, reply) => {
+      try {
+        const id = Number(req.params.id);
+        const ns = String(req.params.namespace || "").trim();
+        if (!Number.isFinite(id) || !ns) return reply.status(400).send({ error: "bad_request" });
+
+        const gate = await requireTenantMemberOrAdmin(req, id);
+        if (!gate.ok) return reply.code(gate.code).send({ error: gate.code === 401 ? "unauthorized" : "forbidden" });
+
+        const setting = await readTenantSetting(id, ns, {});
+        return reply.send(setting.data);
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        return reply.status(status).send(payload);
+      }
+    }
+  );
+
+  /** PUT /tenants/:id/settings/:namespace (OWNER/ADMIN) */
+  fastify.put<{ Params: { id: string; namespace: string }; Body: Record<string, any> }>(
+    "/tenants/:id/settings/:namespace",
+    async (req, reply) => {
+      try {
+        const id = Number(req.params.id);
+        const ns = String(req.params.namespace || "").trim();
+        if (!Number.isFinite(id) || !ns) return reply.status(400).send({ error: "bad_request" });
+
+        const gate = await requireTenantMemberOrAdmin(req, id);
+        if (!gate.ok) return reply.code(gate.code).send({ error: gate.code === 401 ? "unauthorized" : "forbidden" });
+        if (!isAdminLike(gate.role)) return reply.code(403).send({ error: "forbidden" });
+
+        const raw = (req.body ?? {}) as any;
+        if (typeof raw !== "object") return reply.status(400).send({ error: "bad_request", detail: "Invalid payload" });
+
+        const saved = await writeTenantSetting(id, ns, raw, getActorId(req));
+        return reply.send(saved.data);
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        return reply.status(status).send(payload);
+      }
+    }
+  );
 
   /** GET /admin/tenants */
   fastify.get("/admin/tenants", async (req, reply) => {
@@ -915,6 +1060,13 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
             create: { tenantId: createdTenant.id, ...data },
           });
         }
+
+        // Optional: initialize default breeding program at provision time
+        await tx.tenantSetting.upsert({
+          where: { tenantId_namespace: { tenantId: createdTenant.id, namespace: BREEDING_NS } },
+          update: { data: DEFAULT_BREEDING_PROGRAM, version: { increment: 1 }, updatedBy: actorId },
+          create: { tenantId: createdTenant.id, namespace: BREEDING_NS, data: DEFAULT_BREEDING_PROGRAM, version: 1, updatedBy: actorId },
+        });
 
         return {
           tenant: {

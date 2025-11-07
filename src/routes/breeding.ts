@@ -1,5 +1,6 @@
 // apps/api/src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
@@ -317,24 +318,26 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
   return candidate;
 }
 
-async function generatePlanCode(opts: { planId: number; tenantId: number; codeHint?: string | null }) {
-  const base = String(opts.codeHint || buildCodeFromId(opts.planId)).toUpperCase().replace(/\s+/g, "");
-  const tryCodes = [base];
-  for (let i = 2; i <= 6; i++) tryCodes.push(`${base}-${i}`);
+/* ───────────────────────── enums & guards ───────────────────────── */
 
-  for (const code of tryCodes) {
-    try {
-      const updated = await prisma.breedingPlan.update({
-        where: { id: opts.planId },
-        data: { code },
-      });
-      return updated.code!;
-    } catch (err: any) {
-      if (err?.code === "P2002") continue;
-      throw err;
-    }
-  }
-  throw Object.assign(new Error("could_not_assign_unique_code"), { statusCode: 409 });
+const PlanStatus = new Set<string>([
+  "PLANNING",
+  "COMMITTED",
+  "CYCLE_EXPECTED",
+  "HORMONE_TESTING",
+  "BRED",
+  "PREGNANT",
+  "BIRTHED",
+  "WEANED",
+  "PLACEMENT",
+  "COMPLETE",
+  "CANCELED",
+]);
+
+function normalizePlanStatus(s: any) {
+  if (s == null) return null;
+  const up = String(s).toUpperCase();
+  return PlanStatus.has(up) ? up : null;
 }
 
 /* ───────────────────────── routes ───────────────────────── */
@@ -382,7 +385,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const where: any = { tenantId };
       if (archivedMode === "exclude") where.archived = false;
       if (archivedMode === "only") where.archived = true;
-      if (q.status) where.status = q.status;
+
+      if (q.status) {
+        const s = normalizePlanStatus(q.status);
+        if (!s) return reply.code(400).send({ error: "bad_status" });
+        where.status = s as any;
+      }
+
       if (q.damId) where.damId = Number(q.damId);
       if (q.sireId) where.sireId = Number(q.sireId);
       const search = String(q.q || "").trim();
@@ -441,21 +450,45 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!name) return reply.code(400).send({ error: "name_required" });
       if (!b.species) return reply.code(400).send({ error: "species_required" });
 
+      if (b.organizationId != null) {
+        const org = await prisma.organization.findFirst({
+          where: { id: Number(b.organizationId), tenantId },
+          select: { id: true },
+        });
+        if (!org) return reply.code(400).send({ error: "organization_not_in_tenant" });
+      }
+
       const damId = idNum(b.damId);
       if (!damId) return reply.code(400).send({ error: "damId_required" });
 
-      const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId }, select: { species: true } });
+      const dam = await prisma.animal.findFirst({
+        where: { id: damId, tenantId },
+        select: { species: true, sex: true },
+      });
       if (!dam) return reply.code(400).send({ error: "dam_not_found" });
       if (String(dam.species) !== String(b.species)) {
         return reply.code(400).send({ error: "dam_species_mismatch" });
       }
+      if (String(dam.sex) !== "FEMALE") {
+        return reply.code(400).send({ error: "dam_sex_mismatch" });
+      }
+
       if (b.sireId) {
-        const sire = await prisma.animal.findFirst({ where: { id: Number(b.sireId), tenantId }, select: { species: true } });
+        const sire = await prisma.animal.findFirst({
+          where: { id: Number(b.sireId), tenantId },
+          select: { species: true, sex: true },
+        });
         if (!sire) return reply.code(400).send({ error: "sire_not_found" });
         if (String(sire.species) !== String(b.species)) {
           return reply.code(400).send({ error: "sire_species_mismatch" });
         }
+        if (String(sire.sex) !== "MALE") {
+          return reply.code(400).send({ error: "sire_sex_mismatch" });
+        }
       }
+
+      const normalizedStatus = normalizePlanStatus(b.status ?? "PLANNING");
+      if (!normalizedStatus) return reply.code(400).send({ error: "bad_status" });
 
       let lockNorm:
         | { touched: false }
@@ -536,7 +569,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : null,
         completedDateActual: b.completedDateActual ? new Date(b.completedDateActual) : null,
 
-        status: b.status ?? "PLANNING",
+        status: normalizedStatus,
         notes: b.notes ?? null,
         depositsCommittedCents: b.depositsCommittedCents ?? null,
         depositsPaidCents: b.depositsPaidCents ?? null,
@@ -608,7 +641,19 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (!n) return reply.code(400).send({ error: "name_required" });
         data.name = n;
       }
-      if (b.organizationId !== undefined) data.organizationId = b.organizationId;
+
+      if (b.organizationId !== undefined) {
+        if (b.organizationId === null) {
+          data.organizationId = null;
+        } else {
+          const org = await prisma.organization.findFirst({
+            where: { id: Number(b.organizationId), tenantId },
+            select: { id: true },
+          });
+          if (!org) return reply.code(400).send({ error: "organization_not_in_tenant" });
+          data.organizationId = Number(b.organizationId);
+        }
+      }
 
       if (b.code !== undefined) {
         if (existing.code && b.code !== existing.code) {
@@ -628,9 +673,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.damId !== undefined) {
         const damId = idNum(b.damId);
         if (!damId) return reply.code(400).send({ error: "bad_damId" });
-        const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId }, select: { species: true } });
+        const dam = await prisma.animal.findFirst({
+          where: { id: damId, tenantId },
+          select: { species: true, sex: true },
+        });
         if (!dam) return reply.code(400).send({ error: "dam_not_found" });
         if (String(dam.species) !== String(targetSpecies)) return reply.code(400).send({ error: "dam_species_mismatch" });
+        if (String(dam.sex) !== "FEMALE") return reply.code(400).send({ error: "dam_sex_mismatch" });
         data.damId = damId;
       }
       if (b.sireId !== undefined) {
@@ -638,9 +687,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         else {
           const sireId = idNum(b.sireId);
           if (!sireId) return reply.code(400).send({ error: "bad_sireId" });
-          const sire = await prisma.animal.findFirst({ where: { id: sireId, tenantId }, select: { species: true } });
+          const sire = await prisma.animal.findFirst({
+            where: { id: sireId, tenantId },
+            select: { species: true, sex: true },
+          });
           if (!sire) return reply.code(400).send({ error: "sire_not_found" });
           if (String(sire.species) !== String(targetSpecies)) return reply.code(400).send({ error: "sire_species_mismatch" });
+          if (String(sire.sex) !== "MALE") return reply.code(400).send({ error: "sire_sex_mismatch" });
           data.sireId = sireId;
         }
       }
@@ -671,10 +724,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (b[k] !== undefined) (data as any)[k] = b[k] ? new Date(b[k]) : null;
       }
 
+      if (b.status !== undefined) {
+        const s = normalizePlanStatus(b.status);
+        if (!s) return reply.code(400).send({ error: "bad_status" });
+        data.status = s as any;
+      }
+
       const passthrough = [
         "breedText",
         "lockedCycleKey",
-        "status",
         "notes",
         "depositsCommittedCents",
         "depositsPaidCents",
@@ -742,15 +800,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      const terminal = new Set([
+      const terminal = new Set<string>([
         "COMMITTED",
         "BRED",
         "PREGNANT",
         "BIRTHED",
         "WEANED",
         "PLACEMENT",
-        "HOMING",
-        "HOMING_STARTED",
         "COMPLETE",
         "CANCELED",
       ]);
@@ -790,7 +846,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: plan.id },
           data: {
             code,
-            status: "COMMITTED" as any,
+            status: Prisma.BreedingPlanStatus.COMMITTED,
             expectedBirthDate,
             expectedPlacementStart,
             committedAt: new Date(),
@@ -935,14 +991,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const b = (req.body || {}) as any;
       const data: any = {};
       if (b.femaleId !== undefined) {
-        if (b.femaleId === null) data.femaleId = null;
-        else {
-          const fid = idNum(b.femaleId);
-          if (!fid) return reply.code(400).send({ error: "bad_femaleId" });
-          const f = await prisma.animal.findFirst({ where: { id: fid, tenantId }, select: { id: true } });
-          if (!f) return reply.code(400).send({ error: "female_not_found" });
-          data.femaleId = fid;
-        }
+        const fid = idNum(b.femaleId);
+        if (!fid) return reply.code(400).send({ error: "bad_femaleId" });
+        const f = await prisma.animal.findFirst({ where: { id: fid, tenantId }, select: { id: true } });
+        if (!f) return reply.code(400).send({ error: "female_not_found" });
+        data.femaleId = fid;
       }
       if (b.goHomeDate !== undefined && b.placementStartDate === undefined) {
         b.placementStartDate = b.goHomeDate;
