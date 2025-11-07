@@ -300,6 +300,9 @@ model Tenant {
 
   availabilityPrefs Json?
 
+  // ── NEW: relation to namespaced settings (non-breaking)
+  settings TenantSetting[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1140,4 +1143,27 @@ model PlanCodeCounter {
 
   @@id([tenantId, year])
   @@index([tenantId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * NEW: Generic, namespaced tenant settings
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model TenantSetting {
+  tenantId  Int
+  namespace String
+  version   Int     @default(1)
+  data      Json
+  updatedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, namespace])
+  @@index([tenantId])
+  @@index([namespace])
 }

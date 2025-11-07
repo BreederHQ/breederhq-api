@@ -11,15 +11,6 @@ function getTenantId(req: any) {
   return id;
 }
 
-function requireAdmin(req: any, reply: any) {
-  const token = req.headers["x-admin-token"];
-  if (!token || token !== process.env.ADMIN_TOKEN) {
-    reply.code(401).send({ error: "unauthorized" });
-    return false;
-  }
-  return true;
-}
-
 function parseISO(v: any): Date | null {
   if (!v) return null;
   const d = new Date(v);
@@ -177,16 +168,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     (req as any).tenantId = tid;
   });
 
-  /* ===== LIST: GET /api/v1/offspring =====
-     Optional filters:
-       - limit (default 25, max 250)
-       - cursor (id for simple keyset pagination, returns nextCursor)
-       - q (identifier contains)
-       - published (true or false)
-       - hasAnimals (true or false)
-       - dateFrom/dateTo over placementStartAt or birthedStartAt via dateField param
-         dateField in ["birthed","weaned","placementStart","placementCompleted"]
-  */
+  /* ===== LIST: GET /api/v1/offspring ===== */
   app.get("/offspring", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const q = String(req.query["q"] ?? "").trim();
@@ -320,13 +302,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send(litterDetail(L));
   });
 
-  /* ===== CREATE: POST /api/v1/offspring =====
-     Body: { planId, identifier?, notes?, published?, dates?{ birthedStartAt?, birthedEndAt?, weanedAt?, placementStartAt?, placementCompletedAt? } }
-     Idempotent per plan per tenant.
-  */
+  /* ===== CREATE: POST /api/v1/offspring ===== */
   app.post("/offspring", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const { planId, identifier, notes, published, dates } = (req.body as any) ?? {};
     if (!planId) return reply.code(400).send({ error: "planId required" });
 
@@ -384,7 +362,6 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /* ===== UPDATE: PATCH /api/v1/offspring/:id ===== */
   app.patch("/offspring/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const body = (req.body as any) ?? {};
 
@@ -443,14 +420,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send(litterDetail(refreshed));
   });
 
-  /* ===== DELETE: DELETE /api/v1/offspring/:id =====
-     Cascade behavior is handled by Prisma relations:
-       - Animal.litterId onDelete SetNull
-       - WaitlistEntry.litterId onDelete SetNull
-  */
+  /* ===== DELETE: DELETE /api/v1/offspring/:id ===== */
   app.delete("/offspring/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
 
     const existing = await prisma.litter.findFirst({ where: { id, tenantId } });
@@ -463,7 +435,6 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /* ===== MOVE WAITLIST INTO LITTER: POST /offspring/:id/move-waitlist ===== */
   app.post("/offspring/:id/move-waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const { waitlistEntryIds } = (req.body as any) ?? {};
     if (!Array.isArray(waitlistEntryIds) || waitlistEntryIds.length === 0) {
@@ -488,14 +459,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send({ moved: entries.length });
   });
 
-  /* ===== OFFSPRING ANIMALS: CREATE =====
-     POST /offspring/:id/animals
-     Body: { name, sex, status?, birthDate?, species?, breed?, microchip?, notes? }
-     Defaults: species from plan if not provided, status Active if not provided
-  */
+  /* ===== OFFSPRING ANIMALS: CREATE ===== */
   app.post("/offspring/:id/animals", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const body = (req.body as any) ?? {};
 
@@ -528,12 +494,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.code(201).send(created);
   });
 
-  /* ===== OFFSPRING ANIMALS: UPDATE =====
-     PATCH /offspring/:id/animals/:animalId
-  */
+  /* ===== OFFSPRING ANIMALS: UPDATE ===== */
   app.patch("/offspring/:id/animals/:animalId", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const animalId = Number((req.params as any).animalId);
     const body = (req.body as any) ?? {};
@@ -556,13 +519,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send(updated);
   });
 
-  /* ===== OFFSPRING ANIMALS: DELETE or UNLINK =====
-     DELETE /offspring/:id/animals/:animalId?mode=delete|unlink
-     Default mode is unlink, which clears litterId and keeps the animal record.
-  */
+  /* ===== OFFSPRING ANIMALS: DELETE or UNLINK ===== */
   app.delete("/offspring/:id/animals/:animalId", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const animalId = Number((req.params as any).animalId);
     const mode = String(req.query["mode"] ?? "unlink");
@@ -580,13 +539,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send({ ok: true, unlinked: animalId });
   });
 
-  /* ===== WAITLIST: CREATE under litter =====
-     POST /offspring/:id/waitlist
-     Body must include partyType and either contactId or organizationId
-  */
+  /* ===== WAITLIST: CREATE under litter ===== */
   app.post("/offspring/:id/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const b = (req.body as any) ?? {};
 
@@ -628,12 +583,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.code(201).send(created);
   });
 
-  /* ===== WAITLIST: UPDATE =====
-     PATCH /offspring/:id/waitlist/:wid
-  */
+  /* ===== WAITLIST: UPDATE ===== */
   app.patch("/offspring/:id/waitlist/:wid", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const wid = Number((req.params as any).wid);
     const b = (req.body as any) ?? {};
@@ -667,13 +619,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send(updated);
   });
 
-  /* ===== WAITLIST: DELETE or UNLINK =====
-     DELETE /offspring/:id/waitlist/:wid?mode=delete|unlink
-     Default is unlink, which sets litterId null and keeps the record.
-  */
+  /* ===== WAITLIST: DELETE or UNLINK ===== */
   app.delete("/offspring/:id/waitlist/:wid", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const wid = Number((req.params as any).wid);
     const mode = String(req.query["mode"] ?? "unlink");
@@ -691,13 +639,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     reply.send({ ok: true, unlinked: wid });
   });
 
-  /* ===== ATTACHMENTS: CREATE =====
-     POST /offspring/:id/attachments
-     Body: { kind, storageProvider, storageKey, filename, mime, bytes, createdByUserId? }
-  */
+  /* ===== ATTACHMENTS: CREATE ===== */
   app.post("/offspring/:id/attachments", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const b = (req.body as any) ?? {};
 
@@ -732,7 +676,6 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /* ===== ATTACHMENTS: DELETE ===== */
   app.delete("/offspring/:id/attachments/:aid", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    if (!requireAdmin(req, reply)) return;
     const id = Number((req.params as any).id);
     const aid = Number((req.params as any).aid);
 
