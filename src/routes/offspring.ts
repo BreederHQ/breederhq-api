@@ -68,6 +68,8 @@ function litterListItem(L: any) {
       stillborn: L.countStillborn ?? null,
       male: L.countMale ?? null,
       female: L.countFemale ?? null,
+      weaned: L.countWeaned ?? null,   // NEW
+      placed: L.countPlaced ?? null,   // NEW
     },
     dates: {
       birthedStartAt: L.birthedStartAt?.toISOString() ?? null,
@@ -77,6 +79,8 @@ function litterListItem(L: any) {
       placementCompletedAt: L.placementCompletedAt?.toISOString() ?? null,
     },
     published: L.published ?? false,
+    statusOverride: L.statusOverride ?? null,               // NEW (surface status override at list level for UI badges)
+    statusOverrideReason: L.statusOverrideReason ?? null,   // NEW
     plan: litePlanForList(L.plan),
   };
 }
@@ -91,6 +95,9 @@ function litterDetail(L: any) {
     published: !!L.published,
     coverImageUrl: L.coverImageUrl ?? null,
     themeName: L.themeName ?? null,
+    statusOverride: L.statusOverride ?? null,             // NEW
+    statusOverrideReason: L.statusOverrideReason ?? null, // NEW
+    data: L.data ?? null,                                 // NEW
     birthedStartAt: L.birthedStartAt?.toISOString() ?? null,
     birthedEndAt: L.birthedEndAt?.toISOString() ?? null,
     weanedAt: L.weanedAt?.toISOString() ?? null,
@@ -102,6 +109,8 @@ function litterDetail(L: any) {
       stillborn: L.countStillborn ?? null,
       male: L.countMale ?? null,
       female: L.countFemale ?? null,
+      weaned: L.countWeaned ?? null,   // NEW
+      placed: L.countPlaced ?? null,   // NEW
     },
     plan: L.plan
       ? {
@@ -123,6 +132,12 @@ function litterDetail(L: any) {
       species: a.species,
       breed: a.breed ?? null,
       litterId: a.litterId,
+      // NEW: collar fields
+      collarColorId: a.collarColorId ?? null,
+      collarColorName: a.collarColorName ?? null,
+      collarColorHex: a.collarColorHex ?? null,
+      collarAssignedAt: a.collarAssignedAt?.toISOString() ?? null,
+      collarLocked: !!a.collarLocked,
       updatedAt: a.updatedAt.toISOString(),
     })),
     Waitlist: (L.Waitlist ?? []).map((w: any) => ({
@@ -281,6 +296,12 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             breed: true,
             litterId: true,
             updatedAt: true,
+            // NEW: collar fields
+            collarColorId: true,
+            collarColorName: true,
+            collarColorHex: true,
+            collarAssignedAt: true,
+            collarLocked: true,
           },
           orderBy: { id: "asc" },
         },
@@ -305,7 +326,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /* ===== CREATE: POST /api/v1/offspring ===== */
   app.post("/offspring", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    const { planId, identifier, notes, published, dates } = (req.body as any) ?? {};
+    const { planId, identifier, notes, published, dates, counts, publishedMeta, statusOverride, statusOverrideReason, data } = (req.body as any) ?? {};
     if (!planId) return reply.code(400).send({ error: "planId required" });
 
     const plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
@@ -320,7 +341,15 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
       identifier: identifier ?? null,
       notes: notes ?? null,
       published: Boolean(published ?? false),
+      statusOverride: statusOverride ?? null,                 // NEW
+      statusOverrideReason: statusOverrideReason ?? null,     // NEW
+      data: data ?? null,                                     // NEW
     };
+
+    if (publishedMeta) {
+      if ("coverImageUrl" in publishedMeta) payload.coverImageUrl = publishedMeta.coverImageUrl ?? null;
+      if ("themeName" in publishedMeta) payload.themeName = publishedMeta.themeName ?? null;
+    }
 
     if (dates) {
       payload.birthedStartAt = parseISO(dates.birthedStartAt);
@@ -330,6 +359,16 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
       payload.placementCompletedAt = parseISO(dates.placementCompletedAt);
     } else {
       payload.placementStartAt = plan.lockedPlacementStartDate ?? null;
+    }
+
+    if (counts) {
+      if ("countBorn" in counts) payload.countBorn = counts.countBorn ?? null;
+      if ("countLive" in counts) payload.countLive = counts.countLive ?? null;
+      if ("countStillborn" in counts) payload.countStillborn = counts.countStillborn ?? null;
+      if ("countMale" in counts) payload.countMale = counts.countMale ?? null;
+      if ("countFemale" in counts) payload.countFemale = counts.countFemale ?? null;
+      if ("countWeaned" in counts) payload.countWeaned = counts.countWeaned ?? null;   // NEW
+      if ("countPlaced" in counts) payload.countPlaced = counts.countPlaced ?? null;   // NEW
     }
 
     const litter = existing
@@ -372,6 +411,9 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("identifier" in body) data.identifier = body.identifier ?? null;
     if ("notes" in body) data.notes = body.notes ?? null;
     if ("published" in body) data.published = !!body.published;
+    if ("statusOverride" in body) data.statusOverride = body.statusOverride ?? null;                 // NEW
+    if ("statusOverrideReason" in body) data.statusOverrideReason = body.statusOverrideReason ?? null; // NEW
+    if ("data" in body) data.data = body.data ?? null;                                              // NEW
     if (body.publishedMeta) {
       if ("coverImageUrl" in body.publishedMeta) data.coverImageUrl = body.publishedMeta.coverImageUrl ?? null;
       if ("themeName" in body.publishedMeta) data.themeName = body.publishedMeta.themeName ?? null;
@@ -390,6 +432,8 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
       if ("countStillborn" in c) data.countStillborn = c.countStillborn ?? null;
       if ("countMale" in c) data.countMale = c.countMale ?? null;
       if ("countFemale" in c) data.countFemale = c.countFemale ?? null;
+      if ("countWeaned" in c) data.countWeaned = c.countWeaned ?? null;   // NEW
+      if ("countPlaced" in c) data.countPlaced = c.countPlaced ?? null;   // NEW
     }
 
     await prisma.litter.update({ where: { id }, data });
@@ -408,7 +452,24 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             sire: { select: { id: true, name: true } },
           },
         },
-        Animals: true,
+        Animals: {
+          select: {
+            id: true,
+            name: true,
+            sex: true,
+            status: true,
+            birthDate: true,
+            species: true,
+            breed: true,
+            litterId: true,
+            updatedAt: true,
+            collarColorId: true,
+            collarColorName: true,
+            collarColorHex: true,
+            collarAssignedAt: true,
+            collarLocked: true,
+          },
+        },
         Waitlist: {
           include: { contact: true, organization: true, TagAssignment: { include: { tag: true } }, sirePref: true, damPref: true },
           orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }],
@@ -488,6 +549,12 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
         notes: body.notes ?? null,
         breed: body.breed ?? null,
         litterId: L.id,
+        // NEW: optional collar fields on create
+        collarColorId: body.collarColorId ?? null,
+        collarColorName: body.collarColorName ?? null,
+        collarColorHex: body.collarColorHex ?? null,
+        collarAssignedAt: (body.collarColorId || body.collarColorHex || body.collarColorName) ? new Date() : null,
+        collarLocked: body.collarLocked === true ? true : false,
       },
     });
 
@@ -514,6 +581,27 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("microchip" in body) data.microchip = body.microchip ?? null;
     if ("notes" in body) data.notes = body.notes ?? null;
     if ("birthDate" in body) data.birthDate = parseISO(body.birthDate);
+
+    // NEW: collar fields
+    let settingAnyCollar = false;
+    if ("collarColorId" in body) {
+      data.collarColorId = body.collarColorId ?? null;
+      settingAnyCollar = true;
+    }
+    if ("collarColorName" in body) {
+      data.collarColorName = body.collarColorName ?? null;
+      settingAnyCollar = true;
+    }
+    if ("collarColorHex" in body) {
+      data.collarColorHex = body.collarColorHex ?? null;
+      settingAnyCollar = true;
+    }
+    if ("collarLocked" in body) {
+      data.collarLocked = !!body.collarLocked;
+    }
+    if (settingAnyCollar) {
+      data.collarAssignedAt = new Date();
+    }
 
     const updated = await prisma.animal.update({ where: { id: animalId }, data });
     reply.send(updated);

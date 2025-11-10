@@ -181,9 +181,10 @@ model User {
   // committed plans (optional backref)
   committedPlans BreedingPlan[] @relation("CommittedByUser")
 
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
-  Attachment Attachment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  Attachment  Attachment[]
+  LitterEvent LitterEvent[]
 
   @@index([contactId])
   @@index([defaultTenantId])
@@ -300,11 +301,12 @@ model Tenant {
 
   availabilityPrefs Json?
 
-  // ── NEW: relation to namespaced settings (non-breaking)
+  // namespaced settings
   settings TenantSetting[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  LitterEvent LitterEvent[]
 
   @@index([name])
 }
@@ -350,9 +352,10 @@ model Organization {
   country  String?
   archived Boolean @default(false)
 
-  contacts    Contact[]
-  animals     Animal[]
-  memberships Membership[]
+  contacts         Contact[]
+  animals          Animal[]     @relation("OrgAnimals") // ← primary org ↔ animal
+  animalsPurchased Animal[]     @relation("AnimalBuyerOrganization") // ← buyer backref
+  memberships      Membership[]
 
   // backlink for creator relation
   createdCustomBreeds CustomBreed[] @relation("CreatedByOrganization")
@@ -421,6 +424,9 @@ model Contact {
   breedingAttemptsAsStudOwner BreedingAttempt[] @relation("StudOwnerContact")
   waitlistEntries             WaitlistEntry[]
 
+  // buyer backref
+  animalsPurchased Animal[] @relation("AnimalBuyerContact")
+
   archived   Boolean      @default(false)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
@@ -448,7 +454,7 @@ model Animal {
   tenantId         Int
   tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   organizationId   Int?
-  organization     Organization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  organization     Organization? @relation("OrgAnimals", fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
   name             String
   species          Species
   sex              Sex
@@ -470,10 +476,34 @@ model Animal {
   litterId            Int?
   litter              Litter?             @relation(fields: [litterId], references: [id], onDelete: SetNull)
 
-  // Waitlist back-refs (explicit and uniquely named)
+  // Waitlist back-refs
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
   waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
   waitlistDamPrefs    WaitlistEntry[] @relation("WaitlistDamPref")
+
+  // Collar assignment
+  collarColorId    String?
+  collarColorName  String?
+  collarColorHex   String?
+  collarAssignedAt DateTime?
+  collarLocked     Boolean   @default(false)
+
+  // Placement and sale workflow
+  buyerPartyType      OwnerPartyType?
+  buyerContactId      Int?
+  buyerContact        Contact?        @relation("AnimalBuyerContact", fields: [buyerContactId], references: [id], onDelete: SetNull)
+  buyerOrganizationId Int?
+  buyerOrganization   Organization?   @relation("AnimalBuyerOrganization", fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+  priceCents          Int?
+  depositCents        Int?
+  saleInvoiceId       String?
+  contractId          String?
+  contractSignedAt    DateTime?
+  paidInFullAt        DateTime?
+  healthCertAt        DateTime?
+  microchipAppliedAt  DateTime?
+  pickupAt            DateTime?
+  placedAt            DateTime?
 
   tagAssignments TagAssignment[]
   owners         AnimalOwner[]
@@ -495,6 +525,7 @@ model Animal {
   @@index([canonicalBreedId])
   @@index([tenantId, customBreedId])
   @@index([litterId])
+  @@index([tenantId, placedAt])
 }
 
 model AnimalOwner {
@@ -982,13 +1013,19 @@ model Litter {
   countStillborn Int?
   countMale      Int?
   countFemale    Int?
+  countWeaned    Int?
+  countPlaced    Int?
 
-  // Offspring Group timeline (PLACEMENT terminology)
+  // Offspring Group timeline
   weanedAt             DateTime?
   placementStartAt     DateTime?
   placementCompletedAt DateTime?
 
-  // Optional marketing/publishing helpers
+  // Manual status override
+  statusOverride       String?
+  statusOverrideReason String?
+
+  // Optional marketing helpers
   published     Boolean @default(false)
   coverImageUrl String?
   themeName     String?
@@ -999,6 +1036,7 @@ model Litter {
   Animals    Animal[]
   Waitlist   WaitlistEntry[]
   Attachment Attachment[]
+  Events     LitterEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1014,43 +1052,42 @@ model WaitlistEntry {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  // Association (null = global waitlist / parking lot)
+  // Association, null means global waitlist
   planId   Int?
   plan     BreedingPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
   litterId Int?
   litter   Litter?       @relation(fields: [litterId], references: [id], onDelete: SetNull)
 
-  // Buyer can be a Contact or an Organization (enforce one-or-the-other in app layer)
+  // Buyer choice
   partyType      OwnerPartyType
   contactId      Int?
   contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
   organizationId Int?
   organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
-  // Preferences for matching (breed/species + specific parents)
+  // Preferences
   speciesPref Species?
-  breedPrefs  Json? // array of breed names/ids (flexible)
+  breedPrefs  Json?
   sirePrefId  Int?
   sirePref    Animal?  @relation("WaitlistSirePref", fields: [sirePrefId], references: [id], onDelete: SetNull)
   damPrefId   Int?
   damPref     Animal?  @relation("WaitlistDamPref", fields: [damPrefId], references: [id], onDelete: SetNull)
 
-  // Selection & finance references (no billing logic here)
+  // Selection and finance refs
   status               WaitlistStatus @default(INQUIRY)
   priority             Int?
   depositInvoiceId     String?
   balanceInvoiceId     String?
   depositPaidAt        DateTime?
-  // optional display-only snapshots
   depositRequiredCents Int?
   depositPaidCents     Int?
   balanceDueCents      Int?
 
-  // Allocation to a specific animal when selected
+  // Allocation to specific animal
   animalId Int?
   animal   Animal? @relation("WaitlistAllocation", fields: [animalId], references: [id], onDelete: SetNull)
 
-  // Skip policy tracking
+  // Skip policy
   skipCount  Int?
   lastSkipAt DateTime?
 
@@ -1069,6 +1106,38 @@ model WaitlistEntry {
   @@index([damPrefId])
   @@index([animalId])
   @@index([tenantId, depositPaidAt])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Litter audit
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model LitterEvent {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  litterId Int
+  litter   Litter @relation(fields: [litterId], references: [id], onDelete: Cascade)
+
+  // types: CHANGE, NOTE, STATUS_OVERRIDE, BUYER_MOVE
+  type       String
+  occurredAt DateTime
+  field      String?
+  before     Json?
+  after      Json?
+  notes      String?
+
+  recordedByUserId String?
+  recordedByUser   User?   @relation(fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([litterId, type, occurredAt])
 }
 
 /**
@@ -1147,7 +1216,7 @@ model PlanCodeCounter {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
- * NEW: Generic, namespaced tenant settings
+ * Generic, namespaced tenant settings
  * ────────────────────────────────────────────────────────────────────────────
  */
 

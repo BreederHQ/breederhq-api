@@ -20,8 +20,7 @@ function readCookie(rawCookie: string | undefined, name: string): string | null 
 function parseBHQSessionTenant(cookieVal: string | null): number | null {
   if (!cookieVal) return null;
   try {
-    const payloadB64 = cookieVal.includes(".") ? cookieVal.split(".")[1] : cookieVal; // JWT payload or raw
-    // atob safe polyfill
+    const payloadB64 = cookieVal.includes(".") ? cookieVal.split(".")[1] : cookieVal;
     const jsonStr =
       typeof Buffer !== "undefined"
         ? Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
@@ -40,8 +39,6 @@ function parseBHQSessionTenant(cookieVal: string | null): number | null {
 }
 
 function resolveTenantIdFromRequest(req: any): number | null {
-  // 1) Header (prefer explicit header)
-  // Fastify lower-cases header names, but be defensive.
   const h = req.headers || {};
   const headerTenant =
     toNum(h["x-tenant-id"]) ??
@@ -50,13 +47,11 @@ function resolveTenantIdFromRequest(req: any): number | null {
     null;
   if (headerTenant) return headerTenant;
 
-  // 2) Cookie (supports JWT or plain base64 JSON)
   const cookieHeader: string | undefined = (req.headers?.cookie as string | undefined) ?? undefined;
   const bhq = readCookie(cookieHeader, "bhq_s");
   const cookieTenant = parseBHQSessionTenant(bhq);
   if (cookieTenant) return cookieTenant;
 
-  // 3) Common server session/user shapes
   const fromReq =
     toNum(req.tenantId) ??
     toNum(req.session?.tenantId) ??
@@ -65,14 +60,12 @@ function resolveTenantIdFromRequest(req: any): number | null {
     null;
   if (fromReq) return fromReq;
 
-  // 4) Arrays of memberships (pick a sensible default if present)
   const memberships =
     req.user?.memberships ||
     req.user?.tenantMemberships ||
     req.session?.memberships ||
     [];
   if (Array.isArray(memberships) && memberships.length) {
-    // Prefer default/primary/owner if present
     const scored = [...memberships].sort((a: any, b: any) => {
       const score = (m: any) =>
         (m?.isDefault || m?.default ? 3 : 0) +
@@ -102,7 +95,6 @@ function parseArchivedMode(q: any): "exclude" | "include" | "only" {
   const s = String(q?.archived ?? "").toLowerCase();
   if (s === "include" || s === "only" || s === "exclude") return s;
 
-  // accept common boolean-ish flags too
   const truthy =
     q?.includeArchived === "true" ||
     q?.include_archived === "true" ||
@@ -128,7 +120,7 @@ function includeFlags(qInclude: any) {
     .filter(Boolean);
 
   const has = (k: string) => list.includes(k) || list.includes("all");
-  const wantsWaitlist = has("waitlist") || has("reservations"); // back-compat
+  const wantsWaitlist = has("waitlist") || has("reservations");
 
   return {
     Litter: has("litter") ? true : false,
@@ -164,29 +156,24 @@ function toDateOrNull(v: any): Date | null {
 }
 
 function mapLegacyDates(body: any) {
-  // expected → placement (legacy "GoHome" keys)
   if (body.expectedGoHome !== undefined && body.expectedPlacementStart === undefined) {
     body.expectedPlacementStart = body.expectedGoHome;
   }
   if (body.expectedGoHomeExtendedEnd !== undefined && body.expectedPlacementCompleted === undefined) {
     body.expectedPlacementCompleted = body.expectedGoHomeExtendedEnd;
   }
-  // locked → placement
   if (body.lockedGoHomeDate !== undefined && body.lockedPlacementStartDate === undefined) {
     body.lockedPlacementStartDate = body.lockedGoHomeDate;
   }
-  // actuals → placement
   if (body.goHomeDateActual !== undefined && body.placementStartDateActual === undefined) {
     body.placementStartDateActual = body.goHomeDateActual;
   }
   if (body.lastGoHomeDateActual !== undefined && body.placementCompletedDateActual === undefined) {
     body.placementCompletedDateActual = body.lastGoHomeDateActual;
   }
-  // expectedDue → expectedBirthDate
   if (body.expectedDue !== undefined && body.expectedBirthDate === undefined) {
     body.expectedBirthDate = body.expectedDue;
   }
-  // very old "whelp" aliases
   if (body.whelpDateActual !== undefined && body.birthDateActual === undefined) {
     body.birthDateActual = body.whelpDateActual;
   }
@@ -262,6 +249,19 @@ async function getPlanInTenant(planId: number, tenantId: number) {
   return plan;
 }
 
+async function getLitterInTenant(litterId: number, tenantId: number) {
+  const litter = await prisma.litter.findFirst({
+    where: { id: litterId, tenantId },
+    select: { id: true, tenantId: true, planId: true },
+  });
+  if (!litter) {
+    const exists = await prisma.litter.findUnique({ where: { id: litterId } });
+    if (!exists) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+    throw Object.assign(new Error("forbidden"), { statusCode: 403 });
+  }
+  return litter;
+}
+
 function errorReply(err: any) {
   if (err?.code === "P2002") {
     return { status: 409, payload: { error: "duplicate", detail: err?.meta?.target || undefined } };
@@ -309,7 +309,6 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
 
   let candidate = base;
   let suffix = 2;
-  // eslint-disable-next-line no-constant-condition
   while (
     await prisma.breedingPlan.findFirst({ where: { tenantId, code: candidate }, select: { id: true } })
   ) {
@@ -340,19 +339,18 @@ function normalizePlanStatus(s: any) {
   return PlanStatus.has(up) ? up : null;
 }
 
+const HEX3_4_6_8 = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
 /* ───────────────────────── routes ───────────────────────── */
 
 const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  // Enforce tenant context for all routes in this plugin
+  // Enforce tenant context
   app.addHook("preHandler", async (req, reply) => {
-    // Already set by upstream middleware? keep it.
     let tenantId: number | null = toNum((req as any).tenantId);
-
     if (!tenantId) {
       tenantId = resolveTenantIdFromRequest(req);
       if (tenantId) (req as any).tenantId = tenantId;
     }
-
     if (!tenantId) {
       return reply
         .code(400)
@@ -956,7 +954,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!female) return reply.code(400).send({ error: "female_not_found" });
 
       const placementStartDate =
-        b.placementStartDate ?? b.goHomeDate ?? null; // legacy acceptor
+        b.placementStartDate ?? b.goHomeDate ?? null;
 
       const created = await prisma.reproductiveCycle.create({
         data: {
@@ -1169,6 +1167,383 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
       reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────── Litters ───────────── */
+
+  app.get("/breeding/litters", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const q = (req.query || {}) as Partial<{
+        planId: string;
+        from: string;
+        to: string;
+        include: string;
+        page: string;
+        limit: string;
+      }>;
+
+      const where: any = { tenantId };
+      if (q.planId) where.planId = Number(q.planId);
+      if (q.from || q.to) {
+        const from = q.from ? new Date(q.from) : undefined;
+        const to = q.to ? new Date(q.to) : undefined;
+        where.birthedStartAt = { gte: from, lte: to };
+      }
+
+      const { page, limit, skip } = parsePaging(q);
+      const expand: any = {};
+      const list = String(q.include || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const has = (k: string) => list.includes(k) || list.includes("all");
+
+      if (has("plan")) expand.plan = true;
+      if (has("animals")) expand.Animals = { orderBy: { id: "asc" as const } };
+      if (has("waitlist")) expand.Waitlist = { orderBy: [{ depositPaidAt: "desc" as const }, { createdAt: "asc" as const }] };
+      if (has("events")) expand.Events = { orderBy: { occurredAt: "asc" as const } };
+      if (has("attachments")) expand.Attachment = { orderBy: { id: "desc" as const } };
+
+      const [items, total] = await prisma.$transaction([
+        prisma.litter.findMany({
+          where,
+          orderBy: [{ birthedStartAt: "desc" as const }, { id: "desc" as const }],
+          skip,
+          take: limit,
+          include: expand,
+        }),
+        prisma.litter.count({ where }),
+      ]);
+
+      reply.send({ items, total, page, limit });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.get("/breeding/litters/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const list = String((req.query as any)?.include || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const has = (k: string) => list.includes(k) || list.includes("all");
+
+      const expand: any = {};
+      if (has("plan")) expand.plan = true;
+      if (has("animals")) expand.Animals = { orderBy: { id: "asc" as const } };
+      if (has("waitlist")) expand.Waitlist = { orderBy: [{ depositPaidAt: "desc" as const }, { createdAt: "asc" as const }] };
+      if (has("events")) expand.Events = { orderBy: { occurredAt: "asc" as const } };
+      if (has("attachments")) expand.Attachment = { orderBy: { id: "desc" as const } };
+
+      const litter = await prisma.litter.findFirst({
+        where: { id, tenantId },
+        include: expand,
+      });
+      if (!litter) return reply.code(404).send({ error: "not_found" });
+
+      reply.send(litter);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/litters", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const b = (req.body || {}) as any;
+
+      const planId = idNum(b.planId);
+      if (!planId) return reply.code(400).send({ error: "planId_required" });
+      await getPlanInTenant(planId, tenantId);
+
+      const created = await prisma.litter.create({
+        data: {
+          tenantId,
+          planId,
+          identifier: b.identifier ?? null,
+          birthedStartAt: b.birthedStartAt ? new Date(b.birthedStartAt) : null,
+          birthedEndAt: b.birthedEndAt ? new Date(b.birthedEndAt) : null,
+          countBorn: b.countBorn ?? null,
+          countLive: b.countLive ?? null,
+          countStillborn: b.countStillborn ?? null,
+          countMale: b.countMale ?? null,
+          countFemale: b.countFemale ?? null,
+          countWeaned: b.countWeaned ?? null,
+          countPlaced: b.countPlaced ?? null,
+          weanedAt: b.weanedAt ? new Date(b.weanedAt) : null,
+          placementStartAt: b.placementStartAt ? new Date(b.placementStartAt) : null,
+          placementCompletedAt: b.placementCompletedAt ? new Date(b.placementCompletedAt) : null,
+          statusOverride: b.statusOverride ?? null,
+          statusOverrideReason: b.statusOverrideReason ?? null,
+          published: b.published ?? false,
+          coverImageUrl: b.coverImageUrl ?? null,
+          themeName: b.themeName ?? null,
+          notes: b.notes ?? null,
+          data: b.data ?? null,
+        },
+      });
+
+      reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.patch("/breeding/litters/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      await getLitterInTenant(id, tenantId);
+
+      const b = (req.body || {}) as any;
+      const data: any = {};
+
+      const dateKeys = [
+        "birthedStartAt",
+        "birthedEndAt",
+        "weanedAt",
+        "placementStartAt",
+        "placementCompletedAt",
+      ] as const;
+
+      for (const k of dateKeys) if (b[k] !== undefined) data[k] = b[k] ? new Date(b[k]) : null;
+
+      const passthrough = [
+        "identifier",
+        "countBorn",
+        "countLive",
+        "countStillborn",
+        "countMale",
+        "countFemale",
+        "countWeaned",
+        "countPlaced",
+        "statusOverride",
+        "statusOverrideReason",
+        "published",
+        "coverImageUrl",
+        "themeName",
+        "notes",
+        "data",
+      ];
+      for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
+
+      const updated = await prisma.litter.update({ where: { id }, data });
+      reply.send(updated);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────── Litter Events ───────────── */
+
+  app.get("/breeding/litters/:id/events", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const litterId = idNum((req.params as any).id);
+      if (!litterId) return reply.code(400).send({ error: "bad_id" });
+
+      await getLitterInTenant(litterId, tenantId);
+      const items = await prisma.litterEvent.findMany({
+        where: { tenantId, litterId },
+        orderBy: { occurredAt: "asc" },
+      });
+      reply.send(items);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/litters/:id/events", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const litterId = idNum((req.params as any).id);
+      if (!litterId) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as any;
+      if (!b.type || !b.occurredAt) return reply.code(400).send({ error: "type_and_occurredAt_required" });
+
+      await getLitterInTenant(litterId, tenantId);
+
+      const created = await prisma.litterEvent.create({
+        data: {
+          tenantId,
+          litterId,
+          type: String(b.type),
+          occurredAt: new Date(b.occurredAt),
+          field: b.field ?? null,
+          before: b.before ?? null,
+          after: b.after ?? null,
+          notes: b.notes ?? null,
+          recordedByUserId: (req as any).user?.id ?? null,
+        },
+      });
+      reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────── Batch collar assignment ─────────────
+     Body: {
+       force?: boolean; // override collarLocked
+       assignments: Array<{ animalId: number, colorId?: string, colorName?: string, colorHex?: string, lock?: boolean }>
+     }
+     Rules:
+     - All animals must belong to the litter and tenant.
+     - If an animal has collarLocked=true and force!==true, reject.
+     - Within this request, colorId/colorHex must be unique (ignoring blanks).
+     - colorHex (if present) must be valid hex (#rgb/#rgba/#rrggbb/#rrggbbaa).
+  */
+  app.post("/breeding/litters/:id/assign-collars", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const litterId = idNum((req.params as any).id);
+      if (!litterId) return reply.code(400).send({ error: "bad_id" });
+
+      await getLitterInTenant(litterId, tenantId);
+
+      const b = (req.body || {}) as any;
+      const force = !!b.force;
+      const assignments = Array.isArray(b.assignments) ? b.assignments : [];
+
+      if (!assignments.length) {
+        return reply.code(400).send({ error: "assignments_required" });
+      }
+
+      // Validate uniqueness of colorId/colorHex within the batch
+      const seenId = new Set<string>();
+      const seenHex = new Set<string>();
+      for (const a of assignments) {
+        if (!idNum(a.animalId)) return reply.code(400).send({ error: "bad_animalId" });
+        if (a.colorHex && !HEX3_4_6_8.test(a.colorHex)) {
+          return reply.code(400).send({ error: "invalid_color_hex", detail: a.colorHex });
+        }
+        const idKey = (a.colorId || "").trim();
+        const hexKey = (a.colorHex || "").trim().toLowerCase();
+        if (idKey) {
+          if (seenId.has(idKey)) return reply.code(400).send({ error: "duplicate_color_id_in_batch", detail: idKey });
+          seenId.add(idKey);
+        }
+        if (hexKey) {
+          if (seenHex.has(hexKey)) return reply.code(400).send({ error: "duplicate_color_hex_in_batch", detail: hexKey });
+          seenHex.add(hexKey);
+        }
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Pull all animals for verification
+        const animals = await tx.animal.findMany({
+          where: { tenantId, litterId, id: { in: assignments.map((a: any) => Number(a.animalId)) } },
+          select: { id: true, collarLocked: true },
+        });
+
+        const foundIds = new Set(animals.map((a) => a.id));
+        const missing = assignments.map((a: any) => Number(a.animalId)).filter((id: number) => !foundIds.has(id));
+        if (missing.length) {
+          const err: any = new Error(`animals_not_in_litter_or_tenant: ${missing.join(", ")}`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        // Respect lock
+        const lockedIds = animals.filter((a) => a.collarLocked).map((a) => a.id);
+        if (!force && lockedIds.length) {
+          const err: any = new Error(`locked_animals: ${lockedIds.join(", ")}`);
+          err.statusCode = 409;
+          throw err;
+        }
+
+        // Optional uniqueness across the litter (current DB state): enforce that no two litter mates share the same colorId or colorHex (non-empty)
+        const current = await tx.animal.findMany({
+          where: { tenantId, litterId },
+          select: { id: true, collarColorId: true, collarColorHex: true },
+        });
+
+        const currentById = new Map<string, number>();
+        const currentByHex = new Map<string, number>();
+        for (const a of current) {
+          if (a.collarColorId) currentById.set(a.collarColorId, a.id);
+          if (a.collarColorHex) currentByHex.set(a.collarColorHex.toLowerCase(), a.id);
+        }
+
+        for (const a of assignments) {
+          const idKey = (a.colorId || "").trim();
+          const hexKey = (a.colorHex || "").trim().toLowerCase();
+          if (idKey) {
+            const holder = currentById.get(idKey);
+            if (holder && holder !== Number(a.animalId)) {
+              const err: any = new Error(`color_id_in_use:${idKey}`);
+              err.statusCode = 409;
+              throw err;
+            }
+          }
+          if (hexKey) {
+            const holder = currentByHex.get(hexKey);
+            if (holder && holder !== Number(a.animalId)) {
+              const err: any = new Error(`color_hex_in_use:${hexKey}`);
+              err.statusCode = 409;
+              throw err;
+            }
+          }
+        }
+
+        // Apply updates
+        const updates = [];
+        for (const a of assignments) {
+          updates.push(
+            tx.animal.update({
+              where: { id: Number(a.animalId) },
+              data: {
+                collarColorId: a.colorId ?? null,
+                collarColorName: a.colorName ?? null,
+                collarColorHex: a.colorHex ?? null,
+                collarAssignedAt: new Date(),
+                collarLocked: a.lock === true ? true : a.lock === false ? false : undefined,
+              },
+              select: { id: true, collarColorId: true, collarColorName: true, collarColorHex: true, collarLocked: true },
+            })
+          );
+        }
+
+        const updated = await Promise.all(updates);
+
+        // Litter event
+        await tx.litterEvent.create({
+          data: {
+            tenantId,
+            litterId,
+            type: "CHANGE",
+            occurredAt: new Date(),
+            field: "collars",
+            before: null,
+            after: { assigned: assignments.map((a: any) => ({ animalId: Number(a.animalId), colorId: a.colorId, colorName: a.colorName, colorHex: a.colorHex, lock: !!a.lock })) },
+            notes: force ? "Collars assigned (force override locks)" : "Collars assigned",
+            recordedByUserId: (req as any).user?.id ?? null,
+          },
+        });
+
+        return updated;
+      });
+
+      reply.send({ updated: result });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
