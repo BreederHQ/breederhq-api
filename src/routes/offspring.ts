@@ -1,3 +1,236 @@
+// [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
+import type { Prisma, PrismaClient, OffspringGroup, BreedingPlan, Animal } from "@prisma/client";
+
+function __og_addDays(d: Date, days: number): Date {
+  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt;
+}
+function __og_coerceISODateOnly(v: Date | string): Date {
+  const dt = new Date(v);
+  if (Number.isNaN(dt.getTime())) throw new Error("invalid date: " + v);
+  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+}
+function __og_safeSeasonLabel(date: Date): string {
+  const m = date.getUTCMonth();
+  if (m <= 1) return "Winter " + date.getUTCFullYear();
+  if (m <= 4) return "Spring " + date.getUTCFullYear();
+  if (m <= 7) return "Summer " + date.getUTCFullYear();
+  if (m <= 10) return "Fall " + date.getUTCFullYear();
+  return "Winter " + (date.getUTCFullYear() + 1);
+}
+function __og_compactName(name: string): string {
+  const n = String(name || "").trim();
+  if (!n) return "";
+  return n.replace(/\s+/g, " ");
+}
+
+type __OG_EventInput = {
+  tenantId: number;
+  groupId: number;
+  type: "LINK" | "UNLINK" | "CHANGE" | "NOTE" | "STATUS_OVERRIDE" | "BUYER_MOVE";
+  field?: string | null;
+  before?: unknown;
+  after?: unknown;
+  notes?: string | null;
+  actorId?: string | null;
+};
+
+type __OG_Authorizer = { ensureAdmin(tenantId: number, actorId: string): Promise<void> };
+const __og_authorizer: __OG_Authorizer = { async ensureAdmin() { } }; // replace with real check
+
+export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: PrismaClient; authorizer?: __OG_Authorizer }) {
+  function expectedBirthFromPlan(plan: Pick<BreedingPlan, "expectedBirthDate" | "lockedOvulationDate">): Date | null {
+    if (plan.expectedBirthDate) return __og_coerceISODateOnly(plan.expectedBirthDate);
+    if (plan.lockedOvulationDate) return __og_addDays(__og_coerceISODateOnly(plan.lockedOvulationDate), 63);
+    return null;
+  }
+  function buildTentativeGroupName(plan: Pick<BreedingPlan, "name"> & { dam?: Pick<Animal, "name"> | null }, dt: Date): string {
+    if (plan.name && plan.name.trim()) return plan.name.trim();
+    const damName = __og_compactName(plan.dam?.name ?? "");
+    const season = __og_safeSeasonLabel(dt);
+    return [damName || "Unnamed Dam", season].join(" • ");
+  }
+
+  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, planId, actorId } = args;
+    return prisma.$transaction(async (tx) => {
+      const plan = await tx.breedingPlan.findFirst({
+        where: { id: planId, tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      });
+      if (!plan) throw new Error("plan not found for tenant");
+
+      const existing = await tx.offspringGroup.findFirst({ where: { tenantId, planId } });
+      if (existing) return existing;
+
+      const expectedBirthOn = expectedBirthFromPlan(plan);
+      const tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, expectedBirthOn ?? new Date());
+
+      const created = await tx.offspringGroup.create({
+        data: {
+          tenantId,
+          planId: plan.id,
+          species: (plan.dam as any)?.species ?? (plan as any).species ?? "DOG",
+          damId: plan.damId ?? null,
+          sireId: plan.sireId ?? null,
+          linkState: "linked",
+          expectedBirthOn,
+          tentativeName,
+        },
+      });
+
+      await tx.offspringGroupEvent.create({
+        data: {
+          tenantId,
+          groupId: created.id,
+          type: "LINK",
+          field: "planId",
+          before: null,
+          after: { planId: plan.id },
+          notes: "Group ensured for committed plan",
+          actorId,
+        },
+      });
+
+      return created;
+    });
+  }
+
+  async function linkGroupToPlan(args: { tenantId: number; groupId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, groupId, planId, actorId } = args;
+    return prisma.$transaction(async (tx) => {
+      const [group, plan] = await Promise.all([
+        tx.offspringGroup.findFirst({ where: { id: groupId, tenantId } }),
+        tx.breedingPlan.findFirst({
+          where: { id: planId, tenantId },
+          include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+        }),
+      ]);
+      if (!group) throw new Error("group not found for tenant");
+      if (!plan) throw new Error("plan not found for tenant");
+
+      const before = { ...group };
+      const patch: Prisma.OffspringGroupUpdateInput = { planId: plan.id, linkState: "linked" };
+
+      if (!group.species) patch.species = (plan.dam as any)?.species ?? (plan as any).species ?? "DOG";
+      if (!group.damId && plan.damId) patch.dam = { connect: { id: plan.damId } };
+      if (!group.sireId && plan.sireId) patch.sire = { connect: { id: plan.sireId } };
+      if (!group.expectedBirthOn) {
+        const exp = expectedBirthFromPlan(plan);
+        if (exp) patch.expectedBirthOn = exp;
+      }
+      if (!group.tentativeName) {
+        const exp = (patch as any).expectedBirthOn ?? expectedBirthFromPlan(plan) ?? new Date();
+        patch.tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, exp);
+      }
+
+      const updated = await tx.offspringGroup.update({ where: { id: group.id }, data: patch });
+
+      await tx.offspringGroupEvent.create({
+        data: {
+          tenantId,
+          groupId: group.id,
+          type: "LINK",
+          field: "planId",
+          before,
+          after: { ...updated },
+          notes: "Group linked to plan",
+          actorId,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  async function unlinkGroup(args: { tenantId: number; groupId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, groupId, actorId } = args;
+    if (authorizer) await authorizer.ensureAdmin(tenantId, actorId);
+
+    return prisma.$transaction(async (tx) => {
+      const group = await tx.offspringGroup.findFirst({ where: { id: groupId, tenantId } });
+      if (!group) throw new Error("group not found for tenant");
+
+      const updated = await tx.offspringGroup.update({
+        where: { id: group.id },
+        data: { planId: null, linkState: "orphan" },
+      });
+
+      await tx.offspringGroupEvent.create({
+        data: {
+          tenantId,
+          groupId: group.id,
+          type: "UNLINK",
+          field: "planId",
+          before: { ...group },
+          after: { ...updated },
+          notes: "Group manually unlinked from plan",
+          actorId,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  async function getLinkSuggestions(args: { tenantId: number; groupId: number; limit?: number }) {
+    const { tenantId, groupId, limit = 10 } = args;
+
+    const [group, plans] = await Promise.all([
+      prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      }),
+      prisma.breedingPlan.findMany({
+        where: { tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      }),
+    ]);
+    if (!group) throw new Error("group not found for tenant");
+
+    const groupExp = group.expectedBirthOn ?? group.actualBirthOn ?? null;
+    const groupDamId = group.damId ?? null;
+    const groupSireId = group.sireId ?? null;
+    const groupSpecies = group.species ?? (group.dam as any)?.species ?? null;
+
+    const within7 = (d1: Date | null, d2: Date | null) => {
+      if (!d1 || !d2) return false;
+      const ms = Math.abs(__og_coerceISODateOnly(d1).getTime() - __og_coerceISODateOnly(d2).getTime());
+      return ms <= 7 * 24 * 60 * 60 * 1000;
+    };
+
+    return plans
+      .map((p) => {
+        let score = 10;
+        const pSpecies = (p.dam as any)?.species ?? (p as any).species ?? null;
+        if (groupSpecies && pSpecies && String(groupSpecies) === String(pSpecies)) score += 25;
+        if (groupDamId && p.damId && groupDamId === p.damId) score += 40;
+        const pExpected = p.expectedBirthDate
+          ? __og_coerceISODateOnly(p.expectedBirthDate as any)
+          : p.lockedOvulationDate
+            ? __og_addDays(__og_coerceISODateOnly(p.lockedOvulationDate as any), 63)
+            : null;
+        if (within7(groupExp, pExpected)) score += 20;
+        if (groupSireId && p.sireId && groupSireId === p.sireId) score += 5;
+
+        return {
+          planId: p.id,
+          planName: p.name ?? `Plan #${p.id}`,
+          expectedBirthDate: pExpected ?? null,
+          damName: p.dam?.name ?? null,
+          sireName: p.sire?.name ?? null,
+          matchScore: score,
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, limit);
+  }
+
+  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+}
+// [OG-SERVICE-END]
+
 // src/routes/offspring.ts
 import type { FastifyPluginCallback } from "fastify";
 import prisma from "../prisma.js";
@@ -53,94 +286,105 @@ function litePlanForList(p: any) {
   };
 }
 
-function litterListItem(L: any) {
+function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
   return {
-    id: L.id,
-    tenantId: L.tenantId,
-    identifier: L.identifier,
-    createdAt: L.createdAt.toISOString(),
-    updatedAt: L.updatedAt.toISOString(),
+    id: G.id,
+    tenantId: G.tenantId,
+    identifier: G.tentativeName ?? null,
+    // list UIs treat published as optional flag
+    published: !!G.published,
     counts: {
-      animals: L._count?.Animals ?? 0,
-      waitlist: L._count?.Waitlist ?? 0,
-      born: L.countBorn ?? null,
-      live: L.countLive ?? null,
-      stillborn: L.countStillborn ?? null,
-      male: L.countMale ?? null,
-      female: L.countFemale ?? null,
-      weaned: L.countWeaned ?? null,   // NEW
-      placed: L.countPlaced ?? null,   // NEW
+      // align with OffspringRow.counts in apps/offspring/src/api.ts
+      animals: animalsCt ?? 0,
+      waitlist: waitlistCt ?? 0,
+      born: G.countBorn ?? null,
+      live: G.countLive ?? null,
+      stillborn: G.countStillborn ?? null,
+      male: G.countMale ?? null,
+      female: G.countFemale ?? null,
+      weaned: G.countWeaned ?? null,
+      placed: G.countPlaced ?? null,
     },
     dates: {
-      birthedStartAt: L.birthedStartAt?.toISOString() ?? null,
-      birthedEndAt: L.birthedEndAt?.toISOString() ?? null,
-      weanedAt: L.weanedAt?.toISOString() ?? null,
-      placementStartAt: L.placementStartAt?.toISOString() ?? null,
-      placementCompletedAt: L.placementCompletedAt?.toISOString() ?? null,
+      // we only have a single actual birth date today, so mirror it into both slots
+      birthedStartAt: G.actualBirthOn ?? null,
+      birthedEndAt: G.actualBirthOn ?? null,
+      weanedAt: G.weanedAt ?? null,
+      placementStartAt: G.placementStartAt ?? G.plan?.expectedPlacementStart ?? null,
+      placementCompletedAt: G.placementCompletedAt ?? G.plan?.expectedPlacementCompleted ?? null,
     },
-    published: L.published ?? false,
-    statusOverride: L.statusOverride ?? null,               // NEW (surface status override at list level for UI badges)
-    statusOverrideReason: L.statusOverrideReason ?? null,   // NEW
-    plan: litePlanForList(L.plan),
+    plan: G.plan && {
+      id: G.plan.id,
+      code: G.plan.code,
+      name: G.plan.name,
+      species: G.plan.species,
+      breedText: G.plan.breedText,
+      dam: G.plan.dam,
+      sire: G.plan.sire,
+      expectedPlacementStart: G.plan.expectedPlacementStart,
+      expectedPlacementCompleted: G.plan.expectedPlacementCompleted,
+    },
+    statusOverride: G.statusOverride ?? null,
+    statusOverrideReason: G.statusOverrideReason ?? null,
+    createdAt: G.createdAt?.toISOString?.() ?? null,
+    updatedAt: G.updatedAt?.toISOString?.() ?? null,
   };
 }
 
-function litterDetail(L: any) {
-  if (!L) return null;
+function groupDetail(G: any, animals: any[], waitlist: any[], attachments: any[]) {
   return {
-    id: L.id,
-    tenantId: L.tenantId,
-    identifier: L.identifier,
-    notes: L.notes ?? null,
-    published: !!L.published,
-    coverImageUrl: L.coverImageUrl ?? null,
-    themeName: L.themeName ?? null,
-    statusOverride: L.statusOverride ?? null,             // NEW
-    statusOverrideReason: L.statusOverrideReason ?? null, // NEW
-    data: L.data ?? null,                                 // NEW
-    birthedStartAt: L.birthedStartAt?.toISOString() ?? null,
-    birthedEndAt: L.birthedEndAt?.toISOString() ?? null,
-    weanedAt: L.weanedAt?.toISOString() ?? null,
-    placementStartAt: L.placementStartAt?.toISOString() ?? null,
-    placementCompletedAt: L.placementCompletedAt?.toISOString() ?? null,
+    id: G.id,
+    tenantId: G.tenantId,
+    identifier: G.tentativeName ?? null,
+    notes: G.notes ?? null,
+    published: !!G.published,
+    coverImageUrl: G.coverImageUrl ?? null,
+    themeName: G.themeName ?? null,
+    statusOverride: G.statusOverride ?? null,
+    statusOverrideReason: G.statusOverrideReason ?? null,
+    data: G.data ?? null,
+    birthedStartAt: G.actualBirthOn?.toISOString?.() ?? null,
+    birthedEndAt: null,
+    weanedAt: G.weanedAt?.toISOString?.() ?? null,
+    placementStartAt: G.placementStartAt?.toISOString?.() ?? null,
+    placementCompletedAt: G.placementCompletedAt?.toISOString?.() ?? null,
     counts: {
-      born: L.countBorn ?? null,
-      live: L.countLive ?? null,
-      stillborn: L.countStillborn ?? null,
-      male: L.countMale ?? null,
-      female: L.countFemale ?? null,
-      weaned: L.countWeaned ?? null,   // NEW
-      placed: L.countPlaced ?? null,   // NEW
+      born: G.countBorn ?? null,
+      live: G.countLive ?? null,
+      stillborn: G.countStillborn ?? null,
+      male: G.countMale ?? null,
+      female: G.countFemale ?? null,
+      weaned: G.countWeaned ?? null,
+      placed: G.countPlaced ?? null,
     },
-    plan: L.plan
+    plan: G.plan
       ? {
-          id: L.plan.id,
-          code: L.plan.code,
-          name: L.plan.name,
-          species: L.plan.species,
-          breedText: L.plan.breedText,
-          dam: L.plan.dam ? { id: L.plan.dam.id, name: L.plan.dam.name } : null,
-          sire: L.plan.sire ? { id: L.plan.sire.id, name: L.plan.sire.name } : null,
+          id: G.plan.id,
+          code: G.plan.code,
+          name: G.plan.name,
+          species: G.plan.species,
+          breedText: G.plan.breedText,
+          dam: G.plan.dam ? { id: G.plan.dam.id, name: G.plan.dam.name } : null,
+          sire: G.plan.sire ? { id: G.plan.sire.id, name: G.plan.sire.name } : null,
         }
       : null,
-    Animals: (L.Animals ?? []).map((a: any) => ({
+    Animals: animals.map((a: any) => ({
       id: a.id,
       name: a.name,
       sex: a.sex,
       status: a.status,
-      birthDate: a.birthDate?.toISOString() ?? null,
+      birthDate: a.birthDate?.toISOString?.() ?? null,
       species: a.species,
       breed: a.breed ?? null,
-      litterId: a.litterId,
-      // NEW: collar fields
+      litterId: null,
       collarColorId: a.collarColorId ?? null,
       collarColorName: a.collarColorName ?? null,
       collarColorHex: a.collarColorHex ?? null,
-      collarAssignedAt: a.collarAssignedAt?.toISOString() ?? null,
+      collarAssignedAt: a.collarAssignedAt?.toISOString?.() ?? null,
       collarLocked: !!a.collarLocked,
       updatedAt: a.updatedAt.toISOString(),
     })),
-    Waitlist: (L.Waitlist ?? []).map((w: any) => ({
+    Waitlist: waitlist.map((w: any) => ({
       id: w.id,
       tenantId: w.tenantId,
       status: w.status,
@@ -148,10 +392,10 @@ function litterDetail(L: any) {
       depositRequiredCents: w.depositRequiredCents,
       depositPaidCents: w.depositPaidCents,
       balanceDueCents: w.balanceDueCents,
-      depositPaidAt: w.depositPaidAt?.toISOString() ?? null,
+      depositPaidAt: w.depositPaidAt?.toISOString?.() ?? null,
       contactId: w.contactId,
       organizationId: w.organizationId,
-      litterId: w.litterId,
+      litterId: null,
       planId: w.planId,
       speciesPref: w.speciesPref,
       breedPrefs: w.breedPrefs ?? null,
@@ -167,9 +411,9 @@ function litterDetail(L: any) {
       damPref: w.damPref ? { id: w.damPref.id, name: w.damPref.name } : null,
       TagAssignment: (w.TagAssignment ?? []).map((t: any) => ({ id: t.id, tagId: t.tagId, tag: t.tag })),
     })),
-    Attachment: L.Attachment ?? [],
-    createdAt: L.createdAt.toISOString(),
-    updatedAt: L.updatedAt.toISOString(),
+    Attachment: attachments ?? [],
+    createdAt: G.createdAt.toISOString(),
+    updatedAt: G.updatedAt.toISOString(),
   };
 }
 
@@ -186,55 +430,20 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /* ===== LIST: GET /api/v1/offspring ===== */
   app.get("/offspring", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    const q = String(req.query["q"] ?? "").trim();
-    const limit = Math.min(250, Math.max(1, Number(req.query["limit"] ?? 25)));
-    const cursorId = req.query["cursor"] ? Number(req.query["cursor"]) : undefined;
-    const published = asBool(req.query["published"]);
-    const hasAnimals = asBool(req.query["hasAnimals"]);
-
-    const dateFieldRaw = String(req.query["dateField"] ?? "").trim();
-    const dateFrom = parseISO(req.query["dateFrom"]);
-    const dateTo = parseISO(req.query["dateTo"]);
-    const dateFieldMap: Record<string, keyof typeof whereDates> = {
-      birthed: "birthedStartAt",
-      weaned: "weanedAt",
-      placementStart: "placementStartAt",
-      placementCompleted: "placementCompletedAt",
-    };
+    const q = String((req as any).query?.q ?? "").trim();
+    const limit = Math.min(250, Math.max(1, Number((req as any).query?.limit ?? 25)));
+    const cursorId = (req as any).query?.cursor ? Number((req as any).query.cursor) : undefined;
+    const published = asBool((req as any).query?.published);
 
     // build where
-    const whereDates = {
-      birthedStartAt: undefined as any,
-      weanedAt: undefined as any,
-      placementStartAt: undefined as any,
-      placementCompletedAt: undefined as any,
-    };
-
-    if (dateFieldRaw && dateFieldMap[dateFieldRaw]) {
-      const k = dateFieldMap[dateFieldRaw];
-      whereDates[k] = {
-        gte: dateFrom ?? undefined,
-        lte: dateTo ?? undefined,
-      };
-    }
-
     const where: any = {
       tenantId,
-      ...(q ? { identifier: { contains: q, mode: "insensitive" } } : null),
+      ...(q ? { tentativeName: { contains: q, mode: "insensitive" } } : null),
       ...(published !== undefined ? { published } : null),
-      ...(whereDates.birthedStartAt ? { birthedStartAt: whereDates.birthedStartAt } : null),
-      ...(whereDates.weanedAt ? { weanedAt: whereDates.weanedAt } : null),
-      ...(whereDates.placementStartAt ? { placementStartAt: whereDates.placementStartAt } : null),
-      ...(whereDates.placementCompletedAt ? { placementCompletedAt: whereDates.placementCompletedAt } : null),
-      ...(hasAnimals !== undefined
-        ? hasAnimals
-          ? { Animals: { some: {} } }
-          : { Animals: { none: {} } }
-        : null),
-      ...(cursorId ? { id: { lt: cursorId } } : null), // simple keyset by id desc
+      ...(cursorId ? { id: { lt: cursorId } } : null),
     };
 
-    const litters = await prisma.litter.findMany({
+    const groups = await prisma.offspringGroup.findMany({
       where,
       orderBy: { id: "desc" },
       take: limit + 1,
@@ -254,14 +463,36 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             placementCompletedDateActual: true,
           },
         },
-        _count: { select: { Animals: true, Waitlist: true } },
       },
     });
 
-    const hasMore = litters.length > limit;
-    const rows = hasMore ? litters.slice(0, limit) : litters;
-    const items = rows.map(litterListItem);
-    const nextCursor = hasMore ? String(rows[rows.length - 1].id) : null;
+    const ids = groups.map((g) => g.id);
+    // batch counts to avoid _count key mismatches
+    const [animalCounts, waitlistCounts] = await Promise.all([
+      ids.length
+        ? prisma.animal.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+        : Promise.resolve([] as any[]),
+      ids.length
+        ? prisma.waitlistEntry.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const aMap = new Map<number, number>();
+    for (const r of animalCounts) aMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+    const wMap = new Map<number, number>();
+    for (const r of waitlistCounts) wMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+
+    const rows = groups.length > limit ? groups.slice(0, limit) : groups;
+    const items = rows.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
+    const nextCursor = groups.length > limit ? String(rows[rows.length - 1].id) : null;
 
     reply.send({ items, nextCursor });
   });
@@ -271,7 +502,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
 
-    const L = await prisma.litter.findFirst({
+    const G = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
       include: {
         plan: {
@@ -285,42 +516,48 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             sire: { select: { id: true, name: true } },
           },
         },
-        Animals: {
-          select: {
-            id: true,
-            name: true,
-            sex: true,
-            status: true,
-            birthDate: true,
-            species: true,
-            breed: true,
-            litterId: true,
-            updatedAt: true,
-            // NEW: collar fields
-            collarColorId: true,
-            collarColorName: true,
-            collarColorHex: true,
-            collarAssignedAt: true,
-            collarLocked: true,
-          },
-          orderBy: { id: "asc" },
-        },
-        Waitlist: {
-          include: {
-            contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-            organization: { select: { id: true, name: true, email: true, phone: true } },
-            sirePref: { select: { id: true, name: true } },
-            damPref: { select: { id: true, name: true } },
-            TagAssignment: { include: { tag: true } },
-          },
-          orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }],
-        },
-        Attachment: true,
       },
     });
 
-    if (!L) return reply.code(404).send({ error: "not found" });
-    reply.send(litterDetail(L));
+    if (!G) return reply.code(404).send({ error: "not found" });
+
+    const [animals, waitlist, attachments] = await Promise.all([
+      prisma.animal.findMany({
+        where: { offspringGroupId: id, tenantId },
+        select: {
+          id: true,
+          name: true,
+          sex: true,
+          status: true,
+          birthDate: true,
+          species: true,
+          breed: true,
+          updatedAt: true,
+          collarColorId: true,
+          collarColorName: true,
+          collarColorHex: true,
+          collarAssignedAt: true,
+          collarLocked: true,
+        },
+        orderBy: { id: "asc" },
+      }),
+      prisma.waitlistEntry.findMany({
+        where: { offspringGroupId: id, tenantId },
+        include: {
+          contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
+          organization: { select: { id: true, name: true, email: true, phone: true } },
+          sirePref: { select: { id: true, name: true } },
+          damPref: { select: { id: true, name: true } },
+          TagAssignment: { include: { tag: true } },
+        },
+        orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }],
+      }),
+      prisma.attachment.findMany({
+        where: { offspringGroupId: id, tenantId },
+      }),
+    ]);
+
+    reply.send(groupDetail(G as any, animals as any, waitlist as any, attachments as any));
   });
 
   /* ===== CREATE: POST /api/v1/offspring ===== */
@@ -331,52 +568,51 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
     if (!plan) return reply.code(404).send({ error: "plan not found" });
-    if (plan.status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
+    if ((plan as any).status && (plan as any).status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
 
-    const existing = await prisma.litter.findFirst({ where: { planId: plan.id, tenantId } });
+    const existing = await prisma.offspringGroup.findFirst({ where: { planId: plan.id, tenantId } });
 
-    const payload: any = {
+    const payload: Prisma.OffspringGroupUncheckedCreateInput | Prisma.OffspringGroupUncheckedUpdateInput = {
       tenantId,
       planId: plan.id,
-      identifier: identifier ?? null,
+      tentativeName: identifier ?? null,
       notes: notes ?? null,
       published: Boolean(published ?? false),
-      statusOverride: statusOverride ?? null,                 // NEW
-      statusOverrideReason: statusOverrideReason ?? null,     // NEW
-      data: data ?? null,                                     // NEW
+      statusOverride: statusOverride ?? null,
+      statusOverrideReason: statusOverrideReason ?? null,
+      data: data ?? null,
     };
 
     if (publishedMeta) {
-      if ("coverImageUrl" in publishedMeta) payload.coverImageUrl = publishedMeta.coverImageUrl ?? null;
-      if ("themeName" in publishedMeta) payload.themeName = publishedMeta.themeName ?? null;
+      if ("coverImageUrl" in publishedMeta) (payload as any).coverImageUrl = publishedMeta.coverImageUrl ?? null;
+      if ("themeName" in publishedMeta) (payload as any).themeName = publishedMeta.themeName ?? null;
     }
 
     if (dates) {
-      payload.birthedStartAt = parseISO(dates.birthedStartAt);
-      payload.birthedEndAt = parseISO(dates.birthedEndAt);
-      payload.weanedAt = parseISO(dates.weanedAt);
-      payload.placementStartAt = parseISO(dates.placementStartAt) ?? (plan.lockedPlacementStartDate ?? null);
-      payload.placementCompletedAt = parseISO(dates.placementCompletedAt);
+      (payload as any).weanedAt = parseISO(dates.weanedAt);
+      (payload as any).placementStartAt = parseISO(dates.placementStartAt) ?? ((plan as any).lockedPlacementStartDate ?? null);
+      (payload as any).placementCompletedAt = parseISO(dates.placementCompletedAt);
     } else {
-      payload.placementStartAt = plan.lockedPlacementStartDate ?? null;
+      (payload as any).placementStartAt = (plan as any).lockedPlacementStartDate ?? null;
     }
 
     if (counts) {
-      if ("countBorn" in counts) payload.countBorn = counts.countBorn ?? null;
-      if ("countLive" in counts) payload.countLive = counts.countLive ?? null;
-      if ("countStillborn" in counts) payload.countStillborn = counts.countStillborn ?? null;
-      if ("countMale" in counts) payload.countMale = counts.countMale ?? null;
-      if ("countFemale" in counts) payload.countFemale = counts.countFemale ?? null;
-      if ("countWeaned" in counts) payload.countWeaned = counts.countWeaned ?? null;   // NEW
-      if ("countPlaced" in counts) payload.countPlaced = counts.countPlaced ?? null;   // NEW
+      if ("countBorn" in counts) (payload as any).countBorn = counts.countBorn ?? null;
+      if ("countLive" in counts) (payload as any).countLive = counts.countLive ?? null;
+      if ("countStillborn" in counts) (payload as any).countStillborn = counts.countStillborn ?? null;
+      if ("countMale" in counts) (payload as any).countMale = counts.countMale ?? null;
+      if ("countFemale" in counts) (payload as any).countFemale = counts.countFemale ?? null;
+      if ("countWeaned" in counts) (payload as any).countWeaned = counts.countWeaned ?? null;
+      if ("countPlaced" in counts) (payload as any).countPlaced = counts.countPlaced ?? null;
     }
 
-    const litter = existing
-      ? await prisma.litter.update({ where: { id: existing.id }, data: payload })
-      : await prisma.litter.create({ data: payload });
+    const created = existing
+      ? await prisma.offspringGroup.update({ where: { id: existing.id }, data: payload as any })
+      : await prisma.offspringGroup.create({ data: payload as any });
 
-    const created = await prisma.litter.findFirst({
-      where: { id: litter.id, tenantId },
+    // return detail payload
+    const fresh = await prisma.offspringGroup.findFirst({
+      where: { id: created.id, tenantId },
       include: {
         plan: {
           select: {
@@ -389,13 +625,16 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             sire: { select: { id: true, name: true } },
           },
         },
-        Animals: true,
-        Waitlist: true,
-        Attachment: true,
       },
     });
 
-    reply.code(existing ? 200 : 201).send(litterDetail(created));
+    const [animals, waitlist, attachments] = await Promise.all([
+      prisma.animal.findMany({ where: { offspringGroupId: created.id, tenantId } }),
+      prisma.waitlistEntry.findMany({ where: { offspringGroupId: created.id, tenantId }, include: { contact: true, organization: true, TagAssignment: { include: { tag: true } }, sirePref: true, damPref: true } }),
+      prisma.attachment.findMany({ where: { offspringGroupId: created.id, tenantId } }),
+    ]);
+
+    reply.code(existing ? 200 : 201).send(groupDetail(fresh as any, animals as any, waitlist as any, attachments as any));
   });
 
   /* ===== UPDATE: PATCH /api/v1/offspring/:id ===== */
@@ -404,23 +643,21 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const id = Number((req.params as any).id);
     const body = (req.body as any) ?? {};
 
-    const L = await prisma.litter.findFirst({ where: { id, tenantId } });
-    if (!L) return reply.code(404).send({ error: "not found" });
+    const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!G) return reply.code(404).send({ error: "not found" });
 
     const data: any = {};
-    if ("identifier" in body) data.identifier = body.identifier ?? null;
+    if ("identifier" in body) data.tentativeName = body.identifier ?? null;
     if ("notes" in body) data.notes = body.notes ?? null;
     if ("published" in body) data.published = !!body.published;
-    if ("statusOverride" in body) data.statusOverride = body.statusOverride ?? null;                 // NEW
-    if ("statusOverrideReason" in body) data.statusOverrideReason = body.statusOverrideReason ?? null; // NEW
-    if ("data" in body) data.data = body.data ?? null;                                              // NEW
+    if ("statusOverride" in body) data.statusOverride = body.statusOverride ?? null;
+    if ("statusOverrideReason" in body) data.statusOverrideReason = body.statusOverrideReason ?? null;
+    if ("data" in body) data.data = body.data ?? null;
     if (body.publishedMeta) {
       if ("coverImageUrl" in body.publishedMeta) data.coverImageUrl = body.publishedMeta.coverImageUrl ?? null;
       if ("themeName" in body.publishedMeta) data.themeName = body.publishedMeta.themeName ?? null;
     }
     if (body.dates) {
-      if ("birthedStartAt" in body.dates) data.birthedStartAt = parseISO(body.dates.birthedStartAt);
-      if ("birthedEndAt" in body.dates) data.birthedEndAt = parseISO(body.dates.birthedEndAt);
       if ("weanedAt" in body.dates) data.weanedAt = parseISO(body.dates.weanedAt);
       if ("placementStartAt" in body.dates) data.placementStartAt = parseISO(body.dates.placementStartAt);
       if ("placementCompletedAt" in body.dates) data.placementCompletedAt = parseISO(body.dates.placementCompletedAt);
@@ -432,13 +669,13 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
       if ("countStillborn" in c) data.countStillborn = c.countStillborn ?? null;
       if ("countMale" in c) data.countMale = c.countMale ?? null;
       if ("countFemale" in c) data.countFemale = c.countFemale ?? null;
-      if ("countWeaned" in c) data.countWeaned = c.countWeaned ?? null;   // NEW
-      if ("countPlaced" in c) data.countPlaced = c.countPlaced ?? null;   // NEW
+      if ("countWeaned" in c) data.countWeaned = c.countWeaned ?? null;
+      if ("countPlaced" in c) data.countPlaced = c.countPlaced ?? null;
     }
 
-    await prisma.litter.update({ where: { id }, data });
+    await prisma.offspringGroup.update({ where: { id }, data });
 
-    const refreshed = await prisma.litter.findFirst({
+    const refreshed = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
       include: {
         plan: {
@@ -452,33 +689,16 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
             sire: { select: { id: true, name: true } },
           },
         },
-        Animals: {
-          select: {
-            id: true,
-            name: true,
-            sex: true,
-            status: true,
-            birthDate: true,
-            species: true,
-            breed: true,
-            litterId: true,
-            updatedAt: true,
-            collarColorId: true,
-            collarColorName: true,
-            collarColorHex: true,
-            collarAssignedAt: true,
-            collarLocked: true,
-          },
-        },
-        Waitlist: {
-          include: { contact: true, organization: true, TagAssignment: { include: { tag: true } }, sirePref: true, damPref: true },
-          orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }],
-        },
-        Attachment: true,
       },
     });
 
-    reply.send(litterDetail(refreshed));
+    const [animals, waitlist, attachments] = await Promise.all([
+      prisma.animal.findMany({ where: { offspringGroupId: id, tenantId } }),
+      prisma.waitlistEntry.findMany({ where: { offspringGroupId: id, tenantId }, include: { contact: true, organization: true, TagAssignment: { include: { tag: true } }, sirePref: true, damPref: true } }),
+      prisma.attachment.findMany({ where: { offspringGroupId: id, tenantId } }),
+    ]);
+
+    reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any));
   });
 
   /* ===== DELETE: DELETE /api/v1/offspring/:id ===== */
@@ -486,14 +706,14 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
 
-    const existing = await prisma.litter.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
     if (!existing) return reply.code(404).send({ error: "not found" });
 
-    await prisma.litter.delete({ where: { id } });
+    await prisma.offspringGroup.delete({ where: { id } });
     reply.send({ ok: true, id });
   });
 
-  /* ===== MOVE WAITLIST INTO LITTER: POST /offspring/:id/move-waitlist ===== */
+  /* ===== MOVE WAITLIST INTO GROUP: POST /offspring/:id/move-waitlist ===== */
   app.post("/offspring/:id/move-waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -502,8 +722,8 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
       return reply.code(400).send({ error: "waitlistEntryIds required" });
     }
 
-    const L = await prisma.litter.findFirst({ where: { id, tenantId } });
-    if (!L) return reply.code(404).send({ error: "group not found" });
+    const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!G) return reply.code(404).send({ error: "group not found" });
 
     const entries = await prisma.waitlistEntry.findMany({
       where: { id: { in: waitlistEntryIds.map(Number) }, tenantId },
@@ -514,7 +734,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     }
 
     await prisma.$transaction(entries.map((e) =>
-      prisma.waitlistEntry.update({ where: { id: e.id }, data: { litterId: id } }),
+      prisma.waitlistEntry.update({ where: { id: e.id }, data: { offspringGroupId: id } }),
     ));
 
     reply.send({ moved: entries.length });
@@ -526,11 +746,11 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const id = Number((req.params as any).id);
     const body = (req.body as any) ?? {};
 
-    const L = await prisma.litter.findFirst({
+    const G = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
       include: { plan: { select: { species: true } } },
     });
-    if (!L) return reply.code(404).send({ error: "litter not found" });
+    if (!G) return reply.code(404).send({ error: "group not found" });
 
     if (!body?.name || !body?.sex) {
       return reply.code(400).send({ error: "name and sex are required" });
@@ -541,15 +761,15 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
         tenantId,
         organizationId: null, // optional for now
         name: String(body.name),
-        species: body.species ?? L.plan?.species ?? "DOG",
+        species: body.species ?? G.plan?.species ?? "DOG",
         sex: body.sex,
         status: body.status ?? "ACTIVE",
         birthDate: parseISO(body.birthDate),
         microchip: body.microchip ?? null,
         notes: body.notes ?? null,
         breed: body.breed ?? null,
-        litterId: L.id,
-        // NEW: optional collar fields on create
+        offspringGroupId: G.id,
+        // collar fields
         collarColorId: body.collarColorId ?? null,
         collarColorName: body.collarColorName ?? null,
         collarColorHex: body.collarColorHex ?? null,
@@ -570,7 +790,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const A = await prisma.animal.findFirst({ where: { id: animalId, tenantId } });
     if (!A) return reply.code(404).send({ error: "animal not found" });
-    if (A.litterId !== id) return reply.code(409).send({ error: "animal does not belong to this litter" });
+    if (A.offspringGroupId !== id) return reply.code(409).send({ error: "animal does not belong to this group" });
 
     const data: any = {};
     if ("name" in body) data.name = body.name;
@@ -582,7 +802,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("notes" in body) data.notes = body.notes ?? null;
     if ("birthDate" in body) data.birthDate = parseISO(body.birthDate);
 
-    // NEW: collar fields
+    // collar fields
     let settingAnyCollar = false;
     if ("collarColorId" in body) {
       data.collarColorId = body.collarColorId ?? null;
@@ -612,29 +832,29 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
     const animalId = Number((req.params as any).animalId);
-    const mode = String(req.query["mode"] ?? "unlink");
+    const mode = String((req as any).query?.mode ?? "unlink");
 
     const A = await prisma.animal.findFirst({ where: { id: animalId, tenantId } });
     if (!A) return reply.code(404).send({ error: "animal not found" });
-    if (A.litterId !== id) return reply.code(409).send({ error: "animal does not belong to this litter" });
+    if (A.offspringGroupId !== id) return reply.code(409).send({ error: "animal does not belong to this group" });
 
     if (mode === "delete") {
       await prisma.animal.delete({ where: { id: animalId } });
       return reply.send({ ok: true, deleted: animalId });
     }
 
-    await prisma.animal.update({ where: { id: animalId }, data: { litterId: null } });
+    await prisma.animal.update({ where: { id: animalId }, data: { offspringGroupId: null } });
     reply.send({ ok: true, unlinked: animalId });
   });
 
-  /* ===== WAITLIST: CREATE under litter ===== */
+  /* ===== WAITLIST: CREATE under group ===== */
   app.post("/offspring/:id/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
     const b = (req.body as any) ?? {};
 
-    const L = await prisma.litter.findFirst({ where: { id, tenantId } });
-    if (!L) return reply.code(404).send({ error: "litter not found" });
+    const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!G) return reply.code(404).send({ error: "group not found" });
 
     if (!b.partyType || !["Organization", "Contact"].includes(b.partyType)) {
       return reply.code(400).send({ error: "partyType must be Contact or Organization" });
@@ -644,7 +864,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const data: any = {
       tenantId,
-      litterId: id,
+      offspringGroupId: id,
       planId: b.planId ?? null,
       partyType: b.partyType,
       contactId: b.partyType === "Contact" ? Number(b.contactId) : null,
@@ -680,7 +900,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const W = await prisma.waitlistEntry.findFirst({ where: { id: wid, tenantId } });
     if (!W) return reply.code(404).send({ error: "waitlist entry not found" });
-    if (W.litterId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this litter" });
+    if (W.offspringGroupId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this group" });
 
     const data: any = {};
     if ("partyType" in b) data.partyType = b.partyType;
@@ -712,18 +932,18 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
     const wid = Number((req.params as any).wid);
-    const mode = String(req.query["mode"] ?? "unlink");
+    const mode = String((req as any).query?.mode ?? "unlink");
 
     const W = await prisma.waitlistEntry.findFirst({ where: { id: wid, tenantId } });
     if (!W) return reply.code(404).send({ error: "waitlist entry not found" });
-    if (W.litterId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this litter" });
+    if (W.offspringGroupId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this group" });
 
     if (mode === "delete") {
       await prisma.waitlistEntry.delete({ where: { id: wid } });
       return reply.send({ ok: true, deleted: wid });
     }
 
-    await prisma.waitlistEntry.update({ where: { id: wid }, data: { litterId: null } });
+    await prisma.waitlistEntry.update({ where: { id: wid }, data: { offspringGroupId: null } });
     reply.send({ ok: true, unlinked: wid });
   });
 
@@ -733,8 +953,8 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const id = Number((req.params as any).id);
     const b = (req.body as any) ?? {};
 
-    const L = await prisma.litter.findFirst({ where: { id, tenantId } });
-    if (!L) return reply.code(404).send({ error: "litter not found" });
+    const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!G) return reply.code(404).send({ error: "group not found" });
 
     const required = ["kind", "storageProvider", "storageKey", "filename", "mime", "bytes"] as const;
     for (const k of required) {
@@ -744,7 +964,7 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const created = await prisma.attachment.create({
       data: {
         tenantId,
-        litterId: id,
+        offspringGroupId: id,
         planId: null,
         animalId: null,
         contactId: null,
@@ -769,13 +989,259 @@ const offspringRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const A = await prisma.attachment.findFirst({ where: { id: aid, tenantId } });
     if (!A) return reply.code(404).send({ error: "attachment not found" });
-    if (A.litterId !== id) return reply.code(409).send({ error: "attachment does not belong to this litter" });
+    if (A.offspringGroupId !== id) return reply.code(409).send({ error: "attachment does not belong to this group" });
 
     await prisma.attachment.delete({ where: { id: aid } });
     reply.send({ ok: true, deleted: aid });
   });
 
   done();
+
+  // [OG-ROUTES-START] Offspring Group linking endpoints
+  app.post<{ Params: { groupId: string }; Body: { planId: number; actorId: string } }>(
+    "/offspring/groups/:groupId/link",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const groupId = Number(req.params.groupId);
+      const { planId, actorId } = req.body;
+      const og = __makeOffspringGroupsService({ prisma: (app as any).prisma ?? prisma, authorizer: __og_authorizer });
+      const out = await og.linkGroupToPlan({ tenantId, groupId, planId, actorId });
+      reply.send(out);
+    }
+  );
+
+  app.post<{ Params: { groupId: string }; Body: { actorId: string } }>(
+    "/offspring/groups/:groupId/unlink",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const groupId = Number(req.params.groupId);
+      const { actorId } = req.body;
+      const og = __makeOffspringGroupsService({ prisma: (app as any).prisma ?? prisma, authorizer: __og_authorizer });
+      const out = await og.unlinkGroup({ tenantId, groupId, actorId });
+      reply.send(out);
+    }
+  );
+
+  app.get<{ Params: { groupId: string }; Querystring: { limit?: string } }>(
+    "/offspring/groups/:groupId/link-suggestions",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const groupId = Number(req.params.groupId);
+      const limit = (req as any).query?.limit ? Number((req as any).query.limit) : undefined;
+      const og = __makeOffspringGroupsService({ prisma: (app as any).prisma ?? prisma, authorizer: __og_authorizer });
+      const out = await og.getLinkSuggestions({ tenantId, groupId, limit });
+      reply.send(out);
+    }
+  );
+  // [OG-ROUTES-END]
+
 };
 
 export default offspringRoutes;
+
+
+
+/* =====================================================================================
+   V2 Offspring router registration, appended 2025-11-12
+   No breaking changes to existing exports. Call registerOffspringRoutesV2 to migrate.
+   ===================================================================================== */
+
+import type { Request, Response } from "express";
+import type { PrismaClient } from "@prisma/client";
+
+export function registerOffspringRoutesV2(app: any, prisma: PrismaClient) {
+  const base = "/api/v1";
+  const asInt = (v: any, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+
+  // Groups
+  app.get(base + "/offspring/groups", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const page = asInt((req.query as any).page, 1);
+    const pageSize = asInt((req.query as any).pageSize, 50);
+    const skip = (page - 1) * pageSize;
+    const where: any = { tenantId };
+    const [rows, total] = await Promise.all([
+      prisma.offspringGroup.findMany({ where, skip, take: pageSize, orderBy: { id: "desc" } }),
+      prisma.offspringGroup.count({ where }),
+    ]);
+    res.json({ rows, total, page, pageSize });
+  });
+
+  app.get(base + "/offspring/groups/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.offspringGroup.findFirst({ where: { id, tenantId }, include: { offspring: true } });
+    if (!row) return res.status(404).json({ error: "Not found" });
+    res.json(row);
+  });
+
+  app.post(base + "/offspring/groups", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.offspringGroup.create({ data: { ...(req.body || {}), tenantId } });
+    res.json(row);
+  });
+
+  app.patch(base + "/offspring/groups/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const row = await prisma.offspringGroup.update({ where: { id }, data: (req.body || {}) });
+    res.json(row);
+  });
+
+  app.delete(base + "/offspring/groups/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    await prisma.offspringGroup.delete({ where: { id } });
+    res.json({ success: true });
+  });
+
+  app.post(base + "/offspring/groups/ensureForPlan", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const planId = asInt((req.body as any).planId);
+    let grp = await prisma.offspringGroup.findFirst({ where: { tenantId, planId } });
+    if (!grp) {
+      const plan = await prisma.breedingPlan.findFirst({ where: { id: planId, tenantId } });
+      const name = plan?.name ?? "Group " + planId;
+      grp = await prisma.offspringGroup.create({ data: { tenantId, planId, name } });
+    }
+    res.json(grp);
+  });
+
+  // Offspring
+  app.get(base + "/offspring", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const page = asInt((req.query as any).page, 1);
+    const pageSize = asInt((req.query as any).pageSize, 50);
+    const skip = (page - 1) * pageSize;
+    const where: any = { tenantId };
+    if ((req.query as any).groupId) where.groupId = asInt((req.query as any).groupId);
+    const [rows, total] = await Promise.all([
+      prisma.offspring.findMany({ where, skip, take: pageSize, orderBy: { id: "desc" } }),
+      prisma.offspring.count({ where }),
+    ]);
+    res.json({ rows, total, page, pageSize });
+  });
+
+  app.get(base + "/offspring/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.offspring.findFirst({ where: { id, tenantId } });
+    if (!row) return res.status(404).json({ error: "Not found" });
+    res.json(row);
+  });
+
+  app.post(base + "/offspring", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.offspring.create({ data: { ...(req.body || {}), tenantId } });
+    res.json(row);
+  });
+
+  app.patch(base + "/offspring/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const row = await prisma.offspring.update({ where: { id }, data: (req.body || {}) });
+    res.json(row);
+  });
+
+  app.delete(base + "/offspring/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    await prisma.offspring.delete({ where: { id } });
+    res.json({ success: true });
+  });
+
+  // Offspring events
+  app.get(base + "/offspring/:id/events", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const list = await prisma.offspringEvent.findMany({ where: { offspringId: id }, orderBy: { when: "asc" } });
+    res.json(list);
+  });
+  app.post(base + "/offspring/:id/events", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const row = await prisma.offspringEvent.create({ data: { ...(req.body || {}), offspringId: id } });
+    res.json(row);
+  });
+  app.delete(base + "/offspring/:id/events/:eventId", async (req: Request, res: Response) => {
+    const eventId = asInt(req.params.eventId);
+    await prisma.offspringEvent.delete({ where: { id: eventId } });
+    res.json({ success: true });
+  });
+
+  // Waitlist
+  app.get(base + "/offspring/waitlist", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const page = asInt((req.query as any).page, 1);
+    const pageSize = asInt((req.query as any).pageSize, 100);
+    const skip = (page - 1) * pageSize;
+    const where: any = { tenantId };
+    const [rows, total] = await Promise.all([
+      prisma.waitlistEntry.findMany({ where, skip, take: pageSize, orderBy: { id: "desc" } }),
+      prisma.waitlistEntry.count({ where }),
+    ]);
+    res.json({ rows, total, page, pageSize });
+  });
+  app.get(base + "/offspring/waitlist/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.waitlistEntry.findFirst({ where: { id, tenantId } });
+    if (!row) return res.status(404).json({ error: "Not found" });
+    res.json(row);
+  });
+  app.post(base + "/offspring/waitlist", async (req: Request, res: Response) => {
+    const tenantId = asInt((req.query as any).tenantId);
+    const row = await prisma.waitlistEntry.create({ data: { ...(req.body || {}), tenantId } });
+    res.json(row);
+  });
+  app.patch(base + "/offspring/waitlist/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const row = await prisma.waitlistEntry.update({ where: { id }, data: (req.body || {}) });
+    res.json(row);
+  });
+  app.delete(base + "/offspring/waitlist/:id", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    await prisma.waitlistEntry.delete({ where: { id } });
+    res.json({ success: true });
+  });
+
+  // Attachments
+  app.get(base + "/offspring/groups/:id/attachments", async (req: Request, res: Response) => {
+    const groupId = asInt(req.params.id);
+    const list = await prisma.attachment.findMany({ where: { groupId } });
+    res.json(list);
+  });
+  app.get(base + "/offspring/:id/attachments", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const list = await prisma.attachment.findMany({ where: { offspringId: id } });
+    res.json(list);
+  });
+  app.post(base + "/offspring/groups/:id/attachments", async (req: Request, res: Response) => {
+    const groupId = asInt(req.params.id);
+    const row = await prisma.attachment.create({ data: { ...(req.body || {}), groupId } });
+    res.json(row);
+  });
+  app.post(base + "/offspring/:id/attachments", async (req: Request, res: Response) => {
+    const id = asInt(req.params.id);
+    const row = await prisma.attachment.create({ data: { ...(req.body || {}), offspringId: id } });
+    res.json(row);
+  });
+  app.delete(base + "/attachments/:attachmentId", async (req: Request, res: Response) => {
+    const attachmentId = asInt(req.params.attachmentId);
+    await prisma.attachment.delete({ where: { id: attachmentId } });
+    res.json({ success: true });
+  });
+
+  // Contracts
+  app.get(base + "/offspring/groups/:id/contracts", async (req: Request, res: Response) => {
+    const groupId = asInt(req.params.id);
+    const list = await prisma.offspringContract.findMany({ where: { groupId } });
+    res.json(list);
+  });
+  app.post(base + "/offspring/groups/:id/contracts", async (req: Request, res: Response) => {
+    const groupId = asInt(req.params.id);
+    const row = await prisma.offspringContract.create({ data: { ...(req.body || {}), groupId } });
+    res.json(row);
+  });
+
+  // Invoices
+  app.get(base + "/offspring/groups/:id/invoices", async (req: Request, res: Response) => {
+    const groupId = asInt(req.params.id);
+    const list = await prisma.offspringInvoiceLink.findMany({ where: { groupId } });
+    res.json(list);
+  });
+}

@@ -1,6 +1,242 @@
+// [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
+import type { Prisma, PrismaClient, OffspringGroup, BreedingPlan, Animal } from "@prisma/client";
+
+function __og_addDays(d: Date, days: number): Date {
+  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt;
+}
+function __og_coerceISODateOnly(v: Date | string): Date {
+  const dt = new Date(v);
+  if (Number.isNaN(dt.getTime())) throw new Error("invalid date: " + v);
+  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+}
+function __og_safeSeasonLabel(date: Date): string {
+  const m = date.getUTCMonth();
+  if (m <= 1) return "Winter " + date.getUTCFullYear();
+  if (m <= 4) return "Spring " + date.getUTCFullYear();
+  if (m <= 7) return "Summer " + date.getUTCFullYear();
+  if (m <= 10) return "Fall " + date.getUTCFullYear();
+  return "Winter " + (date.getUTCFullYear() + 1);
+}
+function __og_compactName(name: string): string {
+  const n = String(name || "").trim();
+  if (!n) return "";
+  return n.replace(/\s+/g, " ");
+}
+
+type __OG_EventInput = {
+  tenantId: number;
+  groupId: number;
+  type: "LINK" | "UNLINK" | "CHANGE" | "NOTE" | "STATUS_OVERRIDE" | "BUYER_MOVE";
+  field?: string | null;
+  before?: unknown;
+  after?: unknown;
+  notes?: string | null;
+  actorId?: string | null;
+};
+
+type __OG_Authorizer = { ensureAdmin(tenantId: number, actorId: string): Promise<void> };
+const __og_authorizer: __OG_Authorizer = { async ensureAdmin() { } }; // replace with real check
+
+export function __makeOffspringGroupsService({
+  prisma,
+  authorizer,
+}: { prisma: PrismaClient | Prisma.TransactionClient; authorizer?: __OG_Authorizer }) {
+  const db = prisma as Prisma.TransactionClient;
+
+  function expectedBirthFromPlan(plan: Pick<BreedingPlan, "expectedBirthDate" | "lockedOvulationDate">): Date | null {
+    if (plan.expectedBirthDate) return __og_coerceISODateOnly(plan.expectedBirthDate);
+    if (plan.lockedOvulationDate) return __og_addDays(__og_coerceISODateOnly(plan.lockedOvulationDate), 63);
+    return null;
+  }
+  function buildTentativeGroupName(plan: Pick<BreedingPlan, "name"> & { dam?: Pick<Animal, "name"> | null }, dt: Date): string {
+    if (plan.name && plan.name.trim()) return plan.name.trim();
+    const damName = __og_compactName(plan.dam?.name ?? "");
+    const season = __og_safeSeasonLabel(dt);
+    return [damName || "Unnamed Dam", season].join(" • ");
+  }
+
+  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, planId, actorId } = args;
+
+    const plan = await db.breedingPlan.findFirst({
+      where: { id: planId, tenantId },
+      include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+    });
+    if (!plan) throw new Error("plan not found for tenant");
+
+    const existing = await db.offspringGroup.findFirst({ where: { tenantId, planId } });
+    if (existing) return existing;
+
+    const expectedBirthOn = expectedBirthFromPlan(plan);
+    const tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, expectedBirthOn ?? new Date());
+
+    const created = await db.offspringGroup.create({
+      data: {
+        tenantId,
+        planId: plan.id,
+        species: (plan.dam as any)?.species ?? (plan as any).species ?? "DOG",
+        damId: plan.damId ?? null,
+        sireId: plan.sireId ?? null,
+        linkState: "linked",
+        expectedBirthOn,
+        tentativeName,
+      },
+    });
+
+    await db.offspringGroupEvent.create({
+      data: {
+        tenantId,
+        offspringGroupId: created.id,
+        type: "LINK",
+        occurredAt: new Date(),
+        field: "planId",
+        before: null,
+        after: { planId: plan.id },
+        notes: `Group ensured for committed plan${actorId ? ` by ${actorId}` : ""}`,
+        recordedByUserId: null,
+      },
+    });
+
+    return created;
+  }
+
+  async function linkGroupToPlan(args: { tenantId: number; groupId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, groupId, planId, actorId } = args;
+
+    const [group, plan] = await Promise.all([
+      db.offspringGroup.findFirst({ where: { id: groupId, tenantId } }),
+      db.breedingPlan.findFirst({
+        where: { id: planId, tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      }),
+    ]);
+    if (!group) throw new Error("group not found for tenant");
+    if (!plan) throw new Error("plan not found for tenant");
+
+    const before = { ...group };
+    const patch: Prisma.OffspringGroupUpdateInput = { planId: plan.id, linkState: "linked" };
+
+    if (!group.species) patch.species = (plan.dam as any)?.species ?? (plan as any).species ?? "DOG";
+    if (!group.damId && plan.damId) patch.dam = { connect: { id: plan.damId } };
+    if (!group.sireId && plan.sireId) patch.sire = { connect: { id: plan.sireId } };
+    if (!group.expectedBirthOn) {
+      const exp = expectedBirthFromPlan(plan);
+      if (exp) patch.expectedBirthOn = exp;
+    }
+    if (!group.tentativeName) {
+      const exp = (patch as any).expectedBirthOn ?? expectedBirthFromPlan(plan) ?? new Date();
+      patch.tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, exp);
+    }
+
+    const updated = await db.offspringGroup.update({ where: { id: group.id }, data: patch });
+
+    await db.offspringGroupEvent.create({
+      data: {
+        tenantId,
+        offspringGroupId: group.id,
+        type: "LINK",
+        occurredAt: new Date(),
+        field: "planId",
+        before,
+        after: { ...updated },
+        notes: `Group linked to plan${actorId ? ` by ${actorId}` : ""}`,
+        recordedByUserId: null,
+      },
+    });
+
+    return updated;
+  }
+
+  async function unlinkGroup(args: { tenantId: number; groupId: number; actorId: string }): Promise<OffspringGroup> {
+    const { tenantId, groupId, actorId } = args;
+    if (authorizer) await authorizer.ensureAdmin(tenantId, actorId);
+
+    const group = await db.offspringGroup.findFirst({ where: { id: groupId, tenantId } });
+    if (!group) throw new Error("group not found for tenant");
+
+    const updated = await db.offspringGroup.update({
+      where: { id: group.id },
+      data: { planId: null, linkState: "orphan" },
+    });
+
+    await db.offspringGroupEvent.create({
+      data: {
+        tenantId,
+        offspringGroupId: group.id,
+        type: "UNLINK",
+        occurredAt: new Date(),
+        field: "planId",
+        before: { ...group },
+        after: { ...updated },
+        notes: "Group manually unlinked from plan",
+        recordedByUserId: null,
+      },
+    });
+
+    return updated;
+  }
+
+  async function getLinkSuggestions(args: { tenantId: number; groupId: number; limit?: number }) {
+    const { tenantId, groupId, limit = 10 } = args;
+
+    const [group, plans] = await Promise.all([
+      db.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      }),
+      db.breedingPlan.findMany({
+        where: { tenantId },
+        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
+      }),
+    ]);
+    if (!group) throw new Error("group not found for tenant");
+
+    const groupExp = group.expectedBirthOn ?? group.actualBirthOn ?? null;
+    const groupDamId = group.damId ?? null;
+    const groupSireId = group.sireId ?? null;
+    const groupSpecies = group.species ?? (group.dam as any)?.species ?? null;
+
+    const within7 = (d1: Date | null, d2: Date | null) => {
+      if (!d1 || !d2) return false;
+      const ms = Math.abs(__og_coerceISODateOnly(d1).getTime() - __og_coerceISODateOnly(d2).getTime());
+      return ms <= 7 * 24 * 60 * 60 * 1000;
+    };
+
+    return plans
+      .map((p) => {
+        let score = 10;
+        const pSpecies = (p.dam as any)?.species ?? (p as any).species ?? null;
+        if (groupSpecies && pSpecies && String(groupSpecies) === String(pSpecies)) score += 25;
+        if (groupDamId && p.damId && groupDamId === p.damId) score += 40;
+        const pExpected = p.expectedBirthDate
+          ? __og_coerceISODateOnly(p.expectedBirthDate as any)
+          : p.lockedOvulationDate
+            ? __og_addDays(__og_coerceISODateOnly(p.lockedOvulationDate as any), 63)
+            : null;
+        if (within7(groupExp, pExpected)) score += 20;
+        if (groupSireId && p.sireId && groupSireId === p.sireId) score += 5;
+
+        return {
+          planId: p.id,
+          planName: p.name ?? `Plan #${p.id}`,
+          expectedBirthDate: pExpected ?? null,
+          damName: p.dam?.name ?? null,
+          sireName: p.sire?.name ?? null,
+          matchScore: score,
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, limit);
+  }
+
+  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+}
+// [OG-SERVICE-END]
 // apps/api/src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
-import { Prisma } from "@prisma/client";
+import { Prisma, BreedingPlanStatus } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
@@ -126,12 +362,12 @@ function includeFlags(qInclude: any) {
     Litter: has("litter") ? true : false,
     Waitlist: wantsWaitlist
       ? {
-          orderBy: [
-            { depositPaidAt: "desc" as const },
-            { createdAt: "asc" as const },
-          ],
-          take: 200,
-        }
+        orderBy: [
+          { depositPaidAt: "desc" as const },
+          { createdAt: "asc" as const },
+        ],
+        take: 200,
+      }
       : false,
     Events: has("events") ? { orderBy: { occurredAt: "asc" as const }, take: 200 } : false,
     TestResults: has("tests") ? { orderBy: { collectedAt: "asc" as const }, take: 200 } : false,
@@ -263,14 +499,18 @@ async function getLitterInTenant(litterId: number, tenantId: number) {
 }
 
 function errorReply(err: any) {
-  if (err?.code === "P2002") {
-    return { status: 409, payload: { error: "duplicate", detail: err?.meta?.target || undefined } };
-  }
-  if (err?.code === "P2003") {
-    return { status: 409, payload: { error: "foreign_key_conflict" } };
-  }
+  if (err?.code === "P2002") return { status: 409, payload: { error: "duplicate", detail: err?.meta?.target } };
+  if (err?.code === "P2003") return { status: 409, payload: { error: "foreign_key_conflict", meta: err?.meta } };
   if (err?.statusCode) return { status: err.statusCode, payload: { error: err.message } };
-  return { status: 500, payload: { error: "internal_error" } };
+
+  // Show details when not in production
+  const dev = String(process.env.NODE_ENV || "").toLowerCase() !== "production";
+  return {
+    status: 500,
+    payload: dev
+      ? { error: "internal_error", code: err?.code, message: err?.message, meta: err?.meta, stack: err?.stack }
+      : { error: "internal_error" },
+  };
 }
 
 function buildCodeFromId(planId: number, d = new Date()) {
@@ -302,8 +542,8 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
   const dueYmd = plan?.lockedDueDate
     ? ymd(new Date(plan.lockedDueDate))
     : plan?.expectedBirthDate
-    ? ymd(new Date(plan.expectedBirthDate))
-    : "TBD";
+      ? ymd(new Date(plan.expectedBirthDate))
+      : "TBD";
 
   const base = `PLN-${damFirst}-${commitYmd}-${dueYmd}`;
 
@@ -491,12 +731,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let lockNorm:
         | { touched: false }
         | {
-            touched: true;
-            lockedCycleStart: Date | null;
-            lockedOvulationDate: Date | null;
-            lockedDueDate: Date | null;
-            lockedPlacementStartDate: Date | null;
-          };
+          touched: true;
+          lockedCycleStart: Date | null;
+          lockedOvulationDate: Date | null;
+          lockedDueDate: Date | null;
+          lockedPlacementStartDate: Date | null;
+        };
 
       try {
         lockNorm = validateAndNormalizeLockPayload(b);
@@ -520,23 +760,23 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         lockedCycleStart: lockNorm.touched
           ? lockNorm.lockedCycleStart
           : b.lockedCycleStart
-          ? new Date(b.lockedCycleStart)
-          : null,
+            ? new Date(b.lockedCycleStart)
+            : null,
         lockedOvulationDate: lockNorm.touched
           ? lockNorm.lockedOvulationDate
           : b.lockedOvulationDate
-          ? new Date(b.lockedOvulationDate)
-          : null,
+            ? new Date(b.lockedOvulationDate)
+            : null,
         lockedDueDate: lockNorm.touched
           ? lockNorm.lockedDueDate
           : b.lockedDueDate
-          ? new Date(b.lockedDueDate)
-          : null,
+            ? new Date(b.lockedDueDate)
+            : null,
         lockedPlacementStartDate: lockNorm.touched
           ? lockNorm.lockedPlacementStartDate
           : b.lockedPlacementStartDate
-          ? new Date(b.lockedPlacementStartDate)
-          : null,
+            ? new Date(b.lockedPlacementStartDate)
+            : null,
 
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
@@ -544,13 +784,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         expectedBirthDate: b.expectedBirthDate
           ? new Date(b.expectedBirthDate)
           : lockNorm.touched && lockNorm.lockedDueDate
-          ? lockNorm.lockedDueDate
-          : null,
+            ? lockNorm.lockedDueDate
+            : null,
         expectedPlacementStart: b.expectedPlacementStart
           ? new Date(b.expectedPlacementStart)
           : lockNorm.touched && lockNorm.lockedPlacementStartDate
-          ? lockNorm.lockedPlacementStartDate
-          : null,
+            ? lockNorm.lockedPlacementStartDate
+            : null,
         expectedWeaned: b.expectedWeaned ? new Date(b.expectedWeaned) : null,
         expectedPlacementCompleted: b.expectedPlacementCompleted ? new Date(b.expectedPlacementCompleted) : null,
 
@@ -777,7 +1017,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const b = (req.body || {}) as Partial<{ codeHint: string }>;
+      const b = (req.body || {}) as Partial<{ codeHint: string; actorId: string }>;
 
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
@@ -830,21 +1070,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const userId = (req as any).user?.id ?? null;
 
-      const updated = await prisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(async (tx) => {
+        // build final code and expected dates
         let code = plan.code;
-        if (!code) {
-          code = await buildFriendlyPlanCode(plan.tenantId, plan.id);
-        }
-
+        if (!code) code = await buildFriendlyPlanCode(plan.tenantId, plan.id);
         const expectedBirthDate = plan.expectedBirthDate ?? plan.lockedDueDate ?? null;
-        const expectedPlacementStart =
-          plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
+        const expectedPlacementStart = plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
 
         const saved = await tx.breedingPlan.update({
           where: { id: plan.id },
           data: {
             code,
-            status: Prisma.BreedingPlanStatus.COMMITTED,
+            status: BreedingPlanStatus.COMMITTED,
             expectedBirthDate,
             expectedPlacementStart,
             committedAt: new Date(),
@@ -873,15 +1110,30 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        return saved;
+        // If actorId is provided, also ensure an offspring group and return that payload
+        if (b.actorId) {
+          const ogSvc = __makeOffspringGroupsService({ prisma: tx as any, authorizer: __og_authorizer });
+          const group = await ogSvc.ensureGroupForCommittedPlan({
+            tenantId,
+            planId: plan.id,
+            actorId: b.actorId,
+          });
+          return { mode: "ensure", payload: { planId: plan.id, group } };
+        }
+
+        // Legacy response, return the updated plan
+        return { mode: "legacy", payload: saved };
       });
 
-      reply.send(updated);
+      if (result.mode === "ensure") return reply.send(result.payload);
+      return reply.send(result.payload);
     } catch (err) {
+      req.log.error({ err }, "commit failed");
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
   });
+
 
   app.post("/breeding/plans/:id/archive", async (req, reply) => {
     try {

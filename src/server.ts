@@ -232,6 +232,36 @@ app.register(
   { prefix: "/api/v1" }
 );
 
+// ---------- Global error handler ----------
+app.setErrorHandler((err, req, reply) => {
+  req.log.error(
+    {
+      err: {
+        message: err.message,
+        code: (err as any).code,
+        meta: (err as any).meta,
+        stack: err.stack,
+      },
+      url: req.url,
+      method: req.method,
+    },
+    "Unhandled error"
+  );
+
+  const code = (err as any).code;
+  if (code === "P2002") {
+    return reply.status(409).send({ error: "duplicate", detail: (err as any).meta?.target });
+  }
+  if (code === "P2003") {
+    return reply.status(409).send({ error: "foreign_key_conflict" });
+  }
+  if ((err as any).statusCode) {
+    return reply.status((err as any).statusCode).send({ error: err.message });
+  }
+  return reply.status(500).send({ error: "internal_error" });
+});
+
+
 // ---------- API v1: tenant-scoped subtree ----------
 app.register(
   async (api) => {
