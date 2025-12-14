@@ -1,6 +1,11 @@
 // src/routes/animals.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import path from "node:path";
+import fs from "node:fs/promises";
+import sharp from "sharp";
+
+const AVATAR_SIZE = 256;
 
 /* Keep these in sync with Prisma enums */
 type Species = "DOG" | "CAT" | "HORSE";
@@ -27,6 +32,74 @@ function parsePaging(q: any) {
   const skip = (page - 1) * limit;
   return { page, limit, skip };
 }
+
+function normalizeIsoDateOnly(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (Number.isNaN(+d)) return null;
+  // truncate to YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
+}
+
+type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "whelp";
+
+type ReproEvent = {
+  kind: ReproEventKind;
+  date: string; // ISO yyyy mm dd
+};
+
+function buildReproFromCycles(cycles: Array<{
+  cycleStart: Date | string;
+  ovulation?: Date | string | null;
+  dueDate?: Date | string | null;
+  placementStartDate?: Date | string | null;
+}>): { cycleStartDates: string[]; repro: ReproEvent[]; last_heat: string | null } {
+  const dates: string[] = [];
+  const events: ReproEvent[] = [];
+
+  for (const c of cycles) {
+    const heatIso = normalizeIsoDateOnly(c.cycleStart);
+    if (heatIso) {
+      dates.push(heatIso);
+      events.push({ kind: "heat_start", date: heatIso });
+    }
+
+    const ovIso = normalizeIsoDateOnly(c.ovulation ?? null);
+    if (ovIso) {
+      events.push({ kind: "ovulation", date: ovIso });
+    }
+
+    const dueIso = normalizeIsoDateOnly(c.dueDate ?? null);
+    if (dueIso) {
+      events.push({ kind: "whelp", date: dueIso });
+    }
+  }
+
+  const uniqueDates = Array.from(new Set(dates)).sort();
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  const last_heat = uniqueDates.length ? uniqueDates[uniqueDates.length - 1] : null;
+
+  return { cycleStartDates: uniqueDates, repro: events, last_heat };
+}
+
+function extractCycleStartDates(rec: any): string[] {
+  const cycles = Array.isArray(rec?.reproductiveCycles) ? rec.reproductiveCycles : [];
+  const dates = cycles
+    .map((c: any) => {
+      const raw = c.cycleStart ?? c.cycle_start ?? null;
+      if (!raw) return null;
+      const d = new Date(raw);
+      if (Number.isNaN(+d)) return null;
+      return d.toISOString().slice(0, 10);
+    })
+    .filter(Boolean) as string[];
+
+  // dedupe and sort ascending
+  return Array.from(new Set(dates)).sort();
+}
+
 function parseSort(sortParam?: string) {
   // allow: "createdAt", "-createdAt", "name", "-name", "updatedAt", "birthDate"
   const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate"]);
@@ -39,6 +112,22 @@ function parseSort(sortParam?: string) {
     if (allowed.has(key)) orderBy.push({ [key]: desc ? "desc" : "asc" });
   }
   return orderBy.length ? orderBy : [{ createdAt: "desc" }];
+}
+
+type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "whelp";
+
+type ReproEvent = {
+  kind: ReproEventKind;
+  date: string; // ISO yyyy-mm-dd
+};
+
+function cycleDatesFromCycles(cycles: Array<{ cycleStart: Date }>): string[] {
+  const dates: string[] = [];
+  for (const c of cycles) {
+    const iso = normalizeIsoDateOnly(c.cycleStart);
+    if (iso) dates.push(iso);
+  }
+  return Array.from(new Set(dates)).sort();
 }
 
 async function assertTenant(req: any, reply: any): Promise<number | null> {
@@ -94,6 +183,7 @@ async function validateCustomBreedId(customBreedId: number | null | undefined, t
 }
 
 /* ───────── routes ───────── */
+
 
 const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /animals?q=&species=&sex=&status=&organizationId=&includeArchived=&page=&limit=&sort=
@@ -162,7 +252,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
     }
 
-    const [items, total] = await prisma.$transaction([
+    const [rawItems, total] = await prisma.$transaction([
       prisma.animal.findMany({
         where,
         orderBy,
@@ -186,13 +276,94 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           createdAt: true,
           updatedAt: true,
+          photoUrl: true,
+
+          reproductiveCycles: {
+            select: { cycleStart: true },
+          },
         },
       }),
       prisma.animal.count({ where }),
     ]);
 
+    const items = rawItems.map((rec) => ({
+      ...rec,
+      cycleStartDates: extractCycleStartDates(rec),
+    }));
+
     reply.send({ items, total, page: pageNum, limit: take });
   });
+
+  // PUT /animals/:id/cycle-start-dates
+  app.put("/animals/:id/cycle-start-dates", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const body = (req.body || {}) as { dates?: string[] };
+    const input = Array.isArray(body.dates) ? body.dates : [];
+
+    const normalized = Array.from(
+      new Set(
+        input
+          .map((d) => normalizeIsoDateOnly(d))
+          .filter((d): d is string => !!d)
+      )
+    ).sort();
+
+    // Blow away existing cycles for this female in this tenant and recreate
+    await prisma.reproductiveCycle.deleteMany({
+      where: { tenantId, femaleId: id },
+    });
+
+    if (normalized.length) {
+      await prisma.reproductiveCycle.createMany({
+        data: normalized.map((iso) => ({
+          tenantId,
+          femaleId: id,
+          cycleStart: new Date(iso),
+        })),
+      });
+    }
+
+    // Return updated animal with computed cycleStartDates
+    const rec = await prisma.animal.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        tenantId: true,
+        organizationId: true,
+        name: true,
+        species: true,
+        sex: true,
+        status: true,
+        birthDate: true,
+        microchip: true,
+        notes: true,
+        breed: true,
+        canonicalBreedId: true,
+        customBreedId: true,
+        litterId: true,
+        archived: true,
+        createdAt: true,
+        updatedAt: true,
+        photoUrl: true,
+        reproductiveCycles: {
+          select: { cycleStart: true },
+        },
+      },
+    });
+
+    if (!rec) return reply.code(404).send({ error: "not_found" });
+
+    const cycleStartDates = extractCycleStartDates(rec);
+    reply.send({ ...rec, cycleStartDates });
+  });
+
 
   // GET /animals/:id
   app.get("/animals/:id", async (req, reply) => {
@@ -201,6 +372,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const id = parseIntStrict((req.params as { id: string }).id);
     if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    const { include = "" } = (req.query || {}) as { include?: string };
+    const includeParts = String(include || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const wantRepro = includeParts.includes("repro") || includeParts.includes("last_heat");
 
     const rec = await prisma.animal.findFirst({
       where: { id, tenantId },
@@ -225,7 +403,31 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
     if (!rec) return reply.code(404).send({ error: "not_found" });
-    reply.send(rec);
+
+    const cycles = await prisma.reproductiveCycle.findMany({
+      where: { tenantId, femaleId: id },
+      select: {
+        cycleStart: true,
+        ovulation: true,
+        dueDate: true,
+        placementStartDate: true,
+      },
+      orderBy: { cycleStart: "asc" },
+    });
+
+    const info = buildReproFromCycles(cycles);
+
+    const result: any = {
+      ...rec,
+      cycleStartDates: info.cycleStartDates,
+    };
+
+    if (wantRepro) {
+      result.repro = info.repro;
+      result.last_heat = info.last_heat;
+    }
+
+    reply.send(result);
   });
 
   // POST /animals
@@ -245,7 +447,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       canonicalBreedId: number | null;
       customBreedId: number | null;
       organizationId: number | null;
+      photoUrl: string | null;
     }>;
+
 
     const name = String(b.name || "").trim();
     if (!name) return reply.code(400).send({ error: "name_required" });
@@ -255,38 +459,53 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!b.sex || !["FEMALE", "MALE"].includes(b.sex)) {
       return reply.code(400).send({ error: "sex_required" });
     }
-    const bd = b.birthDate !== undefined ? parseDateIso(b.birthDate) : undefined;
-    if (b.birthDate !== undefined && bd === null) {
-      return reply.code(400).send({ error: "birthDate_invalid" });
+
+    const data: any = {
+      tenantId,
+      name,
+      species: b.species,
+      sex: b.sex,
+      status: b.status || "ACTIVE",
+    };
+
+    if (b.birthDate) {
+      const d = new Date(b.birthDate);
+      if (Number.isNaN(+d)) return reply.code(400).send({ error: "birthDate_invalid" });
+      data.birthDate = d;
     }
 
-    let orgId: number | null = null;
+    if (typeof b.microchip === "string") {
+      data.microchip = b.microchip.trim() || null;
+    }
+    if (typeof b.notes === "string") {
+      data.notes = b.notes.trim() || null;
+    }
+
+    // NEW: normalise photoUrl in create
+    if (typeof b.photoUrl === "string") {
+      const u = b.photoUrl.trim();
+      data.photoUrl = u || null;
+    }
+
+    if (typeof b.breed === "string") {
+      data.breed = b.breed.trim() || null;
+    }
+    if (typeof b.canonicalBreedId === "number") {
+      data.canonicalBreedId = b.canonicalBreedId || null;
+    }
+    if (typeof b.customBreedId === "number") {
+      data.customBreedId = b.customBreedId || null;
+    }
     if (b.organizationId != null) {
-      const parsed = parseIntStrict(b.organizationId);
-      if (!parsed) return reply.code(400).send({ error: "organizationId_invalid" });
-      await assertOrgInTenant(parsed, tenantId);
-      orgId = parsed;
+      const orgId = parseIntStrict(b.organizationId);
+      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+      await assertOrgInTenant(orgId, tenantId);
+      data.organizationId = orgId;
     }
-
-    await validateCanonicalBreedId(b.canonicalBreedId ?? null);
-    await validateCustomBreedId(b.customBreedId ?? null, tenantId);
 
     try {
       const created = await prisma.animal.create({
-        data: {
-          tenantId,
-          organizationId: orgId ?? undefined,
-          name,
-          species: b.species,
-          sex: b.sex,
-          status: b.status ?? "ACTIVE",
-          birthDate: bd ?? null,
-          microchip: b.microchip ?? null,
-          notes: b.notes ?? null,
-          breed: b.breed ?? null,
-          canonicalBreedId: b.canonicalBreedId ?? null,
-          customBreedId: b.customBreedId ?? null,
-        },
+        data,
         select: {
           id: true,
           tenantId: true,
@@ -305,6 +524,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           createdAt: true,
           updatedAt: true,
+          photoUrl: true,
         },
       });
       return reply.code(201).send(created);
@@ -346,7 +566,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       canonicalBreedId: number | null;
       customBreedId: number | null;
       archived: boolean;
+      photoUrl: string | null;
     }>;
+
 
     // Pre-validate cross refs to match schema constraints
     if (b.canonicalBreedId !== undefined && b.canonicalBreedId !== null) {
@@ -384,6 +606,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.microchip !== undefined) data.microchip = b.microchip;
     if (b.notes !== undefined) data.notes = b.notes;
     if (b.breed !== undefined) data.breed = b.breed;
+    if (b.photoUrl !== undefined) data.photoUrl = b.photoUrl;
     if (b.canonicalBreedId !== undefined) data.canonicalBreedId = b.canonicalBreedId;
     if (b.customBreedId !== undefined) data.customBreedId = b.customBreedId;
     if (b.archived !== undefined) data.archived = !!b.archived;
@@ -421,6 +644,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           createdAt: true,
           updatedAt: true,
+          photoUrl: true,
         },
       });
       reply.send(updated);
@@ -439,6 +663,68 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       throw e;
     }
   });
+
+    // POST /animals/:id/photo
+  app.post("/animals/:id/photo", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const mpReq = req as any;
+    const file = await mpReq.file();
+    if (!file) return reply.code(400).send({ error: "file_required" });
+
+    const buf = await file.toBuffer();
+
+    const resized = await sharp(buf)
+      .rotate()
+      .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: "cover" })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    const uploadDir = path.join(process.cwd(), "uploads", "animals", String(tenantId));
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    const filename = `animal-${id}.jpg`;
+    const filepath = path.join(uploadDir, filename);
+    await fs.writeFile(filepath, resized);
+
+    const photoUrl = `/uploads/animals/${tenantId}/${filename}`;
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { photoUrl },
+      select: { photoUrl: true },
+    });
+
+    reply.send(updated);
+  });
+
+    // DELETE /animals/:id/photo
+  app.delete("/animals/:id/photo", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    // optional: also delete file from disk if you want to reclaim space
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { photoUrl: null },
+      select: { photoUrl: true },
+    });
+
+    reply.send(updated);
+  });
+
 
   // POST /animals/:id/archive
   app.post("/animals/:id/archive", async (req, reply) => {
