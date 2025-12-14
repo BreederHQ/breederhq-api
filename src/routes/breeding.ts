@@ -543,7 +543,7 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
     ? ymd(new Date(plan.lockedDueDate))
     : plan?.expectedBirthDate
       ? ymd(new Date(plan.expectedBirthDate))
-      : "TBD";
+      : commitYmd;
 
   const base = `PLN-${damFirst}-${commitYmd}-${dueYmd}`;
 
@@ -748,49 +748,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const data: any = {
         tenantId,
         organizationId: b.organizationId ?? null,
+        // allow explicit code from caller, otherwise we will generate below
         code: b.code ?? null,
         name,
         nickname: b.nickname ?? null,
         species: b.species,
-        breedText: b.breedText ?? null,
         damId,
         sireId: b.sireId ?? null,
-
-        lockedCycleKey: b.lockedCycleKey ?? null,
-        lockedCycleStart: lockNorm.touched
-          ? lockNorm.lockedCycleStart
-          : b.lockedCycleStart
-            ? new Date(b.lockedCycleStart)
-            : null,
-        lockedOvulationDate: lockNorm.touched
-          ? lockNorm.lockedOvulationDate
-          : b.lockedOvulationDate
-            ? new Date(b.lockedOvulationDate)
-            : null,
-        lockedDueDate: lockNorm.touched
-          ? lockNorm.lockedDueDate
-          : b.lockedDueDate
-            ? new Date(b.lockedDueDate)
-            : null,
-        lockedPlacementStartDate: lockNorm.touched
-          ? lockNorm.lockedPlacementStartDate
-          : b.lockedPlacementStartDate
-            ? new Date(b.lockedPlacementStartDate)
-            : null,
-
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
         expectedBreedDate: b.expectedBreedDate ? new Date(b.expectedBreedDate) : null,
-        expectedBirthDate: b.expectedBirthDate
-          ? new Date(b.expectedBirthDate)
-          : lockNorm.touched && lockNorm.lockedDueDate
-            ? lockNorm.lockedDueDate
-            : null,
-        expectedPlacementStart: b.expectedPlacementStart
-          ? new Date(b.expectedPlacementStart)
-          : lockNorm.touched && lockNorm.lockedPlacementStartDate
-            ? lockNorm.lockedPlacementStartDate
-            : null,
+        expectedBirthDate: b.expectedBirthDate ? new Date(b.expectedBirthDate) : null,
+        expectedPlacementStart: b.expectedPlacementStart ? new Date(b.expectedPlacementStart) : null,
         expectedWeaned: b.expectedWeaned ? new Date(b.expectedWeaned) : null,
         expectedPlacementCompleted: b.expectedPlacementCompleted ? new Date(b.expectedPlacementCompleted) : null,
 
@@ -815,7 +784,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       };
 
       const userId = (req as any).user?.id ?? null;
-      const created = await prisma.$transaction(async (tx) => {
+
+      let created = await prisma.$transaction(async (tx) => {
         const plan = await tx.breedingPlan.create({ data });
 
         const lockedOnCreate =
@@ -850,6 +820,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         return plan;
       });
+
+      // new part: ensure every new plan has a code if caller did not provide one
+      if (!created.code) {
+        const code = await buildFriendlyPlanCode(tenantId, created.id);
+        created = await prisma.breedingPlan.update({
+          where: { id: created.id },
+          data: { code },
+        });
+      }
 
       reply.code(201).send(created);
     } catch (err) {

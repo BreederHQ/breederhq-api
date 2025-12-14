@@ -34,6 +34,8 @@ enum Species {
   DOG
   CAT
   HORSE
+  GOAT
+  RABBIT
 }
 
 enum Sex {
@@ -344,26 +346,28 @@ model Tenant {
   // namespaced settings
   settings TenantSetting[]
 
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
-  LitterEvent          LitterEvent[]
-  OffspringGroupEvent  OffspringGroupEvent[]
-  OffspringEvent       OffspringEvent[]
-  Invoice              Invoice[]
-  InvoiceLineItem      InvoiceLineItem[]
-  Payment              Payment[]
-  Campaign             Campaign[]
-  CampaignAttribution  CampaignAttribution[]
-  Task                 Task[]
-  HealthEvent          HealthEvent[]
-  Document             Document[]
-  ContractTemplate     ContractTemplate[]
-  Contract             Contract[]
-  ContractParty        ContractParty[]
-  SignatureEvent       SignatureEvent[]
-  OffspringDocument    OffspringDocument[]
-  OffspringContract    OffspringContract[]
-  OffspringInvoiceLink OffspringInvoiceLink[]
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  LitterEvent            LitterEvent[]
+  OffspringGroupEvent    OffspringGroupEvent[]
+  OffspringEvent         OffspringEvent[]
+  OffspringGroupBuyer    OffspringGroupBuyer[]
+  Invoice                Invoice[]
+  InvoiceLineItem        InvoiceLineItem[]
+  Payment                Payment[]
+  Campaign               Campaign[]
+  CampaignAttribution    CampaignAttribution[]
+  Task                   Task[]
+  HealthEvent            HealthEvent[]
+  Document               Document[]
+  ContractTemplate       ContractTemplate[]
+  Contract               Contract[]
+  ContractParty          ContractParty[]
+  SignatureEvent         SignatureEvent[]
+  OffspringDocument      OffspringDocument[]
+  OffspringContract      OffspringContract[]
+  OffspringInvoiceLink   OffspringInvoiceLink[]
+  accountingIntegrations AccountingIntegration[]
 
   @@index([name])
 }
@@ -414,7 +418,8 @@ model Organization {
   animalsPurchased Animal[]     @relation("AnimalBuyerOrganization")
   memberships      Membership[]
 
-  createdCustomBreeds CustomBreed[] @relation("CreatedByOrganization")
+  createdCustomBreeds CustomBreed[]         @relation("CreatedByOrganization")
+  groupBuyerLinks     OffspringGroupBuyer[] @relation("GroupBuyerOrganization")
 
   breedingPlans BreedingPlan[]
 
@@ -429,6 +434,9 @@ model Organization {
   OffspringContracts OffspringContract[] @relation("OffspringContractBuyerOrg")
   Invoice            Invoice[]
   ContractParty      ContractParty[]
+
+  externalProvider String?
+  externalId       String?
 
   @@unique([id, tenantId])
   @@unique([tenantId, name])
@@ -484,15 +492,19 @@ model Contact {
 
   animalsPurchased Animal[] @relation("AnimalBuyerContact")
 
-  archived           Boolean             @default(false)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  archived           Boolean               @default(false)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
   Attachment         Attachment[]
   PlanParty          PlanParty[]
   Offspring          Offspring[]
-  OffspringContracts OffspringContract[] @relation("OffspringContractBuyerContact")
+  OffspringContracts OffspringContract[]   @relation("OffspringContractBuyerContact")
   Invoice            Invoice[]
   ContractParty      ContractParty[]
+  groupBuyerLinks    OffspringGroupBuyer[] @relation("GroupBuyerContact")
+
+  externalProvider String?
+  externalId       String?
 
   @@unique([tenantId, email])
   @@index([organizationId])
@@ -511,21 +523,24 @@ model Contact {
  */
 
 model Animal {
-  id               Int           @id @default(autoincrement())
-  tenantId         Int
-  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  organizationId   Int?
-  organization     Organization? @relation("OrgAnimals", fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
-  name             String
-  species          Species
-  sex              Sex
-  status           AnimalStatus  @default(ACTIVE)
-  birthDate        DateTime?
-  microchip        String?
-  notes            String?
-  breed            String?
+  id             Int           @id @default(autoincrement())
+  tenantId       Int
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId Int?
+  organization   Organization? @relation("OrgAnimals", fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  name           String
+  species        Species
+  sex            Sex
+  status         AnimalStatus  @default(ACTIVE)
+  birthDate      DateTime?
+  microchip      String?
+  notes          String?
+  breed          String?
+
+  photoUrl String? @db.Text
+
   canonicalBreedId Int?
-  canonicalBreed   Breed?        @relation(fields: [canonicalBreedId], references: [id], onDelete: SetNull)
+  canonicalBreed   Breed? @relation(fields: [canonicalBreedId], references: [id], onDelete: SetNull)
 
   customBreedId Int?
   customBreed   CustomBreed? @relation(fields: [customBreedId, tenantId], references: [id, tenantId], onDelete: Restrict)
@@ -543,6 +558,10 @@ model Animal {
   // parent backrefs to groups
   offspringGroupsAsDam  OffspringGroup[] @relation("OffspringDam")
   offspringGroupsAsSire OffspringGroup[] @relation("OffspringSire")
+
+  // parent backrefs to individual offspring
+  offspringAsDam  Offspring[] @relation("OffspringIndividualDam")
+  offspringAsSire Offspring[] @relation("OffspringIndividualSire")
 
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
   waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
@@ -1073,12 +1092,12 @@ model OffspringGroup {
   linkState  OffspringLinkState   @default(linked)
   linkReason OffspringLinkReason?
 
-  species       Species
-  damId         Int
-  dam           Animal  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
-  sireId        Int?
-  sire          Animal? @relation("OffspringSire", fields: [sireId], references: [id], onDelete: SetNull)
-  tentativeName String?
+  species Species
+  damId   Int
+  dam     Animal  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
+  sireId  Int?
+  sire    Animal? @relation("OffspringSire", fields: [sireId], references: [id], onDelete: SetNull)
+  name    String?
 
   expectedBirthOn DateTime?
   actualBirthOn   DateTime?
@@ -1108,10 +1127,11 @@ model OffspringGroup {
   // legacy Animal linkage retained for compatibility
   AnimalsLegacy Animal[] @relation("OffspringGroupPuppiesLegacy")
 
-  Waitlist   WaitlistEntry[]
-  Tags       TagAssignment[]
-  Events     OffspringGroupEvent[]
-  Attachment Attachment[]
+  Waitlist        WaitlistEntry[]
+  Tags            TagAssignment[]
+  Events          OffspringGroupEvent[]
+  Attachment      Attachment[]
+  groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerGroup")
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -1131,6 +1151,36 @@ model OffspringGroup {
   @@index([placementCompletedAt])
 }
 
+model OffspringGroupBuyer {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  groupId Int
+  group   OffspringGroup @relation("GroupBuyerGroup", fields: [groupId], references: [id], onDelete: Cascade)
+
+  contactId Int?
+  contact   Contact? @relation("GroupBuyerContact", fields: [contactId], references: [id], onDelete: SetNull)
+
+  organizationId Int?
+  organization   Organization? @relation("GroupBuyerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  waitlistEntryId Int?
+  waitlistEntry   WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, contactId])
+  @@unique([groupId, organizationId])
+  @@unique([groupId, waitlistEntryId])
+  @@index([tenantId])
+  @@index([groupId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([waitlistEntryId])
+}
+
 model Offspring {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -1142,10 +1192,17 @@ model Offspring {
   // identity
   name    String?
   species Species
+  breed   String?
   sex     Sex?
   bornAt  DateTime?
   diedAt  DateTime?
   status  OffspringStatus @default(NEWBORN)
+
+  // parents as of creation time
+  damId  Int?
+  dam    Animal? @relation("OffspringIndividualDam", fields: [damId], references: [id], onDelete: SetNull)
+  sireId Int?
+  sire   Animal? @relation("OffspringIndividualSire", fields: [sireId], references: [id], onDelete: SetNull)
 
   // collar
   collarColorId    String?
@@ -1181,12 +1238,13 @@ model Offspring {
   Attachments         Attachment[]
   Events              OffspringEvent[]
   WaitlistAllocations WaitlistEntry[]  @relation("WaitlistAllocationOffspring")
+
   // finance, tasks, health, documents, contracts
-  Invoices            Invoice[]
-  Tasks               Task[]
-  HealthLogs          HealthEvent[]
-  Documents           Document[]
-  Contracts           Contract[]
+  Invoices   Invoice[]
+  Tasks      Task[]
+  HealthLogs HealthEvent[]
+  Documents  Document[]
+  Contracts  Contract[]
 
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
@@ -1201,6 +1259,8 @@ model Offspring {
   @@index([buyerContactId])
   @@index([buyerOrganizationId])
   @@index([placedAt])
+  @@index([tenantId, damId])
+  @@index([tenantId, sireId])
 }
 
 model OffspringEvent {
@@ -1323,6 +1383,8 @@ model WaitlistEntry {
   // canonical allocation to Offspring
   offspringId Int?
   offspring   Offspring? @relation("WaitlistAllocationOffspring", fields: [offspringId], references: [id], onDelete: SetNull)
+
+  groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerWaitlistEntry")
 
   skipCount  Int?
   lastSkipAt DateTime?
@@ -1523,6 +1585,9 @@ model TenantSetting {
 enum FinanceScope {
   group
   offspring
+  contact
+  organization
+  general
 }
 
 enum InvoiceStatus {
@@ -1647,9 +1712,13 @@ model Invoice {
   issuedAt     DateTime?
   paidAt       DateTime?
   voidedAt     DateTime?
+  paymentTerms String?
 
   externalProvider String?
   externalId       String?
+  syncedAt         DateTime?
+  lastSyncStatus   String?
+  lastSyncError    String?
 
   notes String?
   data  Json?
@@ -1678,10 +1747,14 @@ model InvoiceLineItem {
   invoiceId Int
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
-  description String
-  qty         Int    @default(1)
-  unitCents   Int
-  totalCents  Int
+  description   String
+  qty           Int     @default(1)
+  unitCents     Int
+  discountCents Int?
+  taxRate       Float?
+  category      String?
+  itemCode      String?
+  totalCents    Int
 
   createdAt DateTime @default(now())
 
@@ -1705,6 +1778,9 @@ model Payment {
 
   externalProvider String?
   externalId       String?
+  syncedAt         DateTime?
+  lastSyncStatus   String?
+  lastSyncError    String?
 
   notes String?
   data  Json?
@@ -2120,4 +2196,28 @@ model OffspringInvoiceLink {
   @@index([tenantId])
   @@index([offspringId])
   @@index([invoiceId])
+}
+
+model AccountingIntegration {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  provider String // for example "quickbooks_online"
+  realmId  String // external account or company id
+
+  accessToken          String
+  refreshToken         String
+  accessTokenExpiresAt DateTime
+
+  isActive       Boolean   @default(true)
+  syncDirection  String    @default("outbound") // outbound, inbound, bidirectional
+  lastSyncAt     DateTime?
+  lastSyncStatus String?
+  lastSyncError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, provider])
 }
