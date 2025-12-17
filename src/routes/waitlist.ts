@@ -1,6 +1,8 @@
 // src/routes/waitlist.ts
 import type { FastifyPluginCallback } from "fastify";
 import prisma from "../prisma.js";
+import { WaitlistStatus } from "@prisma/client";
+import { Species } from "@prisma/client";
 
 /* ───────── helpers ───────── */
 
@@ -82,13 +84,15 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const q = String((req.query as any)["q"] ?? "").trim();
     const status = String((req.query as any)["status"] ?? "").trim();
     const species = String((req.query as any)["species"] ?? "").trim();
+    const validSpecies = species && Object.values(Species).includes(species as Species) ? (species as Species) : undefined;
+    const validStatus = status && Object.values(WaitlistStatus).includes(status as WaitlistStatus) ? (status as WaitlistStatus) : undefined;
     const limit = Math.min(250, Math.max(1, Number((req.query as any)["limit"] ?? 25)));
     const cursorId = (req.query as any)["cursor"] ? Number((req.query as any)["cursor"]) : undefined;
 
     const where: any = {
       tenantId,
       litterId: null, // parking lot
-      ...(status ? { status } : null),
+      ...(validStatus ? { status } : null),
       ...(species ? { speciesPref: species } : null),
       ...(cursorId ? { id: { lt: cursorId } } : null),
       ...(q
@@ -118,7 +122,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     // Count without cursor to give a stable aggregate for UI; still scoped to parking-lot, status/species
     const total = await prisma.waitlistEntry.count({
-      where: { tenantId, litterId: null, ...(status ? { status } : null), ...(species ? { speciesPref: species } : null) },
+      where: { tenantId, litterId: null, ...(validStatus ? { status: validStatus } : null), ...(validSpecies ? { speciesPref: validSpecies } : null) },
     });
 
     reply.send({ items: rows.map(serializeEntry), total });

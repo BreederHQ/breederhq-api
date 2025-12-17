@@ -106,8 +106,8 @@ app.addHook("preValidation", (req, _reply, done) => {
 // Accept JSON with charset, like "application/json; charset=utf-8"
 app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req, body, done) => {
   try {
-    if (!body || body.trim() === "") return done(null, {});
-    done(null, JSON.parse(body));
+    const raw = typeof body === 'string' ? body : body.toString('utf8');
+    done(null, JSON.parse(raw));
   } catch (err) {
     done(err as Error);
   }
@@ -115,9 +115,9 @@ app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req
 
 // Accept empty x-www-form-urlencoded bodies as {}
 app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
-  if (!body || body.trim() === "") return done(null, {});
+  const raw = typeof body === 'string' ? body : body.toString('utf8');
   const obj: Record<string, string> = {};
-  for (const pair of (body || "").split("&")) {
+  for (const pair of raw.split("&")) {
     if (!pair) continue;
     const [k, v = ""] = pair.split("=");
     obj[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, " "));

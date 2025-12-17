@@ -1,5 +1,5 @@
 // [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
-import type { Prisma, PrismaClient, OffspringGroup, BreedingPlan, Animal } from "@prisma/client";
+import { Prisma, type PrismaClient, OffspringGroup, BreedingPlan, Animal, BreedingPlanStatus } from "@prisma/client";
 
 function __og_addDays(d: Date, days: number): Date {
   const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -70,7 +70,7 @@ export function __makeOffspringGroupsService({
     if (existing) return existing;
 
     const expectedBirthOn = expectedBirthFromPlan(plan);
-    const tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, expectedBirthOn ?? new Date());
+    const name = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, expectedBirthOn ?? new Date());
 
     const created = await db.offspringGroup.create({
       data: {
@@ -81,7 +81,7 @@ export function __makeOffspringGroupsService({
         sireId: plan.sireId ?? null,
         linkState: "linked",
         expectedBirthOn,
-        tentativeName,
+        name,
       },
     });
 
@@ -92,7 +92,7 @@ export function __makeOffspringGroupsService({
         type: "LINK",
         occurredAt: new Date(),
         field: "planId",
-        before: null,
+        before: Prisma.DbNull,
         after: { planId: plan.id },
         notes: `Group ensured for committed plan${actorId ? ` by ${actorId}` : ""}`,
         recordedByUserId: null,
@@ -116,18 +116,18 @@ export function __makeOffspringGroupsService({
     if (!plan) throw new Error("plan not found for tenant");
 
     const before = { ...group };
-    const patch: Prisma.OffspringGroupUpdateInput = { planId: plan.id, linkState: "linked" };
+    const patch: Prisma.OffspringGroupUncheckedUpdateInput = { planId: plan.id, linkState: "linked" };
 
     if (!group.species) patch.species = (plan.dam as any)?.species ?? (plan as any).species ?? "DOG";
-    if (!group.damId && plan.damId) patch.dam = { connect: { id: plan.damId } };
-    if (!group.sireId && plan.sireId) patch.sire = { connect: { id: plan.sireId } };
+    if (!group.damId && plan.damId) patch.damId = plan.damId;
+    if (!group.sireId && plan.sireId) patch.sireId = plan.sireId;
     if (!group.expectedBirthOn) {
       const exp = expectedBirthFromPlan(plan);
       if (exp) patch.expectedBirthOn = exp;
     }
-    if (!group.tentativeName) {
+    if (!group.name) {
       const exp = (patch as any).expectedBirthOn ?? expectedBirthFromPlan(plan) ?? new Date();
-      patch.tentativeName = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, exp);
+      patch.name = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, exp);
     }
 
     const updated = await db.offspringGroup.update({ where: { id: group.id }, data: patch });
@@ -236,7 +236,6 @@ export function __makeOffspringGroupsService({
 // [OG-SERVICE-END]
 // apps/api/src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
-import { Prisma, BreedingPlanStatus } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
@@ -790,10 +789,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         const lockedOnCreate =
           lockNorm.touched &&
-          lockNorm.lockedCycleStart &&
-          lockNorm.lockedOvulationDate &&
-          lockNorm.lockedDueDate &&
-          lockNorm.lockedPlacementStartDate;
+          (lockNorm as any).lockedCycleStart &&
+          (lockNorm as any).lockedOvulationDate &&
+          (lockNorm as any).lockedDueDate &&
+          (lockNorm as any).lockedPlacementStartDate;
 
         if (lockedOnCreate) {
           await tx.breedingPlanEvent.create({
@@ -805,10 +804,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               label: "Cycle locked on plan creation",
               recordedByUserId: userId,
               data: {
-                lockedCycleStart: lockNorm.lockedCycleStart,
-                lockedOvulationDate: lockNorm.lockedOvulationDate,
-                lockedDueDate: lockNorm.lockedDueDate,
-                lockedPlacementStartDate: lockNorm.lockedPlacementStartDate,
+                lockedCycleStart: ( lockNorm as any).lockedCycleStart,
+                lockedOvulationDate: ( lockNorm as any).lockedOvulationDate,
+                lockedDueDate: ( lockNorm as any).lockedDueDate,
+                lockedPlacementStartDate: ( lockNorm as any).lockedPlacementStartDate,
                 expectedBirthDate: plan.expectedBirthDate,
                 expectedPlacementStart: plan.expectedPlacementStart,
                 expectedWeaned: plan.expectedWeaned,
@@ -1764,7 +1763,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             type: "CHANGE",
             occurredAt: new Date(),
             field: "collars",
-            before: null,
+            before: Prisma.DbNull,
             after: { assigned: assignments.map((a: any) => ({ animalId: Number(a.animalId), colorId: a.colorId, colorName: a.colorName, colorHex: a.colorHex, lock: !!a.lock })) },
             notes: force ? "Collars assigned (force override locks)" : "Collars assigned",
             recordedByUserId: (req as any).user?.id ?? null,
