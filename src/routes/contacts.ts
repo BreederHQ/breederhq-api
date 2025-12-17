@@ -497,6 +497,65 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     return reply.send(org ? [org] : []);
   });
+
+  // GET /contacts/:id/animals
+  app.get("/contacts/:id/animals", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const contactId = idNum((req.params as any).id);
+    if (!contactId) return reply.code(400).send({ error: "bad_id" });
+
+    // Verify contact exists in tenant
+    const contact = await prisma.contact.findFirst({
+      where: { id: contactId, tenantId },
+      select: { id: true },
+    });
+    if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+
+    // Find all animal ownerships for this contact
+    const ownerships = await prisma.animalOwner.findMany({
+      where: { contactId },
+      orderBy: [{ isPrimary: "desc" }, { percent: "desc" }],
+      select: {
+        id: true,
+        animalId: true,
+        percent: true,
+        isPrimary: true,
+        animal: {
+          select: {
+            id: true,
+            tenantId: true,
+            name: true,
+            species: true,
+            sex: true,
+            status: true,
+            birthDate: true,
+            microchip: true,
+            breed: true,
+            photoUrl: true,
+            archived: true,
+          },
+        },
+      },
+    });
+
+    // Filter to only animals in this tenant
+    const animals = ownerships
+      .filter(o => o.animal.tenantId === tenantId)
+      .map(o => ({
+        ...o.animal,
+        owners: [{
+          contactId,
+          percent: o.percent,
+          isPrimary: o.isPrimary,
+          partyType: "Contact",
+        }],
+      }));
+
+    return reply.send({ items: animals, total: animals.length });
+  });
 };
+
 
 export default contactsRoutes;
