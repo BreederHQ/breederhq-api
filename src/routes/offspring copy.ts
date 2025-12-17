@@ -1,23 +1,5 @@
 // [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
-import {
-  OffspringLifeState,
-  OffspringPlacementState,
-  OffspringKeeperIntent,
-  OffspringFinancialState,
-  OffspringPaperworkState,
-  type Offspring,
-  type Prisma,
-  type PrismaClient,
-  type OffspringGroup,
-  type BreedingPlan,
-  type Animal,
-  type Sex,
-} from "@prisma/client";
-import {
-  OFFSPRING_DUAL_WRITE_LEGACY_STATUS,
-  deriveLegacyStatus,
-  legacyStatusToCanonicalPatch,
-} from "../services/offspring/state.js";
+import type { Prisma, PrismaClient, OffspringGroup, BreedingPlan, Animal } from "@prisma/client";
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -388,7 +370,6 @@ function groupDetail(
   buyers: any[] = [],
   offspring: any[] = [],
 ) {
-  const summary = summarizeOffspringStates(offspring);
   return {
     id: G.id,
     tenantId: G.tenantId,
@@ -442,11 +423,6 @@ function groupDetail(
       placeholderLabel: o.name ?? "",
       sex: o.sex ?? null,
       status: o.status ?? null,
-      lifeState: o.lifeState ?? null,
-      placementState: o.placementState ?? null,
-      keeperIntent: o.keeperIntent ?? null,
-      financialState: o.financialState ?? null,
-      paperworkState: o.paperworkState ?? null,
       birthDate: o.bornAt
         ? o.bornAt instanceof Date
           ? o.bornAt.toISOString()
@@ -551,7 +527,6 @@ function groupDetail(
     })),
 
     Attachment: attachments ?? [],
-    summary,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
   };
@@ -574,11 +549,6 @@ function mapOffspringToAnimalLite(o: any) {
     name: o.name ?? "",
     sex: o.sex ?? null,
     status: String(o.status ?? ""),
-    lifeState: o.lifeState ?? null,
-    placementState: o.placementState ?? null,
-    keeperIntent: o.keeperIntent ?? null,
-    financialState: o.financialState ?? null,
-    paperworkState: o.paperworkState ?? null,
     birthDate: o.bornAt
       ? (o.bornAt instanceof Date ? o.bornAt.toISOString() : String(o.bornAt))
       : null,
@@ -626,264 +596,6 @@ function mapOffspringToAnimalLite(o: any) {
       : null,
     collarLocked: (o as any).collarLocked ?? false,
   };
-}
-
-export function summarizeOffspringStates(offspring: any[]) {
-  let alive = 0;
-  let deceased = 0;
-  let unassigned = 0;
-  let optionHold = 0;
-  let reserved = 0;
-  let placed = 0;
-  let returned = 0;
-  let transferred = 0;
-  let availableToPlace = 0;
-
-  for (const o of offspring || []) {
-    const life = o.lifeState ?? null;
-    const placement = o.placementState ?? null;
-    const intent = o.keeperIntent ?? null;
-
-    if (life === OffspringLifeState.ALIVE) alive += 1;
-    if (life === OffspringLifeState.DECEASED) deceased += 1;
-
-    switch (placement) {
-      case OffspringPlacementState.UNASSIGNED:
-        unassigned += 1;
-        break;
-      case OffspringPlacementState.OPTION_HOLD:
-        optionHold += 1;
-        break;
-      case OffspringPlacementState.RESERVED:
-        reserved += 1;
-        break;
-      case OffspringPlacementState.PLACED:
-        placed += 1;
-        break;
-      case OffspringPlacementState.RETURNED:
-        returned += 1;
-        break;
-      case OffspringPlacementState.TRANSFERRED:
-        transferred += 1;
-        break;
-      default:
-        break;
-    }
-
-    const placeablePlacement =
-      placement === OffspringPlacementState.UNASSIGNED || placement === OffspringPlacementState.OPTION_HOLD;
-    const notHeldByKeeper =
-      intent !== OffspringKeeperIntent.WITHHELD && intent !== OffspringKeeperIntent.KEEP;
-    if (life === OffspringLifeState.ALIVE && placeablePlacement && notHeldByKeeper) {
-      availableToPlace += 1;
-    }
-  }
-
-  const denominator = alive + deceased;
-  const placementRate = denominator > 0 ? placed / denominator : null;
-
-  return {
-    counts: {
-      alive,
-      deceased,
-      unassigned,
-      optionHold,
-      reserved,
-      placed,
-      returned,
-      transferred,
-    },
-    availableToPlaceCount: availableToPlace,
-    placementRate,
-  };
-}
-
-/* ========= offspring state normalization ========= */
-
-export type OffspringStatePatch = Partial<Offspring> & Record<string, unknown>;
-export type NormalizedOffspringPatch = OffspringStatePatch;
-
-const PAPERWORK_ORDER: OffspringPaperworkState[] = [
-  OffspringPaperworkState.NONE,
-  OffspringPaperworkState.SENT,
-  OffspringPaperworkState.SIGNED,
-  OffspringPaperworkState.COMPLETE,
-];
-
-function sameInstant(a?: Date | null, b?: Date | null) {
-  if (a == null && b == null) return true;
-  if (!a || !b) return false;
-  return a.getTime() === b.getTime();
-}
-
-function promotePaperworkState(
-  current: OffspringPaperworkState,
-  min: OffspringPaperworkState,
-) {
-  const currentIdx = PAPERWORK_ORDER.indexOf(current);
-  const minIdx = PAPERWORK_ORDER.indexOf(min);
-  return PAPERWORK_ORDER[Math.max(currentIdx, minIdx)];
-}
-
-export function normalizeOffspringState(
-  current: Offspring | null,
-  patch: OffspringStatePatch,
-): NormalizedOffspringPatch {
-  const normalized: NormalizedOffspringPatch = { ...patch };
-
-  let nextLifeState =
-    patch.lifeState ?? current?.lifeState ?? OffspringLifeState.ALIVE;
-  let nextPlacementState =
-    patch.placementState ?? current?.placementState ?? OffspringPlacementState.UNASSIGNED;
-  let nextKeeperIntent =
-    patch.keeperIntent ?? current?.keeperIntent ?? OffspringKeeperIntent.AVAILABLE;
-  let nextFinancialState =
-    patch.financialState ?? current?.financialState ?? OffspringFinancialState.NONE;
-  let nextPaperworkState =
-    patch.paperworkState ?? current?.paperworkState ?? OffspringPaperworkState.NONE;
-
-  let nextDiedAt =
-    patch.diedAt === undefined ? current?.diedAt ?? null : (patch.diedAt as Date | null);
-  let nextPlacedAt =
-    patch.placedAt === undefined ? current?.placedAt ?? null : (patch.placedAt as Date | null);
-  const nextPaidInFullAt =
-    patch.paidInFullAt === undefined
-      ? current?.paidInFullAt ?? null
-      : (patch.paidInFullAt as Date | null);
-  const nextContractId =
-    patch.contractId === undefined ? current?.contractId ?? null : (patch.contractId as string | null);
-  const nextContractSignedAt =
-    patch.contractSignedAt === undefined
-      ? current?.contractSignedAt ?? null
-      : (patch.contractSignedAt as Date | null);
-  const nextPromotedAnimalId =
-    patch.promotedAnimalId === undefined
-      ? current?.promotedAnimalId ?? null
-      : (patch.promotedAnimalId as number | null);
-  const nextBuyerContactId =
-    patch.buyerContactId === undefined
-      ? current?.buyerContactId ?? null
-      : (patch.buyerContactId as number | null);
-  const nextBuyerOrgId =
-    patch.buyerOrganizationId === undefined
-      ? current?.buyerOrganizationId ?? null
-      : (patch.buyerOrganizationId as number | null);
-  const nextDepositCents =
-    patch.depositCents === undefined
-      ? current?.depositCents ?? null
-      : (patch.depositCents as number | null);
-  const nextPriceCents =
-    patch.priceCents === undefined ? current?.priceCents ?? null : (patch.priceCents as number | null);
-  const bornAt =
-    patch.bornAt === undefined ? current?.bornAt ?? null : (patch.bornAt as Date | null);
-
-  // Clearing diedAt while still DECEASED is illegal to avoid silent resurrection.
-  if ("diedAt" in patch && patch.diedAt === null) {
-    const finalLifeState = patch.lifeState ?? current?.lifeState ?? OffspringLifeState.ALIVE;
-    if (finalLifeState === OffspringLifeState.DECEASED) {
-      throw new Error("cannot clear diedAt while lifeState is DECEASED");
-    }
-  }
-
-  // A death timestamp always forces the DECEASED lifeState.
-  if (nextDiedAt) {
-    nextLifeState = OffspringLifeState.DECEASED;
-  }
-  if (nextLifeState === OffspringLifeState.DECEASED && !nextDiedAt) {
-    nextDiedAt = current?.diedAt ?? new Date();
-  }
-
-  // Once deceased, block any placement transitions or timestamp edits.
-  const placementChangedWhileDead =
-    nextLifeState === OffspringLifeState.DECEASED &&
-    (("placementState" in patch &&
-      (patch.placementState as OffspringPlacementState | undefined) !==
-      (current?.placementState ?? OffspringPlacementState.UNASSIGNED)) ||
-      ("placedAt" in patch && !sameInstant(patch.placedAt as Date | null | undefined, current?.placedAt)));
-  if (placementChangedWhileDead) {
-    throw new Error("cannot change placement details for a deceased offspring");
-  }
-
-  // Removing placement timing while still marked placed is not allowed.
-  const placementStateFromPatch = patch.placementState ?? current?.placementState ?? nextPlacementState;
-  if ("placedAt" in patch && patch.placedAt == null && placementStateFromPatch === OffspringPlacementState.PLACED) {
-    throw new Error("cannot remove placedAt while placementState is PLACED");
-  }
-
-  // placedAt drives PLACED and PLACED requires a timestamp.
-  if (nextPlacedAt) {
-    if (nextLifeState === OffspringLifeState.DECEASED) {
-      throw new Error("cannot place a deceased offspring");
-    }
-    nextPlacementState = OffspringPlacementState.PLACED;
-  }
-  if (nextPlacementState === OffspringPlacementState.PLACED) {
-    if (!nextPlacedAt) {
-      throw new Error("placedAt is required when placementState is PLACED");
-    }
-    if (nextLifeState === OffspringLifeState.DECEASED) {
-      throw new Error("cannot place a deceased offspring");
-    }
-  }
-
-  // Buyer assignment implies RESERVED until placement completes.
-  const buyerAssigned = nextBuyerContactId != null || nextBuyerOrgId != null;
-  if (
-    buyerAssigned &&
-    nextPlacementState !== OffspringPlacementState.PLACED &&
-    nextLifeState !== OffspringLifeState.DECEASED
-  ) {
-    nextPlacementState = OffspringPlacementState.RESERVED;
-  }
-
-  // Promotion locks keeper intent to KEEP and cannot be flipped back to AVAILABLE.
-  if (nextPromotedAnimalId != null) {
-    nextKeeperIntent = OffspringKeeperIntent.KEEP;
-  }
-  if (
-    current?.keeperIntent === OffspringKeeperIntent.KEEP &&
-    patch.keeperIntent === OffspringKeeperIntent.AVAILABLE
-  ) {
-    throw new Error("cannot mark offspring as AVAILABLE once keeper intent is KEEP");
-  }
-
-  // paidInFullAt forces the terminal financial state.
-  if (nextPaidInFullAt) {
-    nextFinancialState = OffspringFinancialState.PAID_IN_FULL;
-  }
-  const depositRequired = typeof nextDepositCents === "number" && nextDepositCents > 0;
-  const hasTerminalFinancialState =
-    nextFinancialState === OffspringFinancialState.PAID_IN_FULL ||
-    nextFinancialState === OffspringFinancialState.DEPOSIT_PAID ||
-    nextFinancialState === OffspringFinancialState.REFUNDED ||
-    nextFinancialState === OffspringFinancialState.CHARGEBACK;
-  if (depositRequired && buyerAssigned && !hasTerminalFinancialState && nextFinancialState === OffspringFinancialState.NONE) {
-    nextFinancialState = OffspringFinancialState.DEPOSIT_PENDING;
-  }
-
-  // Contract milestones advance paperwork.
-  if (nextContractSignedAt) {
-    nextPaperworkState = promotePaperworkState(nextPaperworkState, OffspringPaperworkState.SIGNED);
-  } else if (nextContractId) {
-    nextPaperworkState = promotePaperworkState(nextPaperworkState, OffspringPaperworkState.SENT);
-  }
-
-  normalized.lifeState = nextLifeState;
-  normalized.placementState = nextPlacementState;
-  normalized.keeperIntent = nextKeeperIntent;
-  normalized.financialState = nextFinancialState;
-  normalized.paperworkState = nextPaperworkState;
-  normalized.diedAt = nextDiedAt ?? null;
-  normalized.placedAt = nextPlacedAt ?? null;
-  normalized.paidInFullAt = nextPaidInFullAt ?? null;
-  normalized.contractId = nextContractId ?? null;
-  normalized.contractSignedAt = nextContractSignedAt ?? null;
-  normalized.promotedAnimalId = nextPromotedAnimalId ?? null;
-  normalized.buyerContactId = nextBuyerContactId ?? null;
-  normalized.buyerOrganizationId = nextBuyerOrgId ?? null;
-  normalized.depositCents = nextDepositCents ?? null;
-  normalized.priceCents = nextPriceCents ?? null;
-  return normalized;
 }
 /* ========= router ========= */
 
@@ -1621,82 +1333,33 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
-    const statePatch: NormalizedOffspringPatch = { bornAt };
-
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.create", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
-    if ("lifeState" in body) statePatch.lifeState = body.lifeState;
-    if ("placementState" in body) statePatch.placementState = body.placementState;
-    if ("keeperIntent" in body) statePatch.keeperIntent = body.keeperIntent;
-    if ("financialState" in body) statePatch.financialState = body.financialState;
-    if ("paperworkState" in body) statePatch.paperworkState = body.paperworkState;
-    if ("diedAt" in body) statePatch.diedAt = body.diedAt ? parseISO(body.diedAt) : null;
-    if ("placedAt" in body) statePatch.placedAt = body.placedAt ? parseISO(body.placedAt) : null;
-    if ("paidInFullAt" in body) statePatch.paidInFullAt = body.paidInFullAt ? parseISO(body.paidInFullAt) : null;
-    if ("contractSignedAt" in body) statePatch.contractSignedAt = body.contractSignedAt ? parseISO(body.contractSignedAt) : null;
-    if ("contractId" in body) statePatch.contractId = body.contractId ?? null;
-    if ("promotedAnimalId" in body) statePatch.promotedAnimalId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
-    if ("buyerContactId" in body) statePatch.buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-    if ("buyerOrganizationId" in body) statePatch.buyerOrganizationId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
-    if ("depositCents" in body) statePatch.depositCents = body.depositCents == null ? null : Number(body.depositCents);
-    if ("priceCents" in body) statePatch.priceCents = body.priceCents == null ? null : Number(body.priceCents);
-
-    let normalizedState: NormalizedOffspringPatch;
-    try {
-      normalizedState = normalizeOffspringState(null, statePatch);
-    } catch (err) {
-      return reply.code(400).send({ error: (err as Error).message });
-    }
-
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
-    }
-
     const created = await prisma.offspring.create({
       data: {
         tenantId,
         group: {
           connect: {
-            id: group.id,
+            id: G.id,
           },
         },
 
         // core identity
-        name: name ?? null,
-        sex,
-        species: body.species ?? group.plan?.species ?? "DOG",
+        name: String(body.name),
+        sex: body.sex,
+        status: body.status ?? "NEWBORN",
+        species: body.species ?? G.plan?.species ?? "DOG",
         breed: derivedBreed,
-        bornAt,
+        bornAt: body.birthDate ? parseISO(body.birthDate) : null,
 
         // new: core identity fields
         color: body.color ?? null,
         microchip: body.microchip ?? null,
-        notes: body.notes ?? null,
 
         // extra data payload (may include registrationId)
         data,
 
         // collar fields
-        collarColorName: collarName,
-        collarAssignedAt: collarName ? new Date() : null,
-
-        ...normalizedState,
+        collarColorName: name,
+        collarAssignedAt: name ? new Date() : null,
       },
       include: {
         group: {
@@ -1859,18 +1522,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!existing) return reply.code(404).send({ error: "not found" });
 
     const data: any = {};
-    const statePatch: NormalizedOffspringPatch = {};
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.update", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
 
     // carry forward JSON payload for flexible fields like color
     let extraData: any =
@@ -2001,72 +1652,30 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    if (typeof body.status === "string") {
+      data.status = body.status;
+    }
+
     // Birth date: accept either birthDate (App-Offspring) or dob (OffspringPage)
     if ("birthDate" in body) {
       data.bornAt = body.birthDate ? parseISO(body.birthDate) : null;
-      statePatch.bornAt = data.bornAt;
     } else if ("dob" in body) {
       data.bornAt = body.dob ? parseISO(body.dob) : null;
-      statePatch.bornAt = data.bornAt;
     }
     if ("notes" in body) {
       data.notes = body.notes ?? null;
     }
 
-    if ("lifeState" in body) statePatch.lifeState = body.lifeState;
-    if ("placementState" in body) statePatch.placementState = body.placementState;
-    if ("keeperIntent" in body) statePatch.keeperIntent = body.keeperIntent;
-    if ("financialState" in body) statePatch.financialState = body.financialState;
-    if ("paperworkState" in body) statePatch.paperworkState = body.paperworkState;
-    if ("diedAt" in body) statePatch.diedAt = body.diedAt ? parseISO(body.diedAt) : null;
-    if ("placedAt" in body) {
-      const placedAtVal = body.placedAt ? parseISO(body.placedAt) : null;
-      data.placedAt = placedAtVal;
-      statePatch.placedAt = placedAtVal;
-    }
-    if ("paidInFullAt" in body) {
-      const paidInFullAtVal = body.paidInFullAt ? parseISO(body.paidInFullAt) : null;
-      data.paidInFullAt = paidInFullAtVal;
-      statePatch.paidInFullAt = paidInFullAtVal;
-    }
-    if ("contractSignedAt" in body) {
-      const signedAtVal = body.contractSignedAt ? parseISO(body.contractSignedAt) : null;
-      data.contractSignedAt = signedAtVal;
-      statePatch.contractSignedAt = signedAtVal;
-    }
-    if ("contractId" in body) {
-      const contractIdVal = body.contractId ?? null;
-      data.contractId = contractIdVal;
-      statePatch.contractId = contractIdVal;
-    }
-    if ("promotedAnimalId" in body) {
-      const promotedId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
-      data.promotedAnimalId = promotedId;
-      statePatch.promotedAnimalId = promotedId;
-    }
-
     if ("priceCents" in body) {
-      const priceCentsVal = body.priceCents ?? null;
-      data.priceCents = priceCentsVal;
-      statePatch.priceCents = priceCentsVal;
-    }
-
-    if ("depositCents" in body) {
-      const depositCentsVal = body.depositCents == null ? null : Number(body.depositCents);
-      data.depositCents = depositCentsVal;
-      statePatch.depositCents = depositCentsVal;
+      data.priceCents = body.priceCents ?? null;
     }
 
     if ("buyerContactId" in body) {
-      const buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-      data.buyerContactId = buyerContactId;
-      statePatch.buyerContactId = buyerContactId;
+      data.buyerContactId = body.buyerContactId ?? null;
     }
 
     if ("buyerOrganizationId" in body) {
-      const buyerOrgId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
-      data.buyerOrganizationId = buyerOrgId;
-      statePatch.buyerOrganizationId = buyerOrgId;
+      data.buyerOrganizationId = body.buyerOrganizationId ?? null;
     }
 
     if ("color" in body || "microchip" in body || "registrationId" in body) {
@@ -2099,27 +1708,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.collarAssignedAt = name ? new Date() : null;
     }
 
-    let normalizedState: NormalizedOffspringPatch;
-    try {
-      normalizedState = normalizeOffspringState(existing as Offspring, statePatch);
-    } catch (err) {
-      return reply.code(400).send({ error: (err as Error).message });
-    }
-
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
-    }
-
     const updated = await prisma.offspring.update({
       where: { id },
-      data: { ...data, ...normalizedState },
+      data,
       include: {
         group: {
           select: {
@@ -2707,3 +2298,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 };
 
 export default offspringRoutes;
+
+
+

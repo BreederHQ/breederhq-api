@@ -38,6 +38,51 @@ enum Species {
   RABBIT
 }
 
+enum TenantOperationType {
+  HOBBY
+  COMMERCIAL
+  PERFORMANCE
+}
+
+enum HorseIntendedUse {
+  BREEDING
+  SHOW
+  RACING
+}
+
+enum HorseValuationSource {
+  PRIVATE_SALE
+  AUCTION
+  APPRAISAL
+  INSURANCE
+  OTHER
+}
+
+enum OwnershipChangeKind {
+  SALE
+  SYNDICATION
+  TRANSFER
+  LEASE
+  DEATH
+  OTHER
+}
+
+enum PaymentIntentStatus {
+  PLANNED
+  EXTERNAL
+  COMPLETED
+  CANCELED
+}
+
+enum PaymentIntentPurpose {
+  DEPOSIT
+  PURCHASE
+  STUD_FEE
+  BOARDING
+  TRAINING
+  OTHER
+}
+
 enum Sex {
   FEMALE
   MALE
@@ -158,6 +203,43 @@ enum OffspringStatus {
   WEANED
   PLACED
   DECEASED
+}
+
+enum OffspringLifeState {
+  ALIVE
+  DECEASED
+}
+
+enum OffspringPlacementState {
+  UNASSIGNED
+  OPTION_HOLD
+  RESERVED
+  PLACED
+  RETURNED
+  TRANSFERRED
+}
+
+enum OffspringKeeperIntent {
+  AVAILABLE
+  UNDER_EVALUATION
+  WITHHELD
+  KEEP
+}
+
+enum OffspringFinancialState {
+  NONE
+  DEPOSIT_PENDING
+  DEPOSIT_PAID
+  PAID_IN_FULL
+  REFUNDED
+  CHARGEBACK
+}
+
+enum OffspringPaperworkState {
+  NONE
+  SENT
+  SIGNED
+  COMPLETE
 }
 
 /**
@@ -312,6 +394,8 @@ model Tenant {
   slug         String? @unique
   primaryEmail String?
 
+  operationType TenantOperationType @default(HOBBY)
+
   memberships    TenantMembership[]
   organizations  Organization[]
   contacts       Contact[]
@@ -368,6 +452,8 @@ model Tenant {
   OffspringContract      OffspringContract[]
   OffspringInvoiceLink   OffspringInvoiceLink[]
   accountingIntegrations AccountingIntegration[]
+  AnimalOwnershipChange  AnimalOwnershipChange[]
+  PaymentIntent          PaymentIntent[]
 
   @@index([name])
 }
@@ -532,10 +618,22 @@ model Animal {
   species        Species
   sex            Sex
   status         AnimalStatus  @default(ACTIVE)
-  birthDate      DateTime?
-  microchip      String?
-  notes          String?
-  breed          String?
+
+  // Horse asset metadata (nullable for non-horse species)
+  intendedUse           HorseIntendedUse?
+  declaredValueCents    Int?
+  declaredValueCurrency String?               @db.VarChar(3)
+  valuationDate         DateTime?
+  valuationSource       HorseValuationSource?
+  forSale               Boolean               @default(false)
+  inSyndication         Boolean               @default(false)
+  isLeased              Boolean               @default(false)
+
+  ownershipChanges AnimalOwnershipChange[]
+  birthDate        DateTime?
+  microchip        String?
+  notes            String?
+  breed            String?
 
   photoUrl String? @db.Text
 
@@ -600,6 +698,8 @@ model Animal {
   TestResult     TestResult[]
   Attachment     Attachment[]
   Offspring      Offspring[]                @relation("PromotedAnimal")
+  PaymentIntent  PaymentIntent[]
+  Document       Document[]
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -1198,6 +1298,13 @@ model Offspring {
   diedAt  DateTime?
   status  OffspringStatus @default(NEWBORN)
 
+  // orthogonal lifecycle dimensions (production canonical state)
+  lifeState      OffspringLifeState      @default(ALIVE)
+  placementState OffspringPlacementState @default(UNASSIGNED)
+  keeperIntent   OffspringKeeperIntent   @default(AVAILABLE)
+  financialState OffspringFinancialState @default(NONE)
+  paperworkState OffspringPaperworkState @default(NONE)
+
   // parents as of creation time
   damId  Int?
   dam    Animal? @relation("OffspringIndividualDam", fields: [damId], references: [id], onDelete: SetNull)
@@ -1256,6 +1363,11 @@ model Offspring {
   @@index([tenantId])
   @@index([groupId])
   @@index([tenantId, status])
+  @@index([tenantId, lifeState])
+  @@index([tenantId, placementState])
+  @@index([tenantId, keeperIntent])
+  @@index([tenantId, financialState])
+  @@index([tenantId, paperworkState])
   @@index([buyerContactId])
   @@index([buyerOrganizationId])
   @@index([placedAt])
@@ -1654,6 +1766,11 @@ enum DocumentKind {
   invoice_pdf
   photo
   other
+  bill_of_sale
+  syndication_agreement
+  lease_agreement
+  insurance_policy
+  vet_certificate
 }
 
 enum SignatureProvider {
@@ -1731,6 +1848,7 @@ model Invoice {
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   OffspringInvoiceLink OffspringInvoiceLink[]
+  PaymentIntent        PaymentIntent[]
 
   @@index([tenantId])
   @@index([scope, groupId])
@@ -1790,6 +1908,74 @@ model Payment {
   @@index([tenantId])
   @@index([invoiceId])
   @@index([status])
+}
+
+model AnimalOwnershipChange {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  kind          OwnershipChangeKind
+  effectiveDate DateTime?
+  occurredAt    DateTime            @default(now())
+
+  valueCents Int?
+  currency   String? @db.VarChar(3)
+
+  // Immutable snapshots of ownership at time of change
+  fromOwners Json
+  toOwners   Json
+
+  notes     String?
+  documents Document[]
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  PaymentIntent PaymentIntent[]
+
+  @@index([tenantId])
+  @@index([animalId])
+  @@index([kind])
+  @@index([occurredAt])
+}
+
+model PaymentIntent {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Optional links depending on what the payment represents
+  invoiceId         Int?
+  invoice           Invoice?               @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  animalId          Int?
+  animal            Animal?                @relation(fields: [animalId], references: [id], onDelete: SetNull)
+  ownershipChangeId Int?
+  ownershipChange   AnimalOwnershipChange? @relation(fields: [ownershipChangeId], references: [id], onDelete: SetNull)
+
+  purpose PaymentIntentPurpose
+  status  PaymentIntentStatus  @default(PLANNED)
+
+  amountCents Int
+  currency    String @db.VarChar(3)
+
+  externalProvider String?
+  externalId       String?
+  reference        String?
+
+  data Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@index([animalId])
+  @@index([ownershipChangeId])
+  @@index([status])
+  @@index([purpose])
 }
 
 // ---------- Marketing ----------
@@ -1922,6 +2108,12 @@ model Document {
 
   scope DocumentScope
   kind  DocumentKind  @default(generic)
+
+  // Optional links for Animal and ownership transactions (horses)
+  animalId          Int?
+  animal            Animal?                @relation(fields: [animalId], references: [id], onDelete: SetNull)
+  ownershipChangeId Int?
+  ownershipChange   AnimalOwnershipChange? @relation(fields: [ownershipChangeId], references: [id], onDelete: SetNull)
 
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
