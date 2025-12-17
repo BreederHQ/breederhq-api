@@ -114,12 +114,6 @@ function parseSort(sortParam?: string) {
   return orderBy.length ? orderBy : [{ createdAt: "desc" }];
 }
 
-type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "whelp";
-
-type ReproEvent = {
-  kind: ReproEventKind;
-  date: string; // ISO yyyy-mm-dd
-};
 
 function cycleDatesFromCycles(cycles: Array<{ cycleStart: Date }>): string[] {
   const dates: string[] = [];

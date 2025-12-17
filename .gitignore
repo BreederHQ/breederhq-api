@@ -19,6 +19,10 @@ build/
 .env.test.*
 .env.production.local
 .env.prod.migrate
+.env.dev.example
+.env.dev.migrate.example
+.env.studio.example
+.env.prod.migrate.example
 
 # Logs
 *.log

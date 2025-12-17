@@ -1,5 +1,6 @@
 // src/routes/breeds.ts
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import type { Species } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /** ───────────────────────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     if (q) Object.assign(canonWhere, nameContainsAllTokens(q));
 
     // --- Step 1: canonical breeds (MUST NOT crash) ---------------------------
-    let canonRows: Array<{ id: number; name: string; species: "DOG" | "CAT" | "HORSE" }> = [];
+    let canonRows: Array<{ id: number; name: string; species: Species }> = [];
     try {
       canonRows = await prisma.breed.findMany({
         where: canonWhere,
@@ -108,7 +109,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     }
 
     // --- Step 2: tenant custom breeds (if this fails, just skip) -------------
-    let customRows: Array<{ id: number; name: string; species: "DOG" | "CAT" | "HORSE" }> = [];
+    let customRows: Array<{ id: number; name: string; species: Species }> = [];
     try {
       customRows = await prisma.customBreed.findMany({
         where: { tenantId, species: sp, ...(q ? nameContainsAllTokens(q) : {}) },
@@ -143,7 +144,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
           if (!l.registry) continue;
           const arr = regsByBreed.get(l.breedId) || [];
           arr.push({
-            code: l.registry.code,
+            code: l.registry.code ?? "",
             status: l.statusText ?? null,
             primary: l.primary ?? null,
           });
@@ -159,7 +160,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     type OutRow = {
       id?: number;
       name: string;
-      species: "DOG" | "CAT" | "HORSE";
+      species: Species;
       source: "canonical" | "custom";
       canonicalBreedId?: number | null;
       registries?: Array<{ code: string; status?: string | null; primary?: boolean | null }>;
