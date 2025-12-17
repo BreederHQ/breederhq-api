@@ -6,7 +6,7 @@ import {
   OffspringFinancialState,
   OffspringPaperworkState,
   type Offspring,
-  type Prisma,
+  Prisma,
   type PrismaClient,
   type OffspringGroup,
   type BreedingPlan,
@@ -127,13 +127,14 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       await tx.offspringGroupEvent.create({
         data: {
           tenantId,
-          groupId: created.id,
+          offspringGroupId: created.id,
           type: "LINK",
           field: "planId",
-          before: null,
+          occurredAt: new Date(),
+          before: Prisma.DbNull,
           after: { planId: plan.id },
           notes: "Group ensured for committed plan",
-          actorId,
+          recordedByUserId: actorId,
         },
       });
 
@@ -155,11 +156,11 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       if (!plan) throw new Error("plan not found for tenant");
 
       const before = { ...group };
-      const patch: Prisma.OffspringGroupUpdateInput = { planId: plan.id, linkState: "linked" };
+      const patch: Prisma.OffspringGroupUncheckedUpdateInput = { planId: plan.id, linkState: "linked" };
 
       if (!group.species) patch.species = (plan.dam as any)?.species ?? (plan as any).species ?? "DOG";
-      if (!group.damId && plan.damId) patch.dam = { connect: { id: plan.damId } };
-      if (!group.sireId && plan.sireId) patch.sire = { connect: { id: plan.sireId } };
+      if (!group.damId && plan.damId) patch.damId = plan.damId;
+      if (!group.sireId && plan.sireId) patch.sireId = plan.sireId;
       if (!group.expectedBirthOn) {
         const exp = expectedBirthFromPlan(plan);
         if (exp) patch.expectedBirthOn = exp;
@@ -174,13 +175,14 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       await tx.offspringGroupEvent.create({
         data: {
           tenantId,
-          groupId: group.id,
+          offspringGroupId: group.id,
           type: "LINK",
           field: "planId",
+          occurredAt: new Date(),
           before,
           after: { ...updated },
           notes: "Group linked to plan",
-          actorId,
+          recordedByUserId: actorId,
         },
       });
 
@@ -204,13 +206,14 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       await tx.offspringGroupEvent.create({
         data: {
           tenantId,
-          groupId: group.id,
+          offspringGroupId: group.id,
           type: "UNLINK",
+          occurredAt: new Date(),
           field: "planId",
           before: { ...group },
           after: { ...updated },
           notes: "Group manually unlinked from plan",
-          actorId,
+          recordedByUserId: actorId,
         },
       });
 
@@ -1186,8 +1189,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       name: identifier ?? null,
       notes: notes ?? null,
       published: Boolean(published ?? false),
-      statusOverride: statusOverride ?? null,
-      statusOverrideReason: statusOverrideReason ?? null,
       data: data ?? null,
     };
 
@@ -1239,7 +1240,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const [animals, waitlist, attachments, buyers, offspring] = await Promise.all([
       prisma.animal.findMany({
         where: {
-          offspringGroupId: id,
+          offspringGroupId: created.id,
           tenantId,
         },
         select: {
@@ -1266,7 +1267,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
       prisma.waitlistEntry.findMany({
         where: {
-          offspringGroupId: id,
+          offspringGroupId: created.id,
           tenantId,
         },
         include: {
@@ -1286,7 +1287,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               phone: true,
             },
           },
-          notes: true,
         },
         orderBy: [
           { createdAt: "asc" },
@@ -1295,13 +1295,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
       prisma.attachment.findMany({
         where: {
-          offspringGroupId: id,
+          offspringGroupId: created.id,
           tenantId,
         },
       }),
       prisma.offspringGroupBuyer.findMany({
         where: {
-          groupId: id,
+          groupId: created.id,
           tenantId,
         },
         include: {
@@ -1331,7 +1331,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       prisma.offspring.findMany({
         where: {
           tenantId,
-          groupId: id,
+          groupId: created.id,
         },
         orderBy: {
           id: "asc",
@@ -1355,7 +1355,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     reply.send(
       groupDetail(
-        G as any,
+        fresh as any,
         animals as any,
         waitlist as any,
         attachments as any,
@@ -1705,11 +1705,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const created = await prisma.offspring.create({
       data: {
         tenantId,
-        group: {
-          connect: {
-            id: group.id,
-          },
-        },
+        groupId: group.id,
 
         // core identity
         name: name ?? null,
@@ -1719,8 +1715,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         bornAt,
 
         // new: core identity fields
-        color: body.color ?? null,
-        microchip: body.microchip ?? null,
         notes: body.notes ?? null,
 
         // extra data payload (may include registrationId)
@@ -2506,13 +2500,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const updatedGroup = await prisma.offspringGroup.findFirst({
         where: { id: group.id, tenantId },
         include: {
-          buyers: {
+          groupBuyerLinks: {
             include: {
-              contact: { select: { id: true, name: true, email: true, phone: true } },
+              contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
               organization: { select: { id: true, name: true, phone: true } },
               waitlistEntry: {
                 include: {
-                  contact: { select: { id: true, name: true, email: true, phone: true } },
+                  contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
                   organization: { select: { id: true, name: true, phone: true } },
                 },
               },
@@ -2635,7 +2629,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 phone: true,
               },
             },
-            notes: true,
           },
           orderBy: [
             { priority: "asc" },

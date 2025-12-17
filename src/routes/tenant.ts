@@ -1,6 +1,7 @@
 // src/routes/tenant.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
@@ -298,7 +299,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         select: { availabilityPrefs: true },
       });
 
-      const merged = { ...(existing?.availabilityPrefs ?? DEFAULT_AVAILABILITY_PREFS), ...body };
+      const merged = { ...((existing?.availabilityPrefs as any) ?? DEFAULT_AVAILABILITY_PREFS), ...body };
 
       const updated = await prisma.tenant.update({
         where: { id },
@@ -417,9 +418,9 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const where = q
         ? {
             OR: [
-              { name: { contains: q, mode: "insensitive" } },
-              { slug: { contains: q, mode: "insensitive" } },
-              { primaryEmail: { contains: q, mode: "insensitive" } },
+              { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
+              { slug: { contains: q, mode: Prisma.QueryMode.insensitive } },
+              { primaryEmail: { contains: q, mode: Prisma.QueryMode.insensitive } },
             ],
           }
         : undefined;
@@ -465,8 +466,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const where = q
         ? {
             OR: [
-              { name: { contains: q, mode: "insensitive" } },
-              { slug: { contains: q, mode: "insensitive" } },
+              { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
+              { slug: { contains: q, mode: Prisma.QueryMode.insensitive } },
             ],
           }
         : undefined;
@@ -662,8 +663,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           ? {
               user: {
                 OR: [
-                  { email: { contains: q, mode: "insensitive" } },
-                  { name: { contains: q, mode: "insensitive" } },
+                  { email: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                  { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
                 ],
               },
             }
