@@ -2137,10 +2137,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       normalizedState = normalizeOffspringState(existing as Offspring, statePatch);
     } catch (err) {
-      req.log?.error?.(
-        { route: "offspring.individuals.update", requestId: (req as any).id, error: err },
-        "normalizeOffspringState failed",
-      );
       return reply.code(400).send({ error: (err as Error).message });
     }
 
@@ -2155,29 +2151,20 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       (normalizedState as any).status = legacyStatus;
     }
 
-    let updated;
-    try {
-      updated = await prisma.offspring.update({
-        where: { id },
-        data: { ...data, ...normalizedState },
-        include: {
-          group: {
-            select: {
-              id: true,
-              name: true,
-            },
+    const updated = await prisma.offspring.update({
+      where: { id },
+      data: { ...data, ...normalizedState },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
           },
-          buyerContact: { select: { id: true, display_name: true } },
-          buyerOrganization: { select: { id: true, name: true } },
         },
-      });
-    } catch (err) {
-      req.log?.error?.(
-        { route: "offspring.individuals.update", requestId: (req as any).id, error: err },
-        "Database update failed",
-      );
-      return reply.code(500).send({ error: "database_error" });
-    }
+        buyerContact: { select: { id: true, display_name: true } },
+        buyerOrganization: { select: { id: true, name: true } },
+      },
+    });
 
     reply.send(mapOffspringToAnimalLite(updated));
   });
