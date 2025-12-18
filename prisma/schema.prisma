@@ -382,6 +382,21 @@ model Invitation {
   @@index([organizationId])
 }
 
+model Invite {
+  id             Int       @id @default(autoincrement())
+  email          String
+  organizationId Int?
+  role           String    @default("STAFF")
+  token          String    @unique
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([email])
+  @@index([token])
+}
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Multi-tenancy & Orgs
@@ -643,6 +658,8 @@ model Animal {
   customBreedId Int?
   customBreed   CustomBreed? @relation(fields: [customBreedId, tenantId], references: [id, tenantId], onDelete: Restrict)
 
+  breeds AnimalBreed[]
+
   reproductiveCycles  ReproductiveCycle[]
   breedingPlansAsDam  BreedingPlan[]      @relation("PlanDam")
   breedingPlansAsSire BreedingPlan[]      @relation("PlanSire")
@@ -876,10 +893,26 @@ model Breed {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  registries BreedRegistryLink[]
-  Animal     Animal[]
+  registries   BreedRegistryLink[]
+  Animal       Animal[]
+  AnimalBreeds AnimalBreed[]
 
   @@index([species])
+}
+
+model AnimalBreed {
+  id         Int     @id @default(autoincrement())
+  animalId   Int
+  animal     Animal  @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  breedId    Int
+  breed      Breed   @relation(fields: [breedId], references: [id], onDelete: Cascade)
+  percentage Float   @default(100)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([animalId, breedId])
+  @@index([animalId])
+  @@index([breedId])
 }
 
 model BreedRegistryLink {
