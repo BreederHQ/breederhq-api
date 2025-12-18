@@ -1,35 +1,86 @@
+@'
 -- CreateSchema
-CREATE SCHEMA IF NOT EXISTS "public";
+CREATE SCHEMA IF NOT EXISTS public;
 
 -- CreateEnum
-CREATE TYPE "public"."AnimalStatus" AS ENUM ('ACTIVE', 'BREEDING', 'UNAVAILABLE', 'RETIRED', 'DECEASED', 'PROSPECT');
+DO $$
+BEGIN
+  CREATE TYPE "public"."AnimalStatus" AS ENUM ('ACTIVE', 'BREEDING', 'UNAVAILABLE', 'RETIRED', 'DECEASED', 'PROSPECT');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."MembershipRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER', 'VIEWER');
+DO $$
+BEGIN
+  CREATE TYPE "public"."MembershipRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER', 'VIEWER');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."OwnerPartyType" AS ENUM ('Organization', 'Contact');
+DO $$
+BEGIN
+  CREATE TYPE "public"."OwnerPartyType" AS ENUM ('Organization', 'Contact');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."Sex" AS ENUM ('FEMALE', 'MALE');
+DO $$
+BEGIN
+  CREATE TYPE "public"."Sex" AS ENUM ('FEMALE', 'MALE');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."ShareScope" AS ENUM ('VIEW', 'BREED_PLAN');
+DO $$
+BEGIN
+  CREATE TYPE "public"."ShareScope" AS ENUM ('VIEW', 'BREED_PLAN');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."ShareStatus" AS ENUM ('PENDING', 'ACCEPTED', 'REVOKED', 'EXPIRED');
+DO $$
+BEGIN
+  CREATE TYPE "public"."ShareStatus" AS ENUM ('PENDING', 'ACCEPTED', 'REVOKED', 'EXPIRED');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."Species" AS ENUM ('DOG', 'CAT', 'HORSE');
+DO $$
+BEGIN
+  CREATE TYPE "public"."Species" AS ENUM ('DOG', 'CAT', 'HORSE');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."TagModule" AS ENUM ('CONTACT', 'ORGANIZATION', 'ANIMAL');
+DO $$
+BEGIN
+  CREATE TYPE "public"."TagModule" AS ENUM ('CONTACT', 'ORGANIZATION', 'ANIMAL');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."TenantRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER', 'BILLING', 'VIEWER');
+DO $$
+BEGIN
+  CREATE TYPE "public"."TenantRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER', 'BILLING', 'VIEWER');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "public"."VerificationPurpose" AS ENUM ('VERIFY_EMAIL', 'RESET_PASSWORD', 'INVITE', 'OTHER');
+DO $$
+BEGIN
+  CREATE TYPE "public"."VerificationPurpose" AS ENUM ('VERIFY_EMAIL', 'RESET_PASSWORD', 'INVITE', 'OTHER');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
 CREATE TABLE "public"."Animal" (
@@ -646,4 +697,4 @@ ALTER TABLE "public"."User" ADD CONSTRAINT "User_defaultTenantId_fkey" FOREIGN K
 
 -- AddForeignKey
 ALTER TABLE "public"."VerificationToken" ADD CONSTRAINT "VerificationToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "public"."User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
+'@ | Set-Content -Encoding UTF8 prisma/migrations/20251014074658_baseline/migration.sql
