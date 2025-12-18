@@ -1,507 +1,1201 @@
 // src/routes/animals.ts
-import { PrismaClient } from "@prisma/client";
-import type { FastifyPluginCallback } from "fastify";
-import { z } from "zod";
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import prisma from "../prisma.js";
+import path from "node:path";
+import fs from "node:fs/promises";
+import sharp from "sharp";
 
-const prisma = new PrismaClient();
+const AVATAR_SIZE = 256;
 
-const Species = z.enum(["DOG", "CAT", "HORSE"]);
-const PutAnimalBreeds = z.object({
-  primaryBreedId: z.string().nullish(),
-  species: Species,
-  canonical: z.array(z.object({
-    breedId: z.string(),
-    percentage: z.number().min(0).max(100),
-  })).default([]),
-  custom: z.array(z.object({
-    customBreedId: z.number().int().positive(),
-    percentage: z.number().min(0).max(100),
-  })).default([]),
-});
+/* Keep these in sync with Prisma enums */
+type Species = "DOG" | "CAT" | "HORSE";
+type Sex = "FEMALE" | "MALE";
+type AnimalStatus = "ACTIVE" | "BREEDING" | "UNAVAILABLE" | "RETIRED" | "DECEASED" | "PROSPECT";
+type OwnerPartyType = "Organization" | "Contact";
 
-function requireOrgId(h: any): number {
-  const raw = (h["x-org-id"] ?? h["X-Org-Id"] ?? "").toString().trim();
-  if (!raw) throw new Error("X-Org-Id required");
-  const n = Number(raw);
-  if (!Number.isFinite(n)) throw new Error("X-Org-Id must be numeric");
-  return n;
+/* ───────── utils ───────── */
+
+function parseIntStrict(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+function parseDateIso(v: unknown): Date | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(+d) ? null : d;
+}
+function parsePaging(q: any) {
+  const page = Math.max(1, Number(q?.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(q?.limit ?? 25) || 25));
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
 }
 
+function normalizeIsoDateOnly(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (Number.isNaN(+d)) return null;
+  // truncate to YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
+}
 
-/* -------------------------------------------------------------
- * Sort helper: e.g., "name" or "-createdAt,sex"
- * -----------------------------------------------------------*/
-function buildOrderBy(sort?: string) {
-  if (!sort) return [{ createdAt: "desc" as const }];
-  const parts = sort.split(",").map((s) => s.trim()).filter(Boolean);
+type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "whelp";
 
-  const sortable = new Set([
-    "name",
-    "callName",
-    "sex",
-    "species",   // scalar enum on Animal
-    "status",
-    "createdAt",
-    "updatedAt",
-    "birthDate",
-  ]);
+type ReproEvent = {
+  kind: ReproEventKind;
+  date: string; // ISO yyyy mm dd
+};
 
+function buildReproFromCycles(cycles: Array<{
+  cycleStart: Date | string;
+  ovulation?: Date | string | null;
+  dueDate?: Date | string | null;
+  placementStartDate?: Date | string | null;
+}>): { cycleStartDates: string[]; repro: ReproEvent[]; last_heat: string | null } {
+  const dates: string[] = [];
+  const events: ReproEvent[] = [];
+
+  for (const c of cycles) {
+    const heatIso = normalizeIsoDateOnly(c.cycleStart);
+    if (heatIso) {
+      dates.push(heatIso);
+      events.push({ kind: "heat_start", date: heatIso });
+    }
+
+    const ovIso = normalizeIsoDateOnly(c.ovulation ?? null);
+    if (ovIso) {
+      events.push({ kind: "ovulation", date: ovIso });
+    }
+
+    const dueIso = normalizeIsoDateOnly(c.dueDate ?? null);
+    if (dueIso) {
+      events.push({ kind: "whelp", date: dueIso });
+    }
+  }
+
+  const uniqueDates = Array.from(new Set(dates)).sort();
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  const last_heat = uniqueDates.length ? uniqueDates[uniqueDates.length - 1] : null;
+
+  return { cycleStartDates: uniqueDates, repro: events, last_heat };
+}
+
+function extractCycleStartDates(rec: any): string[] {
+  const cycles = Array.isArray(rec?.reproductiveCycles) ? rec.reproductiveCycles : [];
+  const dates = cycles
+    .map((c: any) => {
+      const raw = c.cycleStart ?? c.cycle_start ?? null;
+      if (!raw) return null;
+      const d = new Date(raw);
+      if (Number.isNaN(+d)) return null;
+      return d.toISOString().slice(0, 10);
+    })
+    .filter(Boolean) as string[];
+
+  // dedupe and sort ascending
+  return Array.from(new Set(dates)).sort();
+}
+
+function parseSort(sortParam?: string) {
+  // allow: "createdAt", "-createdAt", "name", "-name", "updatedAt", "birthDate"
+  const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate"]);
+  if (!sortParam) return [{ createdAt: "desc" } as const];
+  const parts = String(sortParam).split(",").map(s => s.trim()).filter(Boolean);
   const orderBy: any[] = [];
   for (const p of parts) {
     const desc = p.startsWith("-");
     const key = p.replace(/^-/, "");
-    if (sortable.has(key)) orderBy.push({ [key]: (desc ? "desc" : "asc") as const });
+    if (allowed.has(key)) orderBy.push({ [key]: desc ? "desc" : "asc" });
   }
-  return orderBy.length ? orderBy : [{ createdAt: "desc" as const }];
+  return orderBy.length ? orderBy : [{ createdAt: "desc" }];
 }
 
 
-/* -------------------------------------------------------------
- * Search helper (enum-aware)
- * -----------------------------------------------------------*/
-const SPECIES_LABELS = new Map([
-  ["dog", "DOG"],
-  ["cat", "CAT"],
-  ["horse", "HORSE"],
-]);
-const SEX_LABELS = new Map([
-  ["male", "MALE"],
-  ["female", "FEMALE"],
-]);
-const STATUS_LABELS = new Map([
-  ["active", "ACTIVE"],
-  ["unavailable", "UNAVAILABLE"],
-  ["retired", "RETIRED"],
-  ["deceased", "DECEASED"],
-  ["prospect", "PROSPECT"],
-]);
-
-function buildWhere(q?: string) {
-  if (!q) return {};
-  const ql = q.trim().toLowerCase();
-
-  const species = SPECIES_LABELS.get(ql);
-  const sex = SEX_LABELS.get(ql);
-  const status = STATUS_LABELS.get(ql);
-
-  const OR: any[] = [
-    { name: { contains: q, mode: "insensitive" } },
-    { callName: { contains: q, mode: "insensitive" } },
-    { color: { contains: q, mode: "insensitive" } },
-    { pattern: { contains: q, mode: "insensitive" } },
-    { registration: { contains: q, mode: "insensitive" } },
-    { microchip: { contains: q, mode: "insensitive" } },
-    { organization: { name: { contains: q, mode: "insensitive" } } },
-    {
-      owners: {
-        some: {
-          contact: {
-            OR: [
-              { firstName: { contains: q, mode: "insensitive" } },
-              { lastName: { contains: q, mode: "insensitive" } },
-              { displayName: { contains: q, mode: "insensitive" } },
-              { email: { contains: q, mode: "insensitive" } },
-            ],
-          },
-        },
-      },
-    },
-    {
-      tagAssignments: {
-        some: { tag: { AND: [{ type: "animal" }, { name: { contains: q, mode: "insensitive" } }] } },
-      },
-    },
-  ];
-
-  if (species) OR.push({ species });
-  if (sex) OR.push({ sex });
-  if (status) OR.push({ status });
-
-  return { OR };
+function cycleDatesFromCycles(cycles: Array<{ cycleStart: Date }>): string[] {
+  const dates: string[] = [];
+  for (const c of cycles) {
+    const iso = normalizeIsoDateOnly(c.cycleStart);
+    if (iso) dates.push(iso);
+  }
+  return Array.from(new Set(dates)).sort();
 }
 
-/* -------------------------------------------------------------
- * Common include for list/get (cast once to avoid Prisma type noise)
- * -----------------------------------------------------------*/
-const animalInclude = {
-  organization: { select: { id: true, name: true } },
-  primaryOwner: {
-    select: { id: true, firstName: true, lastName: true, displayName: true, email: true },
-  },
-  owners: {
-    select: {
-      role: true,
-      contact: { select: { id: true, firstName: true, lastName: true, displayName: true, email: true } },
-    },
-  },
-  // If your schema has a single breed relation:
-  breed: { select: { id: true, name: true } },
-  // If you also support multi-breed breakdowns:
-  breeds: { select: { breed: { select: { id: true, name: true } }, percentage: true } },
-  sire: { select: { id: true, name: true, callName: true, registration: true } },
-  dam: { select: { id: true, name: true, callName: true, registration: true } },
-  tagAssignments: { select: { tag: { select: { name: true, type: true } } } },
-} as any;
-
-/* -------------------------------------------------------------
- * DTO mapper
- * -----------------------------------------------------------*/
-function toAnimalDTO(a: any) {
-  const owners = Array.isArray(a.owners)
-    ? a.owners
-      .map((o: any) => ({
-        id: o?.contact?.id ?? null,
-        displayName:
-          o?.contact?.displayName ??
-          ([o?.contact?.firstName, o?.contact?.lastName].filter(Boolean).join(" ") ||
-            o?.contact?.email ||
-            null),
-        role: o?.role ?? null,
-      }))
-      .filter((o: any) => o.id)
-    : [];
-
-  const multiBreeds = Array.isArray(a.breeds)
-    ? a.breeds
-      .map((b: any) => ({
-        id: b?.breed?.id ?? null,
-        name: b?.breed?.name ?? null,
-        percentage: typeof b?.percentage === "number" ? b.percentage : null,
-      }))
-      .filter((b: any) => b.id)
-    : [];
-
-  const tagNames =
-    Array.isArray(a.tagAssignments)
-      ? a.tagAssignments.map((t: any) => (t?.tag?.type === "animal" ? t?.tag?.name : null)).filter(Boolean)
-      : [];
-
-  return {
-    id: a.id,
-    name: a.name ?? null,
-    callName: a.callName ?? null,
-    species: a.species ?? null,
-    sex: a.sex ?? null,
-    status: a.status ?? null,
-
-    birthDate: a.birthDate ?? null,
-    registration: a.registration ?? null,
-    microchip: a.microchip ?? null,
-    color: a.color ?? null,
-    pattern: a.pattern ?? null,
-
-    organizationId: a.organizationId ?? null,
-    organizationName: a.organization?.name ?? null,
-
-    primaryOwnerId: a.primaryOwnerId ?? null,
-    primaryOwnerName:
-      a.primaryOwner?.displayName ??
-      ([a.primaryOwner?.firstName, a.primaryOwner?.lastName].filter(Boolean).join(" ") ||
-        a.primaryOwner?.email ||
-        null),
-
-    owners,
-    breed: a.breed?.name ?? null,
-    breeds: multiBreeds,
-    tags: tagNames,
-
-    createdAt: a.createdAt?.toISOString?.() ?? String(a.createdAt ?? ""),
-    updatedAt: a.updatedAt?.toISOString?.() ?? String(a.updatedAt ?? ""),
-  };
+async function assertTenant(req: any, reply: any): Promise<number | null> {
+  const tenantId = Number((req as any).tenantId);
+  if (!tenantId) {
+    reply.code(400).send({ error: "missing_tenant" });
+    return null;
+  }
+  return tenantId;
 }
 
-/* -------------------------------------------------------------
- * Helpers
- * -----------------------------------------------------------*/
-function getOrgIdFrom(req: any): number | undefined {
-  const orgIdHeader = req.headers?.["x-org-id"];
-  const hdr = typeof orgIdHeader === "string" ? orgIdHeader : Array.isArray(orgIdHeader) ? orgIdHeader[0] : orgIdHeader;
-  const fromAuth = req.authUser?.orgId;
-  const n = Number(fromAuth ?? hdr);
-  return Number.isFinite(n) ? n : undefined;
+/* Guards */
+async function assertOrgInTenant(orgId: number, tenantId: number) {
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { id: true, tenantId: true },
+  });
+  if (!org) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  if (org.tenantId !== tenantId) throw Object.assign(new Error("forbidden"), { statusCode: 403 });
+  return org;
+}
+async function assertContactInTenant(contactId: number, tenantId: number) {
+  const c = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { id: true, tenantId: true },
+  });
+  if (!c) throw Object.assign(new Error("contact_not_found"), { statusCode: 404 });
+  if (c.tenantId !== tenantId) throw Object.assign(new Error("forbidden"), { statusCode: 403 });
+  return c;
+}
+async function assertAnimalInTenant(animalId: number, tenantId: number) {
+  const a = await prisma.animal.findFirst({
+    where: { id: animalId, tenantId },
+    select: { id: true, tenantId: true },
+  });
+  if (!a) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  return a;
 }
 
-/* -------------------------------------------------------------
- * Routes (absolute paths; register with app.register(animalsRoutes))
- * -----------------------------------------------------------*/
-const animalsRoutes: FastifyPluginCallback = (app, _opts, done) => {
-  // LIST — GET /api/v1/animals
-  app.get("/api/v1/animals", async (req: any, reply) => {
-    const orgId = getOrgIdFrom(req);
-    if (!orgId) return reply.code(400).send({ error: "org_required" });
+/* Cross refs validation matching schema relations */
+async function validateCanonicalBreedId(canonicalBreedId: number | null | undefined) {
+  if (canonicalBreedId == null) return;
+  const exists = await prisma.breed.findUnique({ where: { id: canonicalBreedId }, select: { id: true } });
+  if (!exists) throw Object.assign(new Error("canonical_breed_not_found"), { statusCode: 404 });
+}
+async function validateCustomBreedId(customBreedId: number | null | undefined, tenantId: number) {
+  if (customBreedId == null) return;
+  const exists = await prisma.customBreed.findFirst({
+    where: { id: customBreedId, tenantId },
+    select: { id: true, tenantId: true },
+  });
+  if (!exists) throw Object.assign(new Error("custom_breed_not_in_tenant"), { statusCode: 404 });
+}
 
-    const qp = req.query as any;
-    const q = (qp?.q ?? "").trim() || undefined;
-    const limit = Math.max(0, Math.min(100, Number(qp?.limit ?? 25)));
-    const page = Math.max(1, Number(qp?.page ?? 1));
-    const offset = qp?.offset != null ? Math.max(0, Number(qp.offset)) : Math.max(0, (page - 1) * limit);
-    const include_archived = String(qp?.include_archived ?? "0") === "1";
-    const sort = qp?.sort as string | undefined;
+/* ───────── routes ───────── */
 
-    const whereBase = buildWhere(q);
-    const scoped = { organizationId: orgId };
-    const where = include_archived
-      ? { AND: [whereBase, scoped] }
-      : { AND: [whereBase, scoped, { archived: { not: true } }] };
 
-    const [itemsRaw, total] = await Promise.all([
+const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // GET /animals?q=&species=&sex=&status=&organizationId=&includeArchived=&page=&limit=&sort=
+  app.get("/animals", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const {
+      q = "",
+      species = "",
+      sex = "",
+      status = "",
+      organizationId = "",
+      includeArchived = "",
+      page = "1",
+      limit = "25",
+      sort = "-createdAt",
+    } = (req.query || {}) as {
+      q?: string;
+      species?: Species | "";
+      sex?: Sex | "";
+      status?: AnimalStatus | "";
+      organizationId?: string;
+      includeArchived?: string | "1" | "true";
+      page?: string;
+      limit?: string;
+      sort?: string;
+    };
+
+    const { page: pageNum, limit: take, skip } = parsePaging({ page, limit });
+    const orderBy = parseSort(sort);
+
+    const where: any = { tenantId };
+
+    if (!includeArchived || includeArchived === "0" || includeArchived === "false") {
+      where.archived = false;
+    }
+    if (species) {
+      if (!["DOG", "CAT", "HORSE"].includes(species)) return reply.code(400).send({ error: "species_invalid" });
+      where.species = species;
+    }
+    if (sex) {
+      if (!["FEMALE", "MALE"].includes(sex)) return reply.code(400).send({ error: "sex_invalid" });
+      where.sex = sex;
+    }
+    if (status) {
+      if (!["ACTIVE", "BREEDING", "UNAVAILABLE", "RETIRED", "DECEASED", "PROSPECT"].includes(status)) {
+        return reply.code(400).send({ error: "status_invalid" });
+      }
+      where.status = status;
+    }
+
+    if (organizationId) {
+      const orgId = parseIntStrict(organizationId);
+      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+      await assertOrgInTenant(orgId, tenantId);
+      where.organizationId = orgId;
+    }
+
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { microchip: { contains: q, mode: "insensitive" } },
+        { breed: { contains: q, mode: "insensitive" } },
+        { notes: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
+    const [rawItems, total] = await prisma.$transaction([
       prisma.animal.findMany({
         where,
-        include: animalInclude,
-        orderBy: buildOrderBy(sort),
-        take: limit || undefined,
-        skip: offset || undefined,
+        orderBy,
+        skip,
+        take,
+        select: {
+          id: true,
+          tenantId: true,
+          organizationId: true,
+          name: true,
+          species: true,
+          sex: true,
+          status: true,
+          birthDate: true,
+          microchip: true,
+          notes: true,
+          breed: true,
+          canonicalBreedId: true,
+          customBreedId: true,
+          litterId: true,
+          archived: true,
+          createdAt: true,
+          updatedAt: true,
+          photoUrl: true,
+
+          reproductiveCycles: {
+            select: { cycleStart: true },
+          },
+        },
       }),
       prisma.animal.count({ where }),
     ]);
 
-    reply.send({ items: itemsRaw.map(toAnimalDTO), total });
+    const items = rawItems.map((rec) => ({
+      ...rec,
+      cycleStartDates: extractCycleStartDates(rec),
+    }));
+
+    reply.send({ items, total, page: pageNum, limit: take });
   });
 
-  // GET ONE — GET /api/v1/animals/:id
-  app.get("/api/v1/animals/:id", async (req: any, reply) => {
-    const orgId = getOrgIdFrom(req);
-    if (!orgId) return reply.code(400).send({ error: "org_required" });
+  // PUT /animals/:id/cycle-start-dates
+  app.put("/animals/:id/cycle-start-dates", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
 
-    const { id } = req.params as { id: string };
-    const animal = await prisma.animal.findFirst({
-      where: { id, organizationId: orgId },
-      include: animalInclude,
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const body = (req.body || {}) as { dates?: string[] };
+    const input = Array.isArray(body.dates) ? body.dates : [];
+
+    const normalized = Array.from(
+      new Set(
+        input
+          .map((d) => normalizeIsoDateOnly(d))
+          .filter((d): d is string => !!d)
+      )
+    ).sort();
+
+    // Blow away existing cycles for this female in this tenant and recreate
+    await prisma.reproductiveCycle.deleteMany({
+      where: { tenantId, femaleId: id },
     });
-    if (!animal) return reply.code(404).send({ message: "Not found" });
-    reply.send(toAnimalDTO(animal));
-  });
 
-  // CREATE — POST /api/v1/animals
-  app.post("/api/v1/animals", async (req: any, reply) => {
-    const orgId = getOrgIdFrom(req);
-    if (!orgId) return reply.code(400).send({ error: "org_required" });
+    if (normalized.length) {
+      await prisma.reproductiveCycle.createMany({
+        data: normalized.map((iso) => ({
+          tenantId,
+          femaleId: id,
+          cycleStart: new Date(iso),
+        })),
+      });
+    }
 
-    const body = (req.body as any) ?? {};
-    const created = await prisma.animal.create({
-      data: {
-        name: body.name ?? null,
-        callName: body.callName ?? null,
-        species: body.species ?? null,
-        sex: body.sex ?? null,
-        status: body.status ?? null,
-        birthDate: body.birthDate ?? null,
-        registration: body.registration ?? null,
-        microchip: body.microchip ?? null,
-        color: body.color ?? null,
-        pattern: body.pattern ?? null,
-        notes: body.notes ?? null,
-
-        organizationId: orgId,
-        primaryOwnerId: body.primaryOwnerId ?? null,
-        sireId: body.sireId ?? null,
-        damId: body.damId ?? null,
-        archived: false, // show up by default
+    // Return updated animal with computed cycleStartDates
+    const rec = await prisma.animal.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        tenantId: true,
+        organizationId: true,
+        name: true,
+        species: true,
+        sex: true,
+        status: true,
+        birthDate: true,
+        microchip: true,
+        notes: true,
+        breed: true,
+        canonicalBreedId: true,
+        customBreedId: true,
+        litterId: true,
+        archived: true,
+        createdAt: true,
+        updatedAt: true,
+        photoUrl: true,
+        reproductiveCycles: {
+          select: { cycleStart: true },
+        },
       },
-      include: animalInclude,
     });
-    reply.code(201).send(toAnimalDTO(created));
+
+    if (!rec) return reply.code(404).send({ error: "not_found" });
+
+    const cycleStartDates = extractCycleStartDates(rec);
+    reply.send({ ...rec, cycleStartDates });
   });
 
-  // UPDATE — PATCH /api/v1/animals/:id
-  app.patch("/api/v1/animals/:id", async (req: any, reply) => {
-    const orgId = getOrgIdFrom(req);
-    if (!orgId) return reply.code(400).send({ error: "org_required" });
 
-    const { id } = req.params as { id: string };
+  // GET /animals/:id
+  app.get("/animals/:id", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
 
-    // ensure belongs to org
-    const exists = await prisma.animal.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
-    if (!exists) return reply.code(404).send({ message: "Not found" });
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
 
-    const body = req.body as any;
-    const data: any = {
-      name: body.name ?? undefined,
-      callName: body.callName ?? undefined,
-      species: body.species ?? undefined,
-      sex: body.sex ?? undefined,
-      status: body.status ?? undefined,
-      birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
-      registration: body.registration ?? undefined,
-      microchip: body.microchip ?? undefined,
-      color: body.color ?? undefined,
-      pattern: body.pattern ?? undefined,
-      notes: body.notes ?? undefined,
-      primaryOwnerId: body.primaryOwnerId ?? undefined,
-      sireId: body.sireId ?? undefined,
-      damId: body.damId ?? undefined,
-      breedId: body.breedId ?? undefined,
+    const { include = "" } = (req.query || {}) as { include?: string };
+    const includeParts = String(include || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const wantRepro = includeParts.includes("repro") || includeParts.includes("last_heat");
+
+    const rec = await prisma.animal.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        tenantId: true,
+        organizationId: true,
+        name: true,
+        species: true,
+        sex: true,
+        status: true,
+        birthDate: true,
+        microchip: true,
+        notes: true,
+        breed: true,
+        canonicalBreedId: true,
+        customBreedId: true,
+        litterId: true,
+        archived: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!rec) return reply.code(404).send({ error: "not_found" });
+
+    const cycles = await prisma.reproductiveCycle.findMany({
+      where: { tenantId, femaleId: id },
+      select: {
+        cycleStart: true,
+        ovulation: true,
+        dueDate: true,
+        placementStartDate: true,
+      },
+      orderBy: { cycleStart: "asc" },
+    });
+
+    const info = buildReproFromCycles(cycles);
+
+    const result: any = {
+      ...rec,
+      cycleStartDates: info.cycleStartDates,
     };
+
+    if (wantRepro) {
+      result.repro = info.repro;
+      result.last_heat = info.last_heat;
+    }
+
+    reply.send(result);
+  });
+
+  // POST /animals
+  app.post("/animals", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const b = (req.body || {}) as Partial<{
+      name: string;
+      species: Species;
+      sex: Sex;
+      status: AnimalStatus;
+      birthDate: string | null;
+      microchip: string | null;
+      notes: string | null;
+      breed: string | null;
+      canonicalBreedId: number | null;
+      customBreedId: number | null;
+      organizationId: number | null;
+      photoUrl: string | null;
+    }>;
+
+
+    const name = String(b.name || "").trim();
+    if (!name) return reply.code(400).send({ error: "name_required" });
+    if (!b.species || !["DOG", "CAT", "HORSE"].includes(b.species)) {
+      return reply.code(400).send({ error: "species_required" });
+    }
+    if (!b.sex || !["FEMALE", "MALE"].includes(b.sex)) {
+      return reply.code(400).send({ error: "sex_required" });
+    }
+
+    const data: any = {
+      tenantId,
+      name,
+      species: b.species,
+      sex: b.sex,
+      status: b.status || "ACTIVE",
+    };
+
+    if (b.birthDate) {
+      const d = new Date(b.birthDate);
+      if (Number.isNaN(+d)) return reply.code(400).send({ error: "birthDate_invalid" });
+      data.birthDate = d;
+    }
+
+    if (typeof b.microchip === "string") {
+      data.microchip = b.microchip.trim() || null;
+    }
+    if (typeof b.notes === "string") {
+      data.notes = b.notes.trim() || null;
+    }
+
+    // NEW: normalise photoUrl in create
+    if (typeof b.photoUrl === "string") {
+      const u = b.photoUrl.trim();
+      data.photoUrl = u || null;
+    }
+
+    if (typeof b.breed === "string") {
+      data.breed = b.breed.trim() || null;
+    }
+    if (typeof b.canonicalBreedId === "number") {
+      data.canonicalBreedId = b.canonicalBreedId || null;
+    }
+    if (typeof b.customBreedId === "number") {
+      data.customBreedId = b.customBreedId || null;
+    }
+    if (b.organizationId != null) {
+      const orgId = parseIntStrict(b.organizationId);
+      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+      await assertOrgInTenant(orgId, tenantId);
+      data.organizationId = orgId;
+    }
+
+    try {
+      const created = await prisma.animal.create({
+        data,
+        select: {
+          id: true,
+          tenantId: true,
+          organizationId: true,
+          name: true,
+          species: true,
+          sex: true,
+          status: true,
+          birthDate: true,
+          microchip: true,
+          notes: true,
+          breed: true,
+          canonicalBreedId: true,
+          customBreedId: true,
+          litterId: true,
+          archived: true,
+          createdAt: true,
+          updatedAt: true,
+          photoUrl: true,
+        },
+      });
+      return reply.code(201).send(created);
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        // @@unique([tenantId, microchip])
+        return reply
+          .code(409)
+          .send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
+      }
+      if (e?.code === "P2003") {
+        return reply.code(409).send({ error: "foreign_key_conflict" });
+      }
+      throw e;
+    }
+  });
+
+  // PATCH /animals/:id
+  app.patch("/animals/:id", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    const existing = await prisma.animal.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!existing) return reply.code(404).send({ error: "not_found" });
+
+    const b = (req.body || {}) as Partial<{
+      organizationId: number | null;
+      name: string;
+      species: Species;
+      sex: Sex;
+      status: AnimalStatus;
+      birthDate: string | null;
+      microchip: string | null;
+      notes: string | null;
+      breed: string | null;
+      canonicalBreedId: number | null;
+      customBreedId: number | null;
+      archived: boolean;
+      photoUrl: string | null;
+    }>;
+
+
+    // Pre-validate cross refs to match schema constraints
+    if (b.canonicalBreedId !== undefined && b.canonicalBreedId !== null) {
+      await validateCanonicalBreedId(b.canonicalBreedId);
+    }
+    if (b.customBreedId !== undefined && b.customBreedId !== null) {
+      await validateCustomBreedId(b.customBreedId, tenantId);
+    }
+
+    const data: any = {};
+    if (b.name !== undefined) {
+      const n = String(b.name || "").trim();
+      if (!n) return reply.code(400).send({ error: "name_required" });
+      data.name = n;
+    }
+    if (b.species !== undefined) {
+      if (!["DOG", "CAT", "HORSE"].includes(b.species)) return reply.code(400).send({ error: "species_invalid" });
+      data.species = b.species;
+    }
+    if (b.sex !== undefined) {
+      if (!["FEMALE", "MALE"].includes(b.sex)) return reply.code(400).send({ error: "sex_invalid" });
+      data.sex = b.sex;
+    }
+    if (b.status !== undefined) {
+      if (!["ACTIVE", "BREEDING", "UNAVAILABLE", "RETIRED", "DECEASED", "PROSPECT"].includes(b.status)) {
+        return reply.code(400).send({ error: "status_invalid" });
+      }
+      data.status = b.status;
+    }
+    if (b.birthDate !== undefined) {
+      const d = parseDateIso(b.birthDate);
+      if (d === null) return reply.code(400).send({ error: "birthDate_invalid" });
+      data.birthDate = d;
+    }
+    if (b.microchip !== undefined) data.microchip = b.microchip;
+    if (b.notes !== undefined) data.notes = b.notes;
+    if (b.breed !== undefined) data.breed = b.breed;
+    if (b.photoUrl !== undefined) data.photoUrl = b.photoUrl;
+    if (b.canonicalBreedId !== undefined) data.canonicalBreedId = b.canonicalBreedId;
+    if (b.customBreedId !== undefined) data.customBreedId = b.customBreedId;
+    if (b.archived !== undefined) data.archived = !!b.archived;
+
+    if (b.organizationId !== undefined) {
+      if (b.organizationId === null) {
+        data.organizationId = null;
+      } else {
+        const orgId = parseIntStrict(b.organizationId);
+        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+        await assertOrgInTenant(orgId, tenantId);
+        data.organizationId = orgId;
+      }
+    }
+
+    try {
+      const updated = await prisma.animal.update({
+        where: { id },
+        data,
+        select: {
+          id: true,
+          tenantId: true,
+          organizationId: true,
+          name: true,
+          species: true,
+          sex: true,
+          status: true,
+          birthDate: true,
+          microchip: true,
+          notes: true,
+          breed: true,
+          canonicalBreedId: true,
+          customBreedId: true,
+          litterId: true,
+          archived: true,
+          createdAt: true,
+          updatedAt: true,
+          photoUrl: true,
+        },
+      });
+      reply.send(updated);
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        return reply
+          .code(409)
+          .send({ error: "duplicate_microchip", detail: "microchip_must_be_unique_within_tenant" });
+      }
+      if (e?.code === "P2025") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      if (e?.code === "P2003") {
+        return reply.code(409).send({ error: "foreign_key_conflict" });
+      }
+      throw e;
+    }
+  });
+
+    // POST /animals/:id/photo
+  app.post("/animals/:id/photo", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const mpReq = req as any;
+    const file = await mpReq.file();
+    if (!file) return reply.code(400).send({ error: "file_required" });
+
+    const buf = await file.toBuffer();
+
+    const resized = await sharp(buf)
+      .rotate()
+      .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: "cover" })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    const uploadDir = path.join(process.cwd(), "uploads", "animals", String(tenantId));
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    const filename = `animal-${id}.jpg`;
+    const filepath = path.join(uploadDir, filename);
+    await fs.writeFile(filepath, resized);
+
+    const photoUrl = `/uploads/animals/${tenantId}/${filename}`;
 
     const updated = await prisma.animal.update({
       where: { id },
-      data,
-      include: animalInclude,
+      data: { photoUrl },
+      select: { photoUrl: true },
     });
-    reply.send(toAnimalDTO(updated));
+
+    reply.send(updated);
   });
 
-  // ARCHIVE — POST /api/v1/animals/:id/archive
-  app.post("/api/v1/animals/:id/archive", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
+    // DELETE /animals/:id/photo
+  app.delete("/animals/:id/photo", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    // optional: also delete file from disk if you want to reclaim space
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { photoUrl: null },
+      select: { photoUrl: true },
+    });
+
+    reply.send(updated);
+  });
+
+
+  // POST /animals/:id/archive
+  app.post("/animals/:id/archive", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: true } });
     reply.send({ ok: true });
   });
 
-  // RESTORE — POST /api/v1/animals/:id/restore
-  app.post("/api/v1/animals/:id/restore", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
+  // POST /animals/:id/restore
+  app.post("/animals/:id/restore", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: false } });
     reply.send({ ok: true });
   });
 
-  // OWNERS — GET /api/v1/animals/:id/owners
-  app.get("/api/v1/animals/:id/owners", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
+  // DELETE /animals/:id
+  app.delete("/animals/:id", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+    await prisma.animal.delete({ where: { id } });
+    reply.send({ ok: true });
+  });
+
+  /* TAGS */
+  // GET /animals/:id/tags
+  app.get("/animals/:id/tags", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const assignments = await prisma.tagAssignment.findMany({
+      where: { animalId: id, tag: { tenantId, module: "ANIMAL" } },
+      select: { tagId: true, tag: { select: { id: true, name: true, module: true, color: true } } },
+      orderBy: { tag: { name: "asc" } },
+    });
+
+    reply.send({
+      items: assignments.map(a => a.tag),
+      total: assignments.length,
+    });
+  });
+
+  // POST /animals/:id/tags { tagId }
+  app.post("/animals/:id/tags", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const { tagId } = (req.body || {}) as { tagId?: number };
+    const tId = parseIntStrict(tagId);
+    if (!tId) return reply.code(400).send({ error: "tagId_invalid" });
+
+    const tag = await prisma.tag.findFirst({
+      where: { id: tId, tenantId, module: "ANIMAL" },
+      select: { id: true },
+    });
+    if (!tag) return reply.code(404).send({ error: "tag_not_found" });
+
+    try {
+      await prisma.tagAssignment.create({ data: { tagId: tId, animalId: id } });
+      return reply.code(201).send({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2002") return reply.code(409).send({ error: "already_assigned" });
+      throw e;
+    }
+  });
+
+  // DELETE /animals/:id/tags/:tagId
+  app.delete("/animals/:id/tags/:tagId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const id = parseIntStrict((req.params as { id: string }).id);
+    const tagId = parseIntStrict((req.params as { tagId: string }).tagId);
+    if (!id || !tagId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    await prisma.tagAssignment.deleteMany({ where: { animalId: id, tagId } });
+    reply.send({ ok: true });
+  });
+
+  /* OWNERS */
+  // GET /animals/:id/owners
+  app.get("/animals/:id/owners", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
     const rows = await prisma.animalOwner.findMany({
-      where: { animalId: id },
-      orderBy: [{ isPrimary: "desc" }, { contactId: "asc" }],
+      where: { animalId },
+      orderBy: [{ isPrimary: "desc" }, { percent: "desc" }, { id: "asc" }],
       select: {
+        id: true,
+        animalId: true,
+        partyType: true,
+        organizationId: true,
         contactId: true,
         percent: true,
         isPrimary: true,
-        contact: { select: { displayName: true, firstName: true, lastName: true, email: true } },
+        createdAt: true,
+        updatedAt: true,
+        organization: { select: { id: true, name: true, tenantId: true } },
+        contact: { select: { id: true, display_name: true, tenantId: true } },
       },
     });
 
     reply.send({
-      owners: rows.map((r) => ({
-        contactId: r.contactId,
+      items: rows.map(r => ({
+        id: r.id,
+        partyType: r.partyType,
         percent: r.percent,
         isPrimary: r.isPrimary,
-        displayName:
-          r.contact?.displayName ||
-          [r.contact?.firstName, r.contact?.lastName].filter(Boolean).join(" ") ||
-          r.contact?.email ||
-          `Contact ${r.contactId}`,
+        organization: r.organizationId ? { id: r.organizationId, name: r.organization?.name ?? "" } : null,
+        contact: r.contactId ? { id: r.contactId, name: r.contact?.display_name ?? "" } : null,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
       })),
+      total: rows.length,
     });
   });
 
-  // OWNERS — PUT /api/v1/animals/:id/owners (idempotent replace)
-  app.put("/api/v1/animals/:id/owners", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
-    const owners = (req.body as any)?.owners ?? [];
+  // POST /animals/:id/owners
+  app.post("/animals/:id/owners", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
 
-    const sum = owners.reduce((a: number, o: any) => a + (typeof o.percent === "number" ? o.percent : 0), 0);
-    if (sum > 100) return reply.code(400).send({ error: "Owner percents must sum to 100 or less" });
+    await assertAnimalInTenant(animalId, tenantId);
 
-    const providedPrimaries = owners.filter((o: any) => o.isPrimary).length;
-    if (providedPrimaries > 1) return reply.code(400).send({ error: "Only one primary owner allowed" });
+    const b = (req.body || {}) as {
+      partyType: OwnerPartyType;
+      organizationId?: number | null;
+      contactId?: number | null;
+      percent: number;
+      isPrimary?: boolean;
+    };
 
-    await prisma.$transaction(async (tx) => {
-      await tx.animalOwner.deleteMany({ where: { animalId: id } });
+    if (!b?.partyType || !["Organization", "Contact"].includes(b.partyType)) {
+      return reply.code(400).send({ error: "partyType_invalid" });
+    }
 
-      const next = owners.map((o: any, i: number) => ({
-        animalId: id,
-        contactId: Number(o.contactId), // keep numeric if Contact.id is numeric
-        percent: o.percent ?? null,
-        isPrimary: o.isPrimary ?? (i === 0),
-      }));
+    const percent = Number(b.percent);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      return reply.code(400).send({ error: "percent_invalid" });
+    }
 
-      if (next.length) await tx.animalOwner.createMany({ data: next });
+    let orgId: number | null = null;
+    let contactId: number | null = null;
+    if (b.partyType === "Organization") {
+      orgId = parseIntStrict(b.organizationId);
+      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+      await assertOrgInTenant(orgId, tenantId);
+    } else {
+      contactId = parseIntStrict(b.contactId);
+      if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
+      await assertContactInTenant(contactId, tenantId);
+    }
 
-      const primary = next.find((n) => n.isPrimary);
-      await tx.animal.update({
-        where: { id },
-        data: { primaryOwnerId: primary ? primary.contactId : null },
+    try {
+      const created = await prisma.animalOwner.create({
+        data: {
+          animalId,
+          partyType: b.partyType,
+          organizationId: orgId,
+          contactId,
+          percent,
+          isPrimary: !!b.isPrimary,
+        },
+        select: {
+          id: true,
+          partyType: true,
+          organizationId: true,
+          contactId: true,
+          percent: true,
+          isPrimary: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
-    });
-
-    reply.send({ ok: true });
-  });
-
-  // DOCUMENTS — GET /api/v1/animals/:id/documents
-  app.get("/api/v1/animals/:id/documents", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
-    const items = await prisma.animalDocument.findMany({
-      where: { animalId: id },
-      orderBy: { createdAt: "desc" },
-    });
-    reply.send({ items });
-  });
-
-  // DOCUMENTS — POST /api/v1/animals/:id/documents
-  app.post("/api/v1/animals/:id/documents", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
-    const { name, note, url } = (req.body as any) ?? {};
-    const row = await prisma.animalDocument.create({
-      data: { animalId: id, name, note: note ?? null, url: url ?? null },
-    });
-    reply.send(row);
-  });
-
-  // DOCUMENTS — DELETE /api/v1/animals/:id/documents/:docId
-  app.delete("/api/v1/animals/:id/documents/:docId", async (req: any, reply) => {
-    const { docId } = req.params as { docId: string };
-    await prisma.animalDocument.delete({ where: { id: Number(docId) } });
-    reply.send({ ok: true });
-  });
-
-  // AUDIT — GET /api/v1/animals/:id/audit
-  app.get("/api/v1/animals/:id/audit", async (_req, reply) => {
-    reply.send({ items: [], total: 0 });
-  });
-
-  // CYCLE DATES — GET /api/v1/animals/:id/cycle-dates
-  app.get("/api/v1/animals/:id/cycle-dates", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
-    const rows = await prisma.animalCycleDate.findMany({
-      where: { animalId: id },
-      orderBy: { startDate: "asc" },
-    });
-    reply.send({
-      dates: rows.map((r) => ({
-        id: r.id,
-        startDate: r.startDate.toISOString().slice(0, 10),
-        note: r.note ?? null,
-      })),
-    });
-  });
-
-  // CYCLE DATES — PUT /api/v1/animals/:id/cycle-dates
-  app.put("/api/v1/animals/:id/cycle-dates", async (req: any, reply) => {
-    const { id } = req.params as { id: string };
-    const incoming = Array.isArray((req.body as any)?.dates) ? (req.body as any).dates : [];
-
-    const clean = incoming
-      .map((d: any) => ({ startDate: new Date(d.startDate), note: (d.note ?? null) as string | null }))
-      .filter((d) => !Number.isNaN(d.startDate.valueOf()))
-      .sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
-
-    await prisma.$transaction(async (tx) => {
-      await tx.animalCycleDate.deleteMany({ where: { animalId: id } });
-      if (clean.length) {
-        await tx.animalCycleDate.createMany({
-          data: clean.map((c) => ({ animalId: id, startDate: c.startDate, note: c.note })),
-        });
+      return reply.code(201).send(created);
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        // @@unique([animalId, organizationId]) or @@unique([animalId, contactId])
+        return reply.code(409).send({ error: "duplicate_owner" });
       }
-    });
-
-    const rows = await prisma.animalCycleDate.findMany({
-      where: { animalId: id },
-      orderBy: { startDate: "asc" },
-    });
-
-    reply.send({
-      dates: rows.map((r) => ({
-        id: r.id,
-        startDate: r.startDate.toISOString().slice(0, 10),
-        note: r.note ?? null,
-      })),
-    });
+      throw e;
+    }
   });
 
-  registerAnimalBreedUpsertRoute(app);
+  // PATCH /animals/:id/owners/:ownerId
+  app.patch("/animals/:id/owners/:ownerId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const ownerId = parseIntStrict((req.params as { ownerId: string }).ownerId);
+    if (!animalId || !ownerId) return reply.code(400).send({ error: "id_invalid" });
 
-  done();
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const existing = await prisma.animalOwner.findUnique({
+      where: { id: ownerId },
+      select: { id: true, animalId: true, organizationId: true, contactId: true, partyType: true },
+    });
+    if (!existing || existing.animalId !== animalId) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const b = (req.body || {}) as Partial<{
+      percent: number;
+      isPrimary: boolean;
+      partyType: OwnerPartyType;
+      organizationId: number | null;
+      contactId: number | null;
+    }>;
+
+    const data: any = {};
+    if (b.percent !== undefined) {
+      const pct = Number(b.percent);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) return reply.code(400).send({ error: "percent_invalid" });
+      data.percent = pct;
+    }
+    if (b.isPrimary !== undefined) data.isPrimary = !!b.isPrimary;
+
+    if (b.partyType !== undefined) {
+      if (!["Organization", "Contact"].includes(b.partyType)) return reply.code(400).send({ error: "partyType_invalid" });
+      data.partyType = b.partyType;
+      if (b.partyType === "Organization") {
+        const orgId = parseIntStrict(b.organizationId);
+        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+        await assertOrgInTenant(orgId, tenantId);
+        data.organizationId = orgId;
+        data.contactId = null;
+      } else {
+        const contactId = parseIntStrict(b.contactId);
+        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
+        await assertContactInTenant(contactId, tenantId);
+        data.contactId = contactId;
+        data.organizationId = null;
+      }
+    } else {
+      if (existing.partyType === "Organization" && b.organizationId !== undefined) {
+        if (b.organizationId === null) return reply.code(400).send({ error: "organizationId_required" });
+        const orgId = parseIntStrict(b.organizationId);
+        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
+        await assertOrgInTenant(orgId, tenantId);
+        data.organizationId = orgId;
+        data.contactId = null;
+      }
+      if (existing.partyType === "Contact" && b.contactId !== undefined) {
+        if (b.contactId === null) return reply.code(400).send({ error: "contactId_required" });
+        const contactId = parseIntStrict(b.contactId);
+        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
+        await assertContactInTenant(contactId, tenantId);
+        data.contactId = contactId;
+        data.organizationId = null;
+      }
+    }
+
+    try {
+      const updated = await prisma.animalOwner.update({
+        where: { id: ownerId },
+        data,
+        select: {
+          id: true,
+          partyType: true,
+          organizationId: true,
+          contactId: true,
+          percent: true,
+          isPrimary: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+      reply.send(updated);
+    } catch (e: any) {
+      if (e?.code === "P2002") return reply.code(409).send({ error: "duplicate_owner" });
+      throw e;
+    }
+  });
+
+  // DELETE /animals/:id/owners/:ownerId
+  app.delete("/animals/:id/owners/:ownerId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const ownerId = parseIntStrict((req.params as { ownerId: string }).ownerId);
+    if (!animalId || !ownerId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const existing = await prisma.animalOwner.findUnique({
+      where: { id: ownerId },
+      select: { id: true, animalId: true },
+    });
+    if (!existing || existing.animalId !== animalId) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    await prisma.animalOwner.delete({ where: { id: ownerId } });
+    reply.send({ ok: true });
+  });
+
+  /* REGISTRY IDENTIFIERS */
+  // GET /animals/:id/registries
+  app.get("/animals/:id/registries", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const rows = await prisma.animalRegistryIdentifier.findMany({
+      where: { animalId },
+      orderBy: [{ createdAt: "desc" }],
+      select: {
+        id: true,
+        registryId: true,
+        identifier: true,
+        registrarOfRecord: true,
+        issuedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        registry: { select: { id: true, name: true, code: true, species: true } },
+      },
+    });
+
+    reply.send({ items: rows, total: rows.length });
+  });
+
+  // POST /animals/:id/registries
+  app.post("/animals/:id/registries", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    const a = await prisma.animal.findFirst({ where: { id: animalId, tenantId }, select: { id: true, species: true } });
+    if (!a) return reply.code(404).send({ error: "not_found" });
+
+    const b = (req.body || {}) as {
+      registryId?: number;
+      identifier?: string;
+      registrarOfRecord?: string | null;
+      issuedAt?: string | null;
+    };
+
+    const registryId = parseIntStrict(b.registryId);
+    if (!registryId) return reply.code(400).send({ error: "registryId_invalid" });
+    const registry = await prisma.registry.findUnique({ where: { id: registryId }, select: { id: true, species: true } });
+    if (!registry) return reply.code(404).send({ error: "registry_not_found" });
+    if (registry.species && registry.species !== a.species) {
+      return reply.code(400).send({ error: "registry_species_mismatch" });
+    }
+
+    const identifier = String(b.identifier || "").trim();
+    if (!identifier) return reply.code(400).send({ error: "identifier_required" });
+
+    const issuedAtDate = b.issuedAt == null ? null : parseDateIso(b.issuedAt);
+    if (b.issuedAt != null && issuedAtDate === null) return reply.code(400).send({ error: "issuedAt_invalid" });
+
+    try {
+      const created = await prisma.animalRegistryIdentifier.create({
+        data: {
+          animalId,
+          registryId,
+          identifier,
+          registrarOfRecord: b.registrarOfRecord ?? null,
+          issuedAt: issuedAtDate,
+        },
+      });
+      return reply.code(201).send(created);
+    } catch (e: any) {
+      if (e?.code === "P2002") return reply.code(409).send({ error: "identifier_conflict" }); // @@unique([registryId, identifier])
+      throw e;
+    }
+  });
+
+  // PATCH /animals/:id/registries/:identifierId
+  app.patch("/animals/:id/registries/:identifierId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const identifierId = parseIntStrict((req.params as { identifierId: string }).identifierId);
+    if (!animalId || !identifierId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const existing = await prisma.animalRegistryIdentifier.findUnique({
+      where: { id: identifierId },
+      select: { id: true, animalId: true, registryId: true },
+    });
+    if (!existing || existing.animalId !== animalId) return reply.code(404).send({ error: "not_found" });
+
+    const b = (req.body || {}) as Partial<{
+      identifier: string;
+      registrarOfRecord: string | null;
+      issuedAt: string | null;
+      registryId: number;
+    }>;
+
+    const data: any = {};
+    if (b.identifier !== undefined) {
+      const ident = String(b.identifier || "").trim();
+      if (!ident) return reply.code(400).send({ error: "identifier_required" });
+      data.identifier = ident;
+    }
+    if (b.registrarOfRecord !== undefined) data.registrarOfRecord = b.registrarOfRecord;
+    if (b.issuedAt !== undefined) {
+      const d = b.issuedAt == null ? null : parseDateIso(b.issuedAt);
+      if (b.issuedAt != null && d === null) return reply.code(400).send({ error: "issuedAt_invalid" });
+      data.issuedAt = d;
+    }
+    if (b.registryId !== undefined) {
+      const regId = parseIntStrict(b.registryId);
+      if (!regId) return reply.code(400).send({ error: "registryId_invalid" });
+      const reg = await prisma.registry.findUnique({ where: { id: regId }, select: { id: true } });
+      if (!reg) return reply.code(404).send({ error: "registry_not_found" });
+      data.registryId = regId;
+    }
+
+    try {
+      const updated = await prisma.animalRegistryIdentifier.update({
+        where: { id: identifierId },
+        data,
+      });
+      reply.send(updated);
+    } catch (e: any) {
+      if (e?.code === "P2002") return reply.code(409).send({ error: "identifier_conflict" });
+      throw e;
+    }
+  });
+
+  // DELETE /animals/:id/registries/:identifierId
+  app.delete("/animals/:id/registries/:identifierId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const identifierId = parseIntStrict((req.params as { identifierId: string }).identifierId);
+    if (!animalId || !identifierId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const existing = await prisma.animalRegistryIdentifier.findUnique({
+      where: { id: identifierId },
+      select: { id: true, animalId: true },
+    });
+    if (!existing || existing.animalId !== animalId) return reply.code(404).send({ error: "not_found" });
+
+    await prisma.animalRegistryIdentifier.delete({ where: { id: identifierId } });
+    reply.send({ ok: true });
+  });
 };
 
-export async function registerAnimalBreedUpsertRoute(app: any) {
-}
 export default animalsRoutes;

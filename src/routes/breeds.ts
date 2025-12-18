@@ -1,256 +1,332 @@
 // src/routes/breeds.ts
-import { FastifyInstance } from "fastify";
-import { z } from "zod";
-import { PrismaClient } from "@prisma/client";
+import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import type { Species } from "@prisma/client";
+import prisma from "../prisma.js";
 
-const prisma = new PrismaClient();
-
-/* ───────────────────────────────────────────────────────────
-   Header helpers
-   ─────────────────────────────────────────────────────────── */
-function requireOrgId(h: any): number {
-  const raw = (h["x-org-id"] ?? h["X-Org-Id"] ?? "").toString().trim();
-  if (!raw) throw new Error("X-Org-Id required");
-  const n = Number(raw);
-  if (!Number.isFinite(n)) throw new Error("X-Org-Id must be numeric");
-  return n;
+/** ───────────────────────────────────────────────────────────────────────────
+ * Helpers
+ * ─────────────────────────────────────────────────────────────────────────── */
+const SPECIES_SET = new Set(["DOG", "CAT", "HORSE"]);
+function assertSpecies(s?: string) {
+  const val = String(s || "").toUpperCase();
+  if (!SPECIES_SET.has(val)) {
+    const err = new Error("invalid_species") as any;
+    err.statusCode = 400;
+    throw err;
+  }
+  return val as "DOG" | "CAT" | "HORSE";
 }
 
-/** Non-throwing org extractor (canonical search can work without org) */
-function tryOrgId(h: any): number | null {
-  const raw = (h["x-org-id"] ?? h["X-Org-Id"] ?? "").toString().trim();
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+/** Pull tenant id from header or request decoration (don’t throw here) */
+function readTenantId(req: any): number | null {
+  const hdr = Number(req?.headers?.["x-tenant-id"]);
+  if (Number.isInteger(hdr) && hdr > 0) return hdr;
+  const decorated = Number(req?.tenantId);
+  if (Number.isInteger(decorated) && decorated > 0) return decorated;
+  return null;
 }
 
-const Species = z.enum(["DOG", "CAT", "HORSE"]);
+type BreedHit = {
+  id?: number; // present for custom
+  name: string;
+  species: "DOG" | "CAT" | "HORSE";
+  source: "canonical" | "custom";
+  canonicalBreedId?: number | null; // present for canonical
+};
 
-/* ───────────────────────────────────────────────────────────
-   Query DTOs
-   ─────────────────────────────────────────────────────────── */
-/** GET /api/v1/breeds/search
- *  Query: species=DOG|CAT|HORSE, q?, limit?, registries? (CSV of codes)
- *  Returns canonical breeds with limited registry link fields.
- *
- *  NOTE: We accept any positive limit and clamp server-side
- *  to avoid throwing (prevents 500s on limit=120, etc).
- */
-const QuerySearch = z.object({
-  species: Species,
-  q: z.string().trim().optional(),
-  limit: z.coerce.number().int().positive().optional(),
-  registries: z.string().optional(), // CSV list, optional
-});
-
-/** GET /api/v1/breeds/custom (org-scoped list of CustomBreed for species) */
-const QueryCustomList = z.object({
-  species: Species.optional(),
-  q: z.string().trim().optional(),
-  limit: z.coerce.number().int().positive().max(200).default(100),
-});
-
-/** POST/PATCH input for custom breeds */
-const UpsertCustom = z.object({
-  name: z.string().min(2),
-  species: Species,
-  canonicalBreedId: z.string().nullish(),
-  aliases: z.array(z.string().min(1)).optional(),
-});
-
-/* ───────────────────────────────────────────────────────────
-   Helper: read enabled registry codes from OrgSetting.preferences
-   Shape: { registryCodesEnabled: string[] }
-   ─────────────────────────────────────────────────────────── */
-async function getEnabledRegistryCodes(
-  orgId: number | null,
-  prismaClient: PrismaClient
-): Promise<string[]> {
-  if (orgId == null) return [];
-  const row = await prismaClient.$queryRaw<Array<{ preferences: any }>>`
-    SELECT preferences FROM "OrgSetting" WHERE "organizationId" = ${orgId} LIMIT 1`;
-  const prefs = row?.[0]?.preferences ?? {};
-  return Array.isArray(prefs.registryCodesEnabled) ? prefs.registryCodesEnabled : [];
+function dedupeByName(items: Array<BreedHit>) {
+  const seen = new Set<string>();
+  const out: BreedHit[] = [];
+  for (const it of items) {
+    const k = it.name.trim().toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(it);
+    }
+  }
+  return out;
 }
 
-/* ───────────────────────────────────────────────────────────
-   Routes
-   ─────────────────────────────────────────────────────────── */
-export default async function breedsRoutes(app: FastifyInstance) {
-  // 1) Canonical breeds search (species-scoped; registry badges filtered)
-  app.get("/api/v1/breeds/search", async (req, reply) => {
+/** Tokenized ILIKE AND search on name */
+function nameContainsAllTokens(q: string) {
+  const tokens = (q || "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (!tokens.length) return undefined;
+  return { AND: tokens.map((t) => ({ name: { contains: t, mode: "insensitive" as const } })) };
+}
+
+/** ───────────────────────────────────────────────────────────────────────────
+ * Routes
+ * ─────────────────────────────────────────────────────────────────────────── */
+export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
+  // GET /species  → enum values
+  app.get("/species", async (_req, reply) => {
+    reply.header("Cache-Control", "public, max-age=86400, immutable");
+    const items = Array.from(SPECIES_SET).sort(); // ["CAT","DOG","HORSE"]
+    return reply.send({ items, total: items.length });
+  });
+
+  /**
+   * Canonical + Custom search (custom is tenant-scoped).
+   * GET /breeds/search?species=DOG&q=golden&limit=20
+   *
+   * Behavior:
+   * - Always returns canonical (from Breed) for the species.
+   * - If tenant present (x-tenant-id), merges in tenant’s CustomBreed rows.
+   * - Never 400s for missing tenant (so typeahead works before tenant resolve).
+   */
+
+
+  app.get("/breeds/search", async (req, reply) => {
+    const { q = "", species = "", limit = "100" } = (req.query || {}) as {
+      q?: string; species?: string; limit?: string | number;
+    };
+
+    const sp = assertSpecies(species);
+    const take = Math.min(200, Math.max(1, Number(limit) || 100));
+
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const canonWhere: any = { species: sp };
+    if (q) Object.assign(canonWhere, nameContainsAllTokens(q));
+
+    // --- Step 1: canonical breeds (MUST NOT crash) ---------------------------
+    let canonRows: Array<{ id: number; name: string; species: Species }> = [];
     try {
-      // Org is OPTIONAL for canonical search; missing/invalid should not 500
-      const orgId = tryOrgId(req.headers);
-
-      const parsed = QuerySearch.safeParse(req.query);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: "invalid_query", details: parsed.error.flatten() });
-      }
-      const q = parsed.data;
-
-      // Clamp limit: default 25, min 1, max 200
-      const limit = Math.min(Math.max(q.limit ?? 25, 1), 200);
-
-      // Registry codes: prefer explicit param, else org prefs, else none
-      const codesFromOrg = await getEnabledRegistryCodes(orgId, prisma);
-      const explicitCodes =
-        q.registries?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-      const codesFilter = explicitCodes.length ? explicitCodes : codesFromOrg;
-
-      // WHERE: species is required; name/slug filter only when q is present
-      const where: any = { species: q.species };
-      if (q.q && q.q.length > 0) {
-        where.OR = [
-          { name: { contains: q.q, mode: "insensitive" as const } },
-          { slug: { contains: q.q, mode: "insensitive" as const } },
-        ];
-      }
-
-      const items = await prisma.breed.findMany({
-        where,
-        take: limit,
+      canonRows = await prisma.breed.findMany({
+        where: canonWhere,
         orderBy: [{ name: "asc" }],
-        include: {
-          registries: {
-            where: codesFilter.length ? { registryCode: { in: codesFilter } } : undefined,
-            select: { registryCode: true, url: true, primary: true, since: true, statusText: true },
-          },
-        },
-      });
-
-      return reply.send({
-        items: items.map((b) => ({
-          source: "canonical",
-          id: b.id,
-          name: b.name,
-          species: b.species,
-          registries: (b.registries ?? []).map((r) => ({
-            code: r.registryCode,
-            url: r.url,
-            primary: r.primary,
-            since: r.since,
-            statusText: r.statusText, // VERBATIM
-          })),
-        })),
+        take,
+        select: { id: true, name: true, species: true },
       });
     } catch (err) {
-      // Log but do NOT break the UI; return empty items on unexpected errors
-      req.log?.error({ err }, "breeds.search failed");
-      return reply.send({ items: [] });
+      req.log.error({ err }, "breeds.search: canonical query failed");
+      // If even canon fails, bail fast with a readable error in dev
+      return reply.code(500).send({ error: "server_error_canonical" });
+    }
+
+    // --- Step 2: tenant custom breeds (if this fails, just skip) -------------
+    let customRows: Array<{ id: number; name: string; species: Species }> = [];
+    try {
+      customRows = await prisma.customBreed.findMany({
+        where: { tenantId, species: sp, ...(q ? nameContainsAllTokens(q) : {}) },
+        orderBy: [{ name: "asc" }],
+        take,
+        select: { id: true, name: true, species: true },
+      });
+    } catch (err) {
+      req.log.warn({ err }, "breeds.search: custom query failed — continuing without custom");
+      customRows = [];
+    }
+
+    // --- Step 3: registries (safe join using the real relation name) -----------
+    let regsByBreed = new Map<number, Array<{ code: string; status?: string | null; primary?: boolean | null }>>();
+    try {
+      const breedIds = canonRows.map(b => b.id);
+      if (breedIds.length) {
+        const links = await prisma.breedRegistryLink.findMany({
+          where: { breedId: { in: breedIds } },
+          select: {
+            breedId: true,
+            statusText: true,
+            primary: true,
+            // THIS is the correct relation name according to Prisma's error hint:
+            registry: { select: { id: true, code: true, name: true } },
+          },
+        });
+
+        regsByBreed = new Map();
+        for (const l of links) {
+          // l.registry can be null if the FK is optional — guard it
+          if (!l.registry) continue;
+          const arr = regsByBreed.get(l.breedId) || [];
+          arr.push({
+            code: l.registry.code ?? "",
+            status: l.statusText ?? null,
+            primary: l.primary ?? null,
+          });
+          regsByBreed.set(l.breedId, arr);
+        }
+      }
+    } catch (err) {
+      req.log.warn({ err }, "breeds.search: registries join failed — continuing without registries");
+      regsByBreed = new Map();
+    }
+
+    // --- Build outputs --------------------------------------------------------
+    type OutRow = {
+      id?: number;
+      name: string;
+      species: Species;
+      source: "canonical" | "custom";
+      canonicalBreedId?: number | null;
+      registries?: Array<{ code: string; status?: string | null; primary?: boolean | null }>;
+    };
+
+    const canon: OutRow[] = canonRows.map(r => ({
+      name: r.name,
+      species: r.species,
+      source: "canonical",
+      canonicalBreedId: r.id,
+      registries: regsByBreed.get(r.id) || [],
+    }));
+
+    const custom: OutRow[] = customRows.map(r => ({
+      id: r.id,
+      name: r.name,
+      species: r.species,
+      source: "custom",
+      registries: [],
+    }));
+
+    // Prefer custom on name collisions
+    const merged: OutRow[] = [];
+    const seen = new Set<string>();
+    for (const it of [...custom, ...canon]) {
+      const k = `${it.species}::${it.name}`.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      merged.push(it);
+      if (merged.length >= take) break;
+    }
+
+    return reply.send({ items: merged, total: merged.length });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Tenant-scoped Custom breeds (CRUD)
+  // Base: /breeds/custom
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // LIST: GET /breeds/custom?species=&q=&page=&limit=
+  app.get("/breeds/custom", async (req, reply) => {
+    const { species = "", q = "", page = "1", limit = "25" } = (req.query || {}) as {
+      species?: string;
+      q?: string;
+      page?: string;
+      limit?: string;
+    };
+
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const take = Math.min(100, Math.max(1, Number(limit) || 25));
+    const skip = Math.max(0, ((Number(page) || 1) - 1) * take);
+
+    const where: any = { tenantId };
+    if (species) where.species = assertSpecies(species);
+    if (q) Object.assign(where, nameContainsAllTokens(q));
+
+    const [data, total] = await prisma.$transaction([
+      prisma.customBreed.findMany({
+        where,
+        orderBy: [{ species: "asc" }, { name: "asc" }],
+        skip,
+        take,
+        select: { id: true, tenantId: true, species: true, name: true, createdAt: true, updatedAt: true },
+      }),
+      prisma.customBreed.count({ where }),
+    ]);
+
+    reply.send({ data, total, page: Number(page) || 1, limit: take });
+  });
+
+  // READ: GET /breeds/custom/:id
+  app.get("/breeds/custom/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const rec = await prisma.customBreed.findFirst({
+      where: { id: Number(id), tenantId },
+      select: { id: true, tenantId: true, species: true, name: true, createdAt: true, updatedAt: true },
+    });
+    if (!rec) return reply.code(404).send({ error: "not_found" });
+    reply.send(rec);
+  });
+
+  // CREATE: POST /breeds/custom  { species: "DOG"|"CAT"|"HORSE", name: string }
+  app.post("/breeds/custom", async (req, reply) => {
+    const body = (req.body || {}) as { species?: string; name?: string };
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const species = assertSpecies(body.species);
+    const name = String(body.name || "").trim();
+    if (!name) return reply.code(400).send({ error: "name_required" });
+
+    try {
+      const created = await prisma.customBreed.create({
+        data: { tenantId, species, name },
+        select: { id: true, tenantId: true, species: true, name: true, createdAt: true, updatedAt: true },
+      });
+      return reply.code(201).send(created);
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        return reply.code(409).send({ error: "duplicate_breed", details: { species, name } });
+      }
+      throw e;
     }
   });
 
-  // 2) Custom breeds (org-scoped, optional species filter)
-  app.get("/api/v1/breeds/custom", async (req, reply) => {
-    // Custom lists are org-owned → strict header requirement stays
-    const orgId = requireOrgId(req.headers);
-    const q = QueryCustomList.parse(req.query);
+  // UPDATE: PATCH /breeds/custom/:id  { name?, species? }
+  app.patch("/breeds/custom/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body || {}) as { name?: string; species?: string };
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    const items = await prisma.customBreed.findMany({
-      where: {
-        organizationId: orgId as any,
-        ...(q.species ? { species: q.species } : {}),
-        ...(q.q ? { name: { contains: q.q, mode: "insensitive" as const } } : {}),
-      },
-      orderBy: [{ name: "asc" }],
-      take: q.limit,
-      include: { aliases: true, Canonical: { select: { id: true, name: true } } },
-    });
-
-    return reply.send({
-      items: items.map((i) => ({
-        id: i.id,
-        name: i.name,
-        species: i.species,
-        canonicalBreedId: i.canonicalBreedId,
-        canonicalBreedName: i.Canonical?.name ?? null,
-        aliases: i.aliases.map((a) => a.name),
-      })),
-    });
-  });
-
-  // 3) Custom breed create (org-scoped)
-  app.post("/api/v1/breeds/custom", async (req, reply) => {
-    const orgId = requireOrgId(req.headers);
-    const body = UpsertCustom.parse(req.body);
-
-    const created = await prisma.customBreed.create({
-      data: {
-        organizationId: orgId as any,
-        name: body.name,
-        species: body.species,
-        canonicalBreedId: body.canonicalBreedId ?? null,
-        aliases: body.aliases?.length
-          ? { create: body.aliases.map((n) => ({ name: n })) }
-          : undefined,
-      },
-      select: { id: true },
-    });
-
-    return reply.send({ id: created.id });
-  });
-
-  // 4) Custom breed update (org-scoped)
-  app.patch("/api/v1/breeds/custom/:id", async (req, reply) => {
-    const orgId = requireOrgId(req.headers);
-    const id = z.coerce.number().parse((req.params as any).id);
-    const body = UpsertCustom.partial().parse(req.body);
-
-    const exists = await prisma.customBreed.findFirst({
-      where: { id, organizationId: orgId as any },
-      select: { id: true },
-    });
-    if (!exists) return reply.code(404).send({ error: "Not found" });
-
-    await prisma.customBreed.update({
-      where: { id },
-      data: {
-        name: body.name ?? undefined,
-        species: body.species ?? undefined,
-        canonicalBreedId:
-          body.canonicalBreedId === undefined ? undefined : body.canonicalBreedId ?? null,
-      },
-    });
-
-    if (body.aliases) {
-      await prisma.$transaction([
-        prisma.customBreedAlias.deleteMany({ where: { customBreedId: id } }),
-        ...(body.aliases.length
-          ? [
-              prisma.customBreedAlias.createMany({
-                data: body.aliases.map((n) => ({ customBreedId: id, name: n })),
-              }),
-            ]
-          : []),
-      ]);
+    const data: any = {};
+    if (body.name !== undefined) {
+      const n = String(body.name || "").trim();
+      if (!n) return reply.code(400).send({ error: "name_required" });
+      data.name = n;
     }
+    if (body.species !== undefined) data.species = assertSpecies(body.species);
 
-    return reply.send({ id });
+    try {
+      const existing = await prisma.customBreed.findUnique({
+        where: { id: Number(id) },
+        select: { tenantId: true },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+      if (existing.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+      const updated = await prisma.customBreed.update({
+        where: { id: Number(id) },
+        data,
+        select: { id: true, tenantId: true, species: true, name: true, createdAt: true, updatedAt: true },
+      });
+      reply.send(updated);
+    } catch (e: any) {
+      if (e?.code === "P2002") return reply.code(409).send({ error: "duplicate_breed" });
+      if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
+      throw e;
+    }
   });
 
-  // 5) Custom breed delete (org-scoped; force unlinks AnimalCustomBreed)
-  app.delete("/api/v1/breeds/custom/:id", async (req, reply) => {
-    const orgId = requireOrgId(req.headers);
-    const id = z.coerce.number().parse((req.params as any).id);
-    const force = z.coerce.boolean().optional().parse((req.query as any)?.force);
+  // DELETE: DELETE /breeds/custom/:id
+  app.delete("/breeds/custom/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    const target = await prisma.customBreed.findFirst({
-      where: { id, organizationId: orgId as any },
-      include: { animalLinks: true },
-    });
-    if (!target) return reply.code(404).send({ error: "Not found" });
+    try {
+      const rec = await prisma.customBreed.findUnique({
+        where: { id: Number(id) },
+        select: { tenantId: true },
+      });
+      if (!rec) return reply.code(404).send({ error: "not_found" });
+      if (rec.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
 
-    if (target.animalLinks.length > 0 && !force) {
-      return reply.code(409).send({ error: "In use by animals", count: target.animalLinks.length });
+      await prisma.customBreed.delete({ where: { id: Number(id) } });
+      reply.send({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
+      throw e;
     }
-
-    await prisma.$transaction(async (tx) => {
-      if (force) await tx.animalCustomBreed.deleteMany({ where: { customBreedId: id } });
-      await tx.customBreedAlias.deleteMany({ where: { customBreedId: id } });
-      await tx.customBreed.delete({ where: { id } });
-    });
-
-    return reply.send({ ok: true });
   });
 }
