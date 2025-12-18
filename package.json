@@ -11,6 +11,7 @@
     "dev": "dotenv -e .env.dev -- tsx watch src/server.ts",
     "build": "tsc -p .",
     "start": "node dist/server.js",
+    "start:render": "node scripts/render-start.mjs",
     "postinstall": "prisma generate --schema=prisma/schema.prisma",
     "db:studio": "dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
     "db:pull": "dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
