@@ -52,12 +52,15 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
       const orgId = getOrgIdFrom(req);
       if (!orgId) return reply.code(400).send({ error: "org_required" });
 
-      const id = String((req.params as any).id);
+      const id = Number((req.params as any).id);
+      if (!Number.isInteger(id)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
 
       const a = await prisma.animal.findFirst({
         where: { id, organizationId: orgId },
         include: {
-          breed: { select: { id: true, name: true } }, // primary
+          canonicalBreed: { select: { id: true, name: true } }, // primary
           breeds: {
             select: {
               percentage: true,
@@ -83,8 +86,8 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
         : [];
 
       // Start with DB primary (may be null)
-      let primaryBreedId: string | null = a.breed?.id ? String(a.breed.id) : null;
-      let primaryBreedName: string | null = a.breed?.name ?? null;
+      let primaryBreedId: string | null = a.canonicalBreed?.id ? String(a.canonicalBreed.id) : null;
+      let primaryBreedName: string | null = a.canonicalBreed?.name ?? null;
 
       // 🔒 Normalize to a single truth:
       // - If more than one mix row → MIXED ⇒ blank out primary
@@ -118,7 +121,10 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
     const orgId = getOrgIdFrom(req);
     if (!orgId) return reply.code(400).send({ error: "org_required" });
 
-    const id = String((req.params as any).id);
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
     const body = PutBody.parse(req.body);
 
     // Ensure animal belongs to org
@@ -146,6 +152,7 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
     const isMixed = body.canonical.length > 1;
     const effectivePrimary =
       isMixed ? null : (body.primaryBreedId ?? (body.canonical[0]?.breedId ?? null));
+    const effectivePrimaryInt = effectivePrimary ? Number(effectivePrimary) : null;
 
     await prisma.$transaction(async (tx) => {
       // Update primary species/breed
@@ -153,7 +160,7 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
         where: { id },
         data: {
           species: body.species,
-          breedId: effectivePrimary, // if mixed → null
+          canonicalBreedId: effectivePrimaryInt, // if mixed → null
         },
       });
 
@@ -164,16 +171,16 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
         await tx.animalBreed.createMany({
           data: body.canonical.map((r) => ({
             animalId: id,
-            breedId: r.breedId,
+            breedId: Number(r.breedId),
             percentage: r.percentage,
           })),
         });
-      } else if (effectivePrimary) {
+      } else if (effectivePrimaryInt) {
         // When pure, we can either store zero rows or a single 100% row.
-        // Choose zero rows to keep the source of truth in primaryBreedId.
+        // Choose zero rows to keep the source of truth in canonicalBreedId.
         // If you prefer 100% row, uncomment below:
         // await tx.animalBreed.create({
-        //   data: { animalId: id, breedId: effectivePrimary, percentage: 100 },
+        //   data: { animalId: id, breedId: effectivePrimaryInt, percentage: 100 },
         // });
       }
     });
@@ -182,7 +189,7 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
     const fresh = await prisma.animal.findFirst({
       where: { id, organizationId: orgId },
       include: {
-        breed: { select: { id: true, name: true } },
+        canonicalBreed: { select: { id: true, name: true } },
         breeds: {
           select: {
             percentage: true,
@@ -208,8 +215,8 @@ export default async function animalsBreedsRoutes(app: FastifyInstance) {
           .filter(Boolean) as { breedId: string; name: string; percentage: number }[]
       : [];
 
-    let pId: string | null = fresh.breed?.id ? String(fresh.breed.id) : null;
-    let pName: string | null = fresh.breed?.name ?? null;
+    let pId: string | null = fresh.canonicalBreed?.id ? String(fresh.canonicalBreed.id) : null;
+    let pName: string | null = fresh.canonicalBreed?.name ?? null;
 
     if (mix.length > 1) {
       pId = null;
