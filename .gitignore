@@ -11,6 +11,7 @@ build/
 *.tsbuildinfo
 
 # Local env files (never commit secrets)
+.env
 .env.local
 .env.*.local
 .env.dev
@@ -19,6 +20,12 @@ build/
 .env.test.*
 .env.production.local
 .env.prod.migrate
+
+# Env templates (commit these)
+!.env.dev.example
+!.env.dev.migrate.example
+!.env.studio.example
+!.env.prod.migrate.example
 
 # Logs
 *.log
@@ -37,3 +44,15 @@ Thumbs.db
 
 # Other files
 *repo-structure*
+# route tests (excluded)
+src/routes/__tests__/
+
+
+prisma/migrations.bak/
+
+
+tmp/route-backups/
+
+
+prisma/schema.backup.prisma
+
