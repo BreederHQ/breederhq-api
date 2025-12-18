@@ -1,34 +1,37 @@
 // src/prisma.ts
+import dotenv from "dotenv";
+
+// Honor ENV_FILE if present; otherwise default to .env.dev in dev, .env in prod.
+const ENV_FILE =
+  process.env.ENV_FILE ||
+  (process.env.NODE_ENV === "production" ? ".env" : ".env.dev");
+
+// Load envs once, before Prisma client is constructed.
+dotenv.config({ path: ENV_FILE });
+
 import { PrismaClient } from "@prisma/client";
 
-/**
- * Single Prisma instance across the whole process.
- * - Cached on globalThis in dev to survive hot reloads.
- * - Default export only (avoid named+default duplicates).
- */
-const globalForPrisma = globalThis as unknown as { __prisma?: PrismaClient };
+const globalForPrisma = globalThis as unknown as { __PRISMA__?: PrismaClient };
 
-const prisma =
-  globalForPrisma.__prisma ??
+export const prisma =
+  globalForPrisma.__PRISMA__ ??
   new PrismaClient({
-    // Optional: enable query logging in dev
     log:
       process.env.NODE_ENV === "production"
         ? ["error", "warn"]
-        : ["error", "warn", "info"],
+        : ["error", "warn"], // add "query" if you want noisy SQL in dev
   });
 
 if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.__prisma = prisma;
+  globalForPrisma.__PRISMA__ = prisma;
 }
 
-// Optional: tidy shutdown (doesn't harm if omitted)
-process.on("beforeExit", async () => {
+export default prisma;
+
+export async function closePrisma() {
   try {
     await prisma.$disconnect();
   } catch {
     /* noop */
   }
-});
-
-export default prisma;
+}

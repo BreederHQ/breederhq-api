@@ -47,3 +47,12 @@ Thumbs.db
 # route tests (excluded)
 src/routes/__tests__/
 
+
+prisma/migrations.bak/
+
+
+tmp/route-backups/
+
+
+prisma/schema.backup.prisma
+
