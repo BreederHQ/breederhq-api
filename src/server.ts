@@ -1,301 +1,376 @@
 // src/server.ts
 import Fastify, { FastifyInstance } from "fastify";
-import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
-import * as cookieLib from "cookie";
+import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
+import prisma from "./prisma.js";
 
-import authRoutes from "./routes/auth.js";
-import contactsRoutes from "./routes/contacts.js";
-import animalsRoutes from "./routes/animals.js";
-import organizationsRoutes from "./routes/organizations.js";
-import breedsRoutes from "./routes/breeds.js";
-import animalsBreedsRoutes from "./routes/animals-breeds.js";
-import orgSettingsRoutes from "./routes/org-settings.js";
-import tagsRoutes from "./routes/tags.js";
+// ---------- Env ----------
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const IS_DEV =
+  (process.env.BHQ_ENV || process.env.NODE_ENV) === "dev" ||
+  String(process.env.NODE_ENV || "").toLowerCase() === "development";
 
-import prisma, { closePrisma } from "./prisma.js";
+// ---------- App ----------
+const app: FastifyInstance = Fastify({
+  logger: true,
+  trustProxy: true,
+  routerOptions: { ignoreTrailingSlash: true },
+});
 
+// ---------- Decorators ----------
+app.decorate("prisma", prisma as any);
 
-// ───────────────────────────────────────────────────────────
-// Types: attach a lightweight authUser to requests
-declare module "fastify" {
-  interface FastifyRequest {
-    authUser?: {
-      id: string;
-      email?: string;
-      orgId?: number;
-      role?: "ADMIN" | "STAFF" | "MEMBER" | "VIEWER";
-    } | null;
+// ---------- Security ----------
+await app.register(helmet, { contentSecurityPolicy: false });
+
+// ---------- Cookie -----------
+await app.register(cookie, {
+  // secret: process.env.COOKIE_SECRET, // uncomment to sign cookies
+  hook: "onRequest",
+});
+
+// ---------- Rate limit (opt-in per route) ----------
+await app.register(rateLimit, {
+  global: false,
+  ban: 2,
+});
+
+// ---------- CORS ----------
+await app.register(cors, {
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // server-to-server/curl
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
+    app.log.warn({ origin }, "CORS: origin not allowed");
+    return cb(new Error("CORS: origin not allowed"), false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "authorization",
+    "content-type",
+    "x-tenant-id",
+    "x-org-id",
+    "x-csrf-token",
+    "x-xsrf-token",
+    "x-requested-with", // fix preflight failures from fetch/axios
+    "x-admin-token",    // <— NEW: required for admin-protected routes
+  ],
+  exposedHeaders: ["set-cookie"],
+});
+
+// ---------- Health & Diagnostics ----------
+app.get("/healthz", async () => ({ ok: true }));
+app.get("/", async () => ({ ok: true }));
+app.get("/__diag", async () => ({
+  ok: true,
+  time: new Date().toISOString(),
+  env: {
+    BHQ_ENV: process.env.BHQ_ENV || "unknown",
+    NODE_ENV: process.env.NODE_ENV || "unknown",
+    ALLOWED_ORIGINS,
+    IS_DEV,
+  },
+}));
+
+// ---------- CSRF (double-submit cookie) ----------
+app.addHook("preHandler", async (req, reply) => {
+  // Let safe and preflight through
+  const m = req.method.toUpperCase();
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+
+  // Auth endpoints: they set/clear CSRF themselves
+  if (req.url.startsWith("/api/v1/auth/")) return;
+
+  const csrfHeader = req.headers["x-csrf-token"];
+  const csrfCookie = req.cookies?.["XSRF-TOKEN"];
+  if (!csrfHeader || !csrfCookie || String(csrfHeader) !== String(csrfCookie)) {
+    return reply.code(403).send({ error: "csrf_failed" });
   }
-  interface FastifyReply {
-    setSessionCookie(value: string, ttlSeconds?: number): void;
-    clearSessionCookie(): void;
+});
+
+// Tolerate empty POST bodies on /auth/logout
+app.addHook("preValidation", (req, _reply, done) => {
+  if (req.method === "POST" && req.url.includes("/auth/logout") && req.body == null) {
+    (req as any).body = {};
   }
-}
+  done();
+});
 
-const IS_PROD = (process.env.NODE_ENV || "development") === "production";
-const NODE_ENV = process.env.NODE_ENV || "development";
-const PORT = Number(process.env.PORT || 6001);
-const HOST = process.env.HOST || "0.0.0.0";
+// Accept JSON with charset, like "application/json; charset=utf-8"
+app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req, body, done) => {
+  try {
+    const raw = typeof body === 'string' ? body : body.toString('utf8');
+    done(null, JSON.parse(raw));
+  } catch (err) {
+    done(err as Error);
+  }
+});
 
+// Accept empty x-www-form-urlencoded bodies as {}
+app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
+  const raw = typeof body === 'string' ? body : body.toString('utf8');
+  const obj: Record<string, string> = {};
+  for (const pair of raw.split("&")) {
+    if (!pair) continue;
+    const [k, v = ""] = pair.split("=");
+    obj[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, " "));
+  }
+  done(null, obj);
+});
+
+// ---------- Request logging ----------
+app.addHook("onRequest", async (req) => {
+  req.log.info({ m: req.method, url: req.url }, "REQ");
+});
+
+// ---------- Helpers: session + membership ----------
 const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14);
-const COOKIE_DOMAIN = IS_PROD ? (process.env.SESSION_COOKIE_DOMAIN || ".breederhq.com") : undefined;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+function parseSessionCookie(raw?: string | null) {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
+    if (!obj?.userId || !obj?.exp) return null;
+    if (Date.now() >= Number(obj.exp)) return null;
+    return obj as { userId: string; tenantId?: number; iat: number; exp: number };
+  } catch {
+    return null;
+  }
+}
 
-// ───────────────────────────────────────────────────────────
-// Factory: build the app without starting it
-function buildServer(): FastifyInstance {
-  const app = Fastify({
-    logger: true,
-    trustProxy: true,
-    ignoreTrailingSlash: true,
-    caseSensitive: false,
+// ——— Schema drift guards for tenant tables ———
+let _hasTenants: boolean | null = null;
+async function detectTenants(): Promise<boolean> {
+  if (_hasTenants != null) return _hasTenants;
+  try {
+    await (app.prisma as any).tenant.findFirst?.({ select: { id: true }, take: 1 });
+    await (app.prisma as any).tenantMembership.findFirst?.({ select: { tenantId: true }, take: 1 });
+    _hasTenants = true;
+  } catch {
+    _hasTenants = false;
+  }
+  return _hasTenants;
+}
+
+async function requireTenantMembership(
+  app: FastifyInstance,
+  req: any,
+  reply: any,
+  tenantId: number
+) {
+  const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
+  if (!sess) {
+    reply.code(401).send({ error: "unauthorized" });
+    return null;
+  }
+  (req as any).userId = sess.userId; // stash for downstream
+
+  // If tenant tables are missing, allow through in single-tenant mode
+  if (!(await detectTenants())) {
+    return sess;
+  }
+
+  const actor = (await app.prisma.user.findUnique({
+    where: { id: sess.userId },
+    select: { isSuperAdmin: true } as any,
+  })) as any;
+
+  if (actor?.isSuperAdmin) return sess; // super admin floats across tenants
+
+  const membership = await (app.prisma as any).tenantMembership.findUnique?.({
+    where: { userId_tenantId: { userId: sess.userId, tenantId } },
+    select: { tenantId: true },
   });
 
-  // Plugins (register BEFORE routes)
-  app.register(cookie, {
-    secret: process.env.COOKIE_SECRET || "dev-cookie-secret",
-    hook: "onRequest",
-  });
+  if (!membership) {
+    reply.code(403).send({ error: "forbidden_tenant" });
+    return null;
+  }
+  return sess;
+}
 
-  app.register(cors, {
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      const allowed = (process.env.ALLOWED_ORIGINS || "")
-        .split(",").map(s => s.trim()).filter(Boolean);
+// ---------- Route imports ----------
+import accountRoutes from "./routes/account.js";
+import animalsRoutes from "./routes/animals.js";
+import breedingRoutes from "./routes/breeding.js";
+import authRoutes from "./routes/auth.js";
+import breedsRoutes from "./routes/breeds.js";
+import contactsRoutes from "./routes/contacts.js";
+import organizationsRoutes from "./routes/organizations.js";
+import offspringRoutes from "./routes/offspring.js";
+import sessionRoutes from "./routes/session.js";
+import tagsRoutes from "./routes/tags.js";
+import tenantRoutes from "./routes/tenant.js";
+import userRoutes from "./routes/user.js";
+import waitlistRoutes from "./routes/waitlist.js"; // <— NEW
 
-      if (NODE_ENV === "production") {
-        const breederhq = /^https:\/\/([a-z0-9-]+\.)?breederhq\.com$/i.test(origin);
-        if (breederhq || allowed.includes(origin)) return cb(null, true);
-        return cb(null, false); // ← deny without throwing
-      } else {
-        // In dev: allow if list is empty (default) OR explicitly listed.
-        if (allowed.length === 0 || allowed.includes(origin)) return cb(null, true);
-        return cb(null, false); // ← deny without throwing (no 500)
-      }
+// ---------- TS typing: prisma + req.tenantId/req.userId ----------
+declare module "fastify" {
+  interface FastifyInstance {
+    prisma: typeof prisma;
+  }
+  interface FastifyRequest {
+    tenantId: number | null;
+    userId?: string;
+  }
+}
+
+// ---------- API v1: public/no-tenant subtree ----------
+app.register(
+  async (api) => {
+    api.register(authRoutes, { prefix: "/auth" }); // /api/v1/auth/*
+    api.register(sessionRoutes);                   // /api/v1/session/*
+    api.register(accountRoutes);                   // /api/v1/account/*
+    api.register(tenantRoutes);                    // /api/v1/tenants/*
+  },
+  { prefix: "/api/v1" }
+);
+
+// ---------- Global error handler ----------
+app.setErrorHandler((err, req, reply) => {
+  req.log.error(
+    {
+      err: {
+        message: err.message,
+        code: (err as any).code,
+        meta: (err as any).meta,
+        stack: err.stack,
+      },
+      url: req.url,
+      method: req.method,
     },
-    credentials: true,
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Org-Id"],
-    exposedHeaders: ["set-cookie"],
-  });
+    "Unhandled error"
+  );
 
-  // Reply helpers
-  app.decorateReply("setSessionCookie", function (value: string, ttlSeconds: number = SESSION_TTL_SECONDS) {
-    const set = cookieLib.serialize(COOKIE_NAME, value, {
-      httpOnly: true,
-      secure: IS_PROD,
-      sameSite: IS_PROD ? "none" : "lax",
-      domain: COOKIE_DOMAIN,
-      path: "/",
-      maxAge: ttlSeconds,
-    });
-    this.header("Set-Cookie", set);
-  });
-
-  app.decorateReply("clearSessionCookie", function () {
-    const set = cookieLib.serialize(COOKIE_NAME, "", {
-      httpOnly: true,
-      secure: IS_PROD,
-      sameSite: IS_PROD ? "none" : "lax",
-      domain: COOKIE_DOMAIN,
-      path: "/",
-      maxAge: 0,
-    });
-    this.header("Set-Cookie", set);
-  });
-
-  // Health
-  app.get("/health", async () => ({ ok: true }));
-  app.get("/healthz", async () => ({ ok: true }));
-  app.get("/__diag", async () => ({ ok: true, env: NODE_ENV }));
-  app.get("/__dbcheck", async () => {
-    // will throw if DATABASE_URL is missing or connection fails
-    await prisma.$queryRaw`SELECT 1`;
-    return { ok: true, db: "connected" };
-  });
-
-
-  // S2S guard for /api/s2s/*
-  app.addHook("onRequest", async (req, reply) => {
-    if (req.method === "OPTIONS") return;
-    if (req.url === "/health" || req.url === "/healthz" || req.url === "/__diag") return;
-    if (req.url.startsWith("/api/v1/auth/")) return; // public auth endpoints
-
-    if (req.url.startsWith("/api/s2s/")) {
-      const header = req.headers.authorization || "";
-      const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-      if (!token || token !== ADMIN_TOKEN) {
-        return reply.code(401).send({ error: "unauthorized" });
-      }
-    }
-  });
-
-  // Attach req.authUser from cookie session for /api/*
-  app.addHook("preHandler", async (req, reply) => {
-    // @ts-ignore
-    req.authUser = null;
-
-    if (!req.url.startsWith("/api/")) return;
-
-    // @ts-ignore - injected by @fastify/cookie
-    const sid = req.cookies?.[COOKIE_NAME] as string | undefined;
-    if (!sid) return;
-
-    const session = await prisma.session.findUnique({
-      where: { id: sid },
-      include: { user: true },
-    });
-    if (!session || session.expiresAt <= new Date()) return;
-
-    // ---- Block access to app APIs until email is verified ----
-    // Allow-list public endpoints (auth flows, invites, health).
-    const isPublic =
-      req.url.startsWith("/api/v1/auth/") ||            // login, logout, register, verify, me
-      req.url.startsWith("/api/v1/account/invites") ||  // invite prefill
-      req.url === "/api/v1/session" ||                  // allow session introspection
-      req.url === "/health" || req.url === "/healthz" || req.url === "/__diag";
-
-    if (!isPublic) {
-      const user = session.user as { emailVerified?: boolean } | null;
-      if (user && user.emailVerified === false) {
-        return reply.code(403).send({
-          error: "email_unverified",
-          message: "Please verify your email before using the app.",
-        });
-      }
-    }
-
-
-    const memberships = await prisma.membership.findMany({
-      where: { userId: session.userId },
-      select: { organizationId: true, role: true },
-    });
-
-    let orgId: number | undefined;
-    let role: "ADMIN" | "STAFF" | "MEMBER" | "VIEWER" | undefined;
-
-    if (!orgId && memberships.length > 0 && NODE_ENV !== "production") {
-      orgId = memberships[0].organizationId;
-      role = memberships[0].role as any;
-      req.log.warn({ userId: session.userId, orgId }, "DEV: auto-selected orgId; set X-Org-Id to override");
-    }
-
-    if (memberships.length === 1 && !orgId) {
-      orgId = memberships[0].organizationId;
-      role = memberships[0].role as any;
-    } else if (memberships.length > 1 && !orgId) {
-      const hdr = req.headers["x-org-id"];
-      let desired = hdr ? Number(hdr) : NaN;
-
-      if (!Number.isFinite(desired) && NODE_ENV !== "production") {
-        const fromEnv = Number(process.env.DEFAULT_DEV_ORG_ID);
-        if (Number.isFinite(fromEnv)) desired = fromEnv;
-      }
-
-      let match = Number.isFinite(desired)
-        ? memberships.find((m) => m.organizationId === desired)
-        : undefined;
-
-      if (!match && NODE_ENV !== "production") {
-        match = memberships[0];
-        req.log.warn({ userId: session.userId, picked: match.organizationId }, "DEV: fell back to first org");
-      }
-
-      if (match) {
-        orgId = match.organizationId;
-        role = match.role as any;
-      } else {
-        return reply.code(400).send({ error: "org_required", message: "Specify X-Org-Id for multi-org users" });
-      }
-    }
-
-    // @ts-ignore
-    req.authUser = { id: session.userId, email: session.user?.email ?? undefined, orgId, role };
-
-    // Optional rolling session extension
-    const ttlSec = Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14);
-    const ttlMs = ttlSec * 1000;
-    const rollIfLessThan = Math.min(ttlMs / 2, 7 * 24 * 60 * 60 * 1000);
-    if (session.expiresAt.getTime() - Date.now() < rollIfLessThan) {
-      const newExp = new Date(Date.now() + ttlMs);
-      await prisma.session.update({ where: { id: sid }, data: { expiresAt: newExp } });
-    }
-  });
-
-  if (NODE_ENV !== "production") {
-    app.addHook("onRoute", (r) => {
-      app.log.info({ method: r.method, url: r.url }, "ROUTE");
-    });
+  const code = (err as any).code;
+  if (code === "P2002") {
+    return reply.status(409).send({ error: "duplicate", detail: (err as any).meta?.target });
   }
+  if (code === "P2003") {
+    return reply.status(409).send({ error: "foreign_key_conflict" });
+  }
+  if ((err as any).statusCode) {
+    return reply.status((err as any).statusCode).send({ error: err.message });
+  }
+  return reply.status(500).send({ error: "internal_error" });
+});
 
-  // Register routes (ONCE) - Routes use absolute /api/v1/* inside the files
-  app.register(authRoutes);
-  app.register(contactsRoutes);
-  app.register(animalsRoutes);
-  app.register(tagsRoutes);
-  app.register(organizationsRoutes);
-  app.register(orgSettingsRoutes);
-  app.register(breedsRoutes);
-  app.register(animalsBreedsRoutes);
 
-  // DEV org utilities under /api/s2s/* (guarded by ADMIN_TOKEN)
-  if (!IS_PROD) {
-    app.register(async (instance) => {
-      try {
-        const m = await import("./routes/dev-org.js");
-        await instance.register(m.default);
-        instance.log.info("dev-org routes registered");
-      } catch (err) {
-        instance.log.error({ err }, "Failed to load dev-org routes");
+// ---------- API v1: tenant-scoped subtree ----------
+app.register(
+  async (api) => {
+    api.decorateRequest("tenantId", null as unknown as number);
+
+    api.addHook("preHandler", async (req, reply) => {
+      // Normalize path (strip query) and be tolerant of prefixes
+      const full = req.url || "/";
+      const pathOnly = full.split("?")[0] || "/";
+      const m = req.method.toUpperCase();
+
+      // Allow-list paths (works whether path has /api/v1 or not)
+      const isSpeciesPath =
+        pathOnly === "/species" || pathOnly.endsWith("/api/v1/species") || pathOnly.endsWith("/species");
+
+      const isBreedsSearchPath =
+        pathOnly === "/breeds/search" ||
+        pathOnly.endsWith("/api/v1/breeds/search") ||
+        pathOnly.endsWith("/breeds/search");
+
+      // 1) /species is always public (GET only)
+      if (m === "GET" && isSpeciesPath) {
+        (req as any).tenantId = null;
+        return;
       }
+
+      // 2) /breeds/search is public only when organizationId is NOT present
+      if (m === "GET" && isBreedsSearchPath) {
+        const q: any = (req as any).query || {};
+        const hasOrgId = q.organizationId != null || /(^|[?&])organizationId=/.test(full);
+        if (!hasOrgId) {
+          (req as any).tenantId = null;
+          return;
+        }
+        // if orgId present → require tenant/membership below
+      }
+
+      // ---------- normal tenant resolution + membership ----------
+      let tId: number | undefined;
+      const headerVal = req.headers["x-tenant-id"];
+      if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
+
+      if (!tId) {
+        const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
+        if (sess?.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
+          tId = sess.tenantId;
+        }
+      }
+
+      if (!(await detectTenants())) {
+        (req as any).tenantId = tId || null;
+        return;
+      }
+
+      if (!tId) {
+        return reply
+          .code(400)
+          .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
+      }
+
+      const ok = await requireTenantMembership(app, req, reply, tId);
+      if (!ok) return;
+
+      (req as any).tenantId = tId;
     });
-  }
 
-  // 404 + error handlers
-  app.setNotFoundHandler((req, reply) => {
-    reply.code(404).send({ error: "not_found", path: req.url });
-  });
+    // Tenant-scoped resources
+    api.register(contactsRoutes);      // /api/v1/contacts/*
+    api.register(organizationsRoutes); // /api/v1/organizations/*
+    api.register(breedingRoutes);      // /api/v1/breeding/*
+    api.register(animalsRoutes);       // /api/v1/animals/*
+    api.register(breedsRoutes);        // /api/v1/breeds/*
+    api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
+    api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
+    api.register(tagsRoutes);
+  },
+  { prefix: "/api/v1" }
+);
 
-  app.setErrorHandler((err, _req, reply) => {
-    const status = (err as any).statusCode || 500;
-    reply.code(status).send({
-      error: status === 500 ? "internal_error" : "request_error",
-      message: err.message,
-    });
-  });
+// ---------- Not Found ----------
+app.setNotFoundHandler((req, reply) => {
+  req.log.warn({ m: req.method, url: req.url }, "NOT FOUND");
+  reply.code(404).send({ ok: false, error: "Not found" });
+});
 
-  app.addHook("onClose", async () => {
-    try { await closePrisma(); } catch { /* noop */ }
-  });
-
-  return app;
-}
-
-// ───────────────────────────────────────────────────────────
-// Singleton guard to avoid re-registering routes in dev HMR
-declare global {
-  // eslint-disable-next-line no-var
-  var __BHQ_APP__: FastifyInstance | undefined;
-}
-export const appSingleton = globalThis.__BHQ_APP__ ?? (globalThis.__BHQ_APP__ = buildServer());
-
-// Start unless explicitly disabled (e.g., tests set BHQ_NO_LISTEN=1)
-async function start() {
-  if (process.env.BHQ_NO_LISTEN === "1") {
-    appSingleton.log.info("BHQ_NO_LISTEN=1 set; not starting HTTP listener.");
-    return;
-  }
-
-  // Avoid double-listen in hot-reload
-  if (!appSingleton.server.listening) {
-    await appSingleton.listen({ port: PORT, host: HOST });
-    appSingleton.log.info(`API listening on http://${HOST}:${PORT}`);
+// ---------- Start ----------
+export async function start() {
+  try {
+    await app.ready();
+    app.printRoutes();
+    await app.listen({ port: PORT, host: "0.0.0.0" });
+    app.log.info(`API listening on :${PORT}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
   }
 }
 
-start().catch((err) => {
-  appSingleton.log.error(err);
-  process.exit(1);
+start();
+
+// ---------- Shutdown ----------
+process.on("SIGTERM", async () => {
+  app.log.info("SIGTERM received, closing");
+  await app.close();
+  process.exit(0);
+});
+process.on("SIGINT", async () => {
+  app.log.info("SIGINT received, closing");
+  await app.close();
+  process.exit(0);
 });

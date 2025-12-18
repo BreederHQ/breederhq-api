@@ -1,360 +1,710 @@
 // src/routes/auth.ts
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
-import * as bcrypt from "bcryptjs";
-import { RateLimiterMemory } from "rate-limiter-flexible";
-import crypto from "node:crypto";
-import { addDays, addMinutes } from "date-fns";
+import type { FastifyInstance, FastifyPluginOptions, FastifyReply } from "fastify";
+import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
-import { Role } from "@prisma/client";
 
-// ───────────────────────────────────────────────────────────
-// Config
-// ───────────────────────────────────────────────────────────
-const IS_PROD = process.env.NODE_ENV === "production";
+/**
+ * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
+ *
+ * Endpoints:
+ *   POST /register
+ *   POST /verify-email
+ *   GET  /verify-email
+ *   POST /forgot-password
+ *   POST /reset-password
+ *   GET  /reset-password
+ *   POST /login
+ *   GET|POST /logout
+ *   GET|POST /dev-login    (DEV_LOGIN_ENABLED=1 and not production)
+ *   GET  /me
+ *
+ * Cookies:
+ *   - Session:   COOKIE_NAME (default "bhq_s") => base64url(JSON { userId, tenantId?, iat, exp })
+ *   - CSRF:      XSRF-TOKEN  (non-HttpOnly)
+ */
+
+type SessionPayload = {
+  userId: string;
+  tenantId?: number;
+  iat: number; // ms
+  exp: number; // ms
+};
+
 const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
-const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
-const WEB_ORIGIN = process.env.WEB_ORIGIN || "http://localhost:6170";
+const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
+const DEV_LOGIN_ENABLED = String(process.env.DEV_LOGIN_ENABLED || "").trim() === "1";
+const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
+const IS_PROD = NODE_ENV === "production";
+const EXPOSE_DEV_TOKENS = !IS_PROD; // never expose raw tokens in prod
 
-// Basic per-IP limiter: 5 attempts/minute
-const rl = new RateLimiterMemory({ points: 5, duration: 60 });
+/* ───────────────────────── schema guards ───────────────────────── */
 
-// ───────────────────────────────────────────────────────────
-// Utils
-// ───────────────────────────────────────────────────────────
-function strongPassword(s: string) {
-  return s.length >= 12 && /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s) && /[^a-zA-Z0-9]/.test(s);
-}
-async function hashPassword(pw: string) { return bcrypt.hash(pw, 12); }
-async function verifyPassword(pw: string, hash: string) { return bcrypt.compare(pw, hash); }
-function randomId(len = 48) { return crypto.randomBytes(len).toString("base64url"); }
+let _hasTenants: boolean | null = null;
+let _hasVerificationToken: boolean | null = null;
+let _hasSessionTable: boolean | null = null;
 
-async function verifyHCaptcha(token: string | null | undefined, _ip: string) {
-  if (!process.env.HCAPTCHA_SECRET) return true; // off in dev
-  if (!token) return false;
-  // TODO: call https://hcaptcha.com/siteverify
-  return true;
-}
-
-async function requireAdminToken(req: FastifyRequest, reply: FastifyReply) {
-  const adminToken = process.env.ADMIN_TOKEN;
-  const got = (req.headers["x-admin-token"] as string) || req.headers["authorization"]?.replace(/^Bearer\s+/i, "");
-  if (adminToken && got === adminToken) return;
-  return reply.code(403).send({ message: "Forbidden" });
+async function tableExists(tableName: string): Promise<boolean> {
+  const r = await prisma.$queryRawUnsafe<
+    Array<{ exists: boolean }>
+  >(
+    `select exists (
+       select 1 from information_schema.tables
+       where table_schema = current_schema() and table_name = $1
+     ) as exists`,
+    tableName.toLowerCase()
+  );
+  return !!r?.[0]?.exists;
 }
 
-async function createSession(reply: FastifyReply, userId: string) {
-  const id = randomId(32);
-  const expiresAt = addDays(new Date(), SESSION_TTL_DAYS);
-  await prisma.session.create({ data: { id, userId, expiresAt } });
+async function detectTenants(): Promise<boolean> {
+  if (_hasTenants != null) return _hasTenants;
+  const hasTenant = await tableExists("Tenant");
+  const hasTM = await tableExists("TenantMembership");
+  _hasTenants = hasTenant && hasTM;
+  return _hasTenants;
+}
 
-  reply.setCookie(COOKIE_NAME, id, {
+async function detectVerificationToken(): Promise<boolean> {
+  if (_hasVerificationToken != null) return _hasVerificationToken;
+  _hasVerificationToken = await tableExists("VerificationToken");
+  return _hasVerificationToken;
+}
+
+async function detectSessionTable(): Promise<boolean> {
+  if (_hasSessionTable != null) return _hasSessionTable;
+  _hasSessionTable = await tableExists("Session");
+  return _hasSessionTable;
+}
+
+/* ───────────────────────── cookies / session ───────────────────────── */
+
+function sessionLifetimes() {
+  const ms = ALLOW_CROSS_SITE
+    ? 24 * 60 * 60 * 1000
+    : (NODE_ENV === "development" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000);
+  const rotateAt = Math.floor(ms * 0.2);
+  return { ms, rotateAt };
+}
+
+function cookieBase() {
+  const { ms } = sessionLifetimes();
+  const sameSite: "lax" | "none" = ALLOW_CROSS_SITE ? "none" : "lax";
+  const secure = ALLOW_CROSS_SITE || NODE_ENV === "production";
+  return {
     httpOnly: true,
-    secure: IS_PROD,                    // dev=false so localhost works
-    sameSite: IS_PROD ? "none" : "lax", // prod cross-site cookie
+    sameSite,
+    secure,
     path: "/",
-    domain: IS_PROD ? COOKIE_DOMAIN : undefined,
-    expires: expiresAt,
-  });
+    maxAge: Math.floor(ms / 1000),
+  } as const;
 }
 
-async function clearSession(reply: FastifyReply, cookieValue?: string) {
-  if (cookieValue) await prisma.session.deleteMany({ where: { id: cookieValue } }).catch(() => { });
-  reply.clearCookie(COOKIE_NAME, {
-    path: "/",
-    domain: IS_PROD ? COOKIE_DOMAIN : undefined,
-    secure: IS_PROD,
-    sameSite: IS_PROD ? "none" : "lax",
-  });
+function randCsrf() {
+  return randomBytes(32).toString("base64url");
 }
 
-async function createEmailVerifyToken(userId: string) {
-  const token = randomId(32);
-  const expiresAt = addDays(new Date(), 2);
-  await prisma.verificationToken.create({
-    data: { id: crypto.randomUUID(), userId, token, type: "EMAIL_VERIFY", expiresAt },
-  });
-  return { token, expiresAt };
+function setSessionCookies(reply: FastifyReply, sess: Omit<SessionPayload, "iat" | "exp">) {
+  const now = Date.now();
+  const { ms } = sessionLifetimes();
+  const payload: SessionPayload = { ...sess, iat: now, exp: now + ms };
+  const buf = Buffer.from(JSON.stringify(payload)).toString("base64url");
+
+  // Session (HttpOnly)
+  reply.setCookie(COOKIE_NAME, buf, cookieBase());
+
+  // CSRF (not HttpOnly)
+  reply.setCookie("XSRF-TOKEN", randCsrf(), { ...cookieBase(), httpOnly: false });
 }
 
-async function sendVerifyEmail(to: string, token: string) {
-  const url = `${WEB_ORIGIN}/verify?token=${encodeURIComponent(token)}`;
-  console.log(`[email] Verify email to=${to} url=${url}`);
+function clearAuthCookies(reply: FastifyReply) {
+  const base = cookieBase();
+  reply.setCookie(COOKIE_NAME, "", { ...base, maxAge: 0 });
+  reply.clearCookie(COOKIE_NAME, { path: "/" });
+  reply.setCookie("XSRF-TOKEN", "", { ...base, httpOnly: false, maxAge: 0 });
+  reply.clearCookie("XSRF-TOKEN", { path: "/" });
 }
 
-async function getPrimaryOrgForUser(userId: string) {
-  const m = await prisma.membership.findFirst({
-    where: { userId },
-    include: { organization: true },
-    orderBy: { id: "asc" },
-  });
-  return m?.organization || null;
+function parseSession(raw?: string | null): SessionPayload | null {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
+    if (!obj?.userId || !obj?.iat || !obj?.exp) return null;
+    return obj as SessionPayload;
+  } catch {
+    return null;
+  }
 }
 
-// ───────────────────────────────────────────────────────────
-// Routes
-// ───────────────────────────────────────────────────────────
-export async function authRoutes(app: FastifyInstance) {
-  // GET /api/v1/session
-  app.get("/api/v1/session", async (req, reply) => {
-    const sid = req.cookies?.[COOKIE_NAME];
-    if (!sid) return reply.code(401).send({ ok: false });
+/* ───────────────────────── tenant helpers ───────────────────────── */
 
-    const session = await prisma.session.findUnique({ where: { id: sid }, include: { user: true } });
-    if (!session || session.expiresAt < new Date()) {
-      await clearSession(reply, sid);
-      return reply.code(401).send({ ok: false });
+/** 1) defaultTenantId 2) first membership 3) undefined */
+async function pickTenantIdForUser(userId: string): Promise<number | undefined> {
+  if (!(await detectTenants())) return undefined;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      // these fields exist only in multi-tenant schema
+      // use any to skip TS binding to a specific Prisma client
+      // @ts-ignore
+      defaultTenantId: true,
+      // @ts-ignore
+      tenantMemberships: { select: { tenantId: true }, orderBy: { tenantId: "asc" } },
+    } as any,
+  }) as any;
+
+  if (!user) return undefined;
+  if (typeof user.defaultTenantId === "number" && user.defaultTenantId > 0) return user.defaultTenantId;
+  const first = Array.isArray(user.tenantMemberships) ? user.tenantMemberships[0]?.tenantId : undefined;
+  return first ?? undefined;
+}
+
+async function ensureDefaultTenant(userId: string) {
+  if (!(await detectTenants())) return;
+  const u = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      // @ts-ignore
+      defaultTenantId: true,
+      // @ts-ignore
+      tenantMemberships: { select: { tenantId: true }, orderBy: { tenantId: "asc" } },
+    } as any,
+  }) as any;
+  if (u && !u.defaultTenantId && Array.isArray(u.tenantMemberships) && u.tenantMemberships.length > 0) {
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        // @ts-ignore
+        data: { defaultTenantId: u.tenantMemberships[0].tenantId },
+      } as any);
+    } catch {
+      // ignore if column not present
     }
+  }
+}
 
-    const user = session.user;
-    const org = await getPrimaryOrgForUser(user.id);
+async function findUserByEmail(email: string) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return null;
 
-    return reply.send({
-      user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified },
-      org: org ? { id: org.id, name: org.name } : null,
-      roles: [],
-    });
-  });
+  // Select minimal core fields that should exist
+  const base = await prisma.user.findUnique({
+    where: { email: e },
+    select: {
+      id: true,
+      email: true,
+      // Optional fields guarded via any
+      // @ts-ignore
+      name: true,
+      // @ts-ignore
+      image: true,
+      // @ts-ignore
+      passwordHash: true,
+      // @ts-ignore
+      isSuperAdmin: true,
+      // @ts-ignore
+      defaultTenantId: true,
+      // @ts-ignore
+      emailVerifiedAt: true,
+      // @ts-ignore
+      tenantMemberships: { select: { tenantId: true, role: true } },
+    } as any,
+  }) as any;
 
-  // GET /api/v1/auth/me  (legacy alias for FE)
-  app.get("/api/v1/auth/me", async (req, reply) => {
-    const sid = req.cookies?.[COOKIE_NAME];
-    if (!sid) return reply.code(401).send({ ok: false });
+  if (!base) return null;
 
-    const session = await prisma.session.findUnique({ where: { id: sid }, include: { user: true } });
-    if (!session || session.expiresAt < new Date()) {
-      await clearSession(reply, sid);
-      return reply.code(401).send({ ok: false });
-    }
+  // Normalize shape so callers do not need guards
+  return {
+    id: base.id,
+    email: base.email,
+    name: base.name ?? null,
+    image: base.image ?? null,
+    passwordHash: base.passwordHash ?? null,
+    isSuperAdmin: !!base.isSuperAdmin,
+    defaultTenantId: typeof base.defaultTenantId === "number" ? base.defaultTenantId : null,
+    emailVerifiedAt: base.emailVerifiedAt ?? null,
+    tenantMemberships: Array.isArray(base.tenantMemberships) ? base.tenantMemberships : [],
+  };
+}
 
-    const user = session.user;
-    const org = await getPrimaryOrgForUser(user.id);
-    return reply.send({
-      user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified },
-      org: org ? { id: org.id, name: org.name } : null,
-      roles: [],
-    });
-  });
+/* ───────────────────────── token helpers ───────────────────────── */
 
-  // POST /api/v1/auth/login
-  app.post("/api/v1/auth/login", async (req, reply) => {
-    try { await rl.consume(req.ip); } catch { return reply.code(429).send({ message: "Too many attempts." }); }
+function b64url(buf: Buffer) {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function sha256b64url(input: string | Buffer) {
+  return b64url(createHash("sha256").update(input).digest());
+}
+function newRawToken(): string {
+  return b64url(randomBytes(32));
+}
 
-    const body = z.object({ email: z.string().email(), password: z.string().min(8) }).parse(req.body);
-    const user = await prisma.user.findUnique({ where: { email: body.email.toLowerCase() } });
-    if (!user || !user.hashedPass) return reply.code(400).send({ message: "Invalid email or password." });
-
-    const ok = await verifyPassword(body.password, user.hashedPass);
-    if (!ok) return reply.code(400).send({ message: "Invalid email or password." });
-
-    if (!user.emailVerified) {
-      return reply.code(403).send({ message: "Please verify your email before signing in." });
-    }
-
-    await createSession(reply, user.id);
-    return reply.send({ ok: true });
-  });
-
-  // POST /api/v1/auth/logout
-  app.post("/api/v1/auth/logout", async (req, reply) => {
-    const sid = req.cookies?.[COOKIE_NAME];
-    await clearSession(reply, sid);
-    return reply.send({ ok: true });
-  });
-
-  // POST /api/v1/account/invites  (guarded)
-  app.post("/api/v1/account/invites", { preHandler: [requireAdminToken] }, async (req, reply) => {
-    const body = z.object({
-      email: z.string().email(),
-      organizationId: z.number().int().optional(),
-      role: z.nativeEnum(Role).optional(),
-      ttlMinutes: z.number().min(5).max(60 * 24 * 14).default(60 * 24 * 7),
-    }).parse(req.body);
-
-    const token = randomId(24);
-    const expiresAt = addMinutes(new Date(), body.ttlMinutes);
-
-    const invite = await prisma.invite.create({
-      data: {
-        email: body.email.toLowerCase(),
-        organizationId: body.organizationId ?? null,
-        role: body.role ?? "STAFF",
-        token,
-        expiresAt,
-      },
-    });
-
-    const link = `${WEB_ORIGIN}/invite?token=${encodeURIComponent(token)}`;
-    app.log.info({ event: "invite_created", email: body.email, organizationId: body.organizationId, link });
-
-    return reply.code(201).send({ id: invite.id, token, link, expiresAt });
-  });
-
-  // GET /api/v1/account/invites/:token
-  app.get("/api/v1/account/invites/:token", async (req, reply) => {
-    const { token } = z.object({ token: z.string() }).parse(req.params);
-    const invite = await prisma.invite.findUnique({ where: { token } });
-    if (!invite || invite.consumedAt || invite.expiresAt < new Date()) {
-      return reply.code(404).send({ message: "Invite not found or expired." });
-    }
-    return reply.send({ email: invite.email, organizationId: invite.organizationId });
-  });
-
-  // GET /api/v1/auth/dev-login
-  app.get("/api/v1/auth/dev-login", async (req, reply) => {
-    if (IS_PROD) return reply.code(404).send({ error: "not_found" });
-
-    const { orgId, redirect } = z.object({
-      orgId: z.coerce.number().int().optional(),
-      redirect: z.string().url().optional(),
-    }).parse(req.query);
-
-    // dev user
-    const devEmail = "dev@local";
-    let user = await prisma.user.findUnique({ where: { email: devEmail } });
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          id: crypto.randomUUID(),
-          email: devEmail,
-          name: "Dev User",
-          hashedPass: await hashPassword("dev-only-password"),
-        },
-      });
-    }
-
-    // org
-    let org = orgId ? await prisma.organization.findUnique({ where: { id: orgId } }) : null;
-    if (!org) org = await prisma.organization.create({ data: { name: "Dev Org" } });
-
-    // membership
-    await prisma.membership.upsert({
-      where: { userId_organizationId: { userId: user.id, organizationId: org.id } },
-      update: { role: "ADMIN" },
-      create: { userId: user.id, organizationId: org.id, role: "ADMIN" },
-    });
-
-    await createSession(reply, user.id);
-    reply.redirect(redirect || "/");
-  });
-
-  // DEV helper
-  if (!IS_PROD) {
-    app.get("/api/v1/dev/verify-token", async (_req, reply) => {
-      const rec = await prisma.verificationToken.findFirst({
-        where: { type: "EMAIL_VERIFY" },
-        orderBy: { expiresAt: "desc" },
-      });
-      if (!rec) return reply.code(404).send({ message: "none" });
-      return reply.send({ token: rec.token, expiresAt: rec.expiresAt });
-    });
+async function createVerificationToken(args: {
+  identifier: string; // usually email
+  purpose: "VERIFY_EMAIL" | "RESET_PASSWORD" | "INVITE" | "OTHER";
+  userId?: string | null;
+  ttlMinutes?: number; // default 60
+}) {
+  if (!(await detectVerificationToken())) {
+    // Token table not available. Return a synthetic that only shows in dev for visibility.
+    return { raw: newRawToken(), rec: { identifier: args.identifier, purpose: args.purpose, expires: new Date(Date.now() + (args.ttlMinutes ?? 60) * 60 * 1000) } };
   }
 
-  // POST /api/v1/auth/register
-  app.post("/api/v1/auth/register", async (req, reply) => {
-    try { await rl.consume(req.ip); } catch { return reply.code(429).send({ message: "Too many attempts." }); }
+  const raw = newRawToken();
+  const tokenHash = sha256b64url(raw);
+  const expires = new Date(Date.now() + (args.ttlMinutes ?? 60) * 60 * 1000);
+  const rec = await prisma.verificationToken.create({
+    data: {
+      identifier: args.identifier.toLowerCase(),
+      tokenHash,
+      purpose: args.purpose,
+      userId: args.userId ?? null,
+      expires,
+    },
+    select: { identifier: true, tokenHash: true, purpose: true, expires: true },
+  });
+  return { raw, rec };
+}
 
-    const body = z.object({
-      token: z.string(),
-      captchaToken: z.string().nullable().optional(),
-      firstName: z.string().min(1),
-      lastName: z.string().min(1),
-      email: z.string().email(),
-      password: z.string().min(12),
-      displayName: z.string().optional(),
-      phone: z.string().optional(),
-    }).parse(req.body);
+/** Validate without consuming (for GET reset preflight). */
+async function findValidToken(
+  purpose: "VERIFY_EMAIL" | "RESET_PASSWORD",
+  rawToken: string
+) {
+  if (!(await detectVerificationToken())) return null;
+  const tokenHash = sha256b64url(rawToken);
+  const tok = await prisma.verificationToken.findFirst({
+    where: { tokenHash, purpose },
+    select: { identifier: true, userId: true, expires: true },
+  });
+  if (!tok) return null;
+  if (tok.expires <= new Date()) return null;
+  return tok;
+}
 
-    const captchaOk = await verifyHCaptcha(body.captchaToken, req.ip);
-    if (!captchaOk) return reply.code(400).send({ message: "Captcha failed." });
-    if (!strongPassword(body.password)) {
-      return reply.code(400).send({ message: "Password must be 12+ chars and include upper, lower, number, and symbol." });
+/** Consume (delete) a token; returns payload if valid. */
+async function consumeToken(
+  purpose: "VERIFY_EMAIL" | "RESET_PASSWORD",
+  rawToken: string
+) {
+  if (!(await detectVerificationToken())) return null;
+  const tokenHash = sha256b64url(rawToken);
+  const tok = await prisma.verificationToken.findFirst({
+    where: { tokenHash, purpose },
+    select: { identifier: true, userId: true, expires: true },
+  });
+  if (!tok) return null;
+  if (tok.expires <= new Date()) {
+    await prisma.verificationToken.deleteMany({ where: { tokenHash } }); // cleanup expired
+    return null;
+  }
+  await prisma.verificationToken.deleteMany({ where: { tokenHash } }); // single-use
+  return tok;
+}
+
+/* Optional redirect guard */
+function isSafeRedirect(u?: string) {
+  if (!u) return false;
+  try {
+    const url = new URL(u);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+/* ───────────────────────── routes ───────────────────────── */
+
+export default async function authRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
+  /* ───── Register ───── */
+  // POST /register  { email, password, name? }
+  app.post("/register", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const { email = "", password = "", name = null } = (req.body || {}) as {
+      email?: string; password?: string; name?: string | null;
+    };
+    const e = String(email).trim().toLowerCase();
+    const p = String(password);
+
+    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
+    if (p.length < 8) return reply.code(400).send({ error: "password_too_short" });
+
+    const existing = await prisma.user.findUnique({
+      where: { email: e },
+      // select only core fields to avoid schema coupling
+      select: { id: true },
+    });
+
+    let userId: string;
+    if (!existing) {
+      // optional fields guarded with try
+      const data: any = { email: e };
+      if (name != null) data.name = name; // ignored if column missing
+      try {
+        data.passwordHash = await bcrypt.hash(p, 12);
+      } catch {
+        // if no passwordHash column, we cannot support email+password auth
+      }
+      const u = await prisma.user.create({
+        data,
+        select: { id: true },
+      });
+      userId = u.id;
+    } else {
+      // If user exists, try to set password if passwordHash column exists
+      const passwordHash = await bcrypt.hash(p, 12);
+      const u = await prisma.user.update({
+        where: { id: existing.id },
+        data: (() => {
+          const d: any = {};
+          d.passwordHash = passwordHash;
+          return d;
+        })(),
+        select: { id: true },
+      });
+      userId = u.id;
     }
 
-    const invite = await prisma.invite.findUnique({ where: { token: body.token } });
-    if (!invite || invite.consumedAt || invite.expiresAt < new Date() ||
-      invite.email.toLowerCase() !== body.email.toLowerCase()) {
-      return reply.code(400).send({ message: "Invalid or expired invite." });
-    }
-
-    const org = invite.organizationId != null
-      ? await prisma.organization.findUniqueOrThrow({ where: { id: invite.organizationId } })
-      : await prisma.organization.create({ data: { name: `${body.firstName}'s Kennel` } });
-
-    const hashedPass = await hashPassword(body.password);
-    const user = await prisma.user.create({
-      data: {
-        id: crypto.randomUUID(),
-        email: body.email.toLowerCase(),
-        name: `${body.firstName} ${body.lastName}`,
-        hashedPass,
-      },
+    // Issue verify-email token when table exists
+    const { raw } = await createVerificationToken({
+      identifier: e,
+      purpose: "VERIFY_EMAIL",
+      userId,
+      ttlMinutes: 60,
     });
 
-    const subscriber = await prisma.contact.create({
-      data: {
-        firstName: body.firstName,
-        lastName: body.lastName,
-        displayName: body.displayName ?? `${body.firstName} ${body.lastName}`,
-        email: body.email.toLowerCase(),
-        phone: body.phone ?? null,
-        organizationId: org.id,
-        kind: "SUBSCRIBER", // if your schema has this column; otherwise remove
-      } as any,
-    });
-
-    await prisma.user.update({ where: { id: user.id }, data: { contactId: subscriber.id } });
-
-    const role = invite.organizationId == null ? "ADMIN" : invite.role;
-    await prisma.membership.create({
-      data: { userId: user.id, organizationId: org.id, role: role || "STAFF" },
-    });
-
-    await prisma.invite.update({ where: { id: invite.id }, data: { consumedAt: new Date() } });
-
-    const ver = await createEmailVerifyToken(user.id);
-    await sendVerifyEmail(user.email!, ver.token);
-
-    // Do NOT create a session yet. User must verify first.
     return reply.code(201).send({
-      userId: user.id,
-      orgId: org.id,
-      emailVerified: false,
-      next: "verify_email",
+      ok: true,
+      ...(EXPOSE_DEV_TOKENS ? { dev_token: raw } : {}),
     });
   });
 
-  // POST /api/v1/auth/verify  (idempotent)
-  app.post("/api/v1/auth/verify", async (req, reply) => {
-    const { token } = z.object({ token: z.string() }).parse(req.body);
-    const vt = await prisma.verificationToken.findUnique({ where: { token } }).catch(() => null);
-    if (!vt) return reply.send({ ok: true, already: true });
+  /* ───── Verify Email ───── */
+  // POST /verify-email  { token }
+  app.post("/verify-email", async (req, reply) => {
+    const { token = "" } = (req.body || {}) as { token?: string };
+    if (!token) return reply.code(400).send({ error: "token_required" });
 
-    if (vt.type !== "EMAIL_VERIFY") {
-      await prisma.verificationToken.delete({ where: { id: vt.id } }).catch(() => { });
-      return reply.code(400).send({ message: "Invalid token type." });
-    }
-    if (vt.expiresAt < new Date()) {
-      await prisma.verificationToken.delete({ where: { id: vt.id } }).catch(() => { });
-      return reply.code(400).send({ message: "Token expired." });
-    }
+    const tok = await consumeToken("VERIFY_EMAIL", token);
+    if (!tok) return reply.code(400).send({ error: "invalid_or_expired_token" });
 
-    if (vt.userId) {
+    const user = await prisma.user.findUnique({
+      where: { email: tok.identifier.toLowerCase() },
+      select: { id: true },
+    });
+    if (!user) return reply.code(404).send({ error: "user_not_found" });
+
+    try {
       await prisma.user.update({
-        where: { id: vt.userId },
-        data: { emailVerified: true },
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() } as any,
+        select: { id: true },
       });
-    } else if (vt.email) {
-      // fallback if you issued token by email
-      await prisma.user.updateMany({
-        where: { email: vt.email.toLowerCase() },
-        data: { emailVerified: true },
+    } catch {
+      // ignore if column not present
+    }
+
+    return reply.send({ ok: true });
+  });
+
+  // GET /verify-email?token=...&redirect=...
+  app.get("/verify-email", async (req, reply) => {
+    const q = (req.query || {}) as { token?: string; redirect?: string };
+    const token = q.token || "";
+    const redirect = q.redirect;
+
+    if (!token) return reply.code(400).send({ error: "token_required" });
+
+    let ok = false;
+    const tok = await consumeToken("VERIFY_EMAIL", token);
+    if (tok) {
+      const u = await prisma.user.findUnique({ where: { email: tok.identifier.toLowerCase() }, select: { id: true } });
+      if (u) {
+        try {
+          await prisma.user.update({
+            where: { id: u.id },
+            data: { emailVerifiedAt: new Date() } as any,
+          });
+          ok = true;
+        } catch {
+          ok = true; // verified conceptually even if column missing
+        }
+      }
+    }
+
+    if (redirect && isSafeRedirect(redirect)) {
+      const url = new URL(redirect);
+      url.searchParams.set("verified", ok ? "1" : "0");
+      return reply.redirect(url.toString());
+    }
+
+    return reply.type("text/html").send(
+      ok
+        ? "<!doctype html><meta charset=utf-8><title>Email Verified</title><p>Email verified. You may close this window.</p>"
+        : "<!doctype html><meta charset=utf-8><title>Invalid Token</title><p>Verification link is invalid or expired.</p>"
+    );
+  });
+
+  /* ───── Forgot / Reset Password ───── */
+  // POST /forgot-password  { email }
+  app.post("/forgot-password", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const { email = "" } = (req.body || {}) as { email?: string };
+    const e = String(email).trim().toLowerCase();
+    if (!e) return reply.code(400).send({ error: "email_required" });
+
+    if (!(await detectVerificationToken())) {
+      // Still return 200 to avoid enumeration patterns
+      return reply.send({ ok: true });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: e }, select: { id: true } });
+    if (user) {
+      const { raw } = await createVerificationToken({
+        identifier: e,
+        purpose: "RESET_PASSWORD",
+        userId: user.id,
+        ttlMinutes: 30,
+      });
+      // TODO: send email link: https://yourapp.example/reset-password?token=${raw}
+      if (EXPOSE_DEV_TOKENS) {
+        return reply.send({ ok: true, dev_token: raw });
+      }
+    }
+    return reply.send({ ok: true });
+  });
+
+  // GET /reset-password?token=...&redirect=...
+  app.get("/reset-password", async (req, reply) => {
+    const q = (req.query || {}) as { token?: string; redirect?: string };
+    const token = q.token || "";
+    const redirect = q.redirect;
+
+    if (!token) return reply.code(400).send({ error: "token_required" });
+
+    const tok = await findValidToken("RESET_PASSWORD", token);
+    const ok = !!tok;
+
+    if (redirect && isSafeRedirect(redirect)) {
+      const url = new URL(redirect);
+      url.searchParams.set("ok", ok ? "1" : "0");
+      if (ok) url.searchParams.set("token", token);
+      return reply.redirect(url.toString());
+    }
+
+    return reply.type("text/html").send(
+      ok
+        ? "<!doctype html><meta charset=utf-8><title>Reset Password</title><p>Token looks good. Continue in the app.</p>"
+        : "<!doctype html><meta charset=utf-8><title>Invalid Token</title><p>Reset link is invalid or expired.</p>"
+    );
+  });
+
+  // POST /reset-password  { token, password }
+  app.post("/reset-password", async (req, reply) => {
+    const { token = "", password = "" } = (req.body || {}) as { token?: string; password?: string };
+    const pw = String(password);
+    if (!token || !pw) return reply.code(400).send({ error: "token_and_password_required" });
+    if (pw.length < 8) return reply.code(400).send({ error: "password_too_short" });
+
+    const tok = await consumeToken("RESET_PASSWORD", token);
+    if (!tok || !tok.userId) return reply.code(400).send({ error: "invalid_or_expired_token" });
+
+    const passwordHash = await bcrypt.hash(pw, 12);
+
+    await prisma.$transaction(async (tx) => {
+      // update password if column exists
+      try {
+        await (tx as any).user.update({
+          where: { id: tok.userId! },
+          data: { passwordHash, passwordUpdatedAt: new Date() } as any,
+          select: { id: true },
+        });
+      } catch {
+        // if password cannot be set, leave as is
+      }
+
+      // revoke all sessions if Session table exists
+      if (await detectSessionTable()) {
+        try {
+          await (tx as any).session.deleteMany({ where: { userId: tok.userId! } });
+        } catch {
+          // ignore
+        }
+      }
+
+      // cleanup any other pending reset tokens
+      if (await detectVerificationToken()) {
+        try {
+          await (tx as any).verificationToken.deleteMany({
+            where: { userId: tok.userId!, purpose: "RESET_PASSWORD" },
+          });
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    return reply.send({ ok: true });
+  });
+
+  /* ───── Login / Logout / Me / Dev-login ───── */
+
+  // POST /login
+  app.post("/login", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const { email = "", password = "" } = (req.body || {}) as { email?: string; password?: string };
+    const e = String(email).trim().toLowerCase();
+    const p = String(password);
+
+    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
+
+    const user = await findUserByEmail(e);
+    if (!user || !user.passwordHash) return reply.code(401).send({ error: "invalid_credentials" });
+
+    // If you want to require verified email, uncomment:
+    // if (!user.emailVerifiedAt) return reply.code(403).send({ error: "email_not_verified" });
+
+    const ok = await bcrypt.compare(p, user.passwordHash).catch(() => false);
+    if (!ok) return reply.code(401).send({ error: "invalid_credentials" });
+
+    // lastLoginAt is optional
+    try {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() } as any,
+        select: { id: true },
+      });
+    } catch {
+      // ignore if column not present
+    }
+
+    await ensureDefaultTenant(user.id);
+    const tenantId = await pickTenantIdForUser(user.id);
+    setSessionCookies(reply, { userId: String(user.id), tenantId });
+
+    return reply.send({
+      ok: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name ?? null,
+        isSuperAdmin: !!user.isSuperAdmin,
+      },
+      tenant: tenantId ? { id: tenantId } : null,
+      memberships: (user.tenantMemberships || []).map((m: any) => ({ tenantId: m.tenantId, role: m.role ?? null })),
+    });
+  });
+
+  // GET/POST /logout
+  const handleLogout = async (req: any, reply: FastifyReply) => {
+    const bag = (req.body || req.query || {}) as { redirect?: string };
+    clearAuthCookies(reply);
+    if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(String(bag.redirect)));
+    return reply.send({ ok: true });
+  };
+  app.get("/logout", handleLogout);
+  app.post("/logout", handleLogout);
+
+  // DEV-ONLY: GET/POST /dev-login
+  const handleDevLogin = async (req: any, reply: FastifyReply) => {
+    if (IS_PROD || !DEV_LOGIN_ENABLED) return reply.code(404).send({ error: "not_found" });
+
+    const bag = (req.body || req.query || {}) as { tenantId?: string; redirect?: string };
+    const requestedTenantId = bag.tenantId ? Number(bag.tenantId) : undefined;
+
+    const email = "dev@bhq.local";
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: { email, name: "Dev User", isSuperAdmin: true, emailVerifiedAt: new Date() } as any,
       });
     }
 
-    await prisma.verificationToken.delete({ where: { id: vt.id } }).catch(() => { });
-    return reply.send({ ok: true, emailVerified: true });
+    let tenantId: number | undefined = undefined;
+
+    if (await detectTenants()) {
+      tenantId = requestedTenantId ?? (await pickTenantIdForUser(user.id));
+      if (requestedTenantId) {
+        const hasMembership = await (prisma as any).tenantMembership.findUnique?.({
+          where: { userId_tenantId: { userId: user.id, tenantId: requestedTenantId } },
+        });
+        if (!hasMembership) {
+          try {
+            await (prisma as any).tenantMembership.create({
+              data: { userId: user.id, tenantId: requestedTenantId, role: "OWNER" },
+            });
+            tenantId = requestedTenantId;
+          } catch {
+            // ignore; tenant may not exist
+          }
+        }
+      }
+    }
+
+    setSessionCookies(reply, { userId: String(user.id), tenantId });
+    if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(bag.redirect));
+    return reply.send({
+      ok: true,
+      user: { id: user.id, email: user.email },
+      tenant: tenantId ? { id: tenantId } : null,
+    });
+  };
+  app.get("/dev-login", handleDevLogin);
+  app.post("/dev-login", handleDevLogin);
+
+  // GET /me
+  app.get("/me", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const raw = req.cookies?.[COOKIE_NAME];
+    const sess = parseSession(raw);
+
+    if (!sess || Date.now() >= sess.exp) {
+      return reply.code(401).send({ ok: false, error: "unauthorized" });
+    }
+
+    // Optional rotation if close to expiry
+    const { rotateAt } = sessionLifetimes();
+    if (sess.exp - Date.now() < rotateAt) {
+      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId });
+    }
+
+    const userRec = await prisma.user.findUnique({
+      where: { id: sess.userId },
+      select: {
+        id: true, email: true,
+        // Optional reads guarded with any
+        // @ts-ignore
+        name: true,
+        // @ts-ignore
+        image: true,
+        // @ts-ignore
+        isSuperAdmin: true,
+        // @ts-ignore
+        defaultTenantId: true,
+        // @ts-ignore
+        tenantMemberships: { select: { tenantId: true, role: true }, orderBy: { tenantId: "asc" } },
+      } as any,
+    }) as any;
+
+    if (!userRec) return reply.code(401).send({ ok: false, error: "unauthorized" });
+
+    const tenantId =
+      sess.tenantId ??
+      (typeof userRec.defaultTenantId === "number" ? userRec.defaultTenantId : undefined) ??
+      (Array.isArray(userRec.tenantMemberships) ? userRec.tenantMemberships[0]?.tenantId : undefined);
+
+    return reply.send({
+      id: userRec.id,
+      email: userRec.email,
+      name: userRec.name ?? null,
+      image: userRec.image ?? null,
+      isSuperAdmin: !!userRec.isSuperAdmin,
+      tenant: tenantId ? { id: tenantId } : null,
+      memberships: (userRec.tenantMemberships || []).map((m: any) => ({ tenantId: m.tenantId, role: m.role ?? null })),
+    });
   });
 }
-export default authRoutes;
