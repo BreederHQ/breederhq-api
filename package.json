@@ -7,22 +7,18 @@
   "engines": {
     "node": "20.x"
   },
-  {
-    "scripts": {
-      "dev": "npx dotenv -e .env.dev -- tsx watch src/server.ts",
-      "build": "tsc -p .",
-      "start": "node dist/server.js",
-      "postinstall": "prisma generate --schema=prisma/schema.prisma",
-      "db:generate": "prisma generate --schema=prisma/schema.prisma",
-      "db:studio": "npx dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
-      "db:pull:studio": "npx dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
-      "db:push:dev": "npx dotenv -e .env.dev -- prisma db push --schema=prisma/schema.prisma",
-      "db:push:dev:accept": "npx dotenv -e .env.dev -- prisma db push --accept-data-loss --schema=prisma/schema.prisma",
-      "db:migrate:deploy:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate deploy --schema=prisma/schema.prisma",
-      "db:migrate:status:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate status --schema=prisma/schema.prisma",
-      "db:migrate:diff:prod": "node ./scripts/prisma-migrate-diff-prod.mjs",
-      "db:migrate:apply:dev": "node ./scripts/prisma-apply-latest-migration-dev.mjs"
-    }
+  "scripts": {
+    "dev": "npx dotenv -e .env.dev -- tsx watch src/server.ts",
+    "build": "tsc -p .",
+    "start": "node dist/server.js",
+    "db:dev": "npx dotenv -e .env.dev -- prisma db push --schema=prisma/schema.prisma",
+    "db:dev:force": "npx dotenv -e .env.dev -- prisma db push --accept-data-loss --schema=prisma/schema.prisma",
+    "db:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate deploy --schema=prisma/schema.prisma",
+    "db:prod:status": "npx dotenv -e .env.prod.migrate -- prisma migrate status --schema=prisma/schema.prisma",
+    "db:studio": "npx dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
+    "db:pull": "npx dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
+    "db:gen": "prisma generate --schema=prisma/schema.prisma",
+    "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
