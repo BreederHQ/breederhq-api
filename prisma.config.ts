@@ -23,7 +23,6 @@ export default defineConfig({
   datasources: {
     db: {
       url: { fromEnvVar: "DATABASE_URL" },
-      shadowDatabaseUrl: { fromEnvVar: "SHADOW_DATABASE_URL" }, // required for migrate
     },
   },
 });
