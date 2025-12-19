@@ -7,25 +7,22 @@
   "engines": {
     "node": "20.x"
   },
-  "scripts": {
-    "dev": "dotenv -e .env.dev -- tsx watch src/server.ts",
-    "build": "tsc -p .",
-    "start": "node dist/server.js",
-    "postinstall": "prisma generate --schema=prisma/schema.prisma",
-    "db:studio": "dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
-    "db:pull": "dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
-    "db:gen": "dotenv -e .env.dev.migrate -- prisma generate --schema=prisma/schema.prisma",
-    "db:resolve": "dotenv -e .env.dev.migrate -- prisma migrate resolve --schema=prisma/schema.prisma",
-    "db:mig:dev": "dotenv -e .env.dev.migrate -- prisma migrate dev --schema=prisma/schema.prisma",
-    "db:mig:reset": "dotenv -e .env.dev.migrate -- prisma migrate reset --force --schema=prisma/schema.prisma",
-    "db:mig:status": "dotenv -e .env.dev.migrate -- prisma migrate status --schema=prisma/schema.prisma",
-    "db:mig:deploy": "dotenv -e .env.prod.migrate -- prisma migrate deploy --schema=prisma/schema.prisma",
-    "db:seed": "dotenv -e .env -- prisma db seed --schema=prisma/schema.prisma",
-    "seed:breeds": "dotenv -e .env.dev.migrate -- tsx prisma/seed/seed-breeds-json.ts",
-    "seed:registries": "dotenv -e .env.dev.migrate -- tsx prisma/seed/seed-registries.ts",
-    "db:seed:dev": "dotenv -e .env.dev -- prisma db seed --schema=prisma/schema.prisma",
-    "db:reset:dev": "dotenv -e .env.dev -- prisma migrate reset --force --skip-generate --skip-seed --schema=prisma/schema.prisma && dotenv -e .env.dev -- prisma db seed --schema=prisma/schema.prisma",
-    "prisma:generate": "prisma generate --schema=prisma/schema.prisma"
+  {
+    "scripts": {
+      "dev": "npx dotenv -e .env.dev -- tsx watch src/server.ts",
+      "build": "tsc -p .",
+      "start": "node dist/server.js",
+      "postinstall": "prisma generate --schema=prisma/schema.prisma",
+      "db:generate": "prisma generate --schema=prisma/schema.prisma",
+      "db:studio": "npx dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
+      "db:pull:studio": "npx dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
+      "db:push:dev": "npx dotenv -e .env.dev -- prisma db push --schema=prisma/schema.prisma",
+      "db:push:dev:accept": "npx dotenv -e .env.dev -- prisma db push --accept-data-loss --schema=prisma/schema.prisma",
+      "db:migrate:deploy:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate deploy --schema=prisma/schema.prisma",
+      "db:migrate:status:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate status --schema=prisma/schema.prisma",
+      "db:migrate:diff:prod": "node ./scripts/prisma-migrate-diff-prod.mjs",
+      "db:migrate:apply:dev": "node ./scripts/prisma-apply-latest-migration-dev.mjs"
+    }
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
