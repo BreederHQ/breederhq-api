@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 /**
@@ -258,10 +257,13 @@ model User {
   image     String?
 
   // auth
-  passwordHash      String?
-  passwordUpdatedAt DateTime?
-  isSuperAdmin      Boolean   @default(false)
-  emailVerifiedAt   DateTime?
+  passwordHash            String?
+  passwordUpdatedAt       DateTime?
+  mustChangePassword      Boolean   @default(false)
+  passwordSetAt           DateTime?
+  lastPasswordChangeAt    DateTime?
+  isSuperAdmin            Boolean   @default(false)
+  emailVerifiedAt         DateTime?
 
   // profile / contact fields (user-scoped)
   phoneE164    String? @db.VarChar(32)
