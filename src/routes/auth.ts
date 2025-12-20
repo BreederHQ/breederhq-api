@@ -18,6 +18,7 @@ import prisma from "../prisma.js";
  *   GET|POST /logout
  *   GET|POST /dev-login    (DEV_LOGIN_ENABLED=1 and not production)
  *   GET  /me
+ *   POST /password         (authenticated password change)
  *
  * Cookies:
  *   - Session:   COOKIE_NAME (default "bhq_s") => base64url(JSON { userId, tenantId?, iat, exp })
@@ -706,5 +707,83 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       tenant: tenantId ? { id: tenantId } : null,
       memberships: (userRec.tenantMemberships || []).map((m: any) => ({ tenantId: m.tenantId, role: m.role ?? null })),
     });
+  });
+
+  /* ───── Change Password (authenticated) ───── */
+  // POST /password  { currentPassword, newPassword }
+  app.post("/password", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const raw = req.cookies?.[COOKIE_NAME];
+    const sess = parseSession(raw);
+
+    if (!sess || Date.now() >= sess.exp) {
+      return reply.code(401).send({ error: "unauthorized", message: "Not authenticated" });
+    }
+
+    const { currentPassword = "", newPassword = "" } = (req.body || {}) as {
+      currentPassword?: string;
+      newPassword?: string;
+    };
+
+    const currPw = String(currentPassword);
+    const newPw = String(newPassword);
+
+    if (!currPw) return reply.code(400).send({ error: "current_password_required", message: "Current password is required" });
+    if (!newPw) return reply.code(400).send({ error: "new_password_required", message: "New password is required" });
+    if (newPw.length < 8) return reply.code(422).send({ error: "password_too_short", message: "New password must be at least 8 characters" });
+
+    // Fetch user with password hash
+    const user = await prisma.user.findUnique({
+      where: { id: sess.userId },
+      select: {
+        id: true,
+        email: true,
+        // @ts-ignore
+        passwordHash: true,
+      } as any,
+    }) as any;
+
+    if (!user) return reply.code(401).send({ error: "unauthorized", message: "User not found" });
+    if (!user.passwordHash) return reply.code(400).send({ error: "no_password_set", message: "Account does not use password authentication" });
+
+    // Verify current password
+    const valid = await bcrypt.compare(currPw, user.passwordHash).catch(() => false);
+    if (!valid) return reply.code(401).send({ error: "invalid_current_password", message: "Current password is incorrect" });
+
+    // Hash new password
+    const newHash = await bcrypt.hash(newPw, 12);
+
+    // Update password in transaction
+    await prisma.$transaction(async (tx) => {
+      try {
+        await (tx as any).user.update({
+          where: { id: sess.userId },
+          data: { passwordHash: newHash, passwordUpdatedAt: new Date() } as any,
+          select: { id: true },
+        });
+      } catch {
+        // If passwordUpdatedAt column missing, try without it
+        await (tx as any).user.update({
+          where: { id: sess.userId },
+          data: { passwordHash: newHash } as any,
+          select: { id: true },
+        });
+      }
+
+      // Revoke all sessions if Session table exists
+      if (await detectSessionTable()) {
+        try {
+          await (tx as any).session.deleteMany({ where: { userId: sess.userId } });
+        } catch {
+          // ignore if Session table not available
+        }
+      }
+    });
+
+    // Clear current session cookie (user will need to re-login)
+    clearAuthCookies(reply);
+
+    return reply.send({ ok: true, message: "Password changed successfully" });
   });
 }
