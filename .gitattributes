@@ -1,2 +1,21 @@
+# Force LF for text files in repo
+* text=auto eol=lf
 
-.githooks/* text eol=lf
+# Explicit overrides (optional but fine)
+prisma/schema.prisma text eol=lf
+*.ts  text eol=lf
+*.tsx text eol=lf
+*.js  text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+*.toml text eol=lf
+
+# Keep binaries untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary

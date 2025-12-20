@@ -974,7 +974,14 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.post<{
     Body: {
       tenant: { name: string; primaryEmail?: string | null };
-      owner: { email: string; name?: string | null; verify?: boolean; makeDefault?: boolean };
+      owner: {
+        email: string;
+        name?: string | null;
+        verify?: boolean;
+        makeDefault?: boolean;
+        tempPassword?: string;
+        generateTempPassword?: boolean;
+      };
       billing?: {
         provider?: string | null;
         customerId?: string | null;
@@ -1001,6 +1008,14 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
       const ownerEmail = normEmail(owner.email);
 
+      // Generate or use provided temp password
+      let tempPassword = "";
+      if (owner.generateTempPassword) {
+        tempPassword = makeRawToken(16); // 16 bytes = ~21 chars base64url
+      } else if (owner.tempPassword) {
+        tempPassword = owner.tempPassword;
+      }
+
       const result = await prisma.$transaction(async (tx) => {
         const createdTenant = await tx.tenant.create({
           data: {
@@ -1010,16 +1025,25 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           include: { billing: true },
         });
 
+        // Prepare password hash if we have a temp password
+        const passwordData: any = {};
+        if (tempPassword) {
+          passwordData.passwordHash = await bcrypt.hash(tempPassword, 12);
+          passwordData.passwordUpdatedAt = new Date();
+        }
+
         const user = await tx.user.upsert({
           where: { email: ownerEmail },
           update: {
             name: owner.name ?? undefined,
             ...(owner.verify ? { emailVerifiedAt: new Date() } : {}),
+            ...passwordData,
           },
           create: {
             email: ownerEmail,
             name: owner.name ?? undefined,
             ...(owner.verify ? { emailVerifiedAt: new Date() } : {}),
+            ...passwordData,
           },
           select: {
             id: true,
@@ -1086,6 +1110,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
             createdAt: user.createdAt,
           },
           billing: savedBilling,
+          tempPassword,
         };
       });
 
@@ -1275,6 +1300,56 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       }
     }
   );
+
+  /** POST /admin/tenants/:id/owner/reset-password */
+  fastify.post<{
+    Params: { id: string };
+    Body: { tempPassword?: string; generateTempPassword?: boolean };
+  }>("/admin/tenants/:id/owner/reset-password", async (req, reply) => {
+    try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      }
+
+      const { tempPassword: providedPassword, generateTempPassword } = req.body || {};
+
+      // Generate or use provided temp password
+      let tempPassword = "";
+      if (generateTempPassword) {
+        tempPassword = makeRawToken(16); // 16 bytes = ~21 chars base64url
+      } else if (providedPassword) {
+        tempPassword = providedPassword;
+      } else {
+        return reply.status(400).send({ error: "bad_request", detail: "Either tempPassword or generateTempPassword is required" });
+      }
+
+      // Find the owner of this tenant
+      const ownerMembership = await prisma.tenantMembership.findFirst({
+        where: { tenantId, role: "OWNER" },
+        select: { userId: true },
+      });
+
+      if (!ownerMembership) {
+        return reply.status(404).send({ error: "not_found", detail: "No owner found for this tenant" });
+      }
+
+      // Hash and update the password
+      const passwordHash = await bcrypt.hash(tempPassword, 12);
+      await prisma.user.update({
+        where: { id: ownerMembership.userId },
+        data: { passwordHash, passwordUpdatedAt: new Date() },
+      });
+
+      return reply.send({ ok: true, tempPassword });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
 };
 
 export default tenantRoutes;
