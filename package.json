@@ -11,6 +11,7 @@
     "dev": "npx dotenv -e .env.dev -- tsx watch src/server.ts",
     "build": "tsc -p .",
     "start": "node dist/server.js",
+    "start:render": "node dist/server.js",
     "db:dev": "npx dotenv -e .env.dev -- prisma db push --schema=prisma/schema.prisma",
     "db:dev:force": "npx dotenv -e .env.dev -- prisma db push --accept-data-loss --schema=prisma/schema.prisma",
     "db:prod": "npx dotenv -e .env.prod.migrate -- prisma migrate deploy --schema=prisma/schema.prisma",
