@@ -1,0 +1,14 @@
+[
+  { "name": "Suffolk", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" }, { "code": "NSIP_SHEEP", "status": "SECONDARY" } ] },
+  { "name": "Hampshire", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" }, { "code": "NSIP_SHEEP", "status": "SECONDARY" } ] },
+  { "name": "Dorset", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" }, { "code": "NSIP_SHEEP", "status": "SECONDARY" } ] },
+  { "name": "Dorper", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" }, { "code": "NSIP_SHEEP", "status": "SECONDARY" } ] },
+  { "name": "Merino", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Rambouillet", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Katahdin", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" }, { "code": "NSIP_SHEEP", "status": "SECONDARY" } ] },
+  { "name": "Romanov", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Texel", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Southdown", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Shropshire", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] },
+  { "name": "Finnsheep", "species": "SHEEP", "registries": [ { "code": "ASI", "status": "PRIMARY" } ] }
+]

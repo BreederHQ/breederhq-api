@@ -16,6 +16,7 @@ function getRegistryModel() {
     anyPrisma.RegistryCatalog ??
     anyPrisma.registry ??
     anyPrisma.Registry;
+
   if (!model) {
     throw new Error(
       "Could not find a registries model on Prisma Client. " +
@@ -29,10 +30,10 @@ const RegistryModel = getRegistryModel();
 
 /**
  * Options via env or CLI
- * CLEAR_BEFORE=true  → delete existing registry links then delete breeds not present in JSON files
- * ONLY=DOG           → limit to a single species (DOG|CAT|HORSE). Comma list allowed.
- * CHUNK=200          → batch size for upserts
- * DRY_RUN=true       → log actions, do not write
+ * CLEAR_BEFORE=true  -> delete existing registry links then delete breeds not present in JSON files
+ * ONLY=DOG           -> limit to a single species (any valid Species enum). Comma list allowed.
+ * CHUNK=200          -> batch size for upserts
+ * DRY_RUN=true       -> log actions, do not write
  */
 const CLEAR_BEFORE = readBool(envOrArg("CLEAR_BEFORE", "false"));
 const DRY_RUN = readBool(envOrArg("DRY_RUN", "false"));
@@ -41,11 +42,11 @@ const ONLY_SPECIES = parseOnlySpecies(envOrArg("ONLY", ""));
 
 type Row = {
   name: string;
-  species: Species; // "DOG" | "CAT" | "HORSE"
+  species: Species;
   parents?: string[];
   registries?: Array<{
-    code: string;        // "AKC", "TICA", "CFA", "FCI", ...
-    status?: string;     // keep EXACT like "PNB", "ANB", "Miscellaneous"
+    code: string; // "AKC", "TICA", "CFA", ...
+    status?: string;
     registryId?: string;
     url?: string;
     primary?: boolean;
@@ -59,6 +60,9 @@ const FILES = [
   path.join(root, "prisma/seed/data/dogs.json"),
   path.join(root, "prisma/seed/data/cats.json"),
   path.join(root, "prisma/seed/data/horses.json"),
+  path.join(root, "prisma/seed/data/goats.json"),
+  path.join(root, "prisma/seed/data/sheep.json"),
+  path.join(root, "prisma/seed/data/rabbits.json"),
 ];
 
 function toSlug(name: string) {
@@ -78,13 +82,21 @@ function envOrArg(key: string, fallback = ""): string {
 
 function parseOnlySpecies(v: string): Species[] | null {
   if (!v?.trim()) return null;
-  const set = new Set(
-    v
-      .split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter((s) => s === "DOG" || s === "CAT" || s === "HORSE")
-  );
-  return set.size ? (Array.from(set) as Species[]) : null;
+
+  const allowed = new Set(Object.values(Species).map((s) => String(s).toUpperCase()));
+  const requested = v
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  const bad = requested.filter((s) => !allowed.has(s));
+  if (bad.length) {
+    throw new Error(
+      `ONLY contains invalid species: ${bad.join(", ")}. Allowed: ${Array.from(allowed).join(", ")}`
+    );
+  }
+
+  return requested.length ? (requested as Species[]) : null;
 }
 
 async function readRows(): Promise<Row[]> {
@@ -97,7 +109,7 @@ async function readRows(): Promise<Row[]> {
     console.warn(`Filtered ${rows.length - valid.length} invalid rows (missing name/species).`);
   }
 
-  const filtered = ONLY_SPECIES ? valid.filter((r) => ONLY_SPECIES!.includes(r.species)) : valid;
+  const filtered = ONLY_SPECIES ? valid.filter((r) => ONLY_SPECIES.includes(r.species)) : valid;
   return filtered;
 }
 
@@ -112,7 +124,6 @@ async function clearBefore(rows: Row[]) {
     return;
   }
 
-  // Find current breeds for those species
   const existing = await prisma.breed.findMany({
     where: { species: { in: speciesSet } },
     select: { id: true, name: true, species: true, slug: true },
@@ -121,13 +132,11 @@ async function clearBefore(rows: Row[]) {
   const keepKey = (r: Row) => `${r.species}::${toSlug(r.name)}`;
   const keepSet = new Set(rows.map(keepKey));
 
-  // Drop links first
   const existingIds = existing.map((b) => b.id);
   if (existingIds.length) {
     await prisma.breedRegistryLink.deleteMany({ where: { breedId: { in: existingIds } } });
   }
 
-  // Delete breeds not present in JSON
   const toDelete = existing.filter((b) => !keepSet.has(`${b.species}::${b.slug || toSlug(b.name)}`));
   if (toDelete.length) {
     const ids = toDelete.map((b) => b.id);
@@ -138,13 +147,15 @@ async function clearBefore(rows: Row[]) {
 
 async function upsertBreed(row: Row) {
   const slug = toSlug(row.name);
-  const where = { name: row.name }; // adjust if you use composite unique
+  const where = { name: row.name }; // leave as-is unless you add a composite unique key
 
   if (DRY_RUN) {
     console.log(`[DRY_RUN] Upsert Breed: ${row.species} :: ${row.name}`);
     if (row.registries?.length) {
       for (const r of row.registries) {
-        console.log(`[DRY_RUN]  └─ link ${r.code} primary=${r.primary ?? ""} status=${r.status ?? ""}`);
+        console.log(
+          `[DRY_RUN]  └─ link ${String(r.code || "").toUpperCase()} primary=${r.primary ?? ""} status=${r.status ?? ""}`
+        );
       }
     }
     return;
@@ -163,7 +174,6 @@ async function upsertBreed(row: Row) {
     const code = reg.code?.toUpperCase?.() || "";
     if (!code) continue;
 
-    // Resolve registry by code using whatever the model is named in this client
     const registry = await RegistryModel.findUnique?.({ where: { code } });
     if (!registry) {
       console.warn(
@@ -200,7 +210,9 @@ async function upsertBreed(row: Row) {
 }
 
 function chunk<T>(arr: T[], size = 200) {
-  return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, (i + 1) * size));
+  return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
+    arr.slice(i * size, (i + 1) * size)
+  );
 }
 
 async function main() {
