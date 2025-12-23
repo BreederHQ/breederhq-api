@@ -19,6 +19,7 @@ import prisma from "../prisma.js";
  */
 
 type SortKey = "display_name" | "email" | "createdAt" | "updatedAt"; // keep existing sort surface
+type SortDir = "asc" | "desc";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -29,7 +30,7 @@ function parsePaging(q: any) {
   return { page, limit, skip };
 }
 
-function parseSort(q: any) {
+function parseSort(q: any, defaultDir: SortDir) {
   // "display_name:asc,email:desc"
   const s = String(q?.sort || "").trim();
   if (!s) return [{ createdAt: "desc" }] as any;
@@ -39,7 +40,11 @@ function parseSort(q: any) {
   for (const p of parts) {
     const [rawField, rawDir] = p.split(":");
     const field = rawField as SortKey;
-    const dir = (rawDir || "asc").toLowerCase() === "desc" ? "desc" : "asc";
+    let dir = defaultDir;
+    if (rawDir) {
+      const normalized = rawDir.toLowerCase();
+      if (normalized === "asc" || normalized === "desc") dir = normalized;
+    }
     if (allowed.includes(field)) orderBy.push({ [field]: dir });
   }
   return orderBy.length ? orderBy : [{ createdAt: "desc" }];
@@ -199,7 +204,12 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { page, limit, skip } = parsePaging(q);
       const includeArchived = String(q.includeArchived ?? "false").toLowerCase() === "true";
       const search = trimToNull(q.search ?? q.q);
-      const orderBy = parseSort(q);
+      const dirRaw = String(q.dir ?? "asc").trim();
+      const dirNormalized = (dirRaw || "asc").toLowerCase();
+      // Sanity check: only allow asc/desc so direction typos fail fast.
+      if (dirNormalized !== "asc" && dirNormalized !== "desc") return reply.code(400).send({ error: "bad_request" });
+      const dir = dirNormalized as SortDir;
+      const orderBy = parseSort(q, dir);
 
       const where: any = { tenantId };
       if (!includeArchived) where.archived = false;
