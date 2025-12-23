@@ -128,7 +128,13 @@ const PARTY_SELECT = {
   },
 };
 
-const ORGANIZATION_SELECT = { select: { id: true, name: true } };
+const ORGANIZATION_SELECT = {
+  select: {
+    id: true,
+    name: true,
+    party: { select: { name: true } },
+  },
+};
 
 function toContactResponse(row: any) {
   const { organization, party, ...rest } = row;
@@ -145,7 +151,7 @@ function toContactResponse(row: any) {
     state: hasParty ? party.state : rest.state,
     zip: hasParty ? party.postalCode : rest.zip,
     country: hasParty ? party.country : rest.country,
-    organizationName: organization?.name ?? null,
+    organizationName: organization?.party?.name ?? null,
   };
 }
 
@@ -176,6 +182,12 @@ const ensureAuth = (_req: any) => {
 
 /* ───────────────────────── routes ───────────────────────── */
 
+// Manual verification (dev):
+// - POST /api/v1/organizations {"name":"Party QA Org"} -> use returned id (sample uses 8)
+// - PATCH /api/v1/organizations/8 {"name":"Party QA Org Renamed"}
+// - PATCH /api/v1/contacts/18 {"organizationId":8}
+// - GET /api/v1/contacts/18 -> organizationName === "Party QA Org Renamed"
+// - SQL: select o.id, o.name, p.name from "Organization" o join "Party" p on p.id=o."partyId" where o.id=8;
 const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /contacts
   app.get("/contacts", async (req, reply) => {
