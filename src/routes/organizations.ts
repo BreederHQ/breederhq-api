@@ -61,7 +61,7 @@ function isValidOrgParty(org: { party?: { tenantId: number; type: string } } | n
 async function getOrgInTenant(orgId: number, tenantId: number) {
   const org = await prisma.organization.findFirst({
     where: { id: orgId, tenantId },
-    select: { id: true },
+    select: { id: true, partyId: true },
   });
   if (!org) {
     // Hide cross-tenant existence by default, but if you prefer explicit, keep this split:
@@ -328,8 +328,20 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      await getOrgInTenant(id, tenantId);
-      await prisma.organization.update({ where: { id }, data: { archived: true } });
+      const org = await getOrgInTenant(id, tenantId);
+      if (!org.partyId) throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+
+      await prisma.$transaction(async (tx) => {
+        const partyUpdated = await tx.party.updateMany({
+          where: { id: org.partyId, tenantId },
+          data: { archived: true },
+        });
+        if (partyUpdated.count == 0) {
+          throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+        }
+
+        await tx.organization.update({ where: { id: org.id }, data: { archived: true } });
+      });
       reply.send({ ok: true });
     } catch (e: any) {
       const { status, payload } = errorReply(e);
@@ -345,8 +357,20 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      await getOrgInTenant(id, tenantId);
-      await prisma.organization.update({ where: { id }, data: { archived: false } });
+      const org = await getOrgInTenant(id, tenantId);
+      if (!org.partyId) throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+
+      await prisma.$transaction(async (tx) => {
+        const partyUpdated = await tx.party.updateMany({
+          where: { id: org.partyId, tenantId },
+          data: { archived: false },
+        });
+        if (partyUpdated.count == 0) {
+          throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+        }
+
+        await tx.organization.update({ where: { id: org.id }, data: { archived: false } });
+      });
       reply.send({ ok: true });
     } catch (e: any) {
       const { status, payload } = errorReply(e);
