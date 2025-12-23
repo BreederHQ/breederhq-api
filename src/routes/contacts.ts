@@ -113,6 +113,42 @@ function normalizeCountry(raw: any): string | null {
   return COUNTRY_NAME_TO_CODE[s] || null;
 }
 
+const PARTY_SELECT = {
+  select: {
+    name: true,
+    email: true,
+    phoneE164: true,
+    whatsappE164: true,
+    street: true,
+    street2: true,
+    city: true,
+    state: true,
+    postalCode: true,
+    country: true,
+  },
+};
+
+const ORGANIZATION_SELECT = { select: { id: true, name: true } };
+
+function toContactResponse(row: any) {
+  const { organization, party, ...rest } = row;
+  const hasParty = !!party;
+  return {
+    ...rest,
+    display_name: hasParty ? party.name : rest.display_name,
+    email: hasParty ? party.email : rest.email,
+    phoneE164: hasParty ? party.phoneE164 : rest.phoneE164,
+    whatsappE164: hasParty ? party.whatsappE164 : rest.whatsappE164,
+    street: hasParty ? party.street : rest.street,
+    street2: hasParty ? party.street2 : rest.street2,
+    city: hasParty ? party.city : rest.city,
+    state: hasParty ? party.state : rest.state,
+    zip: hasParty ? party.postalCode : rest.zip,
+    country: hasParty ? party.country : rest.country,
+    organizationName: organization?.name ?? null,
+  };
+}
+
 function errorReply(err: any) {
   if (err?.code === "P2002") {
     // unique constraint (likely [tenantId, email])
@@ -160,6 +196,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           { party: { name: { contains: search, mode: "insensitive" } } },
           { party: { email: { contains: search } } },
           { party: { phoneE164: { contains: search } } },
+          { party: { whatsappE164: { contains: search } } },
           { display_name: { contains: search, mode: "insensitive" } },
           { first_name: { contains: search, mode: "insensitive" } }, // ← added
           { last_name: { contains: search, mode: "insensitive" } }, // ← added
@@ -197,24 +234,15 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             archived: true,
             createdAt: true,
             updatedAt: true,
-            organization: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
+            organization: ORGANIZATION_SELECT,
+            party: PARTY_SELECT,
           },
         }),
       ]);
 
-      // Flatten organization name to top level for frontend compatibility
-      const itemsWithOrgName = rows.map((row) => ({
-        ...row,
-        organizationName: row.organization?.name ?? null,
-        organization: undefined,
-      }));
+      const items = rows.map(toContactResponse);
 
-      return reply.send({ items: itemsWithOrgName, total, page, limit });
+      return reply.send({ items, total, page, limit });
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "contacts_unavailable" });
@@ -252,24 +280,13 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           createdAt: true,
           updatedAt: true,
-          organization: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
+          organization: ORGANIZATION_SELECT,
+          party: PARTY_SELECT,
         },
       });
       if (!row) return reply.code(404).send({ error: "not_found" });
 
-      // Flatten organization name to top level for frontend compatibility
-      const response = {
-        ...row,
-        organizationName: row.organization?.name ?? null,
-        organization: undefined, // Remove nested object
-      };
-
-      return reply.send(response);
+      return reply.send(toContactResponse(row));
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
@@ -342,46 +359,69 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      const created = await prisma.contact.create({
-        data: {
-          tenantId,
-          organizationId,
-          display_name,
-          first_name: firstName,  // added
-          last_name: lastName,   // added
-          nickname,    // added
-          email,
-          phoneE164,
-          whatsappE164,
-          street,
-          street2,
-          city,
-          state,
-          zip,
-          country,
-          archived: body.archived === true, // rarely set on create
-        },
-        select: {
-          id: true,
-          tenantId: true,
-          organizationId: true,
-          display_name: true,
-          first_name: true,   // ← added
-          last_name: true,    // ← added
-          nickname: true,     // ← added
-          email: true,
-          phoneE164: true,
-          whatsappE164: true,
-          street: true,
-          street2: true,
-          city: true,
-          state: true,
-          zip: true,
-          country: true,
-          archived: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+      const archived = body.archived === true;
+      // Expected: contact create/patch keeps Party and Contact identity fields in sync.
+      const created = await prisma.$transaction(async (tx) => {
+        const party = await tx.party.create({
+          data: {
+            tenantId,
+            type: "CONTACT",
+            name: display_name,
+            email,
+            phoneE164,
+            whatsappE164,
+            street,
+            street2,
+            city,
+            state,
+            postalCode: zip,
+            country,
+            archived,
+          },
+        });
+
+        return tx.contact.create({
+          data: {
+            tenantId,
+            partyId: party.id,
+            organizationId,
+            display_name,
+            first_name: firstName,  // added
+            last_name: lastName,   // added
+            nickname,    // added
+            email,
+            phoneE164,
+            whatsappE164,
+            street,
+            street2,
+            city,
+            state,
+            zip,
+            country,
+            archived, // rarely set on create
+          },
+          select: {
+            id: true,
+            tenantId: true,
+            organizationId: true,
+            display_name: true,
+            first_name: true,   //   added
+            last_name: true,    //   added
+            nickname: true,     //   added
+            email: true,
+            phoneE164: true,
+            whatsappE164: true,
+            street: true,
+            street2: true,
+            city: true,
+            state: true,
+            zip: true,
+            country: true,
+            archived: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
       });
 
       return reply.code(201).send(created);
@@ -390,34 +430,6 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(status).send(payload);
     }
   });
-
-  // PATCH /contacts/:id
-  // helpers at top of file (or near this route)
-  function contactDTO(row: any) {
-    if (!row) return null;
-    return {
-      id: row.id,
-      tenantId: row.tenantId,
-      displayName: row.display_name,
-      firstName: row.first_name ?? null,
-      lastName: row.last_name ?? null,
-      nickname: row.nickname ?? null,
-      email: row.email ?? null,
-      phone: row.phoneE164 ?? null,
-      whatsapp: row.whatsappE164 ?? null,
-      street: row.street ?? null,
-      street2: row.street2 ?? null,
-      city: row.city ?? null,
-      state: row.state ?? null,
-      postalCode: row.zip ?? null,
-      country: row.country ?? null,
-      notes: row.notes ?? null,           // if you don’t have notes, drop this line
-      archived: row.archived,
-      organizationId: row.organizationId ?? null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-  }
 
   function setIfProvided(
     src: Record<string, any>,
@@ -464,7 +476,25 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // Ensure contact exists in this tenant
     const existing = await app.prisma.contact.findFirst({
       where: { id: contactId, tenantId },
-      select: { id: true, organizationId: true, first_name: true, last_name: true, nickname: true },
+      select: {
+        id: true,
+        partyId: true,
+        organizationId: true,
+        display_name: true,
+        first_name: true,
+        last_name: true,
+        nickname: true,
+        email: true,
+        phoneE164: true,
+        whatsappE164: true,
+        street: true,
+        street2: true,
+        city: true,
+        state: true,
+        zip: true,
+        country: true,
+        archived: true,
+      },
     });
     if (!existing) return reply.code(404).send({ error: "contact_not_found" });
 
@@ -472,6 +502,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Build Prisma data (snake_case) from camelCase body
     const dataCore: Record<string, any> = {};
+    const partyData: Record<string, any> = {};
     const trimOrNull = trimToNull;
 
     setIfProvided(body, dataCore, "firstName", "first_name", trimOrNull);
@@ -479,36 +510,69 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     setIfProvided(body, dataCore, "lastName", "last_name", trimOrNull);
     setIfProvided(body, dataCore, "last_name", "last_name", trimOrNull);
     setIfProvided(body, dataCore, "nickname", "nickname", trimOrNull);
-    setIfProvided(body, dataCore, "email", "email", trimOrNull);
+    if (Object.prototype.hasOwnProperty.call(body, "email")) {
+      const nextEmail = trimOrNull(body.email);
+      dataCore.email = nextEmail;
+      partyData.email = nextEmail;
+    }
 
     // special mappings
     const hasPhone = ["phoneE164", "phone", "phoneMobileE164", "phoneLandlineE164"].some((k) =>
       Object.prototype.hasOwnProperty.call(body, k)
     );
     if (hasPhone) {
-      dataCore.phoneE164 = trimOrNull(body.phoneE164 ?? body.phone ?? body.phoneMobileE164 ?? body.phoneLandlineE164);
+      const nextPhone = trimOrNull(body.phoneE164 ?? body.phone ?? body.phoneMobileE164 ?? body.phoneLandlineE164);
+      dataCore.phoneE164 = nextPhone;
+      partyData.phoneE164 = nextPhone;
     }
 
     const hasWhatsapp = ["whatsappE164", "whatsapp"].some((k) => Object.prototype.hasOwnProperty.call(body, k));
     if (hasWhatsapp) {
-      dataCore.whatsappE164 = trimOrNull(body.whatsappE164 ?? body.whatsapp);
+      const nextWhatsapp = trimOrNull(body.whatsappE164 ?? body.whatsapp);
+      dataCore.whatsappE164 = nextWhatsapp;
+      partyData.whatsappE164 = nextWhatsapp;
     }
 
-    setIfProvided(body, dataCore, "postalCode", "zip", trimOrNull);
-    setIfProvided(body, dataCore, "zip", "zip", trimOrNull);
+    const hasPostal = Object.prototype.hasOwnProperty.call(body, "postalCode") || Object.prototype.hasOwnProperty.call(body, "zip");
+    if (hasPostal) {
+      const nextZip = trimOrNull(body.postalCode ?? body.zip);
+      dataCore.zip = nextZip;
+      partyData.postalCode = nextZip;
+    }
 
-    // address
-    setIfProvided(body, dataCore, "street", "street", trimOrNull);
-    setIfProvided(body, dataCore, "street2", "street2", trimOrNull);
-    setIfProvided(body, dataCore, "city", "city", trimOrNull);
-    setIfProvided(body, dataCore, "state", "state", trimOrNull);
-    setIfProvided(body, dataCore, "country", "country", normalizeCountry);
+    if (Object.prototype.hasOwnProperty.call(body, "street")) {
+      const nextStreet = trimOrNull(body.street);
+      dataCore.street = nextStreet;
+      partyData.street = nextStreet;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "street2")) {
+      const nextStreet2 = trimOrNull(body.street2);
+      dataCore.street2 = nextStreet2;
+      partyData.street2 = nextStreet2;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "city")) {
+      const nextCity = trimOrNull(body.city);
+      dataCore.city = nextCity;
+      partyData.city = nextCity;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "state")) {
+      const nextState = trimOrNull(body.state);
+      dataCore.state = nextState;
+      partyData.state = nextState;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "country")) {
+      const nextCountry = normalizeCountry(body.country);
+      dataCore.country = nextCountry;
+      partyData.country = nextCountry;
+    }
 
     // optional notes (remove if not in DB)
     setIfProvided(body, dataCore, "notes", "notes", trimOrNull);
 
     if (Object.prototype.hasOwnProperty.call(body, "archived")) {
-      dataCore.archived = body.archived === true;
+      const isArchived = body.archived === true;
+      dataCore.archived = isArchived;
+      partyData.archived = isArchived;
     }
 
     // Handle organizationId separately (validate tenant, allow null to clear)
@@ -556,6 +620,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       dataCore.display_name = deriveDisplayName(nextNick, nextFirst, nextLast);
+      partyData.name = dataCore.display_name;
     }
 
     if (Object.keys(dataCore).length === 0) {
@@ -563,46 +628,72 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
-      const updatedDb = await app.prisma.contact.update({
-        where: { id: existing.id },
-        data: dataCore,
-        // select snake_case, then map to camelCase DTO
-        select: {
-          id: true,
-          tenantId: true,
-          display_name: true,
-          first_name: true,
-          last_name: true,
-          nickname: true,
-          email: true,
-          phoneE164: true,
-          whatsappE164: true,
-          street: true,
-          street2: true,
-          city: true,
-          state: true,
-          zip: true,
-          country: true,
-          // notes: true, // uncomment if you have this field in your schema
-          archived: true,
-          organizationId: true,
-          createdAt: true,
-          updatedAt: true,
-          organization: {
-            select: {
-              id: true,
-              name: true,
+      const updatedDb = await app.prisma.$transaction(async (tx) => {
+        let partyId = existing.partyId;
+
+        if (!partyId) {
+          const partyName =
+            dataCore.display_name ??
+            existing.display_name ??
+            deriveDisplayName(existing.nickname, existing.first_name, existing.last_name);
+
+          const party = await tx.party.create({
+            data: {
+              tenantId,
+              type: "CONTACT",
+              name: partyName,
+              email: Object.prototype.hasOwnProperty.call(partyData, "email") ? partyData.email : existing.email,
+              phoneE164: Object.prototype.hasOwnProperty.call(partyData, "phoneE164") ? partyData.phoneE164 : existing.phoneE164,
+              whatsappE164: Object.prototype.hasOwnProperty.call(partyData, "whatsappE164") ? partyData.whatsappE164 : existing.whatsappE164,
+              street: Object.prototype.hasOwnProperty.call(partyData, "street") ? partyData.street : existing.street,
+              street2: Object.prototype.hasOwnProperty.call(partyData, "street2") ? partyData.street2 : existing.street2,
+              city: Object.prototype.hasOwnProperty.call(partyData, "city") ? partyData.city : existing.city,
+              state: Object.prototype.hasOwnProperty.call(partyData, "state") ? partyData.state : existing.state,
+              postalCode: Object.prototype.hasOwnProperty.call(partyData, "postalCode") ? partyData.postalCode : existing.zip,
+              country: Object.prototype.hasOwnProperty.call(partyData, "country") ? partyData.country : existing.country,
+              archived: Object.prototype.hasOwnProperty.call(partyData, "archived") ? partyData.archived : existing.archived,
             },
+          });
+
+          partyId = party.id;
+          dataCore.partyId = partyId;
+        }
+
+        if (partyId && existing.partyId && Object.keys(partyData).length > 0) {
+          await tx.party.update({ where: { id: partyId }, data: partyData });
+        }
+
+        return tx.contact.update({
+          where: { id: existing.id },
+          data: dataCore,
+          select: {
+            id: true,
+            tenantId: true,
+            organizationId: true,
+            display_name: true,
+            first_name: true,
+            last_name: true,
+            nickname: true,
+            email: true,
+            phoneE164: true,
+            whatsappE164: true,
+            street: true,
+            street2: true,
+            city: true,
+            state: true,
+            zip: true,
+            country: true,
+            // notes: true, // uncomment if you have this field in your schema
+            archived: true,
+            createdAt: true,
+            updatedAt: true,
+            organization: ORGANIZATION_SELECT,
+            party: PARTY_SELECT,
           },
-        },
+        });
       });
 
-      const response = {
-        ...contactDTO(updatedDb),
-        organizationName: updatedDb.organization?.name ?? null,
-      };
-
-      return reply.send(response);
+      return reply.send(toContactResponse(updatedDb));
     } catch (err: any) {
       req.log.error({ err }, "contacts.patch failed");
       if (err?.code === "P2002") {
@@ -753,3 +844,4 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
 
 export default contactsRoutes;
+
