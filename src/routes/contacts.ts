@@ -717,11 +717,34 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const updated = await prisma.contact.update({
-        where: { id },
-        data: { archived: true },
-        select: { id: true, archived: true, updatedAt: true },
+      const contact = await prisma.contact.findFirst({
+        where: { id, tenantId },
+        select: { id: true, tenantId: true, partyId: true },
       });
+      if (!contact) return reply.code(404).send({ error: "not_found" });
+      const partyId = contact.partyId;
+      if (partyId == null) return reply.code(409).send({ error: "contact_missing_party" });
+
+      // Party is the canonical identity; keep archive state in sync.
+      const updated = await prisma.$transaction(async (tx) => {
+        const partyUpdated = await tx.party.updateMany({
+          where: { id: partyId, tenantId },
+          data: { archived: true },
+        });
+        if (partyUpdated.count === 0) return null;
+
+        const contactUpdated = await tx.contact.updateMany({
+          where: { id: contact.id, tenantId },
+          data: { archived: true },
+        });
+        if (contactUpdated.count === 0) return null;
+
+        return tx.contact.findFirst({
+          where: { id: contact.id, tenantId },
+          select: { id: true, archived: true, updatedAt: true },
+        });
+      });
+      if (!updated) return reply.code(404).send({ error: "not_found" });
 
       return reply.send(updated);
     } catch (err) {
@@ -741,11 +764,34 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const updated = await prisma.contact.update({
-        where: { id },
-        data: { archived: false },
-        select: { id: true, archived: true, updatedAt: true },
+      const contact = await prisma.contact.findFirst({
+        where: { id, tenantId },
+        select: { id: true, tenantId: true, partyId: true },
       });
+      if (!contact) return reply.code(404).send({ error: "not_found" });
+      const partyId = contact.partyId;
+      if (partyId == null) return reply.code(409).send({ error: "contact_missing_party" });
+
+      // Party is the canonical identity; keep archive state in sync.
+      const updated = await prisma.$transaction(async (tx) => {
+        const partyUpdated = await tx.party.updateMany({
+          where: { id: partyId, tenantId },
+          data: { archived: false },
+        });
+        if (partyUpdated.count === 0) return null;
+
+        const contactUpdated = await tx.contact.updateMany({
+          where: { id: contact.id, tenantId },
+          data: { archived: false },
+        });
+        if (contactUpdated.count === 0) return null;
+
+        return tx.contact.findFirst({
+          where: { id: contact.id, tenantId },
+          select: { id: true, archived: true, updatedAt: true },
+        });
+      });
+      if (!updated) return reply.code(404).send({ error: "not_found" });
 
       return reply.send(updated);
     } catch (err) {
