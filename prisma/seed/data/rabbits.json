@@ -1,0 +1,14 @@
+[
+  { "name": "Holland Lop", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Mini Lop", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Netherland Dwarf", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Lionhead", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Rex", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Mini Rex", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Flemish Giant", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "English Angora", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "French Angora", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "Californian", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "New Zealand", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] },
+  { "name": "English Spot", "species": "RABBIT", "registries": [ { "code": "ARBA", "status": "PRIMARY" } ] }
+]

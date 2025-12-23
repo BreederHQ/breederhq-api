@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 /**
@@ -35,6 +35,7 @@ enum Species {
   HORSE
   GOAT
   RABBIT
+  SHEEP
 }
 
 enum TenantOperationType {
@@ -257,13 +258,13 @@ model User {
   image     String?
 
   // auth
-  passwordHash            String?
-  passwordUpdatedAt       DateTime?
-  mustChangePassword      Boolean   @default(false)
-  passwordSetAt           DateTime?
-  lastPasswordChangeAt    DateTime?
-  isSuperAdmin            Boolean   @default(false)
-  emailVerifiedAt         DateTime?
+  passwordHash         String?
+  passwordUpdatedAt    DateTime?
+  mustChangePassword   Boolean   @default(false)
+  passwordSetAt        DateTime?
+  lastPasswordChangeAt DateTime?
+  isSuperAdmin         Boolean   @default(false)
+  emailVerifiedAt      DateTime?
 
   // profile / contact fields (user-scoped)
   phoneE164    String? @db.VarChar(32)
@@ -903,12 +904,12 @@ model Breed {
 }
 
 model AnimalBreed {
-  id         Int     @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   animalId   Int
-  animal     Animal  @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  animal     Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
   breedId    Int
-  breed      Breed   @relation(fields: [breedId], references: [id], onDelete: Cascade)
-  percentage Float   @default(100)
+  breed      Breed    @relation(fields: [breedId], references: [id], onDelete: Cascade)
+  percentage Float    @default(100)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

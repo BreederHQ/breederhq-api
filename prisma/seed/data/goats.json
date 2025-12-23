@@ -1,0 +1,14 @@
+[
+  { "name": "Nigerian Dwarf", "species": "GOAT", "registries": [ { "code": "NDGA", "status": "PRIMARY" }, { "code": "ADGA", "status": "SECONDARY" } ] },
+  { "name": "Boer", "species": "GOAT", "registries": [ { "code": "ABGA_GOAT", "status": "PRIMARY" }, { "code": "IBGA", "status": "SECONDARY" } ] },
+  { "name": "Kiko", "species": "GOAT", "registries": [ { "code": "KGBA", "status": "PRIMARY" } ] },
+  { "name": "Pygmy", "species": "GOAT", "registries": [ { "code": "NPGA", "status": "PRIMARY" }, { "code": "NAPGR", "status": "SECONDARY" } ] },
+  { "name": "Alpine", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Saanen", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Toggenburg", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "LaMancha", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Nubian", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Oberhasli", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Angora", "species": "GOAT", "registries": [ { "code": "GOAT_OTHER", "status": "PRIMARY" } ] },
+  { "name": "Myotonic (Tennessee Fainting)", "species": "GOAT", "registries": [ { "code": "MGR", "status": "PRIMARY" } ] }
+]

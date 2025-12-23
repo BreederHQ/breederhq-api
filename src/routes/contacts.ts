@@ -7,7 +7,7 @@ import prisma from "../prisma.js";
  * - id: Int (PK)
  * - tenantId: Int (required, scope EVERY query)
  * - organizationId: Int? (composite relation with tenantId)
- * - display_name: String (required)
+ * - display_name: String (required, derived server-side)
  * - first_name: String?  ← added
  * - last_name: String?   ← added
  * - nickname: String?    ← added
@@ -50,15 +50,87 @@ function idNum(v: any) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function trimToNull(v: any) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
+function deriveDisplayName(nickname: string | null, firstName: string | null, lastName: string | null) {
+  const base = nickname || firstName || "";
+  return [base, lastName].filter(Boolean).join(" ").trim();
+}
+
+// Map full country names to ISO 3166-1 alpha-2 codes
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  "United States": "US",
+  "United States of America": "US",
+  "USA": "US",
+  "Canada": "CA",
+  "United Kingdom": "GB",
+  "UK": "GB",
+  "Australia": "AU",
+  "New Zealand": "NZ",
+  "Ireland": "IE",
+  "Germany": "DE",
+  "France": "FR",
+  "Spain": "ES",
+  "Italy": "IT",
+  "Netherlands": "NL",
+  "Belgium": "BE",
+  "Switzerland": "CH",
+  "Austria": "AT",
+  "Sweden": "SE",
+  "Norway": "NO",
+  "Denmark": "DK",
+  "Finland": "FI",
+  "Poland": "PL",
+  "Portugal": "PT",
+  "Greece": "GR",
+  "Czech Republic": "CZ",
+  "Mexico": "MX",
+  "Brazil": "BR",
+  "Argentina": "AR",
+  "Chile": "CL",
+  "Japan": "JP",
+  "China": "CN",
+  "India": "IN",
+  "South Korea": "KR",
+  "Singapore": "SG",
+  "Hong Kong": "HK",
+  "Taiwan": "TW",
+  "Israel": "IL",
+  "South Africa": "ZA",
+};
+
+function normalizeCountry(raw: any): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  // If already 2-char code, return uppercase
+  if (s.length === 2) return s.toUpperCase();
+  // Try mapping from full name
+  return COUNTRY_NAME_TO_CODE[s] || null;
+}
+
 function errorReply(err: any) {
   if (err?.code === "P2002") {
     // unique constraint (likely [tenantId, email])
-    return { status: 409, payload: { error: "conflict", detail: "email_must_be_unique_within_tenant" } };
+    return {
+      status: 409,
+      payload: {
+        error: "conflict",
+        message: "Email must be unique within this tenant.",
+        fieldErrors: { email: "Email must be unique within this tenant." },
+      },
+    };
   }
   if (err?.status) {
-    return { status: err.status, payload: { error: err.message || "error" } };
+    return { status: err.status, payload: { error: err.message || "error", message: err.message || "error" } };
   }
-  return { status: 500, payload: { error: "internal_error" } };
+  // Log full error details for debugging
+  console.error("[errorReply] Unhandled error:", err);
+  return { status: 500, payload: { error: "internal_error", detail: err?.message || "unknown" } };
 }
 
 /* if you attach auth to req.user, enforce here (kept no-op for compatibility) */
@@ -122,11 +194,24 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             archived: true,
             createdAt: true,
             updatedAt: true,
+            organization: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
           },
         }),
       ]);
 
-      return reply.send({ items: rows, total, page, limit });
+      // Flatten organization name to top level for frontend compatibility
+      const itemsWithOrgName = rows.map((row) => ({
+        ...row,
+        organizationName: row.organization?.name ?? null,
+        organization: undefined,
+      }));
+
+      return reply.send({ items: itemsWithOrgName, total, page, limit });
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "contacts_unavailable" });
@@ -164,10 +249,24 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           createdAt: true,
           updatedAt: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       });
       if (!row) return reply.code(404).send({ error: "not_found" });
-      return reply.send(row);
+
+      // Flatten organization name to top level for frontend compatibility
+      const response = {
+        ...row,
+        organizationName: row.organization?.name ?? null,
+        organization: undefined, // Remove nested object
+      };
+
+      return reply.send(response);
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
@@ -182,18 +281,62 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
+      req.log?.info?.({ body: req.body }, "[POST /contacts] Request body");
+
       const body = (req.body as any) ?? {};
-      const display_name = String(body.display_name || "").trim();
-      if (!display_name) return reply.code(400).send({ error: "display_name_required" });
+      const firstName = trimToNull(body.firstName ?? body.first_name);
+      const lastName = trimToNull(body.lastName ?? body.last_name);
+      const nickname = trimToNull(body.nickname);
+      const email = trimToNull(body.email);
+      const phoneE164 = trimToNull(
+        body.phoneE164 ?? body.phone ?? body.phoneMobileE164 ?? body.phoneLandlineE164
+      );
+      const whatsappE164 = trimToNull(body.whatsappE164 ?? body.whatsapp);
+      const street = trimToNull(body.street);
+      const street2 = trimToNull(body.street2);
+      const city = trimToNull(body.city);
+      const state = trimToNull(body.state);
+      const zip = trimToNull(body.postalCode ?? body.zip);
+      const country = normalizeCountry(body.country);
+
+      const fieldErrors: Record<string, string> = {};
+      if (!firstName) fieldErrors.firstName = "First name is required.";
+      if (!lastName) fieldErrors.lastName = "Last name is required.";
+      if (Object.keys(fieldErrors).length > 0) {
+        return reply.code(400).send({ message: "Validation failed", fieldErrors });
+      }
+
+      const display_name = deriveDisplayName(nickname, firstName, lastName);
+      if (!display_name || !display_name.trim()) {
+        return reply.code(400).send({
+          message: "Validation failed",
+          fieldErrors: { displayName: "Display name cannot be empty. Please provide first and last name." },
+        });
+      }
 
       // Optional org linkage, must be same-tenant if provided
       let organizationId: number | null = null;
-      if (body.organizationId != null) {
-        const orgId = idNum(body.organizationId);
-        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        const org = await prisma.organization.findFirst({ where: { id: orgId, tenantId }, select: { id: true } });
-        if (!org) return reply.code(404).send({ error: "organization_not_found" });
-        organizationId = org.id;
+      if (Object.prototype.hasOwnProperty.call(body, "organizationId") || Object.prototype.hasOwnProperty.call(body, "organization_id")) {
+        const rawOrg = body.organizationId ?? body.organization_id;
+        if (rawOrg == null || String(rawOrg).trim() === "") {
+          organizationId = null;
+        } else {
+          const orgId = idNum(rawOrg);
+          if (!orgId) {
+            return reply.code(400).send({
+              message: "Validation failed",
+              fieldErrors: { organizationId: "Organization is invalid." },
+            });
+          }
+          const org = await prisma.organization.findFirst({ where: { id: orgId, tenantId }, select: { id: true } });
+          if (!org) {
+            return reply.code(400).send({
+              message: "Validation failed",
+              fieldErrors: { organizationId: "Organization not found." },
+            });
+          }
+          organizationId = org.id;
+        }
       }
 
       const created = await prisma.contact.create({
@@ -201,19 +344,19 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId,
           organizationId,
           display_name,
-          first_name: body.first_name ?? null,  // ← added
-          last_name: body.last_name ?? null,   // ← added
-          nickname: body.nickname ?? null,    // ← added
-          email: body.email ?? null,
-          phoneE164: body.phoneE164 ?? null,
-          whatsappE164: body.whatsappE164 ?? null,
-          street: body.street ?? null,
-          street2: body.street2 ?? null,
-          city: body.city ?? null,
-          state: body.state ?? null,
-          zip: body.zip ?? null,
-          country: body.country ?? null,
-          archived: !!body.archived && body.archived === true, // rarely set on create
+          first_name: firstName,  // added
+          last_name: lastName,   // added
+          nickname,    // added
+          email,
+          phoneE164,
+          whatsappE164,
+          street,
+          street2,
+          city,
+          state,
+          zip,
+          country,
+          archived: body.archived === true, // rarely set on create
         },
         select: {
           id: true,
@@ -273,15 +416,15 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }
 
-  function setIfProvidedCamel(
+  function setIfProvided(
     src: Record<string, any>,
     dst: Record<string, any>,
-    camelKey: string,
+    srcKey: string,
     dbKey: string,
     transform?: (v: any) => any
   ) {
-    if (Object.prototype.hasOwnProperty.call(src, camelKey)) {
-      const v = src[camelKey];
+    if (Object.prototype.hasOwnProperty.call(src, srcKey)) {
+      const v = src[srcKey];
       dst[dbKey] = transform ? transform(v) : v;
     }
   }
@@ -292,7 +435,6 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     Body: Partial<{
       firstName: string | null;
       lastName: string | null;
-      displayName: string | null;
       nickname: string | null;
       email: string | null;
       phone: string | null;         // maps to phoneE164
@@ -319,7 +461,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // Ensure contact exists in this tenant
     const existing = await app.prisma.contact.findFirst({
       where: { id: contactId, tenantId },
-      select: { id: true, organizationId: true },
+      select: { id: true, organizationId: true, first_name: true, last_name: true, nickname: true },
     });
     if (!existing) return reply.code(404).send({ error: "contact_not_found" });
 
@@ -327,52 +469,90 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Build Prisma data (snake_case) from camelCase body
     const dataCore: Record<string, any> = {};
-    const trimOrNull = (v: any) => (v == null ? null : String(v).trim());
+    const trimOrNull = trimToNull;
 
-    setIfProvidedCamel(body, dataCore, "displayName", "display_name", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "firstName", "first_name", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "lastName", "last_name", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "nickname", "nickname", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "email", "email", trimOrNull);
+    setIfProvided(body, dataCore, "firstName", "first_name", trimOrNull);
+    setIfProvided(body, dataCore, "first_name", "first_name", trimOrNull);
+    setIfProvided(body, dataCore, "lastName", "last_name", trimOrNull);
+    setIfProvided(body, dataCore, "last_name", "last_name", trimOrNull);
+    setIfProvided(body, dataCore, "nickname", "nickname", trimOrNull);
+    setIfProvided(body, dataCore, "email", "email", trimOrNull);
 
     // special mappings
-    setIfProvidedCamel(body, dataCore, "phone", "phoneE164", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "whatsapp", "whatsappE164", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "postalCode", "zip", trimOrNull);
+    const hasPhone = ["phoneE164", "phone", "phoneMobileE164", "phoneLandlineE164"].some((k) =>
+      Object.prototype.hasOwnProperty.call(body, k)
+    );
+    if (hasPhone) {
+      dataCore.phoneE164 = trimOrNull(body.phoneE164 ?? body.phone ?? body.phoneMobileE164 ?? body.phoneLandlineE164);
+    }
+
+    const hasWhatsapp = ["whatsappE164", "whatsapp"].some((k) => Object.prototype.hasOwnProperty.call(body, k));
+    if (hasWhatsapp) {
+      dataCore.whatsappE164 = trimOrNull(body.whatsappE164 ?? body.whatsapp);
+    }
+
+    setIfProvided(body, dataCore, "postalCode", "zip", trimOrNull);
+    setIfProvided(body, dataCore, "zip", "zip", trimOrNull);
 
     // address
-    setIfProvidedCamel(body, dataCore, "street", "street", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "street2", "street2", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "city", "city", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "state", "state", trimOrNull);
-    setIfProvidedCamel(body, dataCore, "country", "country", trimOrNull);
+    setIfProvided(body, dataCore, "street", "street", trimOrNull);
+    setIfProvided(body, dataCore, "street2", "street2", trimOrNull);
+    setIfProvided(body, dataCore, "city", "city", trimOrNull);
+    setIfProvided(body, dataCore, "state", "state", trimOrNull);
+    setIfProvided(body, dataCore, "country", "country", normalizeCountry);
 
     // optional notes (remove if not in DB)
-    setIfProvidedCamel(body, dataCore, "notes", "notes", (v) => (v == null ? null : String(v)));
+    setIfProvided(body, dataCore, "notes", "notes", trimOrNull);
 
     if (Object.prototype.hasOwnProperty.call(body, "archived")) {
-      dataCore.archived = Boolean(body.archived);
+      dataCore.archived = body.archived === true;
     }
 
     // Handle organizationId separately (validate tenant, allow null to clear)
-    if (Object.prototype.hasOwnProperty.call(body, "organizationId")) {
-      const orgVal = body.organizationId;
-      if (orgVal === null) {
+    if (Object.prototype.hasOwnProperty.call(body, "organizationId") || Object.prototype.hasOwnProperty.call(body, "organization_id")) {
+      const orgVal = body.organizationId ?? body.organization_id;
+      if (orgVal === null || String(orgVal).trim() === "") {
         dataCore.organizationId = null; // clear link
       } else {
         const orgId = Number(orgVal);
         if (!Number.isInteger(orgId) || orgId <= 0) {
-          return reply.code(400).send({ error: "organizationId_invalid" });
+          return reply.code(400).send({
+            message: "Validation failed",
+            fieldErrors: { organizationId: "Organization is invalid." },
+          });
         }
         const org = await app.prisma.organization.findFirst({
           where: { id: orgId, tenantId },
           select: { id: true },
         });
         if (!org) {
-          return reply.code(404).send({ error: "organization_not_found_or_wrong_tenant" });
+          return reply.code(400).send({
+            message: "Validation failed",
+            fieldErrors: { organizationId: "Organization not found." },
+          });
         }
         dataCore.organizationId = org.id;
       }
+    }
+
+    const nameKeys = ["firstName", "lastName", "nickname", "first_name", "last_name"];
+    const hasNameUpdate = nameKeys.some((k) => Object.prototype.hasOwnProperty.call(body, k));
+    if (hasNameUpdate) {
+      const nextFirst =
+        Object.prototype.hasOwnProperty.call(dataCore, "first_name") ? dataCore.first_name : existing.first_name;
+      const nextLast =
+        Object.prototype.hasOwnProperty.call(dataCore, "last_name") ? dataCore.last_name : existing.last_name;
+      const nextNick =
+        Object.prototype.hasOwnProperty.call(dataCore, "nickname") ? dataCore.nickname : existing.nickname;
+
+      const nameErrors: Record<string, string> = {};
+      if (!nextFirst) nameErrors.firstName = "First name is required.";
+      if (!nextLast) nameErrors.lastName = "Last name is required.";
+      if (Object.keys(nameErrors).length > 0) {
+        return reply.code(400).send({ message: "Validation failed", fieldErrors: nameErrors });
+      }
+
+      dataCore.display_name = deriveDisplayName(nextNick, nextFirst, nextLast);
     }
 
     if (Object.keys(dataCore).length === 0) {
@@ -405,10 +585,21 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           organizationId: true,
           createdAt: true,
           updatedAt: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       });
 
-      return reply.send(contactDTO(updatedDb));
+      const response = {
+        ...contactDTO(updatedDb),
+        organizationName: updatedDb.organization?.name ?? null,
+      };
+
+      return reply.send(response);
     } catch (err: any) {
       req.log.error({ err }, "contacts.patch failed");
       if (err?.code === "P2002") {
