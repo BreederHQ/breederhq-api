@@ -108,6 +108,12 @@ function toOrgDTO(org: OrgWithParty) {
 
 /* ───────────────────────── routes ───────────────────────── */
 
+// Manual verification (dev):
+// - POST /api/v1/organizations {"name":"Party QA Org"} -> use returned id (sample uses 8)
+// - PATCH /api/v1/organizations/8 {"name":"Party QA Org Renamed"}
+// - PATCH /api/v1/contacts/18 {"organizationId":8}
+// - GET /api/v1/contacts/18 -> organizationName === "Party QA Org Renamed"
+// - SQL: select o.id, o.name, p.name from "Organization" o join "Party" p on p.id=o."partyId" where o.id=8;
 const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /organizations?q=&includeArchived=&page=&limit=&sort=
   app.get("/organizations", async (req, reply) => {
@@ -233,7 +239,16 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
             tenantId,
             partyId: party.id,
             name,
+            email: b.email ?? null,
+            phone: b.phone ?? null,
             website: b.website ?? null,
+            street: b.street ?? null,
+            street2: b.street2 ?? null,
+            city: b.city ?? null,
+            state: b.state ?? null,
+            zip: b.zip ?? null,
+            country: b.country ?? null,
+            archived: b.archived ?? false,
             externalProvider: b.externalProvider ?? null,
             externalId: b.externalId ?? null,
           },
@@ -274,22 +289,51 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       }>;
 
       const partyData: any = {};
+      const orgData: any = {};
       if (b.name !== undefined) {
         const n = String(b.name || "").trim();
         if (!n) return reply.code(400).send({ error: "name_required" });
         partyData.name = n;
+        orgData.name = n;
       }
-      if (b.email !== undefined) partyData.email = b.email;
-      if (b.phone !== undefined) partyData.phoneE164 = b.phone;
-      if (b.street !== undefined) partyData.street = b.street;
-      if (b.street2 !== undefined) partyData.street2 = b.street2;
-      if (b.city !== undefined) partyData.city = b.city;
-      if (b.state !== undefined) partyData.state = b.state;
-      if (b.zip !== undefined) partyData.postalCode = b.zip;
-      if (b.country !== undefined) partyData.country = b.country;
-      if (b.archived !== undefined) partyData.archived = !!b.archived;
+      if (b.email !== undefined) {
+        partyData.email = b.email;
+        orgData.email = b.email;
+      }
+      if (b.phone !== undefined) {
+        partyData.phoneE164 = b.phone;
+        orgData.phone = b.phone;
+      }
+      if (b.street !== undefined) {
+        partyData.street = b.street;
+        orgData.street = b.street;
+      }
+      if (b.street2 !== undefined) {
+        partyData.street2 = b.street2;
+        orgData.street2 = b.street2;
+      }
+      if (b.city !== undefined) {
+        partyData.city = b.city;
+        orgData.city = b.city;
+      }
+      if (b.state !== undefined) {
+        partyData.state = b.state;
+        orgData.state = b.state;
+      }
+      if (b.zip !== undefined) {
+        partyData.postalCode = b.zip;
+        orgData.zip = b.zip;
+      }
+      if (b.country !== undefined) {
+        partyData.country = b.country;
+        orgData.country = b.country;
+      }
+      if (b.archived !== undefined) {
+        const archived = !!b.archived;
+        partyData.archived = archived;
+        orgData.archived = archived;
+      }
 
-      const orgData: any = {};
       if (b.website !== undefined) orgData.website = b.website;
       if (b.externalProvider !== undefined) orgData.externalProvider = b.externalProvider;
       if (b.externalId !== undefined) orgData.externalId = b.externalId;
