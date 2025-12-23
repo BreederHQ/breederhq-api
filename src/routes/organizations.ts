@@ -6,6 +6,27 @@ import prisma from "../prisma.js";
 
 type SortKey = "name" | "createdAt" | "updatedAt";
 
+type OrgWithParty = {
+  id: number;
+  website: string | null;
+  party: {
+    tenantId: number;
+    type: "ORGANIZATION" | "CONTACT";
+    name: string;
+    email: string | null;
+    phoneE164: string | null;
+    street: string | null;
+    street2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    country: string | null;
+    archived: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+};
+
 function parsePaging(q: any) {
   const page = Math.max(1, Number(q?.page ?? 1) || 1);
   const limit = Math.min(100, Math.max(1, Number(q?.limit ?? 25) || 25));
@@ -17,20 +38,24 @@ function parseSort(q: any) {
   // Accepts "name:asc,createdAt:desc"
   const s = String(q?.sort || "").trim();
   const allowed: SortKey[] = ["name", "createdAt", "updatedAt"];
-  if (!s) return [{ createdAt: "desc" }] as any[];
+  if (!s) return [{ party: { createdAt: "desc" } }] as any[];
   const orderBy: any[] = [];
   for (const piece of s.split(",").map((p: string) => p.trim()).filter(Boolean)) {
     const [fieldRaw, dirRaw] = piece.split(":");
     const field = fieldRaw as SortKey;
     const dir = (dirRaw || "asc").toLowerCase() === "desc" ? "desc" : "asc";
-    if (allowed.includes(field)) orderBy.push({ [field]: dir });
+    if (allowed.includes(field)) orderBy.push({ party: { [field]: dir } });
   }
-  return orderBy.length ? orderBy : [{ createdAt: "desc" }];
+  return orderBy.length ? orderBy : [{ party: { createdAt: "desc" } }];
 }
 
 function idNum(v: any) {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function isValidOrgParty(org: { party?: { tenantId: number; type: string } } | null, tenantId: number) {
+  return !!org?.party && org.party.tenantId === tenantId && org.party.type === "ORGANIZATION";
 }
 
 async function getOrgInTenant(orgId: number, tenantId: number) {
@@ -62,6 +87,25 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
+function toOrgDTO(org: OrgWithParty) {
+  return {
+    id: org.id,
+    name: org.party.name,
+    email: org.party.email,
+    phone: org.party.phoneE164,
+    website: org.website,
+    street: org.party.street,
+    street2: org.party.street2,
+    city: org.party.city,
+    state: org.party.state,
+    zip: org.party.postalCode,
+    country: org.party.country,
+    archived: org.party.archived,
+    createdAt: org.party.createdAt,
+    updatedAt: org.party.updatedAt,
+  };
+}
+
 /* ───────────────────────── routes ───────────────────────── */
 
 const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -85,45 +129,33 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const { page, limit, skip } = parsePaging(q);
       const orderBy = parseSort(q);
 
-      const where: any = { tenantId };
-      if (!includeArchived) where.archived = false;
+      const partyWhere: any = { tenantId, type: "ORGANIZATION" };
+      if (!includeArchived) partyWhere.archived = false;
       if (search) {
-        where.OR = [
+        partyWhere.OR = [
           { name: { contains: search, mode: "insensitive" } },
           { email: { contains: search, mode: "insensitive" } },
-          { phone: { contains: search, mode: "insensitive" } },
+          { phoneE164: { contains: search, mode: "insensitive" } },
           { city: { contains: search, mode: "insensitive" } },
           { state: { contains: search, mode: "insensitive" } },
           { country: { contains: search, mode: "insensitive" } },
         ];
       }
 
-      const [items, total] = await prisma.$transaction([
+      const where: any = { tenantId, party: partyWhere };
+
+      const [rows, total] = await prisma.$transaction([
         prisma.organization.findMany({
           where,
           orderBy,
           skip,
           take: limit,
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            website: true,
-            street: true,
-            street2: true,
-            city: true,
-            state: true,
-            zip: true,
-            country: true,
-            archived: true,
-            createdAt: true,
-            updatedAt: true,
-          },
+          include: { party: true },
         }),
         prisma.organization.count({ where }),
       ]);
 
+      const items = rows.map((org) => toOrgDTO(org as OrgWithParty));
       reply.send({ items, total, page, limit });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -142,25 +174,11 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
       const org = await prisma.organization.findFirst({
         where: { id, tenantId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          website: true,
-          street: true,
-          street2: true,
-          city: true,
-          state: true,
-          zip: true,
-          country: true,
-          archived: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+        include: { party: true },
       });
       if (!org) return reply.code(404).send({ error: "not_found" });
-      reply.send(org);
+      if (!isValidOrgParty(org, tenantId)) return reply.code(404).send({ error: "not_found" });
+      reply.send(toOrgDTO(org as OrgWithParty));
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
@@ -184,44 +202,46 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         state: string | null;
         zip: string | null;
         country: string | null;
+        archived: boolean;
+        externalProvider: string | null;
+        externalId: string | null;
       }>;
 
       const name = String(b.name || "").trim();
       if (!name) return reply.code(400).send({ error: "name_required" });
 
-      const created = await prisma.organization.create({
-        data: {
-          tenantId,
-          name,
-          email: b.email ?? null,
-          phone: b.phone ?? null,
-          website: b.website ?? null,
-          street: b.street ?? null,
-          street2: b.street2 ?? null,
-          city: b.city ?? null,
-          state: b.state ?? null,
-          zip: b.zip ?? null,
-          country: b.country ?? null,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          website: true,
-          street: true,
-          street2: true,
-          city: true,
-          state: true,
-          zip: true,
-          country: true,
-          archived: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+      const created = await prisma.$transaction(async (tx) => {
+        const party = await tx.party.create({
+          data: {
+            tenantId,
+            type: "ORGANIZATION",
+            name,
+            email: b.email ?? null,
+            phoneE164: b.phone ?? null,
+            street: b.street ?? null,
+            street2: b.street2 ?? null,
+            city: b.city ?? null,
+            state: b.state ?? null,
+            postalCode: b.zip ?? null,
+            country: b.country ?? null,
+            archived: b.archived ?? false,
+          },
+        });
+
+        return tx.organization.create({
+          data: {
+            tenantId,
+            partyId: party.id,
+            name,
+            website: b.website ?? null,
+            externalProvider: b.externalProvider ?? null,
+            externalId: b.externalId ?? null,
+          },
+          include: { party: true },
+        });
       });
 
-      return reply.code(201).send(created);
+      return reply.code(201).send(toOrgDTO(created as OrgWithParty));
     } catch (e: any) {
       const { status, payload } = errorReply(e);
       return reply.code(status).send(payload);
@@ -237,8 +257,6 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      await getOrgInTenant(id, tenantId);
-
       const b = (req.body || {}) as Partial<{
         name: string;
         email: string | null;
@@ -251,47 +269,51 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         zip: string | null;
         country: string | null;
         archived: boolean;
+        externalProvider: string | null;
+        externalId: string | null;
       }>;
 
-      const data: any = {};
+      const partyData: any = {};
       if (b.name !== undefined) {
         const n = String(b.name || "").trim();
         if (!n) return reply.code(400).send({ error: "name_required" });
-        data.name = n;
+        partyData.name = n;
       }
-      if (b.email !== undefined) data.email = b.email;
-      if (b.phone !== undefined) data.phone = b.phone;
-      if (b.website !== undefined) data.website = b.website;
-      if (b.street !== undefined) data.street = b.street;
-      if (b.street2 !== undefined) data.street2 = b.street2;
-      if (b.city !== undefined) data.city = b.city;
-      if (b.state !== undefined) data.state = b.state;
-      if (b.zip !== undefined) data.zip = b.zip;
-      if (b.country !== undefined) data.country = b.country;
-      if (b.archived !== undefined) data.archived = !!b.archived;
+      if (b.email !== undefined) partyData.email = b.email;
+      if (b.phone !== undefined) partyData.phoneE164 = b.phone;
+      if (b.street !== undefined) partyData.street = b.street;
+      if (b.street2 !== undefined) partyData.street2 = b.street2;
+      if (b.city !== undefined) partyData.city = b.city;
+      if (b.state !== undefined) partyData.state = b.state;
+      if (b.zip !== undefined) partyData.postalCode = b.zip;
+      if (b.country !== undefined) partyData.country = b.country;
+      if (b.archived !== undefined) partyData.archived = !!b.archived;
 
-      const updated = await prisma.organization.update({
-        where: { id },
-        data,
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          website: true,
-          street: true,
-          street2: true,
-          city: true,
-          state: true,
-          zip: true,
-          country: true,
-          archived: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+      const orgData: any = {};
+      if (b.website !== undefined) orgData.website = b.website;
+      if (b.externalProvider !== undefined) orgData.externalProvider = b.externalProvider;
+      if (b.externalId !== undefined) orgData.externalId = b.externalId;
+
+      const org = await prisma.organization.findFirst({
+        where: { id, tenantId },
+        include: { party: true },
+      });
+      if (!org) return reply.code(404).send({ error: "not_found" });
+      if (!isValidOrgParty(org, tenantId)) return reply.code(404).send({ error: "not_found" });
+
+      const hasPartyUpdates = Object.keys(partyData).length > 0;
+      const hasOrgUpdates = Object.keys(orgData).length > 0;
+
+      const [updatedParty, updatedOrg] = await prisma.$transaction(async (tx) => {
+        const party = hasPartyUpdates
+          ? await tx.party.update({ where: { id: org.partyId }, data: partyData })
+          : org.party;
+        const organization = hasOrgUpdates ? await tx.organization.update({ where: { id }, data: orgData }) : org;
+        return [party, organization];
       });
 
-      reply.send(updated);
+      const merged = { ...updatedOrg, party: updatedParty };
+      reply.send(toOrgDTO(merged as OrgWithParty));
     } catch (e: any) {
       const { status, payload } = errorReply(e);
       reply.status(status).send(payload);

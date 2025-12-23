@@ -13,6 +13,11 @@ datasource db {
  * ────────────────────────────────────────────────────────────────────────────
  */
 
+enum PartyType {
+  CONTACT
+  ORGANIZATION
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -417,6 +422,7 @@ model Tenant {
   memberships    TenantMembership[]
   organizations  Organization[]
   contacts       Contact[]
+  parties        Party[]
   animals        Animal[]
   billing        BillingAccount?
   sharesSent     AnimalShare[]         @relation("ShareFromTenant")
@@ -445,7 +451,6 @@ model Tenant {
 
   availabilityPrefs Json?
 
-  // namespaced settings
   settings TenantSetting[]
 
   createdAt              DateTime                @default(now())
@@ -502,9 +507,13 @@ model BillingAccount {
 }
 
 model Organization {
-  id       Int     @id @default(autoincrement())
+  id       Int    @id @default(autoincrement())
   tenantId Int
-  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  partyId Int   @unique
+  party   Party @relation("OrganizationParty", fields: [partyId], references: [id], onDelete: Cascade)
+
   name     String
   email    String?
   phone    String?
@@ -517,30 +526,26 @@ model Organization {
   country  String?
   archived Boolean @default(false)
 
-  contacts         Contact[]
-  animals          Animal[]     @relation("OrgAnimals")
-  animalsPurchased Animal[]     @relation("AnimalBuyerOrganization")
-  memberships      Membership[]
-
+  contacts            Contact[]
+  animals             Animal[]              @relation("OrgAnimals")
+  animalsPurchased    Animal[]              @relation("AnimalBuyerOrganization")
+  memberships         Membership[]
   createdCustomBreeds CustomBreed[]         @relation("CreatedByOrganization")
   groupBuyerLinks     OffspringGroupBuyer[] @relation("GroupBuyerOrganization")
-
-  breedingPlans BreedingPlan[]
-
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  AnimalOwner        AnimalOwner[]
-  TagAssignment      TagAssignment[]
-  Invitation         Invitation[]
-  PlanParty          PlanParty[]
-  WaitlistEntry      WaitlistEntry[]
-  Offspring          Offspring[]
-  OffspringContracts OffspringContract[] @relation("OffspringContractBuyerOrg")
-  Invoice            Invoice[]
-  ContractParty      ContractParty[]
-
-  externalProvider String?
-  externalId       String?
+  breedingPlans       BreedingPlan[]
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  AnimalOwner         AnimalOwner[]
+  TagAssignment       TagAssignment[]
+  Invitation          Invitation[]
+  PlanParty           PlanParty[]
+  WaitlistEntry       WaitlistEntry[]
+  Offspring           Offspring[]
+  OffspringContracts  OffspringContract[]   @relation("OffspringContractBuyerOrg")
+  Invoice             Invoice[]
+  ContractParty       ContractParty[]
+  externalProvider    String?
+  externalId          String?
 
   @@unique([id, tenantId])
   @@unique([tenantId, name])
@@ -560,12 +565,50 @@ model Membership {
   @@index([organizationId])
 }
 
+model Party {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  type PartyType
+
+  // Unified list label
+  name String
+
+  // Shared comms
+  email        String? @db.Citext
+  phoneE164    String? @db.VarChar(32)
+  whatsappE164 String? @db.VarChar(32)
+
+  // Shared address
+  street     String?
+  street2    String?
+  city       String?
+  state      String?
+  postalCode String?
+  country    String? @db.Char(2)
+
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization? @relation("OrganizationParty")
+  contact      Contact?      @relation("ContactParty")
+
+  @@index([tenantId, type])
+  @@index([tenantId, name])
+  @@index([tenantId, email])
+}
+
 model Contact {
   id             Int           @id @default(autoincrement())
   tenantId       Int
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
   tenant         Tenant        @relation(fields: [tenantId], references: [id])
+
+  partyId Int?   @unique
+  party   Party? @relation(name: "ContactParty", fields: [partyId], references: [id], onDelete: Restrict)
 
   // Names
   display_name String
@@ -618,6 +661,7 @@ model Contact {
   @@index([last_name])
   @@index([first_name])
   @@index([nickname])
+  @@index([tenantId, partyId])
 }
 
 /**
