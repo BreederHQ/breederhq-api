@@ -137,13 +137,21 @@ const ORGANIZATION_SELECT = {
   select: {
     id: true,
     name: true,
-    party: { select: { name: true } },
+    archived: true,
+    party: { select: { name: true, archived: true } },
   },
 };
 
-function toContactResponse(row: any) {
+function resolveOrganizationName(organization: any, includeArchived: boolean) {
+  if (!organization || !organization.party) return null;
+  if (!includeArchived && (organization.archived || organization.party.archived)) return null;
+  return organization.party.name ?? null;
+}
+
+function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
   const { organization, party, ...rest } = row;
   const hasParty = !!party;
+  const includeArchivedOrg = options.includeArchivedOrg ?? true;
   return {
     ...rest,
     display_name: hasParty ? party.name : rest.display_name,
@@ -156,7 +164,7 @@ function toContactResponse(row: any) {
     state: hasParty ? party.state : rest.state,
     zip: hasParty ? party.postalCode : rest.zip,
     country: hasParty ? party.country : rest.country,
-    organizationName: organization?.party?.name ?? null,
+    organizationName: resolveOrganizationName(organization, includeArchivedOrg),
   };
 }
 
@@ -214,9 +222,24 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const where: any = { tenantId };
       if (!includeArchived) where.archived = false;
       if (search) {
+        const organizationNameMatch = includeArchived
+          ? { organization: { party: { name: { contains: search, mode: "insensitive" } } } }
+          : {
+              organization: {
+                is: {
+                  archived: false,
+                  party: {
+                    is: {
+                      archived: false,
+                      name: { contains: search, mode: "insensitive" },
+                    },
+                  },
+                },
+              },
+            };
         where.OR = [
           { party: { name: { contains: search, mode: "insensitive" } } },
-          { organization: { party: { name: { contains: search, mode: "insensitive" } } } },
+          organizationNameMatch,
           { party: { email: { contains: search } } },
           { party: { phoneE164: { contains: search } } },
           { party: { whatsappE164: { contains: search } } },
@@ -263,7 +286,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
-      const items = rows.map(toContactResponse);
+      const items = rows.map((row) => toContactResponse(row));
 
       return reply.send({ items, total, page, limit });
     } catch (err) {
@@ -277,6 +300,9 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const q = (req.query as any) ?? {};
+      const includeArchived = String(q.includeArchived ?? "false").toLowerCase() === "true";
 
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
@@ -309,7 +335,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!row) return reply.code(404).send({ error: "not_found" });
 
-      return reply.send(toContactResponse(row));
+      return reply.send(toContactResponse(row, { includeArchivedOrg: includeArchived }));
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
