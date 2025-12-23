@@ -8,7 +8,7 @@ import sharp from "sharp";
 const AVATAR_SIZE = 256;
 
 /* Keep these in sync with Prisma enums */
-type Species = "DOG" | "CAT" | "HORSE";
+type Species = "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
 type Sex = "FEMALE" | "MALE";
 type AnimalStatus = "ACTIVE" | "BREEDING" | "UNAVAILABLE" | "RETIRED" | "DECEASED" | "PROSPECT";
 type OwnerPartyType = "Organization" | "Contact";
