@@ -150,13 +150,16 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const q = (req.query as any) ?? {};
       const { page, limit, skip } = parsePaging(q);
       const includeArchived = String(q.includeArchived ?? "false").toLowerCase() === "true";
-      const search = String(q.q ?? "").trim();
+      const search = trimToNull(q.search ?? q.q);
       const orderBy = parseSort(q);
 
       const where: any = { tenantId };
       if (!includeArchived) where.archived = false;
       if (search) {
         where.OR = [
+          { party: { name: { contains: search, mode: "insensitive" } } },
+          { party: { email: { contains: search } } },
+          { party: { phoneE164: { contains: search } } },
           { display_name: { contains: search, mode: "insensitive" } },
           { first_name: { contains: search, mode: "insensitive" } }, // ← added
           { last_name: { contains: search, mode: "insensitive" } }, // ← added
