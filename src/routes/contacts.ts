@@ -206,6 +206,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (search) {
         where.OR = [
           { party: { name: { contains: search, mode: "insensitive" } } },
+          { organization: { party: { name: { contains: search, mode: "insensitive" } } } },
           { party: { email: { contains: search } } },
           { party: { phoneE164: { contains: search } } },
           { party: { whatsappE164: { contains: search } } },
