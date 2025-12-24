@@ -594,6 +594,7 @@ model Party {
 
   organization Organization? @relation("OrganizationParty")
   contact      Contact?      @relation("ContactParty")
+  attachments  Attachment[]  @relation("AttachmentParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -1692,6 +1693,10 @@ model Attachment {
   contactId Int?
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party linkage
+  attachmentPartyId Int?
+  attachmentParty   Party? @relation("AttachmentParty", fields: [attachmentPartyId], references: [id], onDelete: SetNull)
+
   kind            String
   storageProvider String
   storageKey      String
@@ -1713,6 +1718,7 @@ model Attachment {
   @@index([offspringGroupId])
   @@index([offspringId])
   @@index([contactId])
+  @@index([attachmentPartyId])
 }
 
 model PlanParty {
