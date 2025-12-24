@@ -1,6 +1,7 @@
 // src/routes/tags.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { createTagAssignment, getTagsForContact, getTagsForOrganization } from "../services/tag-service.js";
 
 type Module = "CONTACT" | "ORGANIZATION" | "ANIMAL";
 
@@ -82,6 +83,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // GET /contacts/:id/tags  → list tags assigned to a contact
+  // Party migration step 5: dual-read from contactId and taggedPartyId
 app.get("/contacts/:id/tags", async (req, reply) => {
   try {
     const tenantId = Number((req as any).tenantId);
@@ -93,30 +95,17 @@ app.get("/contacts/:id/tags", async (req, reply) => {
       return reply.code(400).send({ error: "invalid_contact_id" });
     }
 
-    // Ensure contact exists and belongs to the tenant (optional but nice for safety)
-    const contact = await prisma.contact.findFirst({
-      where: { id: contactId, tenantId },
-      select: { id: true },
-    });
-    if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+    // Use dual-read service that handles both contactId and taggedPartyId
+    const items = await getTagsForContact(contactId, tenantId);
 
-    // Pull assignments and include the Tag; order by Tag.name asc
-    const rows = await prisma.tagAssignment.findMany({
-      where: { contactId: contactId },
-      include: { tag: true },
-      orderBy: [{ tag: { name: "asc" } }],
-    });
-
-    const items = rows
-      .filter(r => r.tag && r.tag.tenantId === tenantId) // guard cross-tenant just in case
-      .map(r => ({
-        id: r.tag.id,
-        name: r.tag.name,
-        module: r.tag.module,
-        color: r.tag.color ?? null,
-        createdAt: r.tag.createdAt,
-        updatedAt: r.tag.updatedAt,
-      }));
+    // Check if contact exists (if items is empty, could be no tags or no contact)
+    if (items.length === 0) {
+      const contact = await prisma.contact.findFirst({
+        where: { id: contactId, tenantId },
+        select: { id: true },
+      });
+      if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+    }
 
     return reply.send({ items, total: items.length });
   } catch (err) {
@@ -236,6 +225,7 @@ app.get("/contacts/:id/tags", async (req, reply) => {
 
   // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? }
   // Exactly one target; target must be in the same tenant; tag.module must match target type.
+  // Party migration step 5: dual-write for contactId and organizationId
   app.post("/tags/:id/assign", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
@@ -263,7 +253,9 @@ app.get("/contacts/:id/tags", async (req, reply) => {
           });
           if (!org) return reply.code(404).send({ error: "organization_not_found" });
           if (org.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
-          await prisma.tagAssignment.create({ data: { tagId: tag.id, organizationId: org.id } });
+
+          // Dual-write: use service to set both organizationId and taggedPartyId
+          await createTagAssignment({ tagId: tag.id, organizationId: org.id });
         } else if (body.contactId != null) {
           if (tag.module !== "CONTACT") return reply.code(400).send({ error: "module_mismatch" });
           const contactId = parseIntOrNull(body.contactId);
@@ -274,7 +266,9 @@ app.get("/contacts/:id/tags", async (req, reply) => {
           });
           if (!c) return reply.code(404).send({ error: "contact_not_found" });
           if (c.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
-          await prisma.tagAssignment.create({ data: { tagId: tag.id, contactId: c.id } });
+
+          // Dual-write: use service to set both contactId and taggedPartyId
+          await createTagAssignment({ tagId: tag.id, contactId: c.id });
         } else {
           if (tag.module !== "ANIMAL") return reply.code(400).send({ error: "module_mismatch" });
           const animalId = parseIntOrNull(body.animalId);
@@ -285,7 +279,9 @@ app.get("/contacts/:id/tags", async (req, reply) => {
           });
           if (!a) return reply.code(404).send({ error: "animal_not_found" });
           if (a.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
-          await prisma.tagAssignment.create({ data: { tagId: tag.id, animalId: a.id } });
+
+          // Animal assignment (not party-like, no dual-write needed)
+          await createTagAssignment({ tagId: tag.id, animalId: a.id });
         }
       } catch (e: any) {
         if (e?.code === "P2002") {
