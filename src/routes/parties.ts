@@ -49,8 +49,9 @@ const partiesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // curl -H "x-tenant-id: 1" "http://localhost:6170/api/v1/parties?type=PERSON"
   // curl -H "x-tenant-id: 1" "http://localhost:6170/api/v1/parties/123"
   app.get("/parties", async (req, reply) => {
+    let tenantId: number | null = null;
     try {
-      const tenantId = Number((req as any).tenantId);
+      tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const q = (req.query as any) ?? {};
@@ -79,8 +80,8 @@ const partiesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send(result);
     } catch (err) {
-      req.log?.error?.(err as any);
-      return reply.code(500).send({ error: "parties_unavailable" });
+      req.log.error({ err, tenantId, query: req.query, params: req.params }, "Parties endpoint failed");
+      return reply.code(500).send({ error: "internal_error" });
     }
   });
 
