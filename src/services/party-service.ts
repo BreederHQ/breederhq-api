@@ -73,7 +73,6 @@ const ORGANIZATION_SELECT = {
     createdAt: true,
     updatedAt: true,
     partyId: true,
-    tagAssignments: TAG_ASSIGNMENT_SELECT,
   },
 } as const;
 
