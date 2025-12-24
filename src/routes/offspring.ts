@@ -2414,13 +2414,24 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!(k in b)) return reply.code(400).send({ error: `missing field ${k}` });
     }
 
+    // Party migration step 5: resolve attachmentPartyId from contactId if present
+    let attachmentPartyId: number | null = null;
+    if (b.contactId) {
+      const contact = await prisma.contact.findFirst({
+        where: { id: b.contactId, tenantId },
+        select: { partyId: true },
+      });
+      attachmentPartyId = contact?.partyId ?? null;
+    }
+
     const created = await prisma.attachment.create({
       data: {
         tenantId,
         offspringGroupId: id,
         planId: null,
         animalId: null,
-        contactId: null,
+        contactId: b.contactId ?? null,
+        attachmentPartyId,
         kind: b.kind,
         storageProvider: b.storageProvider,
         storageKey: b.storageKey,
