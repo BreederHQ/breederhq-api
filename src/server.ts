@@ -224,6 +224,7 @@ import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
+import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
@@ -351,6 +352,7 @@ app.register(
 
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
+    api.register(partiesRoutes);       // /api/v1/parties/*
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*
