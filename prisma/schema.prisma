@@ -592,9 +592,10 @@ model Party {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization? @relation("OrganizationParty")
-  contact      Contact?      @relation("ContactParty")
-  attachments  Attachment[]  @relation("AttachmentParty")
+  organization    Organization?   @relation("OrganizationParty")
+  contact         Contact?        @relation("ContactParty")
+  attachments     Attachment[]    @relation("AttachmentParty")
+  tagAssignments  TagAssignment[] @relation("TagAssignmentTaggedParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -899,6 +900,10 @@ model TagAssignment {
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for tagged Contact or Organization
+  taggedPartyId Int?
+  taggedParty   Party? @relation("TagAssignmentTaggedParty", fields: [taggedPartyId], references: [id], onDelete: SetNull)
+
   animalId Int?
   animal   Animal? @relation(fields: [animalId], references: [id], onDelete: Cascade)
 
@@ -925,6 +930,8 @@ model TagAssignment {
   @@index([waitlistEntryId])
   @@index([offspringGroupId])
   @@index([offspringId])
+  @@index([taggedPartyId])
+  @@index([tagId, taggedPartyId])
 }
 
 /**
