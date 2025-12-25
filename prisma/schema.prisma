@@ -285,6 +285,10 @@ model User {
   contactId Int?
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for user profile
+  partyId Int?
+  party   Party? @relation("UserParty", fields: [partyId], references: [id], onDelete: SetNull)
+
   // org/tenant membership
   memberships       Membership[]
   tenantMemberships TenantMembership[]
@@ -317,6 +321,7 @@ model User {
   ContractParty       ContractParty[]
 
   @@index([contactId])
+  @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
   @@index([whatsappE164])
@@ -594,6 +599,7 @@ model Party {
 
   organization         Organization?         @relation("OrganizationParty")
   contact              Contact?              @relation("ContactParty")
+  users                User[]                @relation("UserParty")
   attachments          Attachment[]          @relation("AttachmentParty")
   tagAssignments       TagAssignment[]       @relation("TagAssignmentTaggedParty")
   breedingAttempts     BreedingAttempt[]     @relation("BreedingAttemptStudOwner")
