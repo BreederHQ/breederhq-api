@@ -3,7 +3,11 @@ import type { FastifyPluginCallback } from "fastify";
 import prisma from "../prisma.js";
 import { WaitlistStatus } from "@prisma/client";
 import { Species } from "@prisma/client";
-import { resolvePartyIdByType } from "../services/party-resolver.js";
+import {
+  WAITLIST_INCLUDE_PARTY,
+  deriveLegacyClientFields,
+  resolveClientPartyId,
+} from "../services/waitlist-mapping.js";
 
 /* ───────── helpers ───────── */
 
@@ -21,7 +25,13 @@ function parseISO(v: any): Date | null {
 
 /* ───────── serializers ───────── */
 
+/**
+ * Step 6E: Serialize WaitlistEntry with legacy client fields derived from Party.
+ */
 function serializeEntry(w: any) {
+  // Derive legacy contactId/organizationId from Party
+  const legacyClient = deriveLegacyClientFields(w);
+
   return {
     id: w.id,
     tenantId: w.tenantId,
@@ -34,8 +44,9 @@ function serializeEntry(w: any) {
     balanceDueCents: w.balanceDueCents,
     depositPaidAt: w.depositPaidAt?.toISOString() ?? null,
 
-    contactId: w.contactId,
-    organizationId: w.organizationId,
+    // Legacy client fields derived from Party
+    contactId: legacyClient.contactId,
+    organizationId: legacyClient.organizationId,
     litterId: w.litterId,
     planId: w.planId,
 
@@ -44,12 +55,9 @@ function serializeEntry(w: any) {
     sirePrefId: w.sirePrefId,
     damPrefId: w.damPrefId,
 
-    contact: w.contact
-      ? { id: w.contact.id, display_name: w.contact.display_name, email: w.contact.email, phoneE164: w.contact.phoneE164 }
-      : null,
-    organization: w.organization
-      ? { id: w.organization.id, name: w.organization.name, email: w.organization.email, phone: w.organization.phone ?? null }
-      : null,
+    // Legacy contact/organization objects derived from Party
+    contact: legacyClient.contact,
+    organization: legacyClient.organization,
     sirePref: w.sirePref ? { id: w.sirePref.id, name: w.sirePref.name } : null,
     damPref: w.damPref ? { id: w.damPref.id, name: w.damPref.name } : null,
 
@@ -100,9 +108,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         ? {
             OR: [
               { notes: { contains: q, mode: "insensitive" } },
-              { contact: { display_name: { contains: q, mode: "insensitive" } } },
-              { contact: { email: { contains: q, mode: "insensitive" } } },
-              { organization: { name: { contains: q, mode: "insensitive" } } },
+              { clientParty: { contact: { display_name: { contains: q, mode: "insensitive" } } } },
+              { clientParty: { contact: { email: { contains: q, mode: "insensitive" } } } },
+              { clientParty: { organization: { name: { contains: q, mode: "insensitive" } } } },
             ],
           }
         : null),
@@ -112,13 +120,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       where,
       orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }, { id: "asc" }],
       take: limit,
-      include: {
-        contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-        organization: { select: { id: true, name: true, email: true, phone: true } },
-        sirePref: { select: { id: true, name: true } },
-        damPref: { select: { id: true, name: true } },
-        TagAssignment: { include: { tag: true } },
-      },
+      include: WAITLIST_INCLUDE_PARTY,
     });
 
     // Count without cursor to give a stable aggregate for UI; still scoped to parking-lot, status/species
@@ -138,13 +140,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const w = await prisma.waitlistEntry.findFirst({
       where: { id, tenantId },
-      include: {
-        contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-        organization: { select: { id: true, name: true, email: true, phone: true } },
-        sirePref: { select: { id: true, name: true } },
-        damPref: { select: { id: true, name: true } },
-        TagAssignment: { include: { tag: true } },
-      },
+      include: WAITLIST_INCLUDE_PARTY,
     });
 
     if (!w) return reply.code(404).send({ error: "not found" });
@@ -154,26 +150,27 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /**
    * POST /api/v1/waitlist
    * Create a global (parking lot) waitlist entry (no admin required)
-   * FE sends: contactId|organizationId, speciesPref, breedPrefs, sirePrefId, damPrefId, etc.
+   * Step 6E: Accepts legacy contactId|organizationId, persists only clientPartyId
    */
   app.post("/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const b = (req.body as any) ?? {};
 
-    // Require at least one party reference; infer partyType from presence
+    // Require at least one party reference
     if (!b.contactId && !b.organizationId) {
       return reply.code(400).send({ error: "contactId or organizationId required" });
     }
 
-    const partyType = b.organizationId ? "Organization" : "Contact";
-
-    // Party migration step 5: Resolve partyId for dual-write
-    const clientPartyId = await resolvePartyIdByType(
+    // Step 6E: Resolve clientPartyId from legacy contactId/organizationId
+    const clientPartyId = await resolveClientPartyId(
       prisma,
-      partyType,
       b.contactId,
       b.organizationId
     );
+
+    if (!clientPartyId) {
+      return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+    }
 
     const created = await prisma.waitlistEntry.create({
       data: {
@@ -181,10 +178,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         planId: b.planId ?? null,
         litterId: null, // parking-lot by design
 
-        partyType,
-        contactId: partyType === "Contact" ? Number(b.contactId) : null,
-        organizationId: partyType === "Organization" ? Number(b.organizationId) : null,
-        clientPartyId, // Party migration step 5: dual-write
+        clientPartyId, // Step 6E: Party-only storage
 
         speciesPref: b.speciesPref ?? null,
         breedPrefs: b.breedPrefs ?? null,
@@ -208,13 +202,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
         notes: b.notes ?? null,
       },
-      include: {
-        contact: true,
-        organization: true,
-        sirePref: true,
-        damPref: true,
-        TagAssignment: { include: { tag: true } },
-      },
+      include: WAITLIST_INCLUDE_PARTY,
     });
 
     reply.code(201).send(serializeEntry(created));
@@ -223,6 +211,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
   /**
    * PATCH /api/v1/waitlist/:id
    * Update an entry (no admin required)
+   * Step 6E: Accepts legacy contactId/organizationId, persists only clientPartyId
    */
   app.patch("/waitlist/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
@@ -234,17 +223,20 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const data: any = {};
 
-    // party
-    if ("contactId" in b) data.contactId = b.contactId ? Number(b.contactId) : null;
-    if ("organizationId" in b) data.organizationId = b.organizationId ? Number(b.organizationId) : null;
-    if ("partyType" in b) data.partyType = b.partyType; // optional; typically inferred
-
-    // Party migration step 5: dual-write clientPartyId when party fields change
+    // Step 6E: Accept legacy contactId/organizationId and resolve to clientPartyId
     if ("contactId" in b || "organizationId" in b) {
-      const partyType = data.partyType ?? (data.organizationId ? "Organization" : data.contactId ? "Contact" : existing.partyType);
-      const contactId = "contactId" in b ? data.contactId : existing.contactId;
-      const organizationId = "organizationId" in b ? data.organizationId : existing.organizationId;
-      data.clientPartyId = await resolvePartyIdByType(prisma, partyType, contactId, organizationId);
+      const contactId = "contactId" in b ? b.contactId : null;
+      const organizationId = "organizationId" in b ? b.organizationId : null;
+
+      if (!contactId && !organizationId) {
+        return reply.code(400).send({ error: "contactId or organizationId required" });
+      }
+
+      data.clientPartyId = await resolveClientPartyId(prisma, contactId, organizationId);
+
+      if (!data.clientPartyId) {
+        return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+      }
     }
 
     // relations
@@ -280,13 +272,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const updated = await prisma.waitlistEntry.update({
       where: { id },
       data,
-      include: {
-        contact: true,
-        organization: true,
-        sirePref: true,
-        damPref: true,
-        TagAssignment: { include: { tag: true } },
-      },
+      include: WAITLIST_INCLUDE_PARTY,
     });
 
     reply.send(serializeEntry(updated));

@@ -19,6 +19,7 @@ import {
   legacyStatusToCanonicalPatch,
 } from "../services/offspring/state.js";
 import { resolvePartyId } from "../services/party-resolver.js";
+import { WAITLIST_INCLUDE_PARTY } from "../services/waitlist-mapping.js";
 
 /**
  * Step 6D: Offspring Party-only storage constants and helpers
@@ -1229,24 +1230,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: id,
             tenantId,
           },
-          include: {
-            contact: {
-              select: {
-                id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
+          include: WAITLIST_INCLUDE_PARTY,
           orderBy: [
             { priority: "asc" },
             { id: "asc" },
@@ -1406,24 +1390,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringGroupId: created.id,
           tenantId,
         },
-        include: {
-          contact: {
-            select: {
-              id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-            },
-          },
-        },
+        include: WAITLIST_INCLUDE_PARTY,
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1559,27 +1526,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
       prisma.waitlistEntry.findMany({
         where: { offspringGroupId: id, tenantId },
-        include: {
-          contact: {
-            select: {
-              id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-            },
-          },
-          TagAssignment: { include: { tag: true } },
-          sirePref: true,
-          damPref: true,
-        },
+        include: WAITLIST_INCLUDE_PARTY,
       }),
       prisma.attachment.findMany({
         where: { offspringGroupId: id, tenantId },
@@ -2743,24 +2690,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: group.id,
             tenantId,
           },
-          include: {
-            contact: {
-              select: {
-                id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
+          include: WAITLIST_INCLUDE_PARTY,
           orderBy: [
             { priority: "asc" },
             { createdAt: "asc" },
