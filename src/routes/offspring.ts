@@ -335,6 +335,34 @@ const ATTACHMENT_INCLUDE_PARTY = {
 };
 
 /**
+ * Step 6C: Standard include for OffspringGroupBuyer with Party and backing Contact/Organization
+ * for legacy field derivation.
+ */
+const BUYER_INCLUDE_PARTY = {
+  buyerParty: {
+    include: {
+      contact: {
+        select: {
+          id: true,
+          display_name: true,
+          email: true,
+          phoneE164: true,
+        },
+      },
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+        },
+      },
+    },
+  },
+  waitlistEntry: true,
+};
+
+/**
  * Step 6A: Map attachment to include legacy contactId for backward compatibility.
  * Derives contactId from attachmentParty.contact.id if Party type is CONTACT.
  * Returns null for contactId if Party is ORGANIZATION or missing.
@@ -357,6 +385,37 @@ function attachmentWithLegacyFields(attachment: any): any {
   return {
     ...rest,
     contactId,
+  };
+}
+
+/**
+ * Step 6C: Map OffspringGroupBuyer to include legacy contactId and organizationId fields
+ * derived from Party for backward compatibility.
+ *
+ * Storage is Party-only (buyerPartyId), but API responses include legacy fields
+ * derived from the Party's type and backing Contact/Organization.
+ */
+function groupBuyerWithLegacyFields(buyer: any): any {
+  if (!buyer) return buyer;
+
+  const party = buyer.buyerParty;
+  let contactId: number | null = null;
+  let organizationId: number | null = null;
+
+  // Derive legacy fields from Party backing
+  if (party?.type === "CONTACT" && party.contact?.id) {
+    contactId = party.contact.id;
+  } else if (party?.type === "ORGANIZATION" && party.organization?.id) {
+    organizationId = party.organization.id;
+  }
+
+  // Remove Party internals from response, keep only legacy fields for backward compatibility
+  const { buyerParty, buyerPartyId, ...rest } = buyer;
+
+  return {
+    ...rest,
+    contactId,
+    organizationId,
   };
 }
 
@@ -1144,25 +1203,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             groupId: id,
             tenantId,
           },
-          include: {
-            contact: {
-              select: {
-                id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-            waitlistEntry: true,
-          },
+          include: BUYER_INCLUDE_PARTY,
           orderBy: [
             { createdAt: "asc" },
             { id: "asc" },
@@ -1199,13 +1240,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
+      // Step 6C: Map buyers to include legacy contactId/organizationId from Party
+      const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+
       reply.send(
         groupDetail(
           G as any,
           animals as any,
           waitlist as any,
           attachments as any,
-          buyers as any,
+          mappedBuyers as any,
           offspring as any,
         ),
       );
@@ -1350,25 +1394,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           groupId: created.id,
           tenantId,
         },
-        include: {
-          contact: {
-            select: {
-              id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-            },
-          },
-          waitlistEntry: true,
-        },
+        include: BUYER_INCLUDE_PARTY,
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1399,13 +1425,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
     ]);
 
+    // Step 6C: Map buyers to include legacy contactId/organizationId from Party
+    const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+
     reply.send(
       groupDetail(
         fresh as any,
         animals as any,
         waitlist as any,
         attachments as any,
-        buyers as any,
+        mappedBuyers as any,
         offspring as any,
       ),
     );
@@ -1522,25 +1551,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           groupId: id,
           tenantId,
         },
-        include: {
-          contact: {
-            select: {
-              id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-            },
-          },
-          waitlistEntry: true,
-        },
+        include: BUYER_INCLUDE_PARTY,
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1571,7 +1582,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
     ]);
 
-    reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any, buyers as any, offspring as any));
+    // Step 6C: Map buyers to include legacy contactId/organizationId from Party
+    const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+
+    reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any, mappedBuyers as any, offspring as any));
   });
 
   /* ===== DELETE: DELETE /api/v1/offspring/:id ===== */
@@ -2578,7 +2592,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!group) return reply.code(404).send({ error: "group not found" });
 
       try {
-        // Party migration step 5: resolve buyerPartyId for dual-write
+        // Step 6C: Accept legacy contactId/organizationId, persist only buyerPartyId
         const { resolvePartyId } = await import("../services/party-resolver.js");
         let buyerPartyId = null;
         if (contactId) {
@@ -2591,8 +2605,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: {
             tenantId,
             groupId: group.id,
-            contactId: contactId ?? null,
-            organizationId: organizationId ?? null,
             waitlistEntryId: waitlistEntryId ?? null,
             buyerPartyId,
           },
@@ -2606,21 +2618,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Fetch the updated group including buyers for the UI.
+      // Step 6C: Fetch the updated group including buyers with Party for legacy field mapping
       const updatedGroup = await prisma.offspringGroup.findFirst({
         where: { id: group.id, tenantId },
         include: {
           groupBuyerLinks: {
-            include: {
-              contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-              organization: { select: { id: true, name: true, phone: true } },
-              waitlistEntry: {
-                include: {
-                  contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-                  organization: { select: { id: true, name: true, phone: true } },
-                },
-              },
-            },
+            include: BUYER_INCLUDE_PARTY,
           },
         },
       });
@@ -2629,10 +2632,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(500).send({ error: "group_reload_failed" });
       }
 
+      // Step 6C: Map buyers to include legacy contactId/organizationId fields
+      const groupWithMappedBuyers = {
+        ...updatedGroup,
+        groupBuyerLinks: (updatedGroup.groupBuyerLinks ?? []).map(groupBuyerWithLegacyFields),
+      };
+
       return reply.status(200).send({
         ok: true,
         duplicate: false,
-        group: updatedGroup,
+        group: groupWithMappedBuyers,
       });
     }
   );
@@ -2758,25 +2767,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             groupId: group.id,
             tenantId,
           },
-          include: {
-            contact: {
-              select: {
-                id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-            waitlistEntry: true,
-          },
+          include: BUYER_INCLUDE_PARTY,
           orderBy: [
             { createdAt: "asc" },
             { id: "asc" },
@@ -2807,13 +2798,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
+      // Step 6C: Map buyers to include legacy contactId/organizationId from Party
+      const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+
       reply.code(200).send(
         groupDetail(
           G as any,
           animals as any,
           waitlist as any,
           attachments as any,
-          buyers as any,
+          mappedBuyers as any,
           offspring as any,
         ),
       );
