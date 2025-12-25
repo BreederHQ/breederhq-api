@@ -6,11 +6,15 @@ This document provides operational guidance for reconciling Prisma migrations in
 
 ## Background
 
-In this repository:
-- **Development**: We use `npx prisma db push` to apply schema changes quickly without creating migration files
-- **Production**: We use `npx prisma migrate deploy` to apply migration files that have been tested and committed
+**This is the project standard - not optional:**
 
-This creates a potential mismatch: the dev database may have schema changes applied via `db push` that haven't yet been recorded as migrations.
+In this repository:
+- **Development**: We use `npx prisma db push` ONLY to apply schema changes
+- **Migration folders**: Kept for history and for production deploy, but migration.sql MUST be idempotent
+- **NEVER use `prisma migrate dev`**: We do not use shadow databases in this project
+- **Production**: We use `npx prisma migrate deploy` to apply migration files
+
+This creates a workflow where the dev database will have schema changes applied via `db push` **before** migrations are run. Therefore, all migration.sql files must be written to handle pre-existing objects gracefully.
 
 ## When to Use Each Command
 
@@ -127,23 +131,31 @@ ORDER BY tablename, indexname;
 
 **Expected**: At least 6 indexes (single + composite for each model)
 
-## When It's Safe to Mark Migration as Resolved
+## When to Use `prisma migrate resolve --applied`
+
+Use `prisma migrate resolve --applied` when a migration failed because `db push` already created the objects, and you've now made the migration.sql idempotent.
+
+### Reconciliation Workflow After Migration Failure
+
+If `prisma migrate deploy` failed with an error like "constraint already exists":
+
+1. **Validate the database already has the expected objects** - Run the verification queries from the migration's README.md to confirm columns, FKs, and indexes exist
+2. **Make the migration.sql idempotent** - Wrap all FK creations in DO blocks checking pg_constraint, use IF NOT EXISTS for columns and indexes
+3. **Mark the migration as applied**:
+   ```powershell
+   npx dotenv -e .env.dev.migrate --override -- prisma migrate resolve --applied "20251225_party_step5_animals_party" --schema=prisma/schema.prisma
+   ```
+
+### Safety Checklist Before Using Resolve
 
 Use `prisma migrate resolve --applied` **ONLY** when ALL of the following are true:
 
-### Safety Checklist
-
 - [ ] ✅ The schema objects (columns, FKs, indexes) already exist in the database
-- [ ] ✅ You've verified object definitions match the migration.sql exactly
+- [ ] ✅ You've verified object definitions match what the migration.sql would create
 - [ ] ✅ The migration was applied via `db push` and you're just recording it in history
-- [ ] ✅ The database is in sync with schema.prisma (confirmed via `db push` dry-run)
+- [ ] ✅ The database is in sync with schema.prisma (confirmed via `db push` showing "already in sync")
 - [ ] ✅ You have a backup of the database (or it's dev/non-critical)
-- [ ] ✅ The migration.sql file is idempotent (won't cause errors if re-run)
-
-### Command
-```powershell
-npx dotenv -e .env.dev.migrate --override -- prisma migrate resolve --applied "20251225_party_step5_finance_party" --schema=prisma/schema.prisma
-```
+- [ ] ✅ The migration.sql file is NOW idempotent (won't cause errors if re-run in production)
 
 **Effect**: Marks the migration as applied in `_prisma_migrations` table without executing it.
 
@@ -208,41 +220,53 @@ npx dotenv -e .env.prod --override -- prisma migrate status --schema=prisma/sche
 
 ## Idempotent Migration Patterns
 
-When writing `migration.sql` files that may be applied after `db push`, use idempotent SQL:
+**CRITICAL**: All migration.sql files MUST be idempotent because dev uses `db push` which may create objects before the migration runs.
+
+When writing `migration.sql` files that may be applied after `db push`, use these patterns:
 
 ### Add Column
 ```sql
+-- Simple form (Prisma 5.x supports this)
+ALTER TABLE "YourTable"
+  ADD COLUMN IF NOT EXISTS "yourColumn" INTEGER;
+```
+
+### Add Foreign Key (REQUIRED PATTERN)
+```sql
+-- IMPORTANT: Always wrap FK creation in a DO block checking pg_constraint
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'YourTable' AND column_name = 'yourColumn'
-    ) THEN
-        ALTER TABLE "YourTable" ADD COLUMN "yourColumn" INTEGER;
-    END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'YourTable_yourColumn_fkey'
+      AND conrelid = '"YourTable"'::regclass
+  ) THEN
+    ALTER TABLE "YourTable"
+      ADD CONSTRAINT "YourTable_yourColumn_fkey"
+      FOREIGN KEY ("yourColumn")
+      REFERENCES "OtherTable"("id")
+      ON DELETE SET NULL
+      ON UPDATE CASCADE;
+  END IF;
 END $$;
 ```
 
-### Add Foreign Key
-```sql
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'YourTable_yourColumn_fkey'
-    ) THEN
-        ALTER TABLE "YourTable"
-        ADD CONSTRAINT "YourTable_yourColumn_fkey"
-        FOREIGN KEY ("yourColumn")
-        REFERENCES "OtherTable"(id)
-        ON DELETE SET NULL;
-    END IF;
-END $$;
-```
+**Why check both `conname` AND `conrelid`?**
+- `conname`: Ensures we're checking the right constraint name
+- `conrelid`: Ensures the constraint belongs to the correct table (not a different table with same FK name)
 
 ### Add Index
 ```sql
-CREATE INDEX IF NOT EXISTS "YourTable_yourColumn_idx" ON "YourTable"("yourColumn");
+-- Built-in IF NOT EXISTS support
+CREATE INDEX IF NOT EXISTS "YourTable_yourColumn_idx"
+  ON "YourTable"("yourColumn");
+```
+
+### Add JSONB Column
+```sql
+-- JSONB columns are just like any other column
+ALTER TABLE "YourTable"
+  ADD COLUMN IF NOT EXISTS "yourJsonColumn" JSONB;
 ```
 
 ## FAQ
