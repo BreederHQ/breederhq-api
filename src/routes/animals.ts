@@ -892,14 +892,28 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     let orgId: number | null = null;
     let contactId: number | null = null;
+    let partyId: number | null = null;
+
     if (b.partyType === "Organization") {
       orgId = parseIntStrict(b.organizationId);
       if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
       await assertOrgInTenant(orgId, tenantId);
+      // Dual-write: resolve partyId from Organization
+      const org = await prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { partyId: true },
+      });
+      partyId = org?.partyId ?? null;
     } else {
       contactId = parseIntStrict(b.contactId);
       if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
       await assertContactInTenant(contactId, tenantId);
+      // Dual-write: resolve partyId from Contact
+      const contact = await prisma.contact.findUnique({
+        where: { id: contactId },
+        select: { partyId: true },
+      });
+      partyId = contact?.partyId ?? null;
     }
 
     try {
@@ -909,6 +923,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           partyType: b.partyType,
           organizationId: orgId,
           contactId,
+          partyId,
           percent,
           isPrimary: !!b.isPrimary,
         },
@@ -976,12 +991,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         await assertOrgInTenant(orgId, tenantId);
         data.organizationId = orgId;
         data.contactId = null;
+        // Dual-write: resolve and set partyId
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+          select: { partyId: true },
+        });
+        data.partyId = org?.partyId ?? null;
       } else {
         const contactId = parseIntStrict(b.contactId);
         if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
         await assertContactInTenant(contactId, tenantId);
         data.contactId = contactId;
         data.organizationId = null;
+        // Dual-write: resolve and set partyId
+        const contact = await prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { partyId: true },
+        });
+        data.partyId = contact?.partyId ?? null;
       }
     } else {
       if (existing.partyType === "Organization" && b.organizationId !== undefined) {
@@ -991,6 +1018,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         await assertOrgInTenant(orgId, tenantId);
         data.organizationId = orgId;
         data.contactId = null;
+        // Dual-write: resolve and set partyId
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+          select: { partyId: true },
+        });
+        data.partyId = org?.partyId ?? null;
       }
       if (existing.partyType === "Contact" && b.contactId !== undefined) {
         if (b.contactId === null) return reply.code(400).send({ error: "contactId_required" });
@@ -999,6 +1032,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         await assertContactInTenant(contactId, tenantId);
         data.contactId = contactId;
         data.organizationId = null;
+        // Dual-write: resolve and set partyId
+        const contact = await prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { partyId: true },
+        });
+        data.partyId = contact?.partyId ?? null;
       }
     }
 
