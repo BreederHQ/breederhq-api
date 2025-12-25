@@ -1,5 +1,5 @@
 // tests/tag-service.test.ts
-// Unit tests for tag service party migration step 5
+// Unit tests for tag service Step 6B: Party-only
 
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import prisma from "../src/prisma.js";
@@ -12,15 +12,15 @@ import {
 } from "../src/services/tag-service.js";
 
 /**
- * Test suite for Party Migration Step 5: Tags Domain
+ * Test suite for Step 6B: Tags Party-Only
  *
  * These tests verify:
  * 1. partyId resolution from contactId and organizationId
- * 2. Dual-write: creating tag assignments sets both legacy ID and partyId
- * 3. Dual-read: fetching tags works via both contactId and taggedPartyId
+ * 2. Party-only writes: creating tag assignments persists ONLY taggedPartyId
+ * 3. Party-only reads: fetching tags works via taggedPartyId lookups
  */
 
-describe("Tag Service - Party Migration Step 5", () => {
+describe("Tag Service - Step 6B Party-Only", () => {
   let testTenantId: number;
   let testPartyId: number;
   let testContactId: number;
@@ -135,23 +135,23 @@ describe("Tag Service - Party Migration Step 5", () => {
     });
   });
 
-  describe("createTagAssignment - Dual Write", () => {
-    it("should create tag assignment with both contactId and taggedPartyId", async () => {
+  describe("createTagAssignment - Party-Only Write", () => {
+    it("should create tag assignment with ONLY taggedPartyId (no contactId)", async () => {
       await createTagAssignment({
         tagId: testTagId,
         contactId: testContactId,
       });
 
       const assignment = await prisma.tagAssignment.findFirst({
-        where: { tagId: testTagId, contactId: testContactId },
+        where: { tagId: testTagId, taggedPartyId: testPartyId },
       });
 
       expect(assignment).not.toBeNull();
-      expect(assignment?.contactId).toBe(testContactId);
       expect(assignment?.taggedPartyId).toBe(testPartyId);
+      // contactId column should not exist anymore
     });
 
-    it("should create tag assignment with organizationId and taggedPartyId", async () => {
+    it("should create tag assignment with ONLY taggedPartyId for organization", async () => {
       // Create org tag
       const orgTag = await prisma.tag.create({
         data: {
@@ -167,17 +167,17 @@ describe("Tag Service - Party Migration Step 5", () => {
       });
 
       const assignment = await prisma.tagAssignment.findFirst({
-        where: { tagId: orgTag.id, organizationId: testOrgId },
+        where: { tagId: orgTag.id, taggedPartyId: testOrgPartyId },
       });
 
       expect(assignment).not.toBeNull();
-      expect(assignment?.organizationId).toBe(testOrgId);
       expect(assignment?.taggedPartyId).toBe(testOrgPartyId);
+      // organizationId column should not exist anymore
 
       await prisma.tag.delete({ where: { id: orgTag.id } });
     });
 
-    it("should create assignment without taggedPartyId if contact has no partyId", async () => {
+    it("should throw error if contact has no partyId", async () => {
       const contactWithoutParty = await prisma.contact.create({
         data: {
           tenantId: testTenantId,
@@ -185,25 +185,19 @@ describe("Tag Service - Party Migration Step 5", () => {
         },
       });
 
-      await createTagAssignment({
-        tagId: testTagId,
-        contactId: contactWithoutParty.id,
-      });
-
-      const assignment = await prisma.tagAssignment.findFirst({
-        where: { tagId: testTagId, contactId: contactWithoutParty.id },
-      });
-
-      expect(assignment).not.toBeNull();
-      expect(assignment?.contactId).toBe(contactWithoutParty.id);
-      expect(assignment?.taggedPartyId).toBeNull();
+      await expect(
+        createTagAssignment({
+          tagId: testTagId,
+          contactId: contactWithoutParty.id,
+        })
+      ).rejects.toThrow(/has no partyId/);
 
       await prisma.contact.delete({ where: { id: contactWithoutParty.id } });
     });
   });
 
-  describe("getTagsForContact - Dual Read", () => {
-    it("should retrieve tags assigned via contactId", async () => {
+  describe("getTagsForContact - Party-Only Read", () => {
+    it("should retrieve tags assigned via taggedPartyId", async () => {
       await createTagAssignment({
         tagId: testTagId,
         contactId: testContactId,
@@ -216,8 +210,8 @@ describe("Tag Service - Party Migration Step 5", () => {
       expect(tags[0].name).toBe("Test Tag");
     });
 
-    it("should retrieve tags assigned via taggedPartyId", async () => {
-      // Manually create assignment with only taggedPartyId (simulating migrated data)
+    it("should retrieve tags when assignment only has taggedPartyId", async () => {
+      // Manually create assignment with only taggedPartyId
       await prisma.tagAssignment.create({
         data: {
           tagId: testTagId,
@@ -231,20 +225,6 @@ describe("Tag Service - Party Migration Step 5", () => {
       expect(tags[0].id).toBe(testTagId);
     });
 
-    it("should deduplicate tags present in both contactId and taggedPartyId", async () => {
-      // Create assignment with dual-write
-      await createTagAssignment({
-        tagId: testTagId,
-        contactId: testContactId,
-      });
-
-      const tags = await getTagsForContact(testContactId, testTenantId);
-
-      // Should only return one tag, not duplicates
-      expect(tags.length).toBe(1);
-      expect(tags[0].id).toBe(testTagId);
-    });
-
     it("should return empty array for contact with no tags", async () => {
       const tags = await getTagsForContact(testContactId, testTenantId);
       expect(tags).toEqual([]);
@@ -254,10 +234,24 @@ describe("Tag Service - Party Migration Step 5", () => {
       const tags = await getTagsForContact(999999, testTenantId);
       expect(tags).toEqual([]);
     });
+
+    it("should return empty array for contact without partyId", async () => {
+      const contactWithoutParty = await prisma.contact.create({
+        data: {
+          tenantId: testTenantId,
+          display_name: "Contact Without Party",
+        },
+      });
+
+      const tags = await getTagsForContact(contactWithoutParty.id, testTenantId);
+      expect(tags).toEqual([]);
+
+      await prisma.contact.delete({ where: { id: contactWithoutParty.id } });
+    });
   });
 
-  describe("getTagsForOrganization - Dual Read", () => {
-    it("should retrieve tags assigned via organizationId", async () => {
+  describe("getTagsForOrganization - Party-Only Read", () => {
+    it("should retrieve tags assigned via taggedPartyId", async () => {
       const orgTag = await prisma.tag.create({
         data: {
           tenantId: testTenantId,
@@ -279,7 +273,7 @@ describe("Tag Service - Party Migration Step 5", () => {
       await prisma.tag.delete({ where: { id: orgTag.id } });
     });
 
-    it("should retrieve tags assigned via taggedPartyId", async () => {
+    it("should retrieve tags when assignment only has taggedPartyId", async () => {
       const orgTag = await prisma.tag.create({
         data: {
           tenantId: testTenantId,
@@ -302,6 +296,16 @@ describe("Tag Service - Party Migration Step 5", () => {
       expect(tags[0].id).toBe(orgTag.id);
 
       await prisma.tag.delete({ where: { id: orgTag.id } });
+    });
+
+    it("should return empty array for organization with no tags", async () => {
+      const tags = await getTagsForOrganization(testOrgId, testTenantId);
+      expect(tags).toEqual([]);
+    });
+
+    it("should return empty array for non-existent organization", async () => {
+      const tags = await getTagsForOrganization(999999, testTenantId);
+      expect(tags).toEqual([]);
     });
   });
 });
