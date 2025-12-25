@@ -18,6 +18,7 @@ import {
   deriveLegacyStatus,
   legacyStatusToCanonicalPatch,
 } from "../services/offspring/state.js";
+import { resolvePartyId } from "../services/party-resolver.js";
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -316,6 +317,49 @@ function pick<T extends object>(obj: any, keys: (keyof T)[]): Partial<T> {
 
 /* ========= serializers ========= */
 
+/**
+ * Step 6A: Include clause for fetching attachments with Party relation.
+ * Needed to derive legacy contactId from Party backing.
+ */
+const ATTACHMENT_INCLUDE_PARTY = {
+  attachmentParty: {
+    include: {
+      contact: {
+        select: { id: true },
+      },
+      organization: {
+        select: { id: true },
+      },
+    },
+  },
+};
+
+/**
+ * Step 6A: Map attachment to include legacy contactId for backward compatibility.
+ * Derives contactId from attachmentParty.contact.id if Party type is CONTACT.
+ * Returns null for contactId if Party is ORGANIZATION or missing.
+ */
+function attachmentWithLegacyFields(attachment: any): any {
+  if (!attachment) return attachment;
+
+  const party = attachment.attachmentParty;
+  let contactId: number | null = null;
+
+  // Derive contactId from Party backing if Party type is CONTACT
+  if (party?.type === "CONTACT" && party.contact?.id) {
+    contactId = party.contact.id;
+  }
+
+  // Return attachment with legacy contactId for backward compatibility
+  // Note: We don't include attachmentPartyId in the response yet to avoid breaking changes
+  const { attachmentParty, attachmentPartyId, ...rest } = attachment;
+
+  return {
+    ...rest,
+    contactId,
+  };
+}
+
 function litePlanForList(p: any) {
   if (!p) return null;
   return {
@@ -571,7 +615,7 @@ function groupDetail(
         : null,
     })),
 
-    Attachment: attachments ?? [],
+    Attachment: (attachments ?? []).map(attachmentWithLegacyFields),
     summary,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
@@ -1093,6 +1137,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: id,
             tenantId,
           },
+          include: ATTACHMENT_INCLUDE_PARTY,
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
@@ -1298,6 +1343,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringGroupId: created.id,
           tenantId,
         },
+        include: ATTACHMENT_INCLUDE_PARTY,
       }),
       prisma.offspringGroupBuyer.findMany({
         where: {
@@ -1467,7 +1513,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           damPref: true,
         },
       }),
-      prisma.attachment.findMany({ where: { offspringGroupId: id, tenantId } }),
+      prisma.attachment.findMany({
+        where: { offspringGroupId: id, tenantId },
+        include: ATTACHMENT_INCLUDE_PARTY,
+      }),
       prisma.offspringGroupBuyer.findMany({
         where: {
           groupId: id,
@@ -2443,14 +2492,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!(k in b)) return reply.code(400).send({ error: `missing field ${k}` });
     }
 
-    // Party migration step 5: resolve attachmentPartyId from contactId if present
+    // Step 6A: Resolve attachmentPartyId from contactId or organizationId
+    // Accept legacy fields but persist only attachmentPartyId
     let attachmentPartyId: number | null = null;
     if (b.contactId) {
-      const contact = await prisma.contact.findFirst({
-        where: { id: b.contactId, tenantId },
-        select: { partyId: true },
-      });
-      attachmentPartyId = contact?.partyId ?? null;
+      attachmentPartyId = await resolvePartyId(prisma, { contactId: b.contactId });
+    } else if (b.organizationId) {
+      attachmentPartyId = await resolvePartyId(prisma, { organizationId: b.organizationId });
     }
 
     const created = await prisma.attachment.create({
@@ -2459,7 +2507,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         offspringGroupId: id,
         planId: null,
         animalId: null,
-        contactId: b.contactId ?? null,
         attachmentPartyId,
         kind: b.kind,
         storageProvider: b.storageProvider,
@@ -2469,9 +2516,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         bytes: Number(b.bytes) || 0,
         createdByUserId: b.createdByUserId ?? null,
       },
+      include: {
+        attachmentParty: {
+          include: {
+            contact: {
+              select: { id: true },
+            },
+            organization: {
+              select: { id: true },
+            },
+          },
+        },
+      },
     });
 
-    reply.code(201).send(created);
+    // Step 6A: Return response with legacy contactId for backward compatibility
+    reply.code(201).send(attachmentWithLegacyFields(created));
   });
 
   /* ===== ATTACHMENTS: DELETE ===== */
@@ -2691,6 +2751,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: group.id,
             tenantId,
           },
+          include: ATTACHMENT_INCLUDE_PARTY,
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
