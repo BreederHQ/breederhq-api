@@ -610,6 +610,8 @@ model Party {
   invoiceParties       Invoice[]             @relation("InvoiceParty")
   contractParties      ContractParty[]       @relation("ContractPartyRole")
   offspringContracts   OffspringContract[]   @relation("OffspringContractBuyerParty")
+  animalBuyers         Animal[]              @relation("AnimalBuyerParty")
+  animalOwnerships     AnimalOwner[]         @relation("AnimalOwnerParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -756,6 +758,10 @@ model Animal {
   buyerContact        Contact?        @relation("AnimalBuyerContact", fields: [buyerContactId], references: [id], onDelete: SetNull)
   buyerOrganizationId Int?
   buyerOrganization   Organization?   @relation("AnimalBuyerOrganization", fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+
+  // Party migration step 5: unified party reference for animal buyer
+  buyerPartyId Int?
+  buyerParty   Party? @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
   priceCents          Int?
   depositCents        Int?
   saleInvoiceId       String?
@@ -792,6 +798,8 @@ model Animal {
   @@index([litterId])
   @@index([offspringGroupId])
   @@index([tenantId, placedAt])
+  @@index([buyerPartyId])
+  @@index([tenantId, buyerPartyId])
 }
 
 model AnimalOwner {
@@ -805,6 +813,11 @@ model AnimalOwner {
   animal         Animal         @relation(fields: [animalId], references: [id], onDelete: Cascade)
   organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  // Party migration step 5: unified party reference for co-owner
+  partyId Int?
+  party   Party? @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: SetNull)
+
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -813,6 +826,8 @@ model AnimalOwner {
   @@index([animalId])
   @@index([organizationId])
   @@index([contactId])
+  @@index([partyId])
+  @@index([animalId, partyId])
 }
 
 model Registry {
@@ -2071,6 +2086,10 @@ model AnimalOwnershipChange {
   // Immutable snapshots of ownership at time of change
   fromOwners Json
   toOwners   Json
+
+  // Party migration step 5: party-based ownership snapshots
+  fromOwnerParties Json?
+  toOwnerParties   Json?
 
   notes     String?
   documents Document[]
