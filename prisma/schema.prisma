@@ -532,11 +532,10 @@ model Organization {
   archived Boolean @default(false)
 
   contacts            Contact[]
-  animals             Animal[]              @relation("OrgAnimals")
-  animalsPurchased    Animal[]              @relation("AnimalBuyerOrganization")
+  animals             Animal[]          @relation("OrgAnimals")
+  animalsPurchased    Animal[]          @relation("AnimalBuyerOrganization")
   memberships         Membership[]
-  createdCustomBreeds CustomBreed[]         @relation("CreatedByOrganization")
-  groupBuyerLinks     OffspringGroupBuyer[] @relation("GroupBuyerOrganization")
+  createdCustomBreeds CustomBreed[]     @relation("CreatedByOrganization")
   breedingPlans       BreedingPlan[]
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
@@ -655,15 +654,14 @@ model Contact {
 
   animalsPurchased Animal[] @relation("AnimalBuyerContact")
 
-  archived           Boolean               @default(false)
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
+  archived           Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   PlanParty          PlanParty[]
   Offspring          Offspring[]
-  OffspringContracts OffspringContract[]   @relation("OffspringContractBuyerContact")
+  OffspringContracts OffspringContract[] @relation("OffspringContractBuyerContact")
   Invoice            Invoice[]
   ContractParty      ContractParty[]
-  groupBuyerLinks    OffspringGroupBuyer[] @relation("GroupBuyerContact")
 
   externalProvider String?
   externalId       String?
@@ -1369,13 +1367,7 @@ model OffspringGroupBuyer {
   groupId Int
   group   OffspringGroup @relation("GroupBuyerGroup", fields: [groupId], references: [id], onDelete: Cascade)
 
-  contactId Int?
-  contact   Contact? @relation("GroupBuyerContact", fields: [contactId], references: [id], onDelete: SetNull)
-
-  organizationId Int?
-  organization   Organization? @relation("GroupBuyerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for group buyer
+  // Step 6C: Party-only storage for buyer identity
   buyerPartyId Int?
   buyerParty   Party? @relation("OffspringGroupBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
 
@@ -1385,13 +1377,10 @@ model OffspringGroupBuyer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([groupId, contactId])
-  @@unique([groupId, organizationId])
+  @@unique([groupId, buyerPartyId])
   @@unique([groupId, waitlistEntryId])
   @@index([tenantId])
   @@index([groupId])
-  @@index([contactId])
-  @@index([organizationId])
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
   @@index([waitlistEntryId])
