@@ -541,7 +541,6 @@ model Organization {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   AnimalOwner         AnimalOwner[]
-  TagAssignment       TagAssignment[]
   Invitation          Invitation[]
   PlanParty           PlanParty[]
   WaitlistEntry       WaitlistEntry[]
@@ -648,7 +647,6 @@ model Contact {
   country String? @db.Char(2)
 
   // Relations
-  tagAssignments   TagAssignment[]
   animalOwnerships AnimalOwner[]
   users            User[]
 
@@ -922,13 +920,7 @@ model TagAssignment {
   tagId Int
   tag   Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-  contactId Int?
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-
-  organizationId Int?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for tagged Contact or Organization
+  // Step 6B: Party-only storage for Contact/Organization tags
   taggedPartyId Int?
   taggedParty   Party? @relation("TagAssignmentTaggedParty", fields: [taggedPartyId], references: [id], onDelete: SetNull)
 
@@ -946,19 +938,16 @@ model TagAssignment {
 
   createdAt DateTime @default(now())
 
-  @@unique([tagId, contactId])
-  @@unique([tagId, organizationId])
+  @@unique([tagId, taggedPartyId])
   @@unique([tagId, animalId])
   @@unique([tagId, waitlistEntryId])
   @@unique([tagId, offspringGroupId])
   @@unique([tagId, offspringId])
-  @@index([contactId])
-  @@index([organizationId])
+  @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
   @@index([offspringGroupId])
   @@index([offspringId])
-  @@index([taggedPartyId])
   @@index([tagId, taggedPartyId])
 }
 
