@@ -3,6 +3,7 @@ import type { FastifyPluginCallback } from "fastify";
 import prisma from "../prisma.js";
 import { WaitlistStatus } from "@prisma/client";
 import { Species } from "@prisma/client";
+import { resolvePartyIdByType } from "../services/party-resolver.js";
 
 /* ───────── helpers ───────── */
 
@@ -166,6 +167,14 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     const partyType = b.organizationId ? "Organization" : "Contact";
 
+    // Party migration step 5: Resolve partyId for dual-write
+    const clientPartyId = await resolvePartyIdByType(
+      prisma,
+      partyType,
+      b.contactId,
+      b.organizationId
+    );
+
     const created = await prisma.waitlistEntry.create({
       data: {
         tenantId,
@@ -175,6 +184,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         partyType,
         contactId: partyType === "Contact" ? Number(b.contactId) : null,
         organizationId: partyType === "Organization" ? Number(b.organizationId) : null,
+        clientPartyId, // Party migration step 5: dual-write
 
         speciesPref: b.speciesPref ?? null,
         breedPrefs: b.breedPrefs ?? null,
@@ -228,6 +238,14 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("contactId" in b) data.contactId = b.contactId ? Number(b.contactId) : null;
     if ("organizationId" in b) data.organizationId = b.organizationId ? Number(b.organizationId) : null;
     if ("partyType" in b) data.partyType = b.partyType; // optional; typically inferred
+
+    // Party migration step 5: dual-write clientPartyId when party fields change
+    if ("contactId" in b || "organizationId" in b) {
+      const partyType = data.partyType ?? (data.organizationId ? "Organization" : data.contactId ? "Contact" : existing.partyType);
+      const contactId = "contactId" in b ? data.contactId : existing.contactId;
+      const organizationId = "organizationId" in b ? data.organizationId : existing.organizationId;
+      data.clientPartyId = await resolvePartyIdByType(prisma, partyType, contactId, organizationId);
+    }
 
     // relations
     if ("planId" in b) data.planId = b.planId ?? null;
