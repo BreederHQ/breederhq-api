@@ -542,7 +542,6 @@ model Organization {
   AnimalOwner         AnimalOwner[]
   Invitation          Invitation[]
   PlanParty           PlanParty[]
-  WaitlistEntry       WaitlistEntry[]
   OffspringContracts  OffspringContract[]   @relation("OffspringContractBuyerOrg")
   Invoice             Invoice[]
   ContractParty       ContractParty[]
@@ -649,7 +648,6 @@ model Contact {
   users            User[]
 
   breedingAttemptsAsStudOwner BreedingAttempt[] @relation("StudOwnerContact")
-  waitlistEntries             WaitlistEntry[]
 
   animalsPurchased Animal[] @relation("AnimalBuyerContact")
 
@@ -1566,13 +1564,7 @@ model WaitlistEntry {
   offspringGroupId Int?
   offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: SetNull)
 
-  partyType      OwnerPartyType
-  contactId      Int?
-  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  organizationId Int?
-  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for waitlist client
+  // Step 6E: Party-only storage for client identity
   clientPartyId Int?
   clientParty   Party? @relation("WaitlistParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
 
@@ -1615,8 +1607,6 @@ model WaitlistEntry {
   @@index([litterId])
   @@index([offspringGroupId])
   @@index([offspringId])
-  @@index([contactId])
-  @@index([organizationId])
   @@index([clientPartyId])
   @@index([tenantId, clientPartyId])
   @@index([tenantId, speciesPref])
