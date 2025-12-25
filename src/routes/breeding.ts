@@ -1,5 +1,6 @@
 // [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
 import { Prisma, type PrismaClient, OffspringGroup, BreedingPlan, Animal, BreedingPlanStatus } from "@prisma/client";
+import { resolvePartyId } from "../services/party-resolver.js";
 
 function __og_addDays(d: Date, days: number): Date {
   const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -1352,6 +1353,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (!c) return reply.code(400).send({ error: "stud_owner_contact_not_in_tenant" });
       }
 
+      // Party migration step 5: Resolve studOwnerPartyId for dual-write
+      const studOwnerPartyId = b.studOwnerContactId
+        ? await resolvePartyId(prisma, { contactId: Number(b.studOwnerContactId) })
+        : null;
+
       const created = await prisma.breedingAttempt.create({
         data: {
           tenantId,
@@ -1361,6 +1367,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           windowStart: b.windowStart ? new Date(b.windowStart) : null,
           windowEnd: b.windowEnd ? new Date(b.windowEnd) : null,
           studOwnerContactId: b.studOwnerContactId ?? null,
+          studOwnerPartyId, // Party migration step 5: dual-write
           semenBatchId: b.semenBatchId ?? null,
           success: b.success ?? null,
           notes: b.notes ?? null,
