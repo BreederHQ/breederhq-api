@@ -20,6 +20,65 @@ import {
 } from "../services/offspring/state.js";
 import { resolvePartyId } from "../services/party-resolver.js";
 
+/**
+ * Step 6D: Offspring Party-only storage constants and helpers
+ *
+ * OFFSPRING_INCLUDE_PARTY ensures consistent includes for reading Party with backing entity.
+ * offspringWithLegacyBuyerFields derives legacy buyerContactId/buyerOrganizationId from Party.
+ */
+
+const OFFSPRING_INCLUDE_PARTY = {
+  buyerParty: {
+    include: {
+      contact: { select: { id: true, display_name: true } },
+      organization: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+/**
+ * Derives legacy buyer fields from Party for backward-compatible responses.
+ *
+ * @param offspring - Offspring record with buyerParty included
+ * @returns Object with buyerContactId, buyerOrganizationId, buyerContact, buyerOrganization
+ */
+function offspringWithLegacyBuyerFields(offspring: any) {
+  const party = offspring?.buyerParty;
+
+  if (!party) {
+    return {
+      buyerContactId: null,
+      buyerOrganizationId: null,
+      buyerContact: null,
+      buyerOrganization: null,
+    };
+  }
+
+  if (party.type === "CONTACT" && party.contact) {
+    return {
+      buyerContactId: party.contact.id,
+      buyerOrganizationId: null,
+      buyerContact: party.contact,
+      buyerOrganization: null,
+    };
+  }
+
+  if (party.type === "ORGANIZATION" && party.organization) {
+    return {
+      buyerContactId: null,
+      buyerOrganizationId: party.organization.id,
+      buyerContact: null,
+      buyerOrganization: party.organization,
+    };
+  }
+
+  return {
+    buyerContactId: null,
+    buyerOrganizationId: null,
+    buyerContact: null,
+    buyerOrganization: null,
+  };
+}
 
 function __og_addDays(d: Date, days: number): Date {
   const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -542,65 +601,70 @@ function groupDetail(
       updatedAt: a.updatedAt.toISOString(),
     })),
 
-    Offspring: offspring.map((o: any) => ({
-      id: o.id,
-      name: o.name ?? "",
-      placeholderLabel: o.name ?? "",
-      sex: o.sex ?? null,
-      status: o.status ?? null,
-      lifeState: o.lifeState ?? null,
-      placementState: o.placementState ?? null,
-      keeperIntent: o.keeperIntent ?? null,
-      financialState: o.financialState ?? null,
-      paperworkState: o.paperworkState ?? null,
-      diedAt: o.diedAt
-        ? o.diedAt instanceof Date
-          ? o.diedAt.toISOString()
-          : String(o.diedAt)
-        : null,
-      birthDate: o.bornAt
-        ? o.bornAt instanceof Date
-          ? o.bornAt.toISOString()
-          : String(o.bornAt)
-        : null,
-      species: o.species ?? null,
-      breed: (o as any).breed ?? null,
-      buyerContact: (o as any).buyerContact
-        ? {
-          id: (o as any).buyerContact.id,
-          name: (o as any).buyerContact.display_name ?? "",
-        }
-        : null,
-      buyerOrg: (o as any).buyerOrganization
-        ? {
-          id: (o as any).buyerOrganization.id,
-          name: (o as any).buyerOrganization.name ?? "",
-        }
-        : null,
-      placedAt:
-        o.placedAt instanceof Date
-          ? o.placedAt.toISOString()
-          : o.placedAt ?? null,
-      paidInFullAt:
-        (o as any).paidInFullAt instanceof Date
-          ? (o as any).paidInFullAt.toISOString()
-          : (o as any).paidInFullAt ?? null,
-      contractId: (o as any).contractId ?? null,
-      contractSignedAt:
-        (o as any).contractSignedAt instanceof Date
-          ? (o as any).contractSignedAt.toISOString()
-          : (o as any).contractSignedAt ?? null,
-      waitlistEntry: (o as any).waitlistEntry
-        ? {
-          id: (o as any).waitlistEntry.id,
-          label: (o as any).waitlistEntry.identifier ?? null,
-        }
-        : null,
-      price:
-        typeof (o as any).priceCents === "number"
-          ? (o as any).priceCents / 100
+    Offspring: offspring.map((o: any) => {
+      // Step 6D: Derive legacy buyer fields from Party
+      const legacyBuyer = offspringWithLegacyBuyerFields(o);
+
+      return {
+        id: o.id,
+        name: o.name ?? "",
+        placeholderLabel: o.name ?? "",
+        sex: o.sex ?? null,
+        status: o.status ?? null,
+        lifeState: o.lifeState ?? null,
+        placementState: o.placementState ?? null,
+        keeperIntent: o.keeperIntent ?? null,
+        financialState: o.financialState ?? null,
+        paperworkState: o.paperworkState ?? null,
+        diedAt: o.diedAt
+          ? o.diedAt instanceof Date
+            ? o.diedAt.toISOString()
+            : String(o.diedAt)
           : null,
-    })),
+        birthDate: o.bornAt
+          ? o.bornAt instanceof Date
+            ? o.bornAt.toISOString()
+            : String(o.bornAt)
+          : null,
+        species: o.species ?? null,
+        breed: (o as any).breed ?? null,
+        buyerContact: legacyBuyer.buyerContact
+          ? {
+            id: legacyBuyer.buyerContact.id,
+            name: legacyBuyer.buyerContact.display_name ?? "",
+          }
+          : null,
+        buyerOrg: legacyBuyer.buyerOrganization
+          ? {
+            id: legacyBuyer.buyerOrganization.id,
+            name: legacyBuyer.buyerOrganization.name ?? "",
+          }
+          : null,
+        placedAt:
+          o.placedAt instanceof Date
+            ? o.placedAt.toISOString()
+            : o.placedAt ?? null,
+        paidInFullAt:
+          (o as any).paidInFullAt instanceof Date
+            ? (o as any).paidInFullAt.toISOString()
+            : (o as any).paidInFullAt ?? null,
+        contractId: (o as any).contractId ?? null,
+        contractSignedAt:
+          (o as any).contractSignedAt instanceof Date
+            ? (o as any).contractSignedAt.toISOString()
+            : (o as any).contractSignedAt ?? null,
+        waitlistEntry: (o as any).waitlistEntry
+          ? {
+            id: (o as any).waitlistEntry.id,
+            label: (o as any).waitlistEntry.identifier ?? null,
+          }
+          : null,
+        price:
+          typeof (o as any).priceCents === "number"
+            ? (o as any).priceCents / 100
+            : null,
+      };
+    }),
 
     Waitlist: waitlist.map((w: any) => ({
       id: w.id,
@@ -684,8 +748,11 @@ function groupDetail(
 
 function mapOffspringToAnimalLite(o: any) {
   const group = o.group as any | undefined;
-  const buyerContact = (o as any).buyerContact as any | undefined;
-  const buyerOrg = (o as any).buyerOrganization as any | undefined;
+
+  // Step 6D: Derive legacy buyer fields from Party
+  const legacyBuyer = offspringWithLegacyBuyerFields(o);
+  const buyerContact = legacyBuyer.buyerContact;
+  const buyerOrg = legacyBuyer.buyerOrganization;
 
   // carry forward flexible JSON fields like color from the data blob
   const extra =
@@ -900,14 +967,6 @@ export function normalizeOffspringState(
     patch.promotedAnimalId === undefined
       ? current?.promotedAnimalId ?? null
       : (patch.promotedAnimalId as number | null);
-  const nextBuyerContactId =
-    patch.buyerContactId === undefined
-      ? current?.buyerContactId ?? null
-      : (patch.buyerContactId as number | null);
-  const nextBuyerOrgId =
-    patch.buyerOrganizationId === undefined
-      ? current?.buyerOrganizationId ?? null
-      : (patch.buyerOrganizationId as number | null);
   const nextDepositCents =
     patch.depositCents === undefined
       ? current?.depositCents ?? null
@@ -966,8 +1025,12 @@ export function normalizeOffspringState(
     }
   }
 
-  // Buyer assignment implies RESERVED until placement completes.
-  const buyerAssigned = nextBuyerContactId != null || nextBuyerOrgId != null;
+  // Step 6D: Buyer assignment via buyerPartyId implies RESERVED until placement completes
+  const nextBuyerPartyId =
+    patch.buyerPartyId === undefined
+      ? current?.buyerPartyId ?? null
+      : (patch.buyerPartyId as number | null);
+  const buyerAssigned = nextBuyerPartyId != null;
   if (
     buyerAssigned &&
     nextPlacementState !== OffspringPlacementState.PLACED &&
@@ -1019,8 +1082,6 @@ export function normalizeOffspringState(
   normalized.contractId = nextContractId ?? null;
   normalized.contractSignedAt = nextContractSignedAt ?? null;
   normalized.promotedAnimalId = nextPromotedAnimalId ?? null;
-  normalized.buyerContactId = nextBuyerContactId ?? null;
-  normalized.buyerOrganizationId = nextBuyerOrgId ?? null;
   normalized.depositCents = nextDepositCents ?? null;
   normalized.priceCents = nextPriceCents ?? null;
   return normalized;
@@ -1224,18 +1285,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: {
-              select: {
-                id: true,
-                display_name: true,
-              },
-            },
-            buyerOrganization: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
+            ...OFFSPRING_INCLUDE_PARTY,
           },
         }),
       ]);
@@ -1346,9 +1396,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           collarColorHex: true,
           collarAssignedAt: true,
           collarLocked: true,
-          buyerPartyType: true,
-          buyerContactId: true,
-          buyerOrganizationId: true,
         },
         orderBy: {
           id: "asc",
@@ -1415,12 +1462,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: {
-            select: { id: true, display_name: true },
-          },
-          buyerOrganization: {
-            select: { id: true, name: true },
-          },
+          ...OFFSPRING_INCLUDE_PARTY,
         },
       }),
     ]);
@@ -1513,9 +1555,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           collarColorHex: true,
           collarAssignedAt: true,
           collarLocked: true,
-          buyerPartyType: true,
-          buyerContactId: true,
-          buyerOrganizationId: true,
         },
       }),
       prisma.waitlistEntry.findMany({
@@ -1572,12 +1611,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: {
-            select: { id: true, display_name: true },
-          },
-          buyerOrganization: {
-            select: { id: true, name: true },
-          },
+          ...OFFSPRING_INCLUDE_PARTY,
         },
       }),
     ]);
@@ -1742,14 +1776,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if ("contractSignedAt" in body) statePatch.contractSignedAt = body.contractSignedAt ? parseISO(body.contractSignedAt) : null;
     if ("contractId" in body) statePatch.contractId = body.contractId ?? null;
     if ("promotedAnimalId" in body) statePatch.promotedAnimalId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
-    if ("buyerContactId" in body) statePatch.buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-    if ("buyerOrganizationId" in body) statePatch.buyerOrganizationId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
 
-    // Party migration step 5: resolve buyerPartyId for dual-write
+    // Step 6D: Accept legacy buyer fields, resolve to buyerPartyId only
     if ("buyerContactId" in body || "buyerOrganizationId" in body) {
-      const { resolvePartyId } = await import("../services/party-resolver.js");
-      const contactId = statePatch.buyerContactId ?? null;
-      const organizationId = statePatch.buyerOrganizationId ?? null;
+      const contactId = "buyerContactId" in body ? (body.buyerContactId == null ? null : Number(body.buyerContactId)) : null;
+      const organizationId = "buyerOrganizationId" in body ? (body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId)) : null;
+
       if (contactId) {
         statePatch.buyerPartyId = await resolvePartyId(prisma, { contactId });
       } else if (organizationId) {
@@ -1811,8 +1843,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             name: true,
           },
         },
-        buyerContact: { select: { id: true, display_name: true } },
-        buyerOrganization: { select: { id: true, name: true } },
+        ...OFFSPRING_INCLUDE_PARTY,
       },
     });
 
@@ -1866,12 +1897,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   name: true,
                 },
               },
-              buyerContact: {
-                select: { id: true, display_name: true },
-              },
-              buyerOrganization: {
-                select: { id: true, name: true },
-              },
+              ...OFFSPRING_INCLUDE_PARTY,
             },
           }),
           prisma.offspring.count({ where }),
@@ -1929,8 +1955,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: { select: { id: true, display_name: true } },
-            buyerOrganization: { select: { id: true, name: true } },
+            ...OFFSPRING_INCLUDE_PARTY,
           },
         });
       } catch (err) {
@@ -2163,23 +2188,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       statePatch.depositCents = depositCentsVal;
     }
 
-    if ("buyerContactId" in body) {
-      const buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-      data.buyerContactId = buyerContactId;
-      statePatch.buyerContactId = buyerContactId;
-    }
-
-    if ("buyerOrganizationId" in body) {
-      const buyerOrgId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
-      data.buyerOrganizationId = buyerOrgId;
-      statePatch.buyerOrganizationId = buyerOrgId;
-    }
-
-    // Party migration step 5: resolve buyerPartyId for dual-write when buyer fields change
+    // Step 6D: Accept legacy buyer fields, resolve to buyerPartyId only
     if ("buyerContactId" in body || "buyerOrganizationId" in body) {
-      const { resolvePartyId } = await import("../services/party-resolver.js");
-      const contactId = data.buyerContactId ?? existing.buyerContactId ?? null;
-      const organizationId = data.buyerOrganizationId ?? existing.buyerOrganizationId ?? null;
+      const contactId = "buyerContactId" in body ? (body.buyerContactId == null ? null : Number(body.buyerContactId)) : null;
+      const organizationId = "buyerOrganizationId" in body ? (body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId)) : null;
+
       if (contactId) {
         data.buyerPartyId = await resolvePartyId(prisma, { contactId });
       } else if (organizationId) {
@@ -2253,8 +2266,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: { select: { id: true, display_name: true } },
-          buyerOrganization: { select: { id: true, name: true } },
+          ...OFFSPRING_INCLUDE_PARTY,
         },
       });
     } catch (err) {
@@ -2788,12 +2800,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: {
-              select: { id: true, display_name: true },
-            },
-            buyerOrganization: {
-              select: { id: true, name: true },
-            },
+            ...OFFSPRING_INCLUDE_PARTY,
           },
         }),
       ]);
