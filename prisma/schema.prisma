@@ -541,7 +541,6 @@ model Organization {
   updatedAt           DateTime              @updatedAt
   AnimalOwner         AnimalOwner[]
   Invitation          Invitation[]
-  PlanParty           PlanParty[]
   OffspringContracts  OffspringContract[]   @relation("OffspringContractBuyerOrg")
   Invoice             Invoice[]
   ContractParty       ContractParty[]
@@ -654,7 +653,6 @@ model Contact {
   archived           Boolean             @default(false)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
-  PlanParty          PlanParty[]
   OffspringContracts OffspringContract[] @relation("OffspringContractBuyerContact")
   Invoice            Invoice[]
   ContractParty      ContractParty[]
@@ -1740,14 +1738,9 @@ model PlanParty {
   planId Int
   plan   BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
-  role      String
-  contactId Int?
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  role String
 
-  organizationId Int?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for role-based parties
+  // Step 6F: Party-only storage for role-based parties
   partyId Int?
   party   Party? @relation("PlanPartyRole", fields: [partyId], references: [id], onDelete: SetNull)
 
