@@ -2,6 +2,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
 import bcrypt from "bcryptjs";
+import { resolvePartyId } from "../services/party-resolver.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -622,6 +623,7 @@ export default async function userRoutes(
 
       const body = req.body || { contactId: null };
       let setId: number | null = null;
+      let partyId: number | null = null;
 
       if (body.contactId != null) {
         const cid = Number(body.contactId);
@@ -641,13 +643,18 @@ export default async function userRoutes(
           return reply.code(403).send({ error: "not_a_member_of_contact_tenant" });
 
         setId = cid;
+        // Party migration step 5: resolve and dual-write partyId from contactId
+        partyId = await resolvePartyId(prisma, { contactId: cid });
       }
 
       try {
         const u = await prisma.user.update({
           where: { id },
-          data: { contactId: setId },
-          select: { id: true, email: true, contactId: true, updatedAt: true },
+          data: {
+            contactId: setId,
+            partyId: partyId
+          },
+          select: { id: true, email: true, contactId: true, partyId: true, updatedAt: true },
         });
         return reply.send({
           id: u.id,
