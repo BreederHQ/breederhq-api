@@ -1,5 +1,6 @@
 -- Party migration step 5: Animals domain party references
 -- Additive schema changes only, nullable columns
+-- IDEMPOTENT: Safe to run after db push has already created these objects
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- A) Animal buyer party reference
@@ -7,12 +8,22 @@
 ALTER TABLE "Animal"
   ADD COLUMN IF NOT EXISTS "buyerPartyId" INTEGER;
 
-ALTER TABLE "Animal"
-  ADD CONSTRAINT "Animal_buyerPartyId_fkey"
-  FOREIGN KEY ("buyerPartyId")
-  REFERENCES "Party"("id")
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
+-- Create FK only if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'Animal_buyerPartyId_fkey'
+      AND conrelid = '"Animal"'::regclass
+  ) THEN
+    ALTER TABLE "Animal"
+      ADD CONSTRAINT "Animal_buyerPartyId_fkey"
+      FOREIGN KEY ("buyerPartyId")
+      REFERENCES "Party"("id")
+      ON DELETE SET NULL
+      ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS "Animal_buyerPartyId_idx"
   ON "Animal"("buyerPartyId");
@@ -26,12 +37,22 @@ CREATE INDEX IF NOT EXISTS "Animal_tenantId_buyerPartyId_idx"
 ALTER TABLE "AnimalOwner"
   ADD COLUMN IF NOT EXISTS "partyId" INTEGER;
 
-ALTER TABLE "AnimalOwner"
-  ADD CONSTRAINT "AnimalOwner_partyId_fkey"
-  FOREIGN KEY ("partyId")
-  REFERENCES "Party"("id")
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
+-- Create FK only if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'AnimalOwner_partyId_fkey'
+      AND conrelid = '"AnimalOwner"'::regclass
+  ) THEN
+    ALTER TABLE "AnimalOwner"
+      ADD CONSTRAINT "AnimalOwner_partyId_fkey"
+      FOREIGN KEY ("partyId")
+      REFERENCES "Party"("id")
+      ON DELETE SET NULL
+      ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS "AnimalOwner_partyId_idx"
   ON "AnimalOwner"("partyId");
