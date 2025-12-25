@@ -543,7 +543,6 @@ model Organization {
   Invitation          Invitation[]
   PlanParty           PlanParty[]
   WaitlistEntry       WaitlistEntry[]
-  Offspring           Offspring[]
   OffspringContracts  OffspringContract[]   @relation("OffspringContractBuyerOrg")
   Invoice             Invoice[]
   ContractParty       ContractParty[]
@@ -658,7 +657,6 @@ model Contact {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   PlanParty          PlanParty[]
-  Offspring          Offspring[]
   OffspringContracts OffspringContract[] @relation("OffspringContractBuyerContact")
   Invoice            Invoice[]
   ContractParty      ContractParty[]
@@ -1423,14 +1421,7 @@ model Offspring {
   collarAssignedAt DateTime?
   collarLocked     Boolean   @default(false)
 
-  // buyer choice on Offspring
-  buyerPartyType      OwnerPartyType?
-  buyerContactId      Int?
-  buyerContact        Contact?        @relation(fields: [buyerContactId], references: [id], onDelete: SetNull)
-  buyerOrganizationId Int?
-  buyerOrganization   Organization?   @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for offspring buyer
+  // Step 6D: Party-only storage for buyer identity
   buyerPartyId Int?
   buyerParty   Party? @relation("OffspringBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
 
@@ -1477,8 +1468,6 @@ model Offspring {
   @@index([tenantId, keeperIntent])
   @@index([tenantId, financialState])
   @@index([tenantId, paperworkState])
-  @@index([buyerContactId])
-  @@index([buyerOrganizationId])
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
   @@index([placedAt])
