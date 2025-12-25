@@ -24,10 +24,10 @@ export async function resolvePartyIdFromOrganization(organizationId: number): Pr
 }
 
 /**
- * Create a tag assignment with dual-write support
- * - Accepts legacy contactId or organizationId
- * - Automatically resolves and persists taggedPartyId
- * - Maintains backward compatibility
+ * Create a tag assignment with Party-only writes (Step 6B)
+ * - Accepts legacy contactId or organizationId as inputs
+ * - Resolves to taggedPartyId and persists ONLY taggedPartyId
+ * - Maintains API backward compatibility (same inputs, same behavior)
  */
 export async function createTagAssignment(params: {
   tagId: number;
@@ -40,25 +40,25 @@ export async function createTagAssignment(params: {
 }): Promise<void> {
   const data: any = { tagId: params.tagId };
 
-  // Dual-write for Contact
+  // Party-only write for Contact: resolve contactId -> taggedPartyId
   if (params.contactId != null) {
-    data.contactId = params.contactId;
     const partyId = await resolvePartyIdFromContact(params.contactId);
-    if (partyId) {
-      data.taggedPartyId = partyId;
+    if (!partyId) {
+      throw new Error(`Contact ${params.contactId} has no partyId - cannot assign tag`);
     }
+    data.taggedPartyId = partyId;
   }
 
-  // Dual-write for Organization
+  // Party-only write for Organization: resolve organizationId -> taggedPartyId
   if (params.organizationId != null) {
-    data.organizationId = params.organizationId;
     const partyId = await resolvePartyIdFromOrganization(params.organizationId);
-    if (partyId) {
-      data.taggedPartyId = partyId;
+    if (!partyId) {
+      throw new Error(`Organization ${params.organizationId} has no partyId - cannot assign tag`);
     }
+    data.taggedPartyId = partyId;
   }
 
-  // Other entity types (not party-like, no dual-write needed)
+  // Other entity types (not party-like, no mapping needed)
   if (params.animalId != null) data.animalId = params.animalId;
   if (params.waitlistEntryId != null) data.waitlistEntryId = params.waitlistEntryId;
   if (params.offspringGroupId != null) data.offspringGroupId = params.offspringGroupId;
@@ -68,13 +68,12 @@ export async function createTagAssignment(params: {
 }
 
 /**
- * Get all tag assignments for a contact with dual-read support
- * - Prefers taggedPartyId when available
- * - Falls back to contactId for legacy rows
- * - Returns unified tag list
+ * Get all tag assignments for a contact (Step 6B: Party-only reads)
+ * - Queries by taggedPartyId only
+ * - Returns empty array if contact has no partyId
  */
 export async function getTagsForContact(contactId: number, tenantId: number): Promise<any[]> {
-  // Get contact's partyId for dual-read
+  // Get contact's partyId
   const contact = await prisma.contact.findFirst({
     where: { id: contactId, tenantId },
     select: { id: true, partyId: true },
@@ -84,43 +83,39 @@ export async function getTagsForContact(contactId: number, tenantId: number): Pr
     return [];
   }
 
-  // Dual-read: fetch by contactId OR (if contact has partyId) by taggedPartyId
-  const whereConditions: any[] = [{ contactId: contactId }];
-
-  if (contact.partyId) {
-    whereConditions.push({ taggedPartyId: contact.partyId });
+  // If contact has no partyId, return empty (should not happen post-migration)
+  if (!contact.partyId) {
+    return [];
   }
 
+  // Party-only read: query by taggedPartyId
   const rows = await prisma.tagAssignment.findMany({
     where: {
-      OR: whereConditions,
+      taggedPartyId: contact.partyId,
     },
     include: { tag: true },
     orderBy: [{ tag: { name: "asc" } }],
   });
 
-  // Deduplicate by tag.id (in case we have both legacy and new rows for same tag)
-  const uniqueTags = new Map();
-  for (const r of rows) {
-    if (r.tag && r.tag.tenantId === tenantId) {
-      if (!uniqueTags.has(r.tag.id)) {
-        uniqueTags.set(r.tag.id, {
-          id: r.tag.id,
-          name: r.tag.name,
-          module: r.tag.module,
-          color: r.tag.color ?? null,
-          createdAt: r.tag.createdAt,
-          updatedAt: r.tag.updatedAt,
-        });
-      }
-    }
-  }
+  // Map to DTO, filtering by tenantId
+  const tags = rows
+    .filter((r) => r.tag && r.tag.tenantId === tenantId)
+    .map((r) => ({
+      id: r.tag.id,
+      name: r.tag.name,
+      module: r.tag.module,
+      color: r.tag.color ?? null,
+      createdAt: r.tag.createdAt,
+      updatedAt: r.tag.updatedAt,
+    }));
 
-  return Array.from(uniqueTags.values());
+  return tags;
 }
 
 /**
- * Get all tag assignments for an organization with dual-read support
+ * Get all tag assignments for an organization (Step 6B: Party-only reads)
+ * - Queries by taggedPartyId only
+ * - Returns empty array if organization has no partyId
  */
 export async function getTagsForOrganization(organizationId: number, tenantId: number): Promise<any[]> {
   const org = await prisma.organization.findFirst({
@@ -132,35 +127,31 @@ export async function getTagsForOrganization(organizationId: number, tenantId: n
     return [];
   }
 
-  const whereConditions: any[] = [{ organizationId: organizationId }];
-
-  if (org.partyId) {
-    whereConditions.push({ taggedPartyId: org.partyId });
+  // If organization has no partyId, return empty (should not happen post-migration)
+  if (!org.partyId) {
+    return [];
   }
 
+  // Party-only read: query by taggedPartyId
   const rows = await prisma.tagAssignment.findMany({
     where: {
-      OR: whereConditions,
+      taggedPartyId: org.partyId,
     },
     include: { tag: true },
     orderBy: [{ tag: { name: "asc" } }],
   });
 
-  const uniqueTags = new Map();
-  for (const r of rows) {
-    if (r.tag && r.tag.tenantId === tenantId) {
-      if (!uniqueTags.has(r.tag.id)) {
-        uniqueTags.set(r.tag.id, {
-          id: r.tag.id,
-          name: r.tag.name,
-          module: r.tag.module,
-          color: r.tag.color ?? null,
-          createdAt: r.tag.createdAt,
-          updatedAt: r.tag.updatedAt,
-        });
-      }
-    }
-  }
+  // Map to DTO, filtering by tenantId
+  const tags = rows
+    .filter((r) => r.tag && r.tag.tenantId === tenantId)
+    .map((r) => ({
+      id: r.tag.id,
+      name: r.tag.name,
+      module: r.tag.module,
+      color: r.tag.color ?? null,
+      createdAt: r.tag.createdAt,
+      updatedAt: r.tag.updatedAt,
+    }));
 
-  return Array.from(uniqueTags.values());
+  return tags;
 }
