@@ -1681,6 +1681,21 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if ("promotedAnimalId" in body) statePatch.promotedAnimalId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
     if ("buyerContactId" in body) statePatch.buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
     if ("buyerOrganizationId" in body) statePatch.buyerOrganizationId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
+
+    // Party migration step 5: resolve buyerPartyId for dual-write
+    if ("buyerContactId" in body || "buyerOrganizationId" in body) {
+      const { resolvePartyId } = await import("../services/party-resolver.js");
+      const contactId = statePatch.buyerContactId ?? null;
+      const organizationId = statePatch.buyerOrganizationId ?? null;
+      if (contactId) {
+        statePatch.buyerPartyId = await resolvePartyId(prisma, { contactId });
+      } else if (organizationId) {
+        statePatch.buyerPartyId = await resolvePartyId(prisma, { organizationId });
+      } else {
+        statePatch.buyerPartyId = null;
+      }
+    }
+
     if ("depositCents" in body) statePatch.depositCents = body.depositCents == null ? null : Number(body.depositCents);
     if ("priceCents" in body) statePatch.priceCents = body.priceCents == null ? null : Number(body.priceCents);
 
@@ -2097,6 +2112,20 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       statePatch.buyerOrganizationId = buyerOrgId;
     }
 
+    // Party migration step 5: resolve buyerPartyId for dual-write when buyer fields change
+    if ("buyerContactId" in body || "buyerOrganizationId" in body) {
+      const { resolvePartyId } = await import("../services/party-resolver.js");
+      const contactId = data.buyerContactId ?? existing.buyerContactId ?? null;
+      const organizationId = data.buyerOrganizationId ?? existing.buyerOrganizationId ?? null;
+      if (contactId) {
+        data.buyerPartyId = await resolvePartyId(prisma, { contactId });
+      } else if (organizationId) {
+        data.buyerPartyId = await resolvePartyId(prisma, { organizationId });
+      } else {
+        data.buyerPartyId = null;
+      }
+    }
+
     if ("color" in body || "microchip" in body || "registrationId" in body) {
       const existingData = existing.data && typeof existing.data === "object" ? existing.data : {};
       const updatedData: Record<string, unknown> = { ...existingData };
@@ -2489,6 +2518,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!group) return reply.code(404).send({ error: "group not found" });
 
       try {
+        // Party migration step 5: resolve buyerPartyId for dual-write
+        const { resolvePartyId } = await import("../services/party-resolver.js");
+        let buyerPartyId = null;
+        if (contactId) {
+          buyerPartyId = await resolvePartyId(prisma, { contactId: Number(contactId) });
+        } else if (organizationId) {
+          buyerPartyId = await resolvePartyId(prisma, { organizationId: Number(organizationId) });
+        }
+
         await prisma.offspringGroupBuyer.create({
           data: {
             tenantId,
@@ -2496,6 +2534,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             contactId: contactId ?? null,
             organizationId: organizationId ?? null,
             waitlistEntryId: waitlistEntryId ?? null,
+            buyerPartyId,
           },
         });
       } catch (err: any) {
