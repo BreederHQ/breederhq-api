@@ -592,10 +592,18 @@ model Party {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization    Organization?   @relation("OrganizationParty")
-  contact         Contact?        @relation("ContactParty")
-  attachments     Attachment[]    @relation("AttachmentParty")
-  tagAssignments  TagAssignment[] @relation("TagAssignmentTaggedParty")
+  organization         Organization?         @relation("OrganizationParty")
+  contact              Contact?              @relation("ContactParty")
+  attachments          Attachment[]          @relation("AttachmentParty")
+  tagAssignments       TagAssignment[]       @relation("TagAssignmentTaggedParty")
+  breedingAttempts     BreedingAttempt[]     @relation("BreedingAttemptStudOwner")
+  planParties          PlanParty[]           @relation("PlanPartyRole")
+  waitlistEntries      WaitlistEntry[]       @relation("WaitlistParty")
+  offspringGroupBuyers OffspringGroupBuyer[] @relation("OffspringGroupBuyerParty")
+  offspringBuyers      Offspring[]           @relation("OffspringBuyerParty")
+  invoiceParties       Invoice[]             @relation("InvoiceParty")
+  contractParties      ContractParty[]       @relation("ContractPartyRole")
+  offspringContracts   OffspringContract[]   @relation("OffspringContractBuyerParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -1229,6 +1237,10 @@ model BreedingAttempt {
   studOwnerContactId Int?
   studOwnerContact   Contact? @relation("StudOwnerContact", fields: [studOwnerContactId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for stud owner
+  studOwnerPartyId Int?
+  studOwnerParty   Party? @relation("BreedingAttemptStudOwner", fields: [studOwnerPartyId], references: [id], onDelete: SetNull)
+
   semenBatchId Int?
 
   success Boolean?
@@ -1240,6 +1252,7 @@ model BreedingAttempt {
 
   @@index([tenantId])
   @@index([planId])
+  @@index([studOwnerPartyId])
 }
 
 model PregnancyCheck {
@@ -1353,6 +1366,10 @@ model OffspringGroupBuyer {
   organizationId Int?
   organization   Organization? @relation("GroupBuyerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for group buyer
+  buyerPartyId Int?
+  buyerParty   Party? @relation("OffspringGroupBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
+
   waitlistEntryId Int?
   waitlistEntry   WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
 
@@ -1366,6 +1383,8 @@ model OffspringGroupBuyer {
   @@index([groupId])
   @@index([contactId])
   @@index([organizationId])
+  @@index([buyerPartyId])
+  @@index([tenantId, buyerPartyId])
   @@index([waitlistEntryId])
 }
 
@@ -1413,6 +1432,10 @@ model Offspring {
   buyerOrganizationId Int?
   buyerOrganization   Organization?   @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for offspring buyer
+  buyerPartyId Int?
+  buyerParty   Party? @relation("OffspringBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
+
   // finance and placement
   priceCents       Int?
   depositCents     Int?
@@ -1458,6 +1481,8 @@ model Offspring {
   @@index([tenantId, paperworkState])
   @@index([buyerContactId])
   @@index([buyerOrganizationId])
+  @@index([buyerPartyId])
+  @@index([tenantId, buyerPartyId])
   @@index([placedAt])
   @@index([tenantId, damId])
   @@index([tenantId, sireId])
@@ -1560,6 +1585,10 @@ model WaitlistEntry {
   organizationId Int?
   organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for waitlist client
+  clientPartyId Int?
+  clientParty   Party? @relation("WaitlistParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
+
   speciesPref Species?
   breedPrefs  Json?
   sirePrefId  Int?
@@ -1601,6 +1630,8 @@ model WaitlistEntry {
   @@index([offspringId])
   @@index([contactId])
   @@index([organizationId])
+  @@index([clientPartyId])
+  @@index([tenantId, clientPartyId])
   @@index([tenantId, speciesPref])
   @@index([sirePrefId])
   @@index([damPrefId])
@@ -1743,10 +1774,16 @@ model PlanParty {
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for role-based parties
+  partyId Int?
+  party   Party? @relation("PlanPartyRole", fields: [partyId], references: [id], onDelete: SetNull)
+
   notes String?
 
   @@index([tenantId])
   @@index([planId])
+  @@index([partyId])
+  @@index([tenantId, partyId, role])
 }
 
 model PlanCodeCounter {
@@ -1912,6 +1949,10 @@ model Invoice {
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for invoice client/buyer
+  clientPartyId Int?
+  clientParty   Party? @relation("InvoiceParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
+
   number       String?
   currency     String        @default("USD")
   amountCents  Int
@@ -1948,6 +1989,9 @@ model Invoice {
   @@index([scope, offspringId])
   @@index([status])
   @@index([contactId])
+  @@index([organizationId])
+  @@index([clientPartyId])
+  @@index([tenantId, clientPartyId])
 }
 
 model InvoiceLineItem {
@@ -2321,6 +2365,10 @@ model ContractParty {
   userId         String?
   user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for contract party
+  partyId Int?
+  party   Party? @relation("ContractPartyRole", fields: [partyId], references: [id], onDelete: SetNull)
+
   role   String?
   email  String?
   name   String?
@@ -2340,6 +2388,8 @@ model ContractParty {
 
   @@index([tenantId])
   @@index([contractId])
+  @@index([partyId])
+  @@index([tenantId, partyId])
   @@index([status])
 }
 
@@ -2446,6 +2496,10 @@ model OffspringContract {
   buyerOrganizationId Int?
   buyerOrganization   Organization? @relation("OffspringContractBuyerOrg", fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
 
+  // Party migration step 5: unified party reference for contract buyer
+  buyerPartyId Int?
+  buyerParty   Party? @relation("OffspringContractBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
+
   metaJson Json?
 
   createdAt DateTime @default(now())
@@ -2453,6 +2507,8 @@ model OffspringContract {
 
   @@index([tenantId])
   @@index([offspringId])
+  @@index([buyerPartyId])
+  @@index([tenantId, buyerPartyId])
   @@index([status])
 }
 
