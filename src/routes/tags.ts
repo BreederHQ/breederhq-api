@@ -83,36 +83,68 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // GET /contacts/:id/tags  → list tags assigned to a contact
-  // Party migration step 5: dual-read from contactId and taggedPartyId
-app.get("/contacts/:id/tags", async (req, reply) => {
-  try {
-    const tenantId = Number((req as any).tenantId);
-    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+  // Step 6B: Party-only reads via taggedPartyId
+  app.get("/contacts/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    const { id } = req.params as { id: string };
-    const contactId = Number(id);
-    if (!Number.isInteger(contactId) || contactId <= 0) {
-      return reply.code(400).send({ error: "invalid_contact_id" });
+      const { id } = req.params as { id: string };
+      const contactId = Number(id);
+      if (!Number.isInteger(contactId) || contactId <= 0) {
+        return reply.code(400).send({ error: "invalid_contact_id" });
+      }
+
+      // Use Party-only read service
+      const items = await getTagsForContact(contactId, tenantId);
+
+      // Check if contact exists (if items is empty, could be no tags or no contact)
+      if (items.length === 0) {
+        const contact = await prisma.contact.findFirst({
+          where: { id: contactId, tenantId },
+          select: { id: true },
+        });
+        if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+      }
+
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
     }
+  });
 
-    // Use dual-read service that handles both contactId and taggedPartyId
-    const items = await getTagsForContact(contactId, tenantId);
+  // GET /organizations/:id/tags  → list tags assigned to an organization
+  // Step 6B: Party-only reads via taggedPartyId
+  app.get("/organizations/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    // Check if contact exists (if items is empty, could be no tags or no contact)
-    if (items.length === 0) {
-      const contact = await prisma.contact.findFirst({
-        where: { id: contactId, tenantId },
-        select: { id: true },
-      });
-      if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+      const { id } = req.params as { id: string };
+      const organizationId = Number(id);
+      if (!Number.isInteger(organizationId) || organizationId <= 0) {
+        return reply.code(400).send({ error: "invalid_organization_id" });
+      }
+
+      // Use Party-only read service
+      const items = await getTagsForOrganization(organizationId, tenantId);
+
+      // Check if organization exists (if items is empty, could be no tags or no organization)
+      if (items.length === 0) {
+        const org = await prisma.organization.findFirst({
+          where: { id: organizationId, tenantId },
+          select: { id: true },
+        });
+        if (!org) return reply.code(404).send({ error: "organization_not_found" });
+      }
+
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
     }
-
-    return reply.send({ items, total: items.length });
-  } catch (err) {
-    const { status, payload } = errorReply(err);
-    reply.status(status).send(payload);
-  }
-});
+  });
 
 
   // POST /tags  body: { name, module, color? }
@@ -225,7 +257,7 @@ app.get("/contacts/:id/tags", async (req, reply) => {
 
   // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? }
   // Exactly one target; target must be in the same tenant; tag.module must match target type.
-  // Party migration step 5: dual-write for contactId and organizationId
+  // Step 6B: Party-only writes - resolves contactId/organizationId to taggedPartyId
   app.post("/tags/:id/assign", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
@@ -299,6 +331,7 @@ app.get("/contacts/:id/tags", async (req, reply) => {
   });
 
   // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? }
+  // Step 6B: Resolves contactId/organizationId to taggedPartyId before deletion
   app.post("/tags/:id/unassign", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
@@ -315,11 +348,31 @@ app.get("/contacts/:id/tags", async (req, reply) => {
       if (body.organizationId != null) {
         const orgId = parseIntOrNull(body.organizationId);
         if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, organizationId: orgId } });
+
+        // Resolve to partyId and delete by taggedPartyId
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+          select: { partyId: true, tenantId: true },
+        });
+        if (!org) return reply.code(404).send({ error: "organization_not_found" });
+        if (org.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+        if (org.partyId) {
+          await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, taggedPartyId: org.partyId } });
+        }
       } else if (body.contactId != null) {
         const contactId = parseIntOrNull(body.contactId);
         if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, contactId } });
+
+        // Resolve to partyId and delete by taggedPartyId
+        const contact = await prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { partyId: true, tenantId: true },
+        });
+        if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+        if (contact.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+        if (contact.partyId) {
+          await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, taggedPartyId: contact.partyId } });
+        }
       } else {
         const animalId = parseIntOrNull(body.animalId);
         if (!animalId) return reply.code(400).send({ error: "animalId_invalid" });
