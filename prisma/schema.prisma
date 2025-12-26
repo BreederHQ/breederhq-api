@@ -281,10 +281,6 @@ model User {
   postalCode   String?
   country      String? @db.Char(2)
 
-  // optional link into a Contact row
-  contactId Int?
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-
   // Party migration step 5: unified party reference for user profile
   partyId Int?
   party   Party? @relation("UserParty", fields: [partyId], references: [id], onDelete: SetNull)
@@ -320,7 +316,6 @@ model User {
   HealthEvent         HealthEvent[]
   ContractParty       ContractParty[]
 
-  @@index([contactId])
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -532,18 +527,13 @@ model Organization {
   archived Boolean @default(false)
 
   contacts            Contact[]
-  animals             Animal[]          @relation("OrgAnimals")
-  animalsPurchased    Animal[]          @relation("AnimalBuyerOrganization")
+  animals             Animal[]            @relation("OrgAnimals")
   memberships         Membership[]
-  createdCustomBreeds CustomBreed[]     @relation("CreatedByOrganization")
+  createdCustomBreeds CustomBreed[]       @relation("CreatedByOrganization")
   breedingPlans       BreedingPlan[]
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  AnimalOwner         AnimalOwner[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
   Invitation          Invitation[]
-  OffspringContracts  OffspringContract[]   @relation("OffspringContractBuyerOrg")
-  Invoice             Invoice[]
-  ContractParty       ContractParty[]
   externalProvider    String?
   externalId          String?
 
@@ -643,19 +633,10 @@ model Contact {
   country String? @db.Char(2)
 
   // Relations
-  animalOwnerships AnimalOwner[]
-  users            User[]
-
-  breedingAttemptsAsStudOwner BreedingAttempt[] @relation("StudOwnerContact")
-
-  animalsPurchased Animal[] @relation("AnimalBuyerContact")
 
   archived           Boolean             @default(false)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
-  OffspringContracts OffspringContract[] @relation("OffspringContractBuyerContact")
-  Invoice            Invoice[]
-  ContractParty      ContractParty[]
 
   externalProvider String?
   externalId       String?
@@ -742,25 +723,19 @@ model Animal {
   collarAssignedAt DateTime?
   collarLocked     Boolean   @default(false)
 
-  buyerPartyType      OwnerPartyType?
-  buyerContactId      Int?
-  buyerContact        Contact?        @relation("AnimalBuyerContact", fields: [buyerContactId], references: [id], onDelete: SetNull)
-  buyerOrganizationId Int?
-  buyerOrganization   Organization?   @relation("AnimalBuyerOrganization", fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for animal buyer
-  buyerPartyId Int?
-  buyerParty   Party? @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
-  priceCents          Int?
-  depositCents        Int?
-  saleInvoiceId       String?
-  contractId          String?
-  contractSignedAt    DateTime?
-  paidInFullAt        DateTime?
-  healthCertAt        DateTime?
-  microchipAppliedAt  DateTime?
-  pickupAt            DateTime?
-  placedAt            DateTime?
+  // Party migration step 6G: unified party reference for animal buyer (party-only)
+  buyerPartyId       Int?
+  buyerParty         Party?    @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
+  priceCents         Int?
+  depositCents       Int?
+  saleInvoiceId      String?
+  contractId         String?
+  contractSignedAt   DateTime?
+  paidInFullAt       DateTime?
+  healthCertAt       DateTime?
+  microchipAppliedAt DateTime?
+  pickupAt           DateTime?
+  placedAt           DateTime?
 
   tagAssignments TagAssignment[]
   owners         AnimalOwner[]
@@ -792,31 +767,22 @@ model Animal {
 }
 
 model AnimalOwner {
-  id             Int            @id @default(autoincrement())
-  animalId       Int
-  partyType      OwnerPartyType
-  organizationId Int?
-  contactId      Int?
-  percent        Int
-  isPrimary      Boolean        @default(false)
-  animal         Animal         @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  id        Int     @id @default(autoincrement())
+  animalId  Int
+  percent   Int
+  isPrimary Boolean @default(false)
+  animal    Animal  @relation(fields: [animalId], references: [id], onDelete: Cascade)
 
-  // Party migration step 5: unified party reference for co-owner
-  partyId Int?
-  party   Party? @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: SetNull)
+  // Party migration step 6H: unified party reference for co-owner (party-only)
+  partyId Int
+  party   Party @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: SetNull)
 
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([animalId, organizationId])
-  @@unique([animalId, contactId])
+  @@unique([animalId, partyId])
   @@index([animalId])
-  @@index([organizationId])
-  @@index([contactId])
   @@index([partyId])
-  @@index([animalId, partyId])
 }
 
 model Registry {
@@ -1234,9 +1200,6 @@ model BreedingAttempt {
   attemptAt   DateTime?
   windowStart DateTime?
   windowEnd   DateTime?
-
-  studOwnerContactId Int?
-  studOwnerContact   Contact? @relation("StudOwnerContact", fields: [studOwnerContactId], references: [id], onDelete: SetNull)
 
   // Party migration step 5: unified party reference for stud owner
   studOwnerPartyId Int?
@@ -1909,13 +1872,7 @@ model Invoice {
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
 
-  // buyer
-  contactId      Int?
-  contact        Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  organizationId Int?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for invoice client/buyer
+  // Party migration step 6J: unified party reference for invoice client/buyer
   clientPartyId Int?
   clientParty   Party? @relation("InvoiceParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
 
@@ -1954,8 +1911,6 @@ model Invoice {
   @@index([scope, groupId])
   @@index([scope, offspringId])
   @@index([status])
-  @@index([contactId])
-  @@index([organizationId])
   @@index([clientPartyId])
   @@index([tenantId, clientPartyId])
 }
@@ -2328,14 +2283,9 @@ model ContractParty {
   contractId Int
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
-  contactId      Int?
-  contact        Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  organizationId Int?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  userId         String?
-  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Party migration step 5: unified party reference for contract party
   partyId Int?
   party   Party? @relation("ContractPartyRole", fields: [partyId], references: [id], onDelete: SetNull)
 
@@ -2461,12 +2411,7 @@ model OffspringContract {
   fileId Int?
   file   Attachment? @relation(fields: [fileId], references: [id], onDelete: SetNull)
 
-  buyerContactId      Int?
-  buyerContact        Contact?      @relation("OffspringContractBuyerContact", fields: [buyerContactId], references: [id], onDelete: SetNull)
-  buyerOrganizationId Int?
-  buyerOrganization   Organization? @relation("OffspringContractBuyerOrg", fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
-
-  // Party migration step 5: unified party reference for contract buyer
+  // Party migration step 6L: unified party reference for contract buyer (legacy columns removed)
   buyerPartyId Int?
   buyerParty   Party? @relation("OffspringContractBuyerParty", fields: [buyerPartyId], references: [id], onDelete: SetNull)
 
