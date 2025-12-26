@@ -19,7 +19,7 @@ import {
   legacyStatusToCanonicalPatch,
 } from "../services/offspring/state.js";
 import { resolvePartyId } from "../services/party-resolver.js";
-import { WAITLIST_INCLUDE_PARTY } from "../services/waitlist-mapping.js";
+import { WAITLIST_INCLUDE_PARTY, resolveClientPartyId } from "../services/waitlist-mapping.js";
 
 /**
  * Step 6D: Offspring Party-only storage constants and helpers
@@ -2358,6 +2358,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ===== WAITLIST: CREATE under group ===== */
+  // Step 6E: Party-only writes - accepts legacy contactId/organizationId, resolves to clientPartyId
   app.post("/offspring/:id/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -2366,19 +2367,25 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
     if (!G) return reply.code(404).send({ error: "group not found" });
 
-    if (!b.partyType || !["Organization", "Contact"].includes(b.partyType)) {
-      return reply.code(400).send({ error: "partyType must be Contact or Organization" });
+    // Resolve legacy contactId/organizationId to clientPartyId
+    const contactId = b.contactId ? Number(b.contactId) : null;
+    const organizationId = b.organizationId ? Number(b.organizationId) : null;
+
+    if (!contactId && !organizationId) {
+      return reply.code(400).send({ error: "contactId or organizationId required" });
     }
-    if (b.partyType === "Contact" && !b.contactId) return reply.code(400).send({ error: "contactId required for Contact partyType" });
-    if (b.partyType === "Organization" && !b.organizationId) return reply.code(400).send({ error: "organizationId required for Organization partyType" });
+
+    // Resolve clientPartyId from legacy fields (Step 6E: Party-only storage)
+    const clientPartyId = await resolveClientPartyId(prisma, contactId, organizationId);
+    if (!clientPartyId) {
+      return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+    }
 
     const data: any = {
       tenantId,
       offspringGroupId: id,
       planId: b.planId ?? null,
-      partyType: b.partyType,
-      contactId: b.partyType === "Contact" ? Number(b.contactId) : null,
-      organizationId: b.partyType === "Organization" ? Number(b.organizationId) : null,
+      clientPartyId, // Step 6E: Party-only storage (no more partyType, contactId, organizationId)
       speciesPref: b.speciesPref ?? null,
       breedPrefs: b.breedPrefs ?? null,
       sirePrefId: b.sirePrefId ? Number(b.sirePrefId) : null,
@@ -2402,6 +2409,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ===== WAITLIST: UPDATE ===== */
+  // Step 6E: Party-only writes - accepts legacy contactId/organizationId, resolves to clientPartyId
   app.patch("/offspring/:id/waitlist/:wid", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -2413,9 +2421,23 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (W.offspringGroupId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this group" });
 
     const data: any = {};
-    if ("partyType" in b) data.partyType = b.partyType;
-    if ("contactId" in b) data.contactId = b.contactId ? Number(b.contactId) : null;
-    if ("organizationId" in b) data.organizationId = b.organizationId ? Number(b.organizationId) : null;
+
+    // Step 6E: Accept legacy contactId/organizationId and resolve to clientPartyId
+    if ("contactId" in b || "organizationId" in b) {
+      const contactId = "contactId" in b ? (b.contactId ? Number(b.contactId) : null) : null;
+      const organizationId = "organizationId" in b ? (b.organizationId ? Number(b.organizationId) : null) : null;
+
+      if (!contactId && !organizationId) {
+        return reply.code(400).send({ error: "contactId or organizationId required" });
+      }
+
+      data.clientPartyId = await resolveClientPartyId(prisma, contactId, organizationId);
+
+      if (!data.clientPartyId) {
+        return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+      }
+    }
+
     if ("speciesPref" in b) data.speciesPref = b.speciesPref ?? null;
     if ("breedPrefs" in b) data.breedPrefs = b.breedPrefs ?? null;
     if ("sirePrefId" in b) data.sirePrefId = b.sirePrefId ? Number(b.sirePrefId) : null;

@@ -44,6 +44,10 @@ interface WaitlistWithParty {
 /**
  * Derives legacy contactId/organizationId from Party for backward-compatible responses.
  * Returns object with contactId, organizationId, contact, organization populated from Party.
+ *
+ * @deprecated Phase 2: Backend dual-write removed, but frontend still expects these fields.
+ * This function derives legacy client fields from Party for backward compatibility.
+ * TODO: Remove in Phase 5 after frontend migration (see LEGACY_IDENTITY_CLEANUP_PLAN.md)
  */
 export function deriveLegacyClientFields(entry: WaitlistWithParty): {
   contactId: number | null;
@@ -92,6 +96,9 @@ export function deriveLegacyClientFields(entry: WaitlistWithParty): {
 /**
  * Resolves clientPartyId from legacy contactId/organizationId inputs.
  * Accepts either contactId or organizationId (precedence: organizationId > contactId if both provided).
+ *
+ * This function allows the API to accept legacy field inputs while persisting only partyId internally.
+ * Step 6E migration pattern: accept legacy, resolve to Party, persist Party-only.
  *
  * @param prisma - Prisma client
  * @param contactId - Legacy contact ID
