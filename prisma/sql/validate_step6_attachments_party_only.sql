@@ -69,13 +69,15 @@ SELECT
   a."tenantId",
   a."attachmentPartyId",
   p.type AS party_type,
-  p."contactId" AS party_backing_contact_id,
-  p."organizationId" AS party_backing_org_id,
+  c.id AS party_backing_contact_id,
+  o.id AS party_backing_org_id,
   a."offspringGroupId",
   a."planId",
   a.filename,
   a."createdAt"
 FROM "Attachment" a
 LEFT JOIN "Party" p ON p.id = a."attachmentPartyId"
+LEFT JOIN "Contact" c ON c."partyId" = p.id
+LEFT JOIN "Organization" o ON o."partyId" = p.id
 ORDER BY a.id DESC
 LIMIT 10;

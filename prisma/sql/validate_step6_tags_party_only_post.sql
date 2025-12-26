@@ -44,7 +44,7 @@ SELECT
   conname as constraint_name,
   contype as constraint_type
 FROM pg_constraint
-WHERE conrelid = 'TagAssignment'::regclass
+WHERE conrelid = 'public."TagAssignment"'::regclass
   AND conname = 'TagAssignment_tagId_taggedPartyId_key';
 
 \echo ''
@@ -59,7 +59,7 @@ SELECT
   conname as constraint_name,
   contype as constraint_type
 FROM pg_constraint
-WHERE conrelid = 'TagAssignment'::regclass
+WHERE conrelid = 'public."TagAssignment"'::regclass
   AND conname = 'TagAssignment_taggedPartyId_fkey';
 
 \echo ''
