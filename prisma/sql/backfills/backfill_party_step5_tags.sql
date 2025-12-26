@@ -1,11 +1,22 @@
 -- ============================================================================
--- Party Migration Step 5: Tags Domain - Backfill Script
+-- Party Migration Step 5: Tags Domain - POST-MIGRATION REPAIR TOOL
 -- ============================================================================
--- This script backfills the taggedPartyId column in TagAssignment
--- from existing contactId and organizationId values.
+-- PURPOSE:
+--   This is a post-migration repair tool for operational recovery.
+--   Use this script to backfill the taggedPartyId column in TagAssignment
+--   from existing contactId and organizationId values if data inconsistencies
+--   are discovered after migration.
 --
--- IMPORTANT: This script is idempotent and can be run multiple times safely.
--- It only updates rows where taggedPartyId is NULL.
+-- SAFETY:
+--   - This script is IDEMPOTENT and safe to run multiple times
+--   - Only updates rows where taggedPartyId is NULL
+--   - Does not modify existing taggedPartyId values
+--
+-- USAGE:
+--   psql $DATABASE_URL -f prisma/sql/backfills/backfill_party_step5_tags.sql
+--
+-- NOTE:
+--   This is NOT part of the validation suite (does not match validate*.sql pattern)
 -- ============================================================================
 
 -- ============================================================================

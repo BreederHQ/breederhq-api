@@ -1,11 +1,22 @@
 -- ============================================================================
--- Party Migration Step 5: Finance Domain - Backfill Script
+-- Party Migration Step 5: Finance Domain - POST-MIGRATION REPAIR TOOL
 -- ============================================================================
--- Purpose: Backfill partyId columns from legacy Contact/Organization IDs
--- Models: Invoice, OffspringContract, ContractParty
+-- PURPOSE:
+--   This is a post-migration repair tool for operational recovery.
+--   Use this script to backfill partyId columns from legacy Contact/Organization IDs
+--   if data inconsistencies are discovered after migration.
+--   Models: Invoice, OffspringContract, ContractParty
 --
--- IMPORTANT: This script is idempotent and only updates NULL partyId values.
--- Run this script manually in pgAdmin or PowerShell after schema migration.
+-- SAFETY:
+--   - This script is IDEMPOTENT and safe to run multiple times
+--   - Only updates rows where partyId is NULL
+--   - Does not modify existing partyId values
+--
+-- USAGE:
+--   psql $DATABASE_URL -f prisma/sql/backfills/backfill_party_step5_finance.sql
+--
+-- NOTE:
+--   This is NOT part of the validation suite (does not match validate*.sql pattern)
 -- ============================================================================
 
 -- Enable timing and row counts for monitoring
