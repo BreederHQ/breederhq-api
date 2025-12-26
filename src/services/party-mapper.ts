@@ -159,6 +159,10 @@ export function toPartyRead(row: any, logger?: Logger): PartyRead {
  * Maps a Party relation to legacy contactId and organizationId fields.
  * Used for backward-compatible read responses after Step 6 migration.
  *
+ * @deprecated Phase 2: Backend dual-write removed, but frontend still expects these fields.
+ * This function derives legacy contactId/organizationId from Party for backward compatibility.
+ * TODO: Remove in Phase 5 after frontend migration (see LEGACY_IDENTITY_CLEANUP_PLAN.md)
+ *
  * @param party - Party object with contact/organization relations included
  * @returns Object with contactId and organizationId (one will be set, other null)
  */
@@ -176,6 +180,10 @@ export function partyToLegacyContactOrg(party: any): { contactId: number | null;
 /**
  * Maps a Party relation to legacy buyer fields (buyerContactId, buyerOrganizationId, buyerPartyType).
  * Used for backward-compatible read responses for Animal buyer and OffspringContract buyer.
+ *
+ * @deprecated Phase 2: Backend dual-write removed, but frontend still expects these fields.
+ * This function derives legacy buyer fields from Party for backward compatibility.
+ * TODO: Remove in Phase 5 after frontend migration (see LEGACY_IDENTITY_CLEANUP_PLAN.md)
  *
  * @param party - Party object with contact/organization relations and type field
  * @returns Object with buyerContactId, buyerOrganizationId, and buyerPartyType
@@ -200,6 +208,10 @@ export function partyToLegacyBuyerFields(party: any): {
  * Maps a Party relation to legacy owner fields (contactId, organizationId, partyType).
  * Used for backward-compatible read responses for AnimalOwner.
  *
+ * @deprecated Phase 2: Backend dual-write removed, but frontend still expects these fields.
+ * This function derives legacy owner fields from Party for backward compatibility.
+ * TODO: Remove in Phase 5 after frontend migration (see LEGACY_IDENTITY_CLEANUP_PLAN.md)
+ *
  * @param party - Party object with contact/organization relations and type field
  * @returns Object with contactId, organizationId, and partyType
  */
@@ -222,6 +234,10 @@ export function partyToLegacyOwnerFields(party: any): {
 /**
  * Maps a Party relation to legacy stud owner contact field.
  * Used for backward-compatible read responses for BreedingAttempt studOwnerContactId.
+ *
+ * @deprecated Phase 2: Backend dual-write removed, but frontend still expects this field.
+ * This function derives studOwnerContactId from Party for backward compatibility.
+ * TODO: Remove in Phase 5 after frontend migration (see LEGACY_IDENTITY_CLEANUP_PLAN.md)
  *
  * @param party - Party object with contact relation included
  * @returns The contactId if party type is CONTACT, otherwise null
