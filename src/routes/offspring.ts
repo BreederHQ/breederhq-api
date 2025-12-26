@@ -1217,9 +1217,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             collarColorHex: true,
             collarAssignedAt: true,
             collarLocked: true,
-            buyerPartyType: true,
-            buyerContactId: true,
-            buyerOrganizationId: true,
+            buyerPartyId: true,
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                contact: { select: { id: true } },
+                organization: { select: { id: true } },
+              },
+            },
           },
           orderBy: {
             id: "asc",
@@ -2677,9 +2683,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             collarColorHex: true,
             collarAssignedAt: true,
             collarLocked: true,
-            buyerPartyType: true,
-            buyerContactId: true,
-            buyerOrganizationId: true,
+            buyerPartyId: true,
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                contact: { select: { id: true } },
+                organization: { select: { id: true } },
+              },
+            },
           },
           orderBy: {
             id: "asc",
