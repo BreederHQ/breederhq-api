@@ -8,10 +8,9 @@ import sharp from "sharp";
 const AVATAR_SIZE = 256;
 
 /* Keep these in sync with Prisma enums */
-type Species = "DOG" | "CAT" | "HORSE";
+type Species = "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
 type Sex = "FEMALE" | "MALE";
 type AnimalStatus = "ACTIVE" | "BREEDING" | "UNAVAILABLE" | "RETIRED" | "DECEASED" | "PROSPECT";
-type OwnerPartyType = "Organization" | "Contact";
 
 /* ───────── utils ───────── */
 
@@ -837,29 +836,37 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: {
         id: true,
         animalId: true,
-        partyType: true,
-        organizationId: true,
-        contactId: true,
+        partyId: true,
         percent: true,
         isPrimary: true,
         createdAt: true,
         updatedAt: true,
-        organization: { select: { id: true, name: true, tenantId: true } },
-        contact: { select: { id: true, display_name: true, tenantId: true } },
+        party: {
+          select: {
+            id: true,
+            type: true,
+            contact: { select: { id: true, display_name: true, tenantId: true } },
+            organization: { select: { id: true, name: true, tenantId: true } },
+          },
+        },
       },
     });
 
     reply.send({
-      items: rows.map(r => ({
-        id: r.id,
-        partyType: r.partyType,
-        percent: r.percent,
-        isPrimary: r.isPrimary,
-        organization: r.organizationId ? { id: r.organizationId, name: r.organization?.name ?? "" } : null,
-        contact: r.contactId ? { id: r.contactId, name: r.contact?.display_name ?? "" } : null,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-      })),
+      items: rows.map((r) => {
+        return {
+          id: r.id,
+          partyId: r.partyId,
+          kind: r.party?.type ?? null,
+          displayName: r.party?.type === "CONTACT"
+            ? r.party?.contact?.display_name
+            : r.party?.organization?.name ?? null,
+          percent: r.percent,
+          isPrimary: r.isPrimary,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+        };
+      }),
       total: rows.length,
     });
   });
@@ -874,15 +881,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await assertAnimalInTenant(animalId, tenantId);
 
     const b = (req.body || {}) as {
-      partyType: OwnerPartyType;
-      organizationId?: number | null;
-      contactId?: number | null;
+      partyId: number;
       percent: number;
       isPrimary?: boolean;
     };
 
-    if (!b?.partyType || !["Organization", "Contact"].includes(b.partyType)) {
-      return reply.code(400).send({ error: "partyType_invalid" });
+    const partyId = parseIntStrict(b.partyId);
+    if (!partyId) {
+      return reply.code(400).send({ error: "partyId_invalid" });
     }
 
     const percent = Number(b.percent);
@@ -890,43 +896,56 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: "percent_invalid" });
     }
 
-    let orgId: number | null = null;
-    let contactId: number | null = null;
-    if (b.partyType === "Organization") {
-      orgId = parseIntStrict(b.organizationId);
-      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-      await assertOrgInTenant(orgId, tenantId);
-    } else {
-      contactId = parseIntStrict(b.contactId);
-      if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-      await assertContactInTenant(contactId, tenantId);
+    // Verify party exists and belongs to tenant
+    const party = await prisma.party.findUnique({
+      where: { id: partyId },
+      select: { tenantId: true },
+    });
+    if (!party || party.tenantId !== tenantId) {
+      return reply.code(404).send({ error: "party_not_found" });
     }
 
     try {
       const created = await prisma.animalOwner.create({
         data: {
           animalId,
-          partyType: b.partyType,
-          organizationId: orgId,
-          contactId,
+          partyId,
           percent,
           isPrimary: !!b.isPrimary,
         },
         select: {
           id: true,
-          partyType: true,
-          organizationId: true,
-          contactId: true,
+          partyId: true,
           percent: true,
           isPrimary: true,
           createdAt: true,
           updatedAt: true,
+          party: {
+            select: {
+              id: true,
+              type: true,
+              contact: { select: { id: true, display_name: true } },
+              organization: { select: { id: true, name: true } },
+            },
+          },
         },
       });
-      return reply.code(201).send(created);
+
+      return reply.code(201).send({
+        id: created.id,
+        partyId: created.partyId,
+        kind: created.party?.type ?? null,
+        displayName: created.party?.type === "CONTACT"
+          ? created.party?.contact?.display_name
+          : created.party?.organization?.name ?? null,
+        percent: created.percent,
+        isPrimary: created.isPrimary,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      });
     } catch (e: any) {
       if (e?.code === "P2002") {
-        // @@unique([animalId, organizationId]) or @@unique([animalId, contactId])
+        // @@unique([animalId, partyId])
         return reply.code(409).send({ error: "duplicate_owner" });
       }
       throw e;
@@ -945,7 +964,19 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const existing = await prisma.animalOwner.findUnique({
       where: { id: ownerId },
-      select: { id: true, animalId: true, organizationId: true, contactId: true, partyType: true },
+      select: {
+        id: true,
+        animalId: true,
+        partyId: true,
+        party: {
+          select: {
+            id: true,
+            type: true,
+            contact: { select: { id: true } },
+            organization: { select: { id: true } },
+          },
+        },
+      },
     });
     if (!existing || existing.animalId !== animalId) {
       return reply.code(404).send({ error: "not_found" });
@@ -954,9 +985,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const b = (req.body || {}) as Partial<{
       percent: number;
       isPrimary: boolean;
-      partyType: OwnerPartyType;
-      organizationId: number | null;
-      contactId: number | null;
+      partyId: number;
     }>;
 
     const data: any = {};
@@ -967,39 +996,20 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if (b.isPrimary !== undefined) data.isPrimary = !!b.isPrimary;
 
-    if (b.partyType !== undefined) {
-      if (!["Organization", "Contact"].includes(b.partyType)) return reply.code(400).send({ error: "partyType_invalid" });
-      data.partyType = b.partyType;
-      if (b.partyType === "Organization") {
-        const orgId = parseIntStrict(b.organizationId);
-        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        await assertOrgInTenant(orgId, tenantId);
-        data.organizationId = orgId;
-        data.contactId = null;
-      } else {
-        const contactId = parseIntStrict(b.contactId);
-        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-        await assertContactInTenant(contactId, tenantId);
-        data.contactId = contactId;
-        data.organizationId = null;
+    if (b.partyId !== undefined) {
+      const partyId = parseIntStrict(b.partyId);
+      if (!partyId) return reply.code(400).send({ error: "partyId_invalid" });
+
+      // Verify party exists and belongs to tenant
+      const party = await prisma.party.findUnique({
+        where: { id: partyId },
+        select: { tenantId: true },
+      });
+      if (!party || party.tenantId !== tenantId) {
+        return reply.code(404).send({ error: "party_not_found" });
       }
-    } else {
-      if (existing.partyType === "Organization" && b.organizationId !== undefined) {
-        if (b.organizationId === null) return reply.code(400).send({ error: "organizationId_required" });
-        const orgId = parseIntStrict(b.organizationId);
-        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        await assertOrgInTenant(orgId, tenantId);
-        data.organizationId = orgId;
-        data.contactId = null;
-      }
-      if (existing.partyType === "Contact" && b.contactId !== undefined) {
-        if (b.contactId === null) return reply.code(400).send({ error: "contactId_required" });
-        const contactId = parseIntStrict(b.contactId);
-        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-        await assertContactInTenant(contactId, tenantId);
-        data.contactId = contactId;
-        data.organizationId = null;
-      }
+
+      data.partyId = partyId;
     }
 
     try {
@@ -1008,16 +1018,34 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data,
         select: {
           id: true,
-          partyType: true,
-          organizationId: true,
-          contactId: true,
+          partyId: true,
           percent: true,
           isPrimary: true,
           createdAt: true,
           updatedAt: true,
+          party: {
+            select: {
+              id: true,
+              type: true,
+              contact: { select: { id: true, display_name: true } },
+              organization: { select: { id: true, name: true } },
+            },
+          },
         },
       });
-      reply.send(updated);
+
+      reply.send({
+        id: updated.id,
+        partyId: updated.partyId,
+        kind: updated.party?.type ?? null,
+        displayName: updated.party?.type === "CONTACT"
+          ? updated.party?.contact?.display_name
+          : updated.party?.organization?.name ?? null,
+        percent: updated.percent,
+        isPrimary: updated.isPrimary,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
+      });
     } catch (e: any) {
       if (e?.code === "P2002") return reply.code(409).send({ error: "duplicate_owner" });
       throw e;

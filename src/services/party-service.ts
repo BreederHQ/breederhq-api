@@ -1,0 +1,209 @@
+import type { Prisma } from "@prisma/client";
+import prisma from "../prisma.js";
+import { toPartyRead } from "./party-mapper.js";
+import type { PartyRead, PartyStatus, PartyType } from "../types/party.js";
+
+export type PartySortKey = "displayName" | "updatedAt" | "createdAt";
+export type PartySortDir = "asc" | "desc";
+
+export type PartyListParams = {
+  tenantId: number;
+  q?: string | null;
+  page: number;
+  limit: number;
+  sort: PartySortKey;
+  dir: PartySortDir;
+  type?: PartyType;
+  status?: PartyStatus;
+  logger?: { warn?: (obj: Record<string, unknown>, msg?: string) => void };
+};
+
+const TAG_ASSIGNMENT_SELECT = {
+  select: {
+    tag: { select: { name: true } },
+  },
+  orderBy: { tag: { name: "asc" } },
+} as const;
+
+const CONTACT_SELECT = {
+  select: {
+    id: true,
+    display_name: true,
+    first_name: true,
+    last_name: true,
+    nickname: true,
+    email: true,
+    phoneE164: true,
+    whatsappE164: true,
+    street: true,
+    street2: true,
+    city: true,
+    state: true,
+    zip: true,
+    country: true,
+    archived: true,
+    createdAt: true,
+    updatedAt: true,
+    organization: {
+      select: {
+        id: true,
+        partyId: true,
+        name: true,
+        archived: true,
+        party: { select: { name: true, archived: true } },
+      },
+    },
+    tagAssignments: TAG_ASSIGNMENT_SELECT,
+  },
+} as const;
+
+const ORGANIZATION_SELECT = {
+  select: {
+    id: true,
+    name: true,
+    email: true,
+    phone: true,
+    street: true,
+    street2: true,
+    city: true,
+    state: true,
+    zip: true,
+    country: true,
+    archived: true,
+    createdAt: true,
+    updatedAt: true,
+    partyId: true,
+  },
+} as const;
+
+const PARTY_SELECT = {
+  select: {
+    id: true,
+    tenantId: true,
+    type: true,
+    name: true,
+    email: true,
+    phoneE164: true,
+    whatsappE164: true,
+    street: true,
+    street2: true,
+    city: true,
+    state: true,
+    postalCode: true,
+    country: true,
+    archived: true,
+    createdAt: true,
+    updatedAt: true,
+    contact: CONTACT_SELECT,
+    organization: ORGANIZATION_SELECT,
+  },
+} as const;
+
+const TIE_BREAKER: Prisma.PartyOrderByWithRelationInput = { id: "asc" };
+
+function buildOrderBy(sort: PartySortKey, dir: PartySortDir): Prisma.PartyOrderByWithRelationInput[] {
+  const sortDir = dir as Prisma.SortOrder;
+  switch (sort) {
+    case "createdAt":
+      return [{ createdAt: sortDir }, TIE_BREAKER];
+    case "updatedAt":
+      return [{ updatedAt: sortDir }, TIE_BREAKER];
+    case "displayName":
+    default:
+      return [{ name: sortDir }, TIE_BREAKER];
+  }
+}
+
+function mapPartyTypeToDb(type?: PartyType) {
+  if (type === "PERSON") return "CONTACT";
+  if (type === "ORGANIZATION") return "ORGANIZATION";
+  return undefined;
+}
+
+function buildSearchOr(search: string) {
+  return [
+    { name: { contains: search, mode: "insensitive" } },
+    { email: { contains: search, mode: "insensitive" } },
+    { phoneE164: { contains: search, mode: "insensitive" } },
+    { whatsappE164: { contains: search, mode: "insensitive" } },
+    { contact: { is: { display_name: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { first_name: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { last_name: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { nickname: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { email: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { phoneE164: { contains: search, mode: "insensitive" } } } },
+    { contact: { is: { whatsappE164: { contains: search, mode: "insensitive" } } } },
+    { organization: { is: { name: { contains: search, mode: "insensitive" } } } },
+    { organization: { is: { email: { contains: search, mode: "insensitive" } } } },
+    { organization: { is: { phone: { contains: search, mode: "insensitive" } } } },
+  ];
+}
+
+function buildWhere(params: PartyListParams) {
+  const where: Record<string, unknown> = { tenantId: params.tenantId };
+  const and: any[] = [];
+
+  const dbType = mapPartyTypeToDb(params.type);
+  if (dbType) and.push({ type: dbType });
+
+  if (params.status === "ARCHIVED") {
+    and.push({ archived: true });
+  } else if (params.status === "ACTIVE") {
+    and.push({ archived: false });
+    and.push({
+      NOT: {
+        OR: [
+          { contact: { is: { archived: true } } },
+          { organization: { is: { archived: true } } },
+        ],
+      },
+    });
+  } else if (params.status === "INACTIVE") {
+    and.push({ archived: false });
+    and.push({
+      OR: [
+        { contact: { is: { archived: true } } },
+        { organization: { is: { archived: true } } },
+      ],
+    });
+  }
+
+  const search = String(params.q || "").trim();
+  if (search) {
+    and.push({ OR: buildSearchOr(search) });
+  }
+
+  if (and.length) where.AND = and;
+  return where;
+}
+
+export const PartyService = {
+  async list(params: PartyListParams): Promise<{ items: PartyRead[]; total: number; page: number; limit: number }> {
+    const where = buildWhere(params);
+    const orderBy = buildOrderBy(params.sort, params.dir);
+    const skip = (params.page - 1) * params.limit;
+
+    const [rows, total] = await prisma.$transaction([
+      prisma.party.findMany({
+        where,
+        skip,
+        take: params.limit,
+        orderBy,
+        ...PARTY_SELECT,
+      }),
+      prisma.party.count({ where }),
+    ]);
+
+    const items = rows.map((row) => toPartyRead(row, params.logger));
+    return { items, total, page: params.page, limit: params.limit };
+  },
+
+  async getById(tenantId: number, partyId: number, logger?: PartyListParams["logger"]): Promise<PartyRead | null> {
+    const row = await prisma.party.findFirst({
+      where: { id: partyId, tenantId },
+      ...PARTY_SELECT,
+    });
+    if (!row) return null;
+    return toPartyRead(row, logger);
+  },
+};

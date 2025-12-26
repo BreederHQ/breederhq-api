@@ -80,13 +80,34 @@ app.get("/__diag", async () => ({
 }));
 
 // ---------- CSRF (double-submit cookie) ----------
+function normalizePath(url?: string) {
+  const pathOnly = (url || "/").split("?")[0] || "/";
+  const trimmed = pathOnly.replace(/\/+$/, "");
+  return trimmed || "/";
+}
+
+function isCsrfExempt(pathname: string, method: string) {
+  // Auth bootstrap routes lack an existing CSRF cookie (login/logout handshake).
+  if (!pathname.startsWith("/api/v1/auth")) return false;
+  const m = method.toUpperCase();
+  switch (pathname) {
+    case "/api/v1/auth/login":
+      return m === "POST";
+    case "/api/v1/auth/dev-login":
+    case "/api/v1/auth/logout":
+      return m === "GET" || m === "POST";
+    default:
+      return false;
+  }
+}
+
 app.addHook("preHandler", async (req, reply) => {
   // Let safe and preflight through
   const m = req.method.toUpperCase();
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
 
-  // Auth endpoints: they set/clear CSRF themselves
-  if (req.url.startsWith("/api/v1/auth/")) return;
+  const pathOnly = normalizePath(req.url);
+  if (isCsrfExempt(pathOnly, m)) return;
 
   const csrfHeader = req.headers["x-csrf-token"];
   const csrfCookie = req.cookies?.["XSRF-TOKEN"];
@@ -203,6 +224,7 @@ import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
+import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
@@ -330,6 +352,7 @@ app.register(
 
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
+    api.register(partiesRoutes);       // /api/v1/parties/*
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*

@@ -6,7 +6,7 @@ import prisma from "../prisma.js";
 /** ───────────────────────────────────────────────────────────────────────────
  * Helpers
  * ─────────────────────────────────────────────────────────────────────────── */
-const SPECIES_SET = new Set(["DOG", "CAT", "HORSE"]);
+const SPECIES_SET = new Set(["DOG", "CAT", "HORSE", "GOAT", "SHEEP", "RABBIT"]);
 function assertSpecies(s?: string) {
   const val = String(s || "").toUpperCase();
   if (!SPECIES_SET.has(val)) {
@@ -14,7 +14,7 @@ function assertSpecies(s?: string) {
     err.statusCode = 400;
     throw err;
   }
-  return val as "DOG" | "CAT" | "HORSE";
+  return val as "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
 }
 
 /** Pull tenant id from header or request decoration (don’t throw here) */
