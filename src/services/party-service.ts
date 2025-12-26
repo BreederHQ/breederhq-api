@@ -183,6 +183,43 @@ export const PartyService = {
     const orderBy = buildOrderBy(params.sort, params.dir);
     const skip = (params.page - 1) * params.limit;
 
+    // Get tenant's default owner party to potentially feature it prominently
+    let tenantDefaultParty: PartyRead | null = null;
+    const search = String(params.q || "").trim().toLowerCase();
+
+    // Only fetch and feature default party on page 1 when searching
+    if (params.page === 1 && params.type !== "PERSON") {  // Only for org searches or unfiltered
+      try {
+        // Try to get the first organization's party for this tenant
+        const org = await prisma.organization.findFirst({
+          where: { tenantId: params.tenantId, archived: false },
+          orderBy: { id: "asc" },
+          select: { partyId: true },
+        });
+
+        if (org) {
+          const defaultParty = await prisma.party.findUnique({
+            where: { id: org.partyId },
+            ...PARTY_SELECT,
+          });
+          if (defaultParty) {
+            tenantDefaultParty = toPartyRead(defaultParty, params.logger);
+            // Only include if it matches the search (if any)
+            if (search) {
+              const matchesSearch =
+                tenantDefaultParty.displayName.toLowerCase().includes(search) ||
+                (tenantDefaultParty.backing.organizationId != null);
+              if (!matchesSearch) {
+                tenantDefaultParty = null;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        params.logger?.warn?.({ err }, "Failed to fetch tenant default party");
+      }
+    }
+
     const [rows, total] = await prisma.$transaction([
       prisma.party.findMany({
         where,
@@ -194,7 +231,16 @@ export const PartyService = {
       prisma.party.count({ where }),
     ]);
 
-    const items = rows.map((row) => toPartyRead(row, params.logger));
+    let items = rows.map((row) => toPartyRead(row, params.logger));
+
+    // Prepend tenant default party if found and not already in results
+    if (tenantDefaultParty) {
+      const alreadyIncluded = items.some(item => item.partyId === tenantDefaultParty.partyId);
+      if (!alreadyIncluded) {
+        items = [tenantDefaultParty, ...items.slice(0, params.limit - 1)];
+      }
+    }
+
     return { items, total, page: params.page, limit: params.limit };
   },
 
