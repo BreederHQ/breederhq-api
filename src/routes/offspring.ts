@@ -13,11 +13,6 @@ import {
   type Animal,
   type Sex,
 } from "@prisma/client";
-import {
-  OFFSPRING_DUAL_WRITE_LEGACY_STATUS,
-  deriveLegacyStatus,
-  legacyStatusToCanonicalPatch,
-} from "../services/offspring/state.js";
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -316,6 +311,7 @@ function pick<T extends object>(obj: any, keys: (keyof T)[]): Partial<T> {
 
 /* ========= serializers ========= */
 
+
 function litePlanForList(p: any) {
   if (!p) return null;
   return {
@@ -439,65 +435,70 @@ function groupDetail(
       updatedAt: a.updatedAt.toISOString(),
     })),
 
-    Offspring: offspring.map((o: any) => ({
-      id: o.id,
-      name: o.name ?? "",
-      placeholderLabel: o.name ?? "",
-      sex: o.sex ?? null,
-      status: o.status ?? null,
-      lifeState: o.lifeState ?? null,
-      placementState: o.placementState ?? null,
-      keeperIntent: o.keeperIntent ?? null,
-      financialState: o.financialState ?? null,
-      paperworkState: o.paperworkState ?? null,
-      diedAt: o.diedAt
-        ? o.diedAt instanceof Date
-          ? o.diedAt.toISOString()
-          : String(o.diedAt)
-        : null,
-      birthDate: o.bornAt
-        ? o.bornAt instanceof Date
-          ? o.bornAt.toISOString()
-          : String(o.bornAt)
-        : null,
-      species: o.species ?? null,
-      breed: (o as any).breed ?? null,
-      buyerContact: (o as any).buyerContact
-        ? {
-          id: (o as any).buyerContact.id,
-          name: (o as any).buyerContact.display_name ?? "",
-        }
-        : null,
-      buyerOrg: (o as any).buyerOrganization
-        ? {
-          id: (o as any).buyerOrganization.id,
-          name: (o as any).buyerOrganization.name ?? "",
-        }
-        : null,
-      placedAt:
-        o.placedAt instanceof Date
-          ? o.placedAt.toISOString()
-          : o.placedAt ?? null,
-      paidInFullAt:
-        (o as any).paidInFullAt instanceof Date
-          ? (o as any).paidInFullAt.toISOString()
-          : (o as any).paidInFullAt ?? null,
-      contractId: (o as any).contractId ?? null,
-      contractSignedAt:
-        (o as any).contractSignedAt instanceof Date
-          ? (o as any).contractSignedAt.toISOString()
-          : (o as any).contractSignedAt ?? null,
-      waitlistEntry: (o as any).waitlistEntry
-        ? {
-          id: (o as any).waitlistEntry.id,
-          label: (o as any).waitlistEntry.identifier ?? null,
-        }
-        : null,
-      price:
-        typeof (o as any).priceCents === "number"
-          ? (o as any).priceCents / 100
+    Offspring: offspring.map((o: any) => {
+      // Step 6D: Use Party-native fields directly
+      const buyerParty = o.buyerParty;
+
+      return {
+        id: o.id,
+        name: o.name ?? "",
+        placeholderLabel: o.name ?? "",
+        sex: o.sex ?? null,
+        status: o.status ?? null,
+        lifeState: o.lifeState ?? null,
+        placementState: o.placementState ?? null,
+        keeperIntent: o.keeperIntent ?? null,
+        financialState: o.financialState ?? null,
+        paperworkState: o.paperworkState ?? null,
+        diedAt: o.diedAt
+          ? o.diedAt instanceof Date
+            ? o.diedAt.toISOString()
+            : String(o.diedAt)
           : null,
-    })),
+        birthDate: o.bornAt
+          ? o.bornAt instanceof Date
+            ? o.bornAt.toISOString()
+            : String(o.bornAt)
+          : null,
+        species: o.species ?? null,
+        breed: (o as any).breed ?? null,
+        buyerContact: buyerParty?.type === "CONTACT"
+          ? {
+            id: buyerParty.id,
+            name: buyerParty.name ?? "",
+          }
+          : null,
+        buyerOrg: buyerParty?.type === "ORGANIZATION"
+          ? {
+            id: buyerParty.id,
+            name: buyerParty.name ?? "",
+          }
+          : null,
+        placedAt:
+          o.placedAt instanceof Date
+            ? o.placedAt.toISOString()
+            : o.placedAt ?? null,
+        paidInFullAt:
+          (o as any).paidInFullAt instanceof Date
+            ? (o as any).paidInFullAt.toISOString()
+            : (o as any).paidInFullAt ?? null,
+        contractId: (o as any).contractId ?? null,
+        contractSignedAt:
+          (o as any).contractSignedAt instanceof Date
+            ? (o as any).contractSignedAt.toISOString()
+            : (o as any).contractSignedAt ?? null,
+        waitlistEntry: (o as any).waitlistEntry
+          ? {
+            id: (o as any).waitlistEntry.id,
+            label: (o as any).waitlistEntry.identifier ?? null,
+          }
+          : null,
+        price:
+          typeof (o as any).priceCents === "number"
+            ? (o as any).priceCents / 100
+            : null,
+      };
+    }),
 
     Waitlist: waitlist.map((w: any) => ({
       id: w.id,
@@ -571,7 +572,11 @@ function groupDetail(
         : null,
     })),
 
-    Attachment: attachments ?? [],
+    Attachment: (attachments ?? []).map((att: any) => ({
+      ...att,
+      attachmentPartyId: att.attachmentPartyId,
+      partyName: att.attachmentParty?.name ?? null,
+    })),
     summary,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
@@ -581,8 +586,9 @@ function groupDetail(
 
 function mapOffspringToAnimalLite(o: any) {
   const group = o.group as any | undefined;
-  const buyerContact = (o as any).buyerContact as any | undefined;
-  const buyerOrg = (o as any).buyerOrganization as any | undefined;
+
+  // Step 6D: Use Party-native fields directly
+  const buyerParty = o.buyerParty;
 
   // carry forward flexible JSON fields like color from the data blob
   const extra =
@@ -642,7 +648,7 @@ function mapOffspringToAnimalLite(o: any) {
 
     litterId: o.groupId ?? null,
     groupName: group?.name ?? null,
-    buyerName: buyerContact?.display_name ?? buyerOrg?.name ?? null,
+    buyerName: buyerParty?.name ?? null,
 
     placedAt: (o as any).placedAt
       ? ((o as any).placedAt instanceof Date
@@ -797,14 +803,6 @@ export function normalizeOffspringState(
     patch.promotedAnimalId === undefined
       ? current?.promotedAnimalId ?? null
       : (patch.promotedAnimalId as number | null);
-  const nextBuyerContactId =
-    patch.buyerContactId === undefined
-      ? current?.buyerContactId ?? null
-      : (patch.buyerContactId as number | null);
-  const nextBuyerOrgId =
-    patch.buyerOrganizationId === undefined
-      ? current?.buyerOrganizationId ?? null
-      : (patch.buyerOrganizationId as number | null);
   const nextDepositCents =
     patch.depositCents === undefined
       ? current?.depositCents ?? null
@@ -863,8 +861,12 @@ export function normalizeOffspringState(
     }
   }
 
-  // Buyer assignment implies RESERVED until placement completes.
-  const buyerAssigned = nextBuyerContactId != null || nextBuyerOrgId != null;
+  // Step 6D: Buyer assignment via buyerPartyId implies RESERVED until placement completes
+  const nextBuyerPartyId =
+    patch.buyerPartyId === undefined
+      ? current?.buyerPartyId ?? null
+      : (patch.buyerPartyId as number | null);
+  const buyerAssigned = nextBuyerPartyId != null;
   if (
     buyerAssigned &&
     nextPlacementState !== OffspringPlacementState.PLACED &&
@@ -916,8 +918,6 @@ export function normalizeOffspringState(
   normalized.contractId = nextContractId ?? null;
   normalized.contractSignedAt = nextContractSignedAt ?? null;
   normalized.promotedAnimalId = nextPromotedAnimalId ?? null;
-  normalized.buyerContactId = nextBuyerContactId ?? null;
-  normalized.buyerOrganizationId = nextBuyerOrgId ?? null;
   normalized.depositCents = nextDepositCents ?? null;
   normalized.priceCents = nextPriceCents ?? null;
   return normalized;
@@ -1052,9 +1052,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             collarColorHex: true,
             collarAssignedAt: true,
             collarLocked: true,
-            buyerPartyType: true,
-            buyerContactId: true,
-            buyerOrganizationId: true,
+            buyerPartyId: true,
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                contact: { select: { id: true } },
+                organization: { select: { id: true } },
+              },
+            },
           },
           orderBy: {
             id: "asc",
@@ -1066,20 +1072,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             tenantId,
           },
           include: {
-            contact: {
+            clientParty: {
               select: {
                 id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
+                type: true,
                 name: true,
-                email: true,
-                phone: true,
               },
             },
           },
@@ -1093,6 +1090,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: id,
             tenantId,
           },
+          include: {
+            attachmentParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
@@ -1100,23 +1106,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             tenantId,
           },
           include: {
-            contact: {
+            buyerParty: {
               select: {
                 id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
+                type: true,
                 name: true,
-                email: true,
-                phone: true,
               },
             },
-            waitlistEntry: true,
           },
           orderBy: [
             { createdAt: "asc" },
@@ -1138,21 +1134,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: {
-              select: {
-                id: true,
-                display_name: true,
-              },
-            },
-            buyerOrganization: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
           },
         }),
       ]);
+
+      // Step 6C: Map buyers to Party-native fields
+      const mappedBuyers = buyers.map((buyer: any) => ({
+        id: buyer.id,
+        buyerPartyId: buyer.buyerPartyId,
+        buyerName: buyer.buyerParty?.name ?? null,
+        buyerKind: buyer.buyerParty?.type ?? null,
+        priority: buyer.priority,
+        poolMin: buyer.poolMin,
+        poolMax: buyer.poolMax,
+        createdAt: buyer.createdAt,
+        updatedAt: buyer.updatedAt,
+      }));
 
       reply.send(
         groupDetail(
@@ -1160,7 +1157,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           animals as any,
           waitlist as any,
           attachments as any,
-          buyers as any,
+          mappedBuyers as any,
           offspring as any,
         ),
       );
@@ -1257,9 +1254,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           collarColorHex: true,
           collarAssignedAt: true,
           collarLocked: true,
-          buyerPartyType: true,
-          buyerContactId: true,
-          buyerOrganizationId: true,
         },
         orderBy: {
           id: "asc",
@@ -1271,20 +1265,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId,
         },
         include: {
-          contact: {
+          clientParty: {
             select: {
               id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
+              type: true,
               name: true,
-              email: true,
-              phone: true,
             },
           },
         },
@@ -1298,6 +1283,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringGroupId: created.id,
           tenantId,
         },
+        include: {
+          attachmentParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
       }),
       prisma.offspringGroupBuyer.findMany({
         where: {
@@ -1305,23 +1299,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId,
         },
         include: {
-          contact: {
+          buyerParty: {
             select: {
               id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
+              type: true,
               name: true,
-              email: true,
-              phone: true,
             },
           },
-          waitlistEntry: true,
         },
         orderBy: [
           { createdAt: "asc" },
@@ -1343,15 +1327,29 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: {
-            select: { id: true, display_name: true },
-          },
-          buyerOrganization: {
-            select: { id: true, name: true },
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
           },
         },
       }),
     ]);
+
+    // Step 6C: Map buyers to Party-native fields
+    const mappedBuyers = buyers.map((buyer: any) => ({
+      id: buyer.id,
+      buyerPartyId: buyer.buyerPartyId,
+      buyerName: buyer.buyerParty?.name ?? null,
+      buyerKind: buyer.buyerParty?.type ?? null,
+      priority: buyer.priority,
+      poolMin: buyer.poolMin,
+      poolMax: buyer.poolMax,
+      createdAt: buyer.createdAt,
+      updatedAt: buyer.updatedAt,
+    }));
 
     reply.send(
       groupDetail(
@@ -1359,7 +1357,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         animals as any,
         waitlist as any,
         attachments as any,
-        buyers as any,
+        mappedBuyers as any,
         offspring as any,
       ),
     );
@@ -1438,59 +1436,45 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           collarColorHex: true,
           collarAssignedAt: true,
           collarLocked: true,
-          buyerPartyType: true,
-          buyerContactId: true,
-          buyerOrganizationId: true,
         },
       }),
       prisma.waitlistEntry.findMany({
         where: { offspringGroupId: id, tenantId },
         include: {
-          contact: {
+          clientParty: {
             select: {
               id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
+              type: true,
               name: true,
-              email: true,
-              phone: true,
             },
           },
-          TagAssignment: { include: { tag: true } },
-          sirePref: true,
-          damPref: true,
         },
       }),
-      prisma.attachment.findMany({ where: { offspringGroupId: id, tenantId } }),
+      prisma.attachment.findMany({
+        where: { offspringGroupId: id, tenantId },
+        include: {
+          attachmentParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
+      }),
       prisma.offspringGroupBuyer.findMany({
         where: {
           groupId: id,
           tenantId,
         },
         include: {
-          contact: {
+          buyerParty: {
             select: {
               id: true,
-              display_name: true,
-              email: true,
-              phoneE164: true,
-            },
-          },
-          organization: {
-            select: {
-              id: true,
+              type: true,
               name: true,
-              email: true,
-              phone: true,
             },
           },
-          waitlistEntry: true,
         },
         orderBy: [
           { createdAt: "asc" },
@@ -1512,17 +1496,31 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: {
-            select: { id: true, display_name: true },
-          },
-          buyerOrganization: {
-            select: { id: true, name: true },
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
           },
         },
       }),
     ]);
 
-    reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any, buyers as any, offspring as any));
+    // Step 6C: Map buyers to Party-native fields
+    const mappedBuyers = buyers.map((buyer: any) => ({
+      id: buyer.id,
+      buyerPartyId: buyer.buyerPartyId,
+      buyerName: buyer.buyerParty?.name ?? null,
+      buyerKind: buyer.buyerParty?.type ?? null,
+      priority: buyer.priority,
+      poolMin: buyer.poolMin,
+      poolMax: buyer.poolMax,
+      createdAt: buyer.createdAt,
+      updatedAt: buyer.updatedAt,
+    }));
+
+    reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any, mappedBuyers as any, offspring as any));
   });
 
   /* ===== DELETE: DELETE /api/v1/offspring/:id ===== */
@@ -1655,19 +1653,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
     const statePatch: NormalizedOffspringPatch = { bornAt };
 
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.create", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
     if ("lifeState" in body) statePatch.lifeState = body.lifeState;
     if ("placementState" in body) statePatch.placementState = body.placementState;
     if ("keeperIntent" in body) statePatch.keeperIntent = body.keeperIntent;
@@ -1679,8 +1666,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if ("contractSignedAt" in body) statePatch.contractSignedAt = body.contractSignedAt ? parseISO(body.contractSignedAt) : null;
     if ("contractId" in body) statePatch.contractId = body.contractId ?? null;
     if ("promotedAnimalId" in body) statePatch.promotedAnimalId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
-    if ("buyerContactId" in body) statePatch.buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-    if ("buyerOrganizationId" in body) statePatch.buyerOrganizationId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
+
+    if ("buyerPartyId" in body) {
+      statePatch.buyerPartyId = body.buyerPartyId == null ? null : Number(body.buyerPartyId);
+    }
+
     if ("depositCents" in body) statePatch.depositCents = body.depositCents == null ? null : Number(body.depositCents);
     if ("priceCents" in body) statePatch.priceCents = body.priceCents == null ? null : Number(body.priceCents);
 
@@ -1689,17 +1679,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       normalizedState = normalizeOffspringState(null, statePatch);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
-    }
-
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
     }
 
     const created = await prisma.offspring.create({
@@ -1733,8 +1712,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             name: true,
           },
         },
-        buyerContact: { select: { id: true, display_name: true } },
-        buyerOrganization: { select: { id: true, name: true } },
+        buyerParty: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -1788,13 +1772,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   name: true,
                 },
               },
-              buyerContact: {
-                select: { id: true, display_name: true },
               },
-              buyerOrganization: {
-                select: { id: true, name: true },
-              },
-            },
           }),
           prisma.offspring.count({ where }),
         ]);
@@ -1851,8 +1829,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: { select: { id: true, display_name: true } },
-            buyerOrganization: { select: { id: true, name: true } },
           },
         });
       } catch (err) {
@@ -1888,23 +1864,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const data: any = {};
     const statePatch: NormalizedOffspringPatch = {};
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.update", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
-
-    // carry forward JSON payload for flexible fields like color
-    let extraData: any =
-      typeof (existing as any).data === "object" && (existing as any).data !== null
-        ? { ...(existing as any).data }
-        : {};
 
     let targetGroupSpecies: string | null | undefined = undefined;
 
@@ -2085,16 +2044,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       statePatch.depositCents = depositCentsVal;
     }
 
-    if ("buyerContactId" in body) {
-      const buyerContactId = body.buyerContactId == null ? null : Number(body.buyerContactId);
-      data.buyerContactId = buyerContactId;
-      statePatch.buyerContactId = buyerContactId;
-    }
-
-    if ("buyerOrganizationId" in body) {
-      const buyerOrgId = body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId);
-      data.buyerOrganizationId = buyerOrgId;
-      statePatch.buyerOrganizationId = buyerOrgId;
+    if ("buyerPartyId" in body) {
+      data.buyerPartyId = body.buyerPartyId == null ? null : Number(body.buyerPartyId);
     }
 
     if ("color" in body || "microchip" in body || "registrationId" in body) {
@@ -2138,17 +2089,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: (err as Error).message });
     }
 
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
-    }
-
     let updated;
     try {
       updated = await prisma.offspring.update({
@@ -2161,8 +2101,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          buyerContact: { select: { id: true, display_name: true } },
-          buyerOrganization: { select: { id: true, name: true } },
         },
       });
     } catch (err) {
@@ -2301,6 +2239,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ===== WAITLIST: CREATE under group ===== */
+  // Step 6E: Party-only writes - accepts legacy contactId/organizationId, resolves to clientPartyId
   app.post("/offspring/:id/waitlist", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -2309,19 +2248,17 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
     if (!G) return reply.code(404).send({ error: "group not found" });
 
-    if (!b.partyType || !["Organization", "Contact"].includes(b.partyType)) {
-      return reply.code(400).send({ error: "partyType must be Contact or Organization" });
+    // Step 6E: Accept clientPartyId directly (Party-native API)
+    const clientPartyId = b.clientPartyId ? Number(b.clientPartyId) : null;
+    if (!clientPartyId) {
+      return reply.code(400).send({ error: "clientPartyId_required" });
     }
-    if (b.partyType === "Contact" && !b.contactId) return reply.code(400).send({ error: "contactId required for Contact partyType" });
-    if (b.partyType === "Organization" && !b.organizationId) return reply.code(400).send({ error: "organizationId required for Organization partyType" });
 
     const data: any = {
       tenantId,
       offspringGroupId: id,
       planId: b.planId ?? null,
-      partyType: b.partyType,
-      contactId: b.partyType === "Contact" ? Number(b.contactId) : null,
-      organizationId: b.partyType === "Organization" ? Number(b.organizationId) : null,
+      clientPartyId, // Step 6E: Party-only storage (no more partyType, contactId, organizationId)
       speciesPref: b.speciesPref ?? null,
       breedPrefs: b.breedPrefs ?? null,
       sirePrefId: b.sirePrefId ? Number(b.sirePrefId) : null,
@@ -2345,6 +2282,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ===== WAITLIST: UPDATE ===== */
+  // Step 6E: Party-only writes - accepts legacy contactId/organizationId, resolves to clientPartyId
   app.patch("/offspring/:id/waitlist/:wid", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -2356,9 +2294,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (W.offspringGroupId !== id) return reply.code(409).send({ error: "waitlist entry does not belong to this group" });
 
     const data: any = {};
-    if ("partyType" in b) data.partyType = b.partyType;
-    if ("contactId" in b) data.contactId = b.contactId ? Number(b.contactId) : null;
-    if ("organizationId" in b) data.organizationId = b.organizationId ? Number(b.organizationId) : null;
+
+    // Step 6E: Accept clientPartyId directly (Party-native API)
+    if ("clientPartyId" in b) {
+      data.clientPartyId = b.clientPartyId ? Number(b.clientPartyId) : null;
+      if (!data.clientPartyId) {
+        return reply.code(400).send({ error: "clientPartyId_required" });
+      }
+    }
+
     if ("speciesPref" in b) data.speciesPref = b.speciesPref ?? null;
     if ("breedPrefs" in b) data.breedPrefs = b.breedPrefs ?? null;
     if ("sirePrefId" in b) data.sirePrefId = b.sirePrefId ? Number(b.sirePrefId) : null;
@@ -2420,7 +2364,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         offspringGroupId: id,
         planId: null,
         animalId: null,
-        contactId: null,
+        attachmentPartyId: b.attachmentPartyId ?? null,
         kind: b.kind,
         storageProvider: b.storageProvider,
         storageKey: b.storageKey,
@@ -2453,8 +2397,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post<{
     Params: { groupId: string };
     Body: {
-      contactId?: number | null;
-      organizationId?: number | null;
+      buyerPartyId?: number | null;
       waitlistEntryId?: number | null;
       actorId?: string | null; // currently ignored, reserved for future event logging
     };
@@ -2463,12 +2406,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     async (req, reply) => {
       const tenantId = (req as any).tenantId as number;
       const groupId = Number(req.params.groupId);
-      const { contactId, organizationId, waitlistEntryId } = req.body ?? {};
+      const { buyerPartyId, waitlistEntryId } = req.body ?? {};
 
-      if (!contactId && !organizationId && !waitlistEntryId) {
+      if (!buyerPartyId && !waitlistEntryId) {
         return reply
           .code(400)
-          .send({ error: "contactId, organizationId, or waitlistEntryId required" });
+          .send({ error: "buyerPartyId or waitlistEntryId required" });
       }
 
       const group = await prisma.offspringGroup.findFirst({
@@ -2482,9 +2425,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: {
             tenantId,
             groupId: group.id,
-            contactId: contactId ?? null,
-            organizationId: organizationId ?? null,
             waitlistEntryId: waitlistEntryId ?? null,
+            buyerPartyId: buyerPartyId ?? null,
           },
         });
       } catch (err: any) {
@@ -2496,20 +2438,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Fetch the updated group including buyers for the UI.
       const updatedGroup = await prisma.offspringGroup.findFirst({
         where: { id: group.id, tenantId },
         include: {
           groupBuyerLinks: {
             include: {
-              contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-              organization: { select: { id: true, name: true, phone: true } },
-              waitlistEntry: {
-                include: {
-                  contact: { select: { id: true, display_name: true, email: true, phoneE164: true } },
-                  organization: { select: { id: true, name: true, phone: true } },
-                },
-              },
+              waitlistEntry: true,
             },
           },
         },
@@ -2599,9 +2533,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             collarColorHex: true,
             collarAssignedAt: true,
             collarLocked: true,
-            buyerPartyType: true,
-            buyerContactId: true,
-            buyerOrganizationId: true,
+            buyerPartyId: true,
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                contact: { select: { id: true } },
+                organization: { select: { id: true } },
+              },
+            },
           },
           orderBy: {
             id: "asc",
@@ -2613,20 +2553,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             tenantId,
           },
           include: {
-            contact: {
+            clientParty: {
               select: {
                 id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
+                type: true,
                 name: true,
-                email: true,
-                phone: true,
               },
             },
           },
@@ -2641,6 +2572,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: group.id,
             tenantId,
           },
+          include: {
+            attachmentParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
@@ -2648,23 +2588,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             tenantId,
           },
           include: {
-            contact: {
+            buyerParty: {
               select: {
                 id: true,
-                display_name: true,
-                email: true,
-                phoneE164: true,
-              },
-            },
-            organization: {
-              select: {
-                id: true,
+                type: true,
                 name: true,
-                email: true,
-                phone: true,
               },
             },
-            waitlistEntry: true,
           },
           orderBy: [
             { createdAt: "asc" },
@@ -2686,15 +2616,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            buyerContact: {
-              select: { id: true, display_name: true },
-            },
-            buyerOrganization: {
-              select: { id: true, name: true },
-            },
           },
         }),
       ]);
+
+      // Step 6C: Map buyers to Party-native fields
+      const mappedBuyers = buyers.map((buyer: any) => ({
+        id: buyer.id,
+        buyerPartyId: buyer.buyerPartyId,
+        buyerName: buyer.buyerParty?.name ?? null,
+        buyerKind: buyer.buyerParty?.type ?? null,
+        priority: buyer.priority,
+        poolMin: buyer.poolMin,
+        poolMax: buyer.poolMax,
+        createdAt: buyer.createdAt,
+        updatedAt: buyer.updatedAt,
+      }));
 
       reply.code(200).send(
         groupDetail(
@@ -2702,7 +2639,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           animals as any,
           waitlist as any,
           attachments as any,
-          buyers as any,
+          mappedBuyers as any,
           offspring as any,
         ),
       );
