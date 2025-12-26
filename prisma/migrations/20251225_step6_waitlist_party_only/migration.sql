@@ -34,10 +34,10 @@ END $$;
 -- 2. Ensure indexes exist for clientPartyId
 -- ============================================================
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "WaitlistEntry_clientPartyId_idx"
+CREATE INDEX IF NOT EXISTS "WaitlistEntry_clientPartyId_idx"
 ON "WaitlistEntry"("clientPartyId");
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "WaitlistEntry_tenantId_clientPartyId_idx"
+CREATE INDEX IF NOT EXISTS "WaitlistEntry_tenantId_clientPartyId_idx"
 ON "WaitlistEntry"("tenantId", "clientPartyId");
 
 -- ============================================================
@@ -45,8 +45,8 @@ ON "WaitlistEntry"("tenantId", "clientPartyId");
 -- ============================================================
 
 -- Drop legacy indexes first (safe: IF EXISTS)
-DROP INDEX CONCURRENTLY IF EXISTS "WaitlistEntry_contactId_idx";
-DROP INDEX CONCURRENTLY IF EXISTS "WaitlistEntry_organizationId_idx";
+DROP INDEX IF EXISTS "WaitlistEntry_contactId_idx";
+DROP INDEX IF EXISTS "WaitlistEntry_organizationId_idx";
 
 -- Drop legacy columns (safe: IF EXISTS via DO block)
 DO $$
