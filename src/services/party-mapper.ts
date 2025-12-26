@@ -147,3 +147,94 @@ export function toPartyRead(row: any, logger?: Logger): PartyRead {
     updatedAt,
   };
 }
+
+/**
+ * Step 6 Legacy Field Mapping Helpers
+ *
+ * These functions derive legacy contactId/organizationId fields from Party relations
+ * to maintain backward compatibility after Party-only column migration.
+ */
+
+/**
+ * Maps a Party relation to legacy contactId and organizationId fields.
+ * Used for backward-compatible read responses after Step 6 migration.
+ *
+ * @param party - Party object with contact/organization relations included
+ * @returns Object with contactId and organizationId (one will be set, other null)
+ */
+export function partyToLegacyContactOrg(party: any): { contactId: number | null; organizationId: number | null } {
+  if (!party) {
+    return { contactId: null, organizationId: null };
+  }
+
+  const contactId = party.contact?.id ?? null;
+  const organizationId = party.organization?.id ?? null;
+
+  return { contactId, organizationId };
+}
+
+/**
+ * Maps a Party relation to legacy buyer fields (buyerContactId, buyerOrganizationId, buyerPartyType).
+ * Used for backward-compatible read responses for Animal buyer and OffspringContract buyer.
+ *
+ * @param party - Party object with contact/organization relations and type field
+ * @returns Object with buyerContactId, buyerOrganizationId, and buyerPartyType
+ */
+export function partyToLegacyBuyerFields(party: any): {
+  buyerContactId: number | null;
+  buyerOrganizationId: number | null;
+  buyerPartyType: string | null;
+} {
+  if (!party) {
+    return { buyerContactId: null, buyerOrganizationId: null, buyerPartyType: null };
+  }
+
+  const buyerContactId = party.contact?.id ?? null;
+  const buyerOrganizationId = party.organization?.id ?? null;
+  const buyerPartyType = party.type ?? null;
+
+  return { buyerContactId, buyerOrganizationId, buyerPartyType };
+}
+
+/**
+ * Maps a Party relation to legacy owner fields (contactId, organizationId, partyType).
+ * Used for backward-compatible read responses for AnimalOwner.
+ *
+ * @param party - Party object with contact/organization relations and type field
+ * @returns Object with contactId, organizationId, and partyType
+ */
+export function partyToLegacyOwnerFields(party: any): {
+  contactId: number | null;
+  organizationId: number | null;
+  partyType: string | null;
+} {
+  if (!party) {
+    return { contactId: null, organizationId: null, partyType: null };
+  }
+
+  const contactId = party.contact?.id ?? null;
+  const organizationId = party.organization?.id ?? null;
+  const partyType = party.type ?? null;
+
+  return { contactId, organizationId, partyType };
+}
+
+/**
+ * Maps a Party relation to legacy stud owner contact field.
+ * Used for backward-compatible read responses for BreedingAttempt studOwnerContactId.
+ *
+ * @param party - Party object with contact relation included
+ * @returns The contactId if party type is CONTACT, otherwise null
+ */
+export function partyToLegacyStudOwnerContactId(party: any): number | null {
+  if (!party) {
+    return null;
+  }
+
+  // Only return contactId if this is a contact-backed party
+  if (party.type === "CONTACT" && party.contact?.id) {
+    return party.contact.id;
+  }
+
+  return null;
+}

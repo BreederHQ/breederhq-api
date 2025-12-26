@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
 import bcrypt from "bcryptjs";
 import { resolvePartyId } from "../services/party-resolver.js";
+import { partyToLegacyStudOwnerContactId } from "../services/party-mapper.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -299,7 +300,14 @@ export default async function userRoutes(
           state: true,
           postalCode: true,
           country: true,
-          contactId: true,
+          partyId: true,
+          party: {
+            select: {
+              id: true,
+              type: true,
+              contact: { select: { id: true } },
+            },
+          },
           emailVerifiedAt: true,
           // ⬇️ NEW FIELDS
           firstName: true,
@@ -308,6 +316,9 @@ export default async function userRoutes(
         },
       });
       if (!u) return reply.code(404).send({ error: "not_found" });
+
+      // Step 6: Derive contactId from Party for backward compatibility
+      const contactId = partyToLegacyStudOwnerContactId(u.party);
 
       return reply.send({
         id: u.id,
@@ -333,7 +344,7 @@ export default async function userRoutes(
         state: u.state ?? null,
         postalCode: u.postalCode ?? null,
         country: u.country ?? null,
-        contactId: u.contactId ?? null,
+        contactId,
         emailVerifiedAt: u.emailVerifiedAt ?? null,
       });
     }
@@ -614,6 +625,7 @@ export default async function userRoutes(
   );
 
   // PATCH /users/:id/contact — set/clear contactId (self or Super Admin)
+  // Step 6: Accepts legacy contactId but persists only partyId
   app.patch<{ Params: { id: string }; Body: { contactId: number | null } }>(
     `/users/${STRING_ID_SEG}/contact`,
     async (req, reply) => {
@@ -622,8 +634,8 @@ export default async function userRoutes(
       if (!actorId) return;
 
       const body = req.body || { contactId: null };
-      let setId: number | null = null;
       let partyId: number | null = null;
+      let contactIdForResponse: number | null = null;
 
       if (body.contactId != null) {
         const cid = Number(body.contactId);
@@ -642,24 +654,39 @@ export default async function userRoutes(
         if (!membership)
           return reply.code(403).send({ error: "not_a_member_of_contact_tenant" });
 
-        setId = cid;
-        // Party migration step 5: resolve and dual-write partyId from contactId
+        // Step 6: Resolve partyId from contactId (Party-only persistence)
         partyId = await resolvePartyId(prisma, { contactId: cid });
+        contactIdForResponse = cid;
       }
 
       try {
         const u = await prisma.user.update({
           where: { id },
           data: {
-            contactId: setId,
-            partyId: partyId
+            partyId
           },
-          select: { id: true, email: true, contactId: true, partyId: true, updatedAt: true },
+          select: {
+            id: true,
+            email: true,
+            partyId: true,
+            party: {
+              select: {
+                id: true,
+                type: true,
+                contact: { select: { id: true } },
+              },
+            },
+            updatedAt: true
+          },
         });
+
+        // Derive contactId from Party for backward-compatible response
+        const derivedContactId = partyToLegacyStudOwnerContactId(u.party);
+
         return reply.send({
           id: u.id,
           email: u.email,
-          contactId: u.contactId ?? null,
+          contactId: derivedContactId,
           updatedAt: u.updatedAt.toISOString(),
         });
       } catch (e: any) {

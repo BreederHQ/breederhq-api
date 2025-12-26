@@ -886,22 +886,27 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const contactId = idNum((req.params as any).id);
     if (!contactId) return reply.code(400).send({ error: "bad_id" });
 
-    // Verify contact exists in tenant
+    // Step 6: Verify contact exists in tenant and get partyId
     const contact = await prisma.contact.findFirst({
       where: { id: contactId, tenantId },
-      select: { id: true },
+      select: { id: true, partyId: true },
     });
     if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+    if (!contact.partyId) {
+      return reply.send({ items: [], total: 0 });
+    }
 
-    // Find all animal ownerships for this contact
     const ownerships = await prisma.animalOwner.findMany({
-      where: { contactId },
+      where: { partyId: contact.partyId },
       orderBy: [{ isPrimary: "desc" }, { percent: "desc" }],
       select: {
         id: true,
         animalId: true,
+        partyId: true,
         percent: true,
         isPrimary: true,
+        createdAt: true,
+        updatedAt: true,
         animal: {
           select: {
             id: true,
@@ -922,15 +927,17 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Filter to only animals in this tenant
     const animals = ownerships
-      .filter(o => o.animal.tenantId === tenantId)
-      .map(o => ({
+      .filter((o) => o.animal && o.animal.tenantId === tenantId)
+      .map((o) => ({
         ...o.animal,
-        owners: [{
-          contactId,
-          percent: o.percent,
-          isPrimary: o.isPrimary,
-          partyType: "Contact",
-        }],
+        owners: [
+          {
+            contactId,
+            percent: o.percent,
+            isPrimary: o.isPrimary,
+            partyType: "Contact",
+          },
+        ],
       }));
 
     return reply.send({ items: animals, total: animals.length });

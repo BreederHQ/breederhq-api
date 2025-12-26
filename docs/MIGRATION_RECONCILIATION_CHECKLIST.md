@@ -307,8 +307,67 @@ npx dotenv -e .env.dev.migrate --override -- prisma migrate reset --schema=prism
 7. ✅ Keep migration.sql files idempotent
 8. ✅ Document manual backfill steps in separate .sql files (not in migration.sql)
 
+## Step 6 Party-Only Migration Reconciliation
+
+Step 6 of the Party migration removes legacy columns from models that were dual-writing in Step 5. After running `db push` for Step 6 schema cleanup, migrations are marked as applied using `migrate resolve --applied` because the schema changes were already applied to dev.
+
+### Step 6 Target Models (Party-only)
+
+The following models had legacy columns removed and now store only Party references:
+
+- **AnimalOwner**: `partyId` only (removed: contactId, organizationId, partyType)
+- **BreedingAttempt**: `studOwnerPartyId` only (removed: studOwnerContactId)
+- **Invoice**: `clientPartyId` only (removed: contactId, organizationId)
+- **ContractParty**: `partyId` + `userId` (removed: contactId, organizationId)
+- **OffspringContract**: `buyerPartyId` only (removed: buyerContactId, buyerOrganizationId)
+- **User**: `partyId` only (removed: contactId)
+- **Animal**: `buyerPartyId` only (removed: buyerContactId, buyerOrganizationId, buyerPartyType)
+
+Plus earlier Step 6 work: **Attachment**, **Tag**, **OffspringGroupBuyer**, **Offspring**, **WaitlistEntry**, **PlanParty**
+
+### Key Constraint After Step 6
+
+**CRITICAL**: After Step 6 schema cleanup migrations are marked as applied using `migrate resolve --applied`, **NEVER** run `migrate deploy` in dev to apply Step 6 schema cleanup migrations, because:
+
+1. Dev database already has Step 6 schema changes applied via `db push`
+2. Migrations are marked as applied in `_prisma_migrations` table
+3. Running `migrate deploy` would try to execute already-applied DROP COLUMN statements
+4. This would fail or cause inconsistencies
+
+### Safe Deployment Path
+
+**Development**:
+```powershell
+# 1. Run db push to apply Step 6 schema cleanup
+npx dotenv -e .env.dev.migrate --override -- prisma db push --schema=prisma/schema.prisma
+
+# 2. Mark Step 6 migrations as applied (do NOT run migrate deploy)
+npx dotenv -e .env.dev.migrate --override -- prisma migrate resolve --applied "20251225_step6_cleanup_*" --schema=prisma/schema.prisma
+```
+
+**Production** (when ready):
+```powershell
+# Production uses migrate deploy as normal - migrations are idempotent
+npx dotenv -e .env.prod --override -- prisma migrate deploy --schema=prisma/schema.prisma
+```
+
+### Runtime Validation Query
+
+After Step 6 operational updates, run this query to validate Party-only persistence:
+
+```powershell
+# Location: breederhq-api/prisma/sql/validate_step6_party_only_runtime.sql
+psql $YOUR_DEV_CONNECTION_STRING -f prisma/sql/validate_step6_party_only_runtime.sql
+```
+
+This validates:
+1. Legacy columns no longer exist
+2. Party-only columns exist with proper foreign keys
+3. No orphaned Party references
+
 ## Resources
 
 - [Prisma Migrate Docs](https://www.prisma.io/docs/concepts/components/prisma-migrate)
 - [Prisma db push vs migrate](https://www.prisma.io/docs/concepts/components/prisma-migrate/db-push)
 - Party Migration Files: `breederhq-api/prisma/migrations/20251225_party_step5_*`
+- Step 6 Validation: `breederhq-api/prisma/sql/validate_step6_party_only_runtime.sql`

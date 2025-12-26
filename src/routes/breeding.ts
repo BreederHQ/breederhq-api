@@ -1348,15 +1348,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!b.method) return reply.code(400).send({ error: "method_required" });
 
       await getPlanInTenant(planId, tenantId);
+
+      // Step 6: Accept legacy studOwnerContactId but persist only studOwnerPartyId
+      let studOwnerPartyId: number | null = null;
       if (b.studOwnerContactId) {
         const c = await prisma.contact.findFirst({ where: { id: Number(b.studOwnerContactId), tenantId }, select: { id: true } });
         if (!c) return reply.code(400).send({ error: "stud_owner_contact_not_in_tenant" });
+        // Resolve studOwnerPartyId from contactId (Party-only persistence)
+        studOwnerPartyId = await resolvePartyId(prisma, { contactId: Number(b.studOwnerContactId) });
       }
-
-      // Party migration step 5: Resolve studOwnerPartyId for dual-write
-      const studOwnerPartyId = b.studOwnerContactId
-        ? await resolvePartyId(prisma, { contactId: Number(b.studOwnerContactId) })
-        : null;
 
       const created = await prisma.breedingAttempt.create({
         data: {
@@ -1366,8 +1366,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           attemptAt: b.attemptAt ? new Date(b.attemptAt) : null,
           windowStart: b.windowStart ? new Date(b.windowStart) : null,
           windowEnd: b.windowEnd ? new Date(b.windowEnd) : null,
-          studOwnerContactId: b.studOwnerContactId ?? null,
-          studOwnerPartyId, // Party migration step 5: dual-write
+          studOwnerPartyId, // Step 6: Party-only persistence
           semenBatchId: b.semenBatchId ?? null,
           success: b.success ?? null,
           notes: b.notes ?? null,
