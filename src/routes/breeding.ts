@@ -235,7 +235,7 @@ export function __makeOffspringGroupsService({
   return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
 }
 // [OG-SERVICE-END]
-// apps/api/src/routes/breeding.ts
+// src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 
@@ -1349,15 +1349,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       await getPlanInTenant(planId, tenantId);
 
-      // Step 6: Accept legacy studOwnerContactId but persist only studOwnerPartyId
-      let studOwnerPartyId: number | null = null;
-      if (b.studOwnerContactId) {
-        const c = await prisma.contact.findFirst({ where: { id: Number(b.studOwnerContactId), tenantId }, select: { id: true } });
-        if (!c) return reply.code(400).send({ error: "stud_owner_contact_not_in_tenant" });
-        // Resolve studOwnerPartyId from contactId (Party-only persistence)
-        studOwnerPartyId = await resolvePartyId(prisma, { contactId: Number(b.studOwnerContactId) });
-      }
-
       const created = await prisma.breedingAttempt.create({
         data: {
           tenantId,
@@ -1366,7 +1357,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           attemptAt: b.attemptAt ? new Date(b.attemptAt) : null,
           windowStart: b.windowStart ? new Date(b.windowStart) : null,
           windowEnd: b.windowEnd ? new Date(b.windowEnd) : null,
-          studOwnerPartyId, // Step 6: Party-only persistence
+          studOwnerPartyId: b.studOwnerPartyId ?? null,
           semenBatchId: b.semenBatchId ?? null,
           success: b.success ?? null,
           notes: b.notes ?? null,

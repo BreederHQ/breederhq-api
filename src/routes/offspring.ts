@@ -13,73 +13,7 @@ import {
   type Animal,
   type Sex,
 } from "@prisma/client";
-import {
-  OFFSPRING_DUAL_WRITE_LEGACY_STATUS,
-  deriveLegacyStatus,
-  legacyStatusToCanonicalPatch,
-} from "../services/offspring/state.js";
-import { resolvePartyId } from "../services/party-resolver.js";
-import { WAITLIST_INCLUDE_PARTY, resolveClientPartyId } from "../services/waitlist-mapping.js";
 
-/**
- * Step 6D: Offspring Party-only storage constants and helpers
- *
- * OFFSPRING_INCLUDE_PARTY ensures consistent includes for reading Party with backing entity.
- * offspringWithLegacyBuyerFields derives legacy buyerContactId/buyerOrganizationId from Party.
- */
-
-const OFFSPRING_INCLUDE_PARTY = {
-  buyerParty: {
-    include: {
-      contact: { select: { id: true, display_name: true } },
-      organization: { select: { id: true, name: true } },
-    },
-  },
-} as const;
-
-/**
- * Derives legacy buyer fields from Party for backward-compatible responses.
- *
- * @param offspring - Offspring record with buyerParty included
- * @returns Object with buyerContactId, buyerOrganizationId, buyerContact, buyerOrganization
- */
-function offspringWithLegacyBuyerFields(offspring: any) {
-  const party = offspring?.buyerParty;
-
-  if (!party) {
-    return {
-      buyerContactId: null,
-      buyerOrganizationId: null,
-      buyerContact: null,
-      buyerOrganization: null,
-    };
-  }
-
-  if (party.type === "CONTACT" && party.contact) {
-    return {
-      buyerContactId: party.contact.id,
-      buyerOrganizationId: null,
-      buyerContact: party.contact,
-      buyerOrganization: null,
-    };
-  }
-
-  if (party.type === "ORGANIZATION" && party.organization) {
-    return {
-      buyerContactId: null,
-      buyerOrganizationId: party.organization.id,
-      buyerContact: null,
-      buyerOrganization: party.organization,
-    };
-  }
-
-  return {
-    buyerContactId: null,
-    buyerOrganizationId: null,
-    buyerContact: null,
-    buyerOrganization: null,
-  };
-}
 
 function __og_addDays(d: Date, days: number): Date {
   const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -377,107 +311,6 @@ function pick<T extends object>(obj: any, keys: (keyof T)[]): Partial<T> {
 
 /* ========= serializers ========= */
 
-/**
- * Step 6A: Include clause for fetching attachments with Party relation.
- * Needed to derive legacy contactId from Party backing.
- */
-const ATTACHMENT_INCLUDE_PARTY = {
-  attachmentParty: {
-    include: {
-      contact: {
-        select: { id: true },
-      },
-      organization: {
-        select: { id: true },
-      },
-    },
-  },
-};
-
-/**
- * Step 6C: Standard include for OffspringGroupBuyer with Party and backing Contact/Organization
- * for legacy field derivation.
- */
-const BUYER_INCLUDE_PARTY = {
-  buyerParty: {
-    include: {
-      contact: {
-        select: {
-          id: true,
-          display_name: true,
-          email: true,
-          phoneE164: true,
-        },
-      },
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-        },
-      },
-    },
-  },
-  waitlistEntry: true,
-};
-
-/**
- * Step 6A: Map attachment to include legacy contactId for backward compatibility.
- * Derives contactId from attachmentParty.contact.id if Party type is CONTACT.
- * Returns null for contactId if Party is ORGANIZATION or missing.
- */
-function attachmentWithLegacyFields(attachment: any): any {
-  if (!attachment) return attachment;
-
-  const party = attachment.attachmentParty;
-  let contactId: number | null = null;
-
-  // Derive contactId from Party backing if Party type is CONTACT
-  if (party?.type === "CONTACT" && party.contact?.id) {
-    contactId = party.contact.id;
-  }
-
-  // Return attachment with legacy contactId for backward compatibility
-  // Note: We don't include attachmentPartyId in the response yet to avoid breaking changes
-  const { attachmentParty, attachmentPartyId, ...rest } = attachment;
-
-  return {
-    ...rest,
-    contactId,
-  };
-}
-
-/**
- * Step 6C: Map OffspringGroupBuyer to include legacy contactId and organizationId fields
- * derived from Party for backward compatibility.
- *
- * Storage is Party-only (buyerPartyId), but API responses include legacy fields
- * derived from the Party's type and backing Contact/Organization.
- */
-function groupBuyerWithLegacyFields(buyer: any): any {
-  if (!buyer) return buyer;
-
-  const party = buyer.buyerParty;
-  let contactId: number | null = null;
-  let organizationId: number | null = null;
-
-  // Derive legacy fields from Party backing
-  if (party?.type === "CONTACT" && party.contact?.id) {
-    contactId = party.contact.id;
-  } else if (party?.type === "ORGANIZATION" && party.organization?.id) {
-    organizationId = party.organization.id;
-  }
-
-  // Remove Party internals from response, keep only legacy fields for backward compatibility
-  const { buyerParty, buyerPartyId, ...rest } = buyer;
-
-  return {
-    ...rest,
-    contactId,
-    organizationId,
-  };
-}
 
 function litePlanForList(p: any) {
   if (!p) return null;
@@ -603,8 +436,8 @@ function groupDetail(
     })),
 
     Offspring: offspring.map((o: any) => {
-      // Step 6D: Derive legacy buyer fields from Party
-      const legacyBuyer = offspringWithLegacyBuyerFields(o);
+      // Step 6D: Use Party-native fields directly
+      const buyerParty = o.buyerParty;
 
       return {
         id: o.id,
@@ -629,16 +462,16 @@ function groupDetail(
           : null,
         species: o.species ?? null,
         breed: (o as any).breed ?? null,
-        buyerContact: legacyBuyer.buyerContact
+        buyerContact: buyerParty?.type === "CONTACT"
           ? {
-            id: legacyBuyer.buyerContact.id,
-            name: legacyBuyer.buyerContact.display_name ?? "",
+            id: buyerParty.id,
+            name: buyerParty.name ?? "",
           }
           : null,
-        buyerOrg: legacyBuyer.buyerOrganization
+        buyerOrg: buyerParty?.type === "ORGANIZATION"
           ? {
-            id: legacyBuyer.buyerOrganization.id,
-            name: legacyBuyer.buyerOrganization.name ?? "",
+            id: buyerParty.id,
+            name: buyerParty.name ?? "",
           }
           : null,
         placedAt:
@@ -739,7 +572,11 @@ function groupDetail(
         : null,
     })),
 
-    Attachment: (attachments ?? []).map(attachmentWithLegacyFields),
+    Attachment: (attachments ?? []).map((att: any) => ({
+      ...att,
+      attachmentPartyId: att.attachmentPartyId,
+      partyName: att.attachmentParty?.name ?? null,
+    })),
     summary,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
@@ -750,10 +587,8 @@ function groupDetail(
 function mapOffspringToAnimalLite(o: any) {
   const group = o.group as any | undefined;
 
-  // Step 6D: Derive legacy buyer fields from Party
-  const legacyBuyer = offspringWithLegacyBuyerFields(o);
-  const buyerContact = legacyBuyer.buyerContact;
-  const buyerOrg = legacyBuyer.buyerOrganization;
+  // Step 6D: Use Party-native fields directly
+  const buyerParty = o.buyerParty;
 
   // carry forward flexible JSON fields like color from the data blob
   const extra =
@@ -813,7 +648,7 @@ function mapOffspringToAnimalLite(o: any) {
 
     litterId: o.groupId ?? null,
     groupName: group?.name ?? null,
-    buyerName: buyerContact?.display_name ?? buyerOrg?.name ?? null,
+    buyerName: buyerParty?.name ?? null,
 
     placedAt: (o as any).placedAt
       ? ((o as any).placedAt instanceof Date
@@ -1236,7 +1071,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: id,
             tenantId,
           },
-          include: WAITLIST_INCLUDE_PARTY,
+          include: {
+            clientParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
           orderBy: [
             { priority: "asc" },
             { id: "asc" },
@@ -1247,14 +1090,30 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: id,
             tenantId,
           },
-          include: ATTACHMENT_INCLUDE_PARTY,
+          include: {
+            attachmentParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
             groupId: id,
             tenantId,
           },
-          include: BUYER_INCLUDE_PARTY,
+          include: {
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
           orderBy: [
             { createdAt: "asc" },
             { id: "asc" },
@@ -1275,13 +1134,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            ...OFFSPRING_INCLUDE_PARTY,
           },
         }),
       ]);
 
-      // Step 6C: Map buyers to include legacy contactId/organizationId from Party
-      const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+      // Step 6C: Map buyers to Party-native fields
+      const mappedBuyers = buyers.map((buyer: any) => ({
+        id: buyer.id,
+        buyerPartyId: buyer.buyerPartyId,
+        buyerName: buyer.buyerParty?.name ?? null,
+        buyerKind: buyer.buyerParty?.type ?? null,
+        priority: buyer.priority,
+        poolMin: buyer.poolMin,
+        poolMax: buyer.poolMax,
+        createdAt: buyer.createdAt,
+        updatedAt: buyer.updatedAt,
+      }));
 
       reply.send(
         groupDetail(
@@ -1396,7 +1264,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringGroupId: created.id,
           tenantId,
         },
-        include: WAITLIST_INCLUDE_PARTY,
+        include: {
+          clientParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1407,14 +1283,30 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringGroupId: created.id,
           tenantId,
         },
-        include: ATTACHMENT_INCLUDE_PARTY,
+        include: {
+          attachmentParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
       }),
       prisma.offspringGroupBuyer.findMany({
         where: {
           groupId: created.id,
           tenantId,
         },
-        include: BUYER_INCLUDE_PARTY,
+        include: {
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1435,13 +1327,29 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          ...OFFSPRING_INCLUDE_PARTY,
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
         },
       }),
     ]);
 
-    // Step 6C: Map buyers to include legacy contactId/organizationId from Party
-    const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+    // Step 6C: Map buyers to Party-native fields
+    const mappedBuyers = buyers.map((buyer: any) => ({
+      id: buyer.id,
+      buyerPartyId: buyer.buyerPartyId,
+      buyerName: buyer.buyerParty?.name ?? null,
+      buyerKind: buyer.buyerParty?.type ?? null,
+      priority: buyer.priority,
+      poolMin: buyer.poolMin,
+      poolMax: buyer.poolMax,
+      createdAt: buyer.createdAt,
+      updatedAt: buyer.updatedAt,
+    }));
 
     reply.send(
       groupDetail(
@@ -1532,18 +1440,42 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }),
       prisma.waitlistEntry.findMany({
         where: { offspringGroupId: id, tenantId },
-        include: WAITLIST_INCLUDE_PARTY,
+        include: {
+          clientParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
       }),
       prisma.attachment.findMany({
         where: { offspringGroupId: id, tenantId },
-        include: ATTACHMENT_INCLUDE_PARTY,
+        include: {
+          attachmentParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
       }),
       prisma.offspringGroupBuyer.findMany({
         where: {
           groupId: id,
           tenantId,
         },
-        include: BUYER_INCLUDE_PARTY,
+        include: {
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
+        },
         orderBy: [
           { createdAt: "asc" },
           { id: "asc" },
@@ -1564,13 +1496,29 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          ...OFFSPRING_INCLUDE_PARTY,
+          buyerParty: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+            },
+          },
         },
       }),
     ]);
 
-    // Step 6C: Map buyers to include legacy contactId/organizationId from Party
-    const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+    // Step 6C: Map buyers to Party-native fields
+    const mappedBuyers = buyers.map((buyer: any) => ({
+      id: buyer.id,
+      buyerPartyId: buyer.buyerPartyId,
+      buyerName: buyer.buyerParty?.name ?? null,
+      buyerKind: buyer.buyerParty?.type ?? null,
+      priority: buyer.priority,
+      poolMin: buyer.poolMin,
+      poolMax: buyer.poolMax,
+      createdAt: buyer.createdAt,
+      updatedAt: buyer.updatedAt,
+    }));
 
     reply.send(groupDetail(refreshed as any, animals as any, waitlist as any, attachments as any, mappedBuyers as any, offspring as any));
   });
@@ -1705,19 +1653,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
     const statePatch: NormalizedOffspringPatch = { bornAt };
 
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.create", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
     if ("lifeState" in body) statePatch.lifeState = body.lifeState;
     if ("placementState" in body) statePatch.placementState = body.placementState;
     if ("keeperIntent" in body) statePatch.keeperIntent = body.keeperIntent;
@@ -1730,18 +1667,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if ("contractId" in body) statePatch.contractId = body.contractId ?? null;
     if ("promotedAnimalId" in body) statePatch.promotedAnimalId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
 
-    // Step 6D: Accept legacy buyer fields, resolve to buyerPartyId only
-    if ("buyerContactId" in body || "buyerOrganizationId" in body) {
-      const contactId = "buyerContactId" in body ? (body.buyerContactId == null ? null : Number(body.buyerContactId)) : null;
-      const organizationId = "buyerOrganizationId" in body ? (body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId)) : null;
-
-      if (contactId) {
-        statePatch.buyerPartyId = await resolvePartyId(prisma, { contactId });
-      } else if (organizationId) {
-        statePatch.buyerPartyId = await resolvePartyId(prisma, { organizationId });
-      } else {
-        statePatch.buyerPartyId = null;
-      }
+    if ("buyerPartyId" in body) {
+      statePatch.buyerPartyId = body.buyerPartyId == null ? null : Number(body.buyerPartyId);
     }
 
     if ("depositCents" in body) statePatch.depositCents = body.depositCents == null ? null : Number(body.depositCents);
@@ -1752,17 +1679,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       normalizedState = normalizeOffspringState(null, statePatch);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
-    }
-
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
     }
 
     const created = await prisma.offspring.create({
@@ -1796,7 +1712,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             name: true,
           },
         },
-        ...OFFSPRING_INCLUDE_PARTY,
+        buyerParty: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -1850,8 +1772,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   name: true,
                 },
               },
-              ...OFFSPRING_INCLUDE_PARTY,
-            },
+              },
           }),
           prisma.offspring.count({ where }),
         ]);
@@ -1908,7 +1829,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            ...OFFSPRING_INCLUDE_PARTY,
           },
         });
       } catch (err) {
@@ -1944,23 +1864,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const data: any = {};
     const statePatch: NormalizedOffspringPatch = {};
-    const canonicalStateFieldsProvided = ["lifeState", "placementState", "keeperIntent", "financialState", "paperworkState"].some((k) => k in body);
-
-    if ("status" in body) {
-      req.log?.warn?.(
-        { route: "offspring.individuals.update", requestId: (req as any).id, legacyStatus: body.status },
-        "legacy offspring.status input received",
-      );
-      if (!canonicalStateFieldsProvided && body.status) {
-        Object.assign(statePatch, legacyStatusToCanonicalPatch(body.status));
-      }
-    }
-
-    // carry forward JSON payload for flexible fields like color
-    let extraData: any =
-      typeof (existing as any).data === "object" && (existing as any).data !== null
-        ? { ...(existing as any).data }
-        : {};
 
     let targetGroupSpecies: string | null | undefined = undefined;
 
@@ -2141,18 +2044,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       statePatch.depositCents = depositCentsVal;
     }
 
-    // Step 6D: Accept legacy buyer fields, resolve to buyerPartyId only
-    if ("buyerContactId" in body || "buyerOrganizationId" in body) {
-      const contactId = "buyerContactId" in body ? (body.buyerContactId == null ? null : Number(body.buyerContactId)) : null;
-      const organizationId = "buyerOrganizationId" in body ? (body.buyerOrganizationId == null ? null : Number(body.buyerOrganizationId)) : null;
-
-      if (contactId) {
-        data.buyerPartyId = await resolvePartyId(prisma, { contactId });
-      } else if (organizationId) {
-        data.buyerPartyId = await resolvePartyId(prisma, { organizationId });
-      } else {
-        data.buyerPartyId = null;
-      }
+    if ("buyerPartyId" in body) {
+      data.buyerPartyId = body.buyerPartyId == null ? null : Number(body.buyerPartyId);
     }
 
     if ("color" in body || "microchip" in body || "registrationId" in body) {
@@ -2196,17 +2089,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: (err as Error).message });
     }
 
-    if (OFFSPRING_DUAL_WRITE_LEGACY_STATUS) {
-      const legacyStatus = deriveLegacyStatus({
-        lifeState: (normalizedState.lifeState as OffspringLifeState) ?? OffspringLifeState.ALIVE,
-        placementState:
-          (normalizedState.placementState as OffspringPlacementState) ?? OffspringPlacementState.UNASSIGNED,
-        keeperIntent:
-          (normalizedState.keeperIntent as OffspringKeeperIntent) ?? OffspringKeeperIntent.AVAILABLE,
-      });
-      (normalizedState as any).status = legacyStatus;
-    }
-
     let updated;
     try {
       updated = await prisma.offspring.update({
@@ -2219,7 +2101,6 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
-          ...OFFSPRING_INCLUDE_PARTY,
         },
       });
     } catch (err) {
@@ -2367,18 +2248,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
     if (!G) return reply.code(404).send({ error: "group not found" });
 
-    // Resolve legacy contactId/organizationId to clientPartyId
-    const contactId = b.contactId ? Number(b.contactId) : null;
-    const organizationId = b.organizationId ? Number(b.organizationId) : null;
-
-    if (!contactId && !organizationId) {
-      return reply.code(400).send({ error: "contactId or organizationId required" });
-    }
-
-    // Resolve clientPartyId from legacy fields (Step 6E: Party-only storage)
-    const clientPartyId = await resolveClientPartyId(prisma, contactId, organizationId);
+    // Step 6E: Accept clientPartyId directly (Party-native API)
+    const clientPartyId = b.clientPartyId ? Number(b.clientPartyId) : null;
     if (!clientPartyId) {
-      return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+      return reply.code(400).send({ error: "clientPartyId_required" });
     }
 
     const data: any = {
@@ -2422,19 +2295,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const data: any = {};
 
-    // Step 6E: Accept legacy contactId/organizationId and resolve to clientPartyId
-    if ("contactId" in b || "organizationId" in b) {
-      const contactId = "contactId" in b ? (b.contactId ? Number(b.contactId) : null) : null;
-      const organizationId = "organizationId" in b ? (b.organizationId ? Number(b.organizationId) : null) : null;
-
-      if (!contactId && !organizationId) {
-        return reply.code(400).send({ error: "contactId or organizationId required" });
-      }
-
-      data.clientPartyId = await resolveClientPartyId(prisma, contactId, organizationId);
-
+    // Step 6E: Accept clientPartyId directly (Party-native API)
+    if ("clientPartyId" in b) {
+      data.clientPartyId = b.clientPartyId ? Number(b.clientPartyId) : null;
       if (!data.clientPartyId) {
-        return reply.code(400).send({ error: "Unable to resolve party for provided contactId or organizationId" });
+        return reply.code(400).send({ error: "clientPartyId_required" });
       }
     }
 
@@ -2493,22 +2358,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!(k in b)) return reply.code(400).send({ error: `missing field ${k}` });
     }
 
-    // Step 6A: Resolve attachmentPartyId from contactId or organizationId
-    // Accept legacy fields but persist only attachmentPartyId
-    let attachmentPartyId: number | null = null;
-    if (b.contactId) {
-      attachmentPartyId = await resolvePartyId(prisma, { contactId: b.contactId });
-    } else if (b.organizationId) {
-      attachmentPartyId = await resolvePartyId(prisma, { organizationId: b.organizationId });
-    }
-
     const created = await prisma.attachment.create({
       data: {
         tenantId,
         offspringGroupId: id,
         planId: null,
         animalId: null,
-        attachmentPartyId,
+        attachmentPartyId: b.attachmentPartyId ?? null,
         kind: b.kind,
         storageProvider: b.storageProvider,
         storageKey: b.storageKey,
@@ -2517,22 +2373,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         bytes: Number(b.bytes) || 0,
         createdByUserId: b.createdByUserId ?? null,
       },
-      include: {
-        attachmentParty: {
-          include: {
-            contact: {
-              select: { id: true },
-            },
-            organization: {
-              select: { id: true },
-            },
-          },
-        },
-      },
     });
 
-    // Step 6A: Return response with legacy contactId for backward compatibility
-    reply.code(201).send(attachmentWithLegacyFields(created));
+    reply.code(201).send(created);
   });
 
   /* ===== ATTACHMENTS: DELETE ===== */
@@ -2554,8 +2397,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post<{
     Params: { groupId: string };
     Body: {
-      contactId?: number | null;
-      organizationId?: number | null;
+      buyerPartyId?: number | null;
       waitlistEntryId?: number | null;
       actorId?: string | null; // currently ignored, reserved for future event logging
     };
@@ -2564,12 +2406,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     async (req, reply) => {
       const tenantId = (req as any).tenantId as number;
       const groupId = Number(req.params.groupId);
-      const { contactId, organizationId, waitlistEntryId } = req.body ?? {};
+      const { buyerPartyId, waitlistEntryId } = req.body ?? {};
 
-      if (!contactId && !organizationId && !waitlistEntryId) {
+      if (!buyerPartyId && !waitlistEntryId) {
         return reply
           .code(400)
-          .send({ error: "contactId, organizationId, or waitlistEntryId required" });
+          .send({ error: "buyerPartyId or waitlistEntryId required" });
       }
 
       const group = await prisma.offspringGroup.findFirst({
@@ -2579,21 +2421,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!group) return reply.code(404).send({ error: "group not found" });
 
       try {
-        // Step 6C: Accept legacy contactId/organizationId, persist only buyerPartyId
-        const { resolvePartyId } = await import("../services/party-resolver.js");
-        let buyerPartyId = null;
-        if (contactId) {
-          buyerPartyId = await resolvePartyId(prisma, { contactId: Number(contactId) });
-        } else if (organizationId) {
-          buyerPartyId = await resolvePartyId(prisma, { organizationId: Number(organizationId) });
-        }
-
         await prisma.offspringGroupBuyer.create({
           data: {
             tenantId,
             groupId: group.id,
             waitlistEntryId: waitlistEntryId ?? null,
-            buyerPartyId,
+            buyerPartyId: buyerPartyId ?? null,
           },
         });
       } catch (err: any) {
@@ -2605,12 +2438,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Step 6C: Fetch the updated group including buyers with Party for legacy field mapping
       const updatedGroup = await prisma.offspringGroup.findFirst({
         where: { id: group.id, tenantId },
         include: {
           groupBuyerLinks: {
-            include: BUYER_INCLUDE_PARTY,
+            include: {
+              waitlistEntry: true,
+            },
           },
         },
       });
@@ -2619,16 +2453,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(500).send({ error: "group_reload_failed" });
       }
 
-      // Step 6C: Map buyers to include legacy contactId/organizationId fields
-      const groupWithMappedBuyers = {
-        ...updatedGroup,
-        groupBuyerLinks: (updatedGroup.groupBuyerLinks ?? []).map(groupBuyerWithLegacyFields),
-      };
-
       return reply.status(200).send({
         ok: true,
         duplicate: false,
-        group: groupWithMappedBuyers,
+        group: updatedGroup,
       });
     }
   );
@@ -2724,7 +2552,15 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: group.id,
             tenantId,
           },
-          include: WAITLIST_INCLUDE_PARTY,
+          include: {
+            clientParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
           orderBy: [
             { priority: "asc" },
             { createdAt: "asc" },
@@ -2736,14 +2572,30 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             offspringGroupId: group.id,
             tenantId,
           },
-          include: ATTACHMENT_INCLUDE_PARTY,
+          include: {
+            attachmentParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
         }),
         prisma.offspringGroupBuyer.findMany({
           where: {
             groupId: group.id,
             tenantId,
           },
-          include: BUYER_INCLUDE_PARTY,
+          include: {
+            buyerParty: {
+              select: {
+                id: true,
+                type: true,
+                name: true,
+              },
+            },
+          },
           orderBy: [
             { createdAt: "asc" },
             { id: "asc" },
@@ -2764,13 +2616,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
               },
             },
-            ...OFFSPRING_INCLUDE_PARTY,
           },
         }),
       ]);
 
-      // Step 6C: Map buyers to include legacy contactId/organizationId from Party
-      const mappedBuyers = buyers.map(groupBuyerWithLegacyFields);
+      // Step 6C: Map buyers to Party-native fields
+      const mappedBuyers = buyers.map((buyer: any) => ({
+        id: buyer.id,
+        buyerPartyId: buyer.buyerPartyId,
+        buyerName: buyer.buyerParty?.name ?? null,
+        buyerKind: buyer.buyerParty?.type ?? null,
+        priority: buyer.priority,
+        poolMin: buyer.poolMin,
+        poolMax: buyer.poolMax,
+        createdAt: buyer.createdAt,
+        updatedAt: buyer.updatedAt,
+      }));
 
       reply.code(200).send(
         groupDetail(
