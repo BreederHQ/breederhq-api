@@ -4,8 +4,6 @@ import prisma from "../prisma.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import sharp from "sharp";
-import { partyToLegacyOwnerFields } from "../services/party-mapper.js";
-import { resolvePartyId } from "../services/party-resolver.js";
 
 const AVATAR_SIZE = 256;
 
@@ -13,7 +11,6 @@ const AVATAR_SIZE = 256;
 type Species = "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
 type Sex = "FEMALE" | "MALE";
 type AnimalStatus = "ACTIVE" | "BREEDING" | "UNAVAILABLE" | "RETIRED" | "DECEASED" | "PROSPECT";
-type OwnerPartyType = "Organization" | "Contact";
 
 /* ───────── utils ───────── */
 
@@ -857,16 +854,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     reply.send({
       items: rows.map((r) => {
-        const { contactId, organizationId, partyType } = partyToLegacyOwnerFields(r.party);
         return {
           id: r.id,
-          partyType,
-          contactId,
-          organizationId,
+          partyId: r.partyId,
+          kind: r.party?.type ?? null,
+          displayName: r.party?.type === "CONTACT"
+            ? r.party?.contact?.display_name
+            : r.party?.organization?.name ?? null,
           percent: r.percent,
           isPrimary: r.isPrimary,
-          organization: organizationId ? { id: organizationId, name: r.party?.organization?.name ?? "" } : null,
-          contact: contactId ? { id: contactId, name: r.party?.contact?.display_name ?? "" } : null,
           createdAt: r.createdAt,
           updatedAt: r.updatedAt,
         };
@@ -885,15 +881,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await assertAnimalInTenant(animalId, tenantId);
 
     const b = (req.body || {}) as {
-      partyType: OwnerPartyType;
-      organizationId?: number | null;
-      contactId?: number | null;
+      partyId: number;
       percent: number;
       isPrimary?: boolean;
     };
 
-    if (!b?.partyType || !["Organization", "Contact"].includes(b.partyType)) {
-      return reply.code(400).send({ error: "partyType_invalid" });
+    const partyId = parseIntStrict(b.partyId);
+    if (!partyId) {
+      return reply.code(400).send({ error: "partyId_invalid" });
     }
 
     const percent = Number(b.percent);
@@ -901,25 +896,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: "percent_invalid" });
     }
 
-    // Step 6: Accept legacy fields but persist only partyId
-    let partyId: number | null = null;
-
-    if (b.partyType === "Organization") {
-      const orgId = parseIntStrict(b.organizationId);
-      if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-      await assertOrgInTenant(orgId, tenantId);
-      // Resolve partyId from Organization (Party-only persistence)
-      partyId = await resolvePartyId(prisma, { organizationId: orgId });
-    } else {
-      const contactId = parseIntStrict(b.contactId);
-      if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-      await assertContactInTenant(contactId, tenantId);
-      // Resolve partyId from Contact (Party-only persistence)
-      partyId = await resolvePartyId(prisma, { contactId });
-    }
-
-    if (!partyId) {
-      return reply.code(400).send({ error: "party_resolution_failed" });
+    // Verify party exists and belongs to tenant
+    const party = await prisma.party.findUnique({
+      where: { id: partyId },
+      select: { tenantId: true },
+    });
+    if (!party || party.tenantId !== tenantId) {
+      return reply.code(404).send({ error: "party_not_found" });
     }
 
     try {
@@ -948,13 +931,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      // Return legacy fields in response for backward compatibility
-      const { contactId, organizationId, partyType } = partyToLegacyOwnerFields(created.party);
       return reply.code(201).send({
         id: created.id,
-        partyType,
-        contactId,
-        organizationId,
+        partyId: created.partyId,
+        kind: created.party?.type ?? null,
+        displayName: created.party?.type === "CONTACT"
+          ? created.party?.contact?.display_name
+          : created.party?.organization?.name ?? null,
         percent: created.percent,
         isPrimary: created.isPrimary,
         createdAt: created.createdAt,
@@ -1002,9 +985,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const b = (req.body || {}) as Partial<{
       percent: number;
       isPrimary: boolean;
-      partyType: OwnerPartyType;
-      organizationId: number | null;
-      contactId: number | null;
+      partyId: number;
     }>;
 
     const data: any = {};
@@ -1015,51 +996,20 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if (b.isPrimary !== undefined) data.isPrimary = !!b.isPrimary;
 
-    // Step 6: Accept legacy fields for party updates but persist only partyId
-    if (b.partyType !== undefined) {
-      if (!["Organization", "Contact"].includes(b.partyType)) return reply.code(400).send({ error: "partyType_invalid" });
+    if (b.partyId !== undefined) {
+      const partyId = parseIntStrict(b.partyId);
+      if (!partyId) return reply.code(400).send({ error: "partyId_invalid" });
 
-      if (b.partyType === "Organization") {
-        const orgId = parseIntStrict(b.organizationId);
-        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        await assertOrgInTenant(orgId, tenantId);
-        // Resolve partyId from Organization (Party-only persistence)
-        const partyId = await resolvePartyId(prisma, { organizationId: orgId });
-        if (!partyId) return reply.code(400).send({ error: "party_resolution_failed" });
-        data.partyId = partyId;
-      } else {
-        const contactId = parseIntStrict(b.contactId);
-        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-        await assertContactInTenant(contactId, tenantId);
-        // Resolve partyId from Contact (Party-only persistence)
-        const partyId = await resolvePartyId(prisma, { contactId });
-        if (!partyId) return reply.code(400).send({ error: "party_resolution_failed" });
-        data.partyId = partyId;
+      // Verify party exists and belongs to tenant
+      const party = await prisma.party.findUnique({
+        where: { id: partyId },
+        select: { tenantId: true },
+      });
+      if (!party || party.tenantId !== tenantId) {
+        return reply.code(404).send({ error: "party_not_found" });
       }
-    } else {
-      // Handle updates to contactId/organizationId without partyType being sent
-      const existingPartyType = existing.party?.type === "ORGANIZATION" ? "Organization" : "Contact";
 
-      if (existingPartyType === "Organization" && b.organizationId !== undefined) {
-        if (b.organizationId === null) return reply.code(400).send({ error: "organizationId_required" });
-        const orgId = parseIntStrict(b.organizationId);
-        if (!orgId) return reply.code(400).send({ error: "organizationId_invalid" });
-        await assertOrgInTenant(orgId, tenantId);
-        // Resolve partyId from Organization (Party-only persistence)
-        const partyId = await resolvePartyId(prisma, { organizationId: orgId });
-        if (!partyId) return reply.code(400).send({ error: "party_resolution_failed" });
-        data.partyId = partyId;
-      }
-      if (existingPartyType === "Contact" && b.contactId !== undefined) {
-        if (b.contactId === null) return reply.code(400).send({ error: "contactId_required" });
-        const contactId = parseIntStrict(b.contactId);
-        if (!contactId) return reply.code(400).send({ error: "contactId_invalid" });
-        await assertContactInTenant(contactId, tenantId);
-        // Resolve partyId from Contact (Party-only persistence)
-        const partyId = await resolvePartyId(prisma, { contactId });
-        if (!partyId) return reply.code(400).send({ error: "party_resolution_failed" });
-        data.partyId = partyId;
-      }
+      data.partyId = partyId;
     }
 
     try {
@@ -1084,13 +1034,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      // Return legacy fields in response for backward compatibility
-      const { contactId, organizationId, partyType } = partyToLegacyOwnerFields(updated.party);
       reply.send({
         id: updated.id,
-        partyType,
-        contactId,
-        organizationId,
+        partyId: updated.partyId,
+        kind: updated.party?.type ?? null,
+        displayName: updated.party?.type === "CONTACT"
+          ? updated.party?.contact?.display_name
+          : updated.party?.organization?.name ?? null,
         percent: updated.percent,
         isPrimary: updated.isPrimary,
         createdAt: updated.createdAt,

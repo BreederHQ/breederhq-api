@@ -2,12 +2,8 @@
  * Party Resolution Utility
  *
  * Provides helper functions for resolving partyId from legacy Contact or Organization IDs.
- * Used for dual-write operations in the Party migration (Step 5: Breeding domain).
- *
- * Usage:
- * - When creating/updating records with contactId or organizationId,
- *   call resolvePartyId() to get the corresponding partyId.
- * - This ensures dual-write: both legacy and new partyId fields are populated.
+ * Retained for compatibility with user.ts PATCH /users/:id/contact endpoint which still
+ * accepts legacy contactId for setting user.partyId.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -50,27 +46,3 @@ export async function resolvePartyId(
   return null;
 }
 
-/**
- * Resolves partyId for a party-type discriminated union.
- * Useful for models that have partyType field to indicate which FK to use.
- *
- * @param prisma - Prisma client instance
- * @param partyType - Either "Contact" or "Organization"
- * @param contactId - Contact ID if partyType is "Contact"
- * @param organizationId - Organization ID if partyType is "Organization"
- * @returns The partyId if resolvable, otherwise null
- */
-export async function resolvePartyIdByType(
-  prisma: PrismaClient | any,
-  partyType: "Contact" | "Organization" | string,
-  contactId: number | null | undefined,
-  organizationId: number | null | undefined
-): Promise<number | null> {
-  if (partyType === "Contact" && contactId) {
-    return resolvePartyId(prisma, { contactId });
-  }
-  if (partyType === "Organization" && organizationId) {
-    return resolvePartyId(prisma, { organizationId });
-  }
-  return null;
-}

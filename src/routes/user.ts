@@ -3,7 +3,6 @@ import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
 import bcrypt from "bcryptjs";
 import { resolvePartyId } from "../services/party-resolver.js";
-import { partyToLegacyStudOwnerContactId } from "../services/party-mapper.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -317,9 +316,6 @@ export default async function userRoutes(
       });
       if (!u) return reply.code(404).send({ error: "not_found" });
 
-      // Step 6: Derive contactId from Party for backward compatibility
-      const contactId = partyToLegacyStudOwnerContactId(u.party);
-
       return reply.send({
         id: u.id,
         email: u.email,
@@ -344,7 +340,7 @@ export default async function userRoutes(
         state: u.state ?? null,
         postalCode: u.postalCode ?? null,
         country: u.country ?? null,
-        contactId,
+        partyId: u.partyId ?? null,
         emailVerifiedAt: u.emailVerifiedAt ?? null,
       });
     }
@@ -669,24 +665,14 @@ export default async function userRoutes(
             id: true,
             email: true,
             partyId: true,
-            party: {
-              select: {
-                id: true,
-                type: true,
-                contact: { select: { id: true } },
-              },
-            },
             updatedAt: true
           },
         });
 
-        // Derive contactId from Party for backward-compatible response
-        const derivedContactId = partyToLegacyStudOwnerContactId(u.party);
-
         return reply.send({
           id: u.id,
           email: u.email,
-          contactId: derivedContactId,
+          partyId: u.partyId ?? null,
           updatedAt: u.updatedAt.toISOString(),
         });
       } catch (e: any) {
