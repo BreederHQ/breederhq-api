@@ -1,10 +1,21 @@
 -- ============================================================================
--- Step 6F: PlanParty Backfill partyId
+-- Step 6F: PlanParty Backfill partyId - POST-MIGRATION REPAIR TOOL
 -- ============================================================================
--- This script backfills PlanParty.partyId from legacy contactId or organizationId.
--- Run this BEFORE dropping legacy columns if partyId is not fully populated.
+-- PURPOSE:
+--   This is a post-migration repair tool for operational recovery.
+--   Use this script to backfill PlanParty.partyId from legacy contactId or
+--   organizationId if data inconsistencies are discovered after migration.
 --
--- This script is IDEMPOTENT and can be run multiple times safely.
+-- SAFETY:
+--   - This script is IDEMPOTENT and safe to run multiple times
+--   - Only updates rows where partyId is NULL
+--   - Does not modify existing partyId values
+--
+-- USAGE:
+--   psql $DATABASE_URL -f prisma/sql/backfills/backfill_step6f_planparty_party_only.sql
+--
+-- NOTE:
+--   This is NOT part of the validation suite (does not match validate*.sql pattern)
 -- ============================================================================
 
 \echo ''

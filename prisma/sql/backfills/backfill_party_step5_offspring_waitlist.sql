@@ -1,18 +1,23 @@
 -- ============================================================================
--- Party Migration Step 5: Backfill Offspring and Waitlist Party References
+-- Party Migration Step 5: Offspring and Waitlist - POST-MIGRATION REPAIR TOOL
 -- ============================================================================
--- This script backfills partyId references from legacy contactId/organizationId
--- for WaitlistEntry, OffspringGroupBuyer, and Offspring models.
+-- PURPOSE:
+--   This is a post-migration repair tool for operational recovery.
+--   Use this script to backfill partyId references from legacy contactId/organizationId
+--   if data inconsistencies are discovered after migration.
+--   Models: WaitlistEntry, OffspringGroupBuyer, Offspring
 --
--- IMPORTANT: Run this script manually in pgAdmin or psql after schema is applied.
--- DO NOT run via Prisma migrate deploy - this is a data migration only.
---
--- Usage:
---   psql -h <host> -U <user> -d <database> -f backfill_party_step5_offspring_waitlist.sql
---
--- Safety:
---   - Idempotent: Only updates rows where partyId IS NULL
+-- SAFETY:
+--   - This script is IDEMPOTENT and safe to run multiple times
+--   - Only updates rows where partyId is NULL
+--   - Does not modify existing partyId values
 --   - Read-only for legacy columns: contactId/organizationId remain unchanged
+--
+-- USAGE:
+--   psql $DATABASE_URL -f prisma/sql/backfills/backfill_party_step5_offspring_waitlist.sql
+--
+-- NOTE:
+--   This is NOT part of the validation suite (does not match validate*.sql pattern)
 --   - Reports conflicts and unresolved counts at the end
 -- ============================================================================
 
