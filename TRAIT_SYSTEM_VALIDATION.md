@@ -520,6 +520,56 @@ curl -X GET "$API_URL/api/v1/animals/999999/traits" \
 }
 ```
 
+## Seed Verification
+
+Verify that all 12 global DOG trait definitions are seeded with correct defaults:
+
+### SQL Validation (Direct Database)
+
+**Count all global DOG traits:**
+```sql
+SELECT count(*)
+FROM "TraitDefinition"
+WHERE "tenantId" IS NULL AND species='DOG';
+```
+**Expected:** 12
+
+**List all global DOG traits with marketplace defaults:**
+```sql
+SELECT key, category, "valueType", "marketplaceVisibleDefault", "requiresDocument"
+FROM "TraitDefinition"
+WHERE "tenantId" IS NULL AND species='DOG'
+ORDER BY "sortOrder", key;
+```
+
+**Expected result (12 rows):**
+```
+key                            | category     | valueType | marketplaceVisibleDefault | requiresDocument
+-------------------------------+--------------+-----------+---------------------------+------------------
+dog.hips.ofa                   | Orthopedic   | ENUM      | false                     | true
+dog.hips.pennhip               | Orthopedic   | JSON      | false                     | true
+dog.elbows.ofa                 | Orthopedic   | ENUM      | false                     | true
+dog.patella.luxation           | Orthopedic   | ENUM      | false                     | false
+dog.eyes.caer                  | Eyes         | ENUM      | false                     | true
+dog.cardiac.exam               | Cardiac      | ENUM      | false                     | false
+dog.genetics.panelCompleted    | Genetic      | BOOLEAN   | false                     | false
+dog.genetics.summary           | Genetic      | JSON      | false                     | false
+dog.repro.proven               | Reproductive | BOOLEAN   | false                     | false
+dog.repro.semenAnalysis        | Reproductive | ENUM      | false                     | false
+dog.id.microchip               | General      | BOOLEAN   | false                     | false
+dog.registry.akcNumber         | General      | TEXT      | false                     | false
+```
+
+**Verify all have marketplaceVisibleDefault=false:**
+```sql
+SELECT count(*)
+FROM "TraitDefinition"
+WHERE "tenantId" IS NULL
+  AND species='DOG'
+  AND "marketplaceVisibleDefault" = true;
+```
+**Expected:** 0 (none should have true)
+
 ## Summary
 
 All endpoints:
@@ -533,3 +583,4 @@ All endpoints:
 All return stable, predictable JSON structures suitable for UI prototyping.
 Documents are metadata-only (no S3 integration in this phase).
 Trait definitions are seeded globally (tenantId=null) for all DOG animals.
+Document scope for animal uploads is "animal" (not "offspring").

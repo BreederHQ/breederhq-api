@@ -99,12 +99,10 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     if (!body.title) return reply.code(400).send({ error: "title_required" });
 
-    // PROTOTYPE: Document ownership is determined by animalId, not scope.
-    // Using "offspring" as least-wrong existing scope value until ANIMAL scope exists.
-    // In production, add DocumentScope.ANIMAL enum value.
+    // Document scope is ANIMAL for animal-linked documents
     const createdDoc = await prisma.document.create({
       data: {
-        tenantId, animalId, scope: "offspring", title: body.title,
+        tenantId, animalId, scope: "animal", title: body.title,
         originalFileName: body.originalFileName || null,
         mimeType: body.mimeType || null,
         sizeBytes: body.sizeBytes || null,
@@ -189,11 +187,10 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       });
     }
 
-    // PROTOTYPE: Document ownership is determined by animalId, not scope.
-    // Using "offspring" as least-wrong existing scope value until ANIMAL scope exists.
+    // Document scope is ANIMAL for animal-linked documents
     const createdDoc = await prisma.document.create({
       data: {
-        tenantId, animalId, scope: "offspring", title: body.title,
+        tenantId, animalId, scope: "animal", title: body.title,
         originalFileName: body.originalFileName || null,
         mimeType: body.mimeType || null,
         sizeBytes: body.sizeBytes || null,
