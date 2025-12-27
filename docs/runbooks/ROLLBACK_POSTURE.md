@@ -270,4 +270,5 @@ If rollback or major recovery was needed:
 - [Post-Migration Validation Runbook](./POST_MIGRATION_VALIDATION.md)
 - [Backfill Runbook](./BACKFILL_RUNBOOK.md)
 - [Performance Monitoring Checklist](./PERFORMANCE_MONITORING.md)
-- [Party Migration Baseline](../../PARTY_MIGRATION_BASELINE.md)
+- [Party Migration Baseline](../migrations/party/notes/PARTY_MIGRATION_BASELINE.md)
+

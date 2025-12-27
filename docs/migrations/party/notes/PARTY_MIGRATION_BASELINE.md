@@ -66,7 +66,7 @@ All migrations validated via:
 - Step 5 (Additive): 7 migrations
 - Step 6 (Cleanup): 13 migrations (IRREVERSIBLE)
 
-**Complete Inventory**: See [`MIGRATION_INVENTORY.md`](./MIGRATION_INVENTORY.md)
+**Complete Inventory**: See [`MIGRATION_INVENTORY.md`](../artifacts/MIGRATION_INVENTORY.md)
 
 ### Validation SQL Scripts
 
@@ -383,3 +383,4 @@ For questions or issues related to the Party migration baseline:
 **Baseline Frozen**: 2025-12-26
 **Maintainer**: BreederHQ Engineering
 **Status**: ✅ Complete and Validated
+

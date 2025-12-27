@@ -278,4 +278,5 @@ Run validations:
 - [Backfill Runbook](./BACKFILL_RUNBOOK.md)
 - [Rollback Posture](./ROLLBACK_POSTURE.md)
 - [Performance Monitoring Checklist](./PERFORMANCE_MONITORING.md)
-- [Party Migration Baseline](../../PARTY_MIGRATION_BASELINE.md)
+- [Party Migration Baseline](../migrations/party/notes/PARTY_MIGRATION_BASELINE.md)
+
