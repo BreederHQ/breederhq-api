@@ -539,6 +539,7 @@ model Tenant {
   accountingIntegrations AccountingIntegration[]
   AnimalOwnershipChange  AnimalOwnershipChange[]
   PaymentIntent          PaymentIntent[]
+  AnimalTraitValue       AnimalTraitValue[]
 
   @@index([name])
 }
@@ -983,6 +984,7 @@ model TraitDefinition {
 model AnimalTraitValue {
   id                Int           @id @default(autoincrement())
   tenantId          Int
+  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   animalId          Int
   traitDefinitionId Int
   valueBoolean      Boolean?
