@@ -826,11 +826,12 @@ If issues arise during column drop:
 
 ## References
 
-- [VALIDATION_QUERIES_BREEDING.md](../VALIDATION_QUERIES_BREEDING.md)
-- [VALIDATION_QUERIES_STEP6_*.md](../) (6 files)
-- [TEST_PLAN_STEP6_*.md](../) (6 files)
-- [prisma/sql/validate_step6*.sql](../prisma/sql/) (13 files)
+- [VALIDATION_QUERIES_BREEDING.md](../validation-queries/VALIDATION_QUERIES_BREEDING.md)
+- [VALIDATION_QUERIES_STEP6_*.md](../validation-queries/) (6 files)
+- [TEST_PLAN_STEP6_*.md](../test-plans/) (6 files)
+- [prisma/sql/validate_step6*.sql](../../../../prisma/sql/) (13 files)
 
 ---
 
 **Next Action:** Decide on execution timeline and coordinate with frontend team for Phase 3 migration.
+

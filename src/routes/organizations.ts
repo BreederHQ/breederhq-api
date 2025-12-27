@@ -1,6 +1,8 @@
 // src/routes/organizations.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { CommPrefsService } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -8,6 +10,7 @@ type SortKey = "name" | "createdAt" | "updatedAt";
 
 type OrgWithParty = {
   id: number;
+  partyId: number;
   website: string | null;
   party: {
     tenantId: number;
@@ -87,9 +90,35 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
-function toOrgDTO(org: OrgWithParty) {
+async function toOrgDTO(org: OrgWithParty) {
+  // Fetch communication preferences
+  let commPreferences: any = null;
+  const partyId = org.partyId;
+  if (partyId) {
+    try {
+      const prefs = await CommPrefsService.getCommPreferences(partyId);
+      // Convert array to object keyed by channel for easier frontend access
+      commPreferences = {};
+      for (const pref of prefs) {
+        const channel = pref.channel.toLowerCase();
+        // Store the full preference level (ALLOW, NOT_PREFERRED, NEVER)
+        commPreferences[channel] = pref.preference;
+        // Always include compliance fields for EMAIL and SMS (even if null)
+        if (channel === 'email' || channel === 'sms') {
+          commPreferences[`${channel}Compliance`] = pref.compliance;
+          commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
+          commPreferences[`${channel}ComplianceSource`] = pref.complianceSource;
+        }
+      }
+    } catch (err) {
+      // If preferences fetch fails, continue without them
+      console.error('Failed to fetch comm preferences:', err);
+    }
+  }
+
   return {
     id: org.id,
+    partyId: org.partyId,
     name: org.party.name,
     email: org.party.email,
     phone: org.party.phoneE164,
@@ -103,6 +132,7 @@ function toOrgDTO(org: OrgWithParty) {
     archived: org.party.archived,
     createdAt: org.party.createdAt,
     updatedAt: org.party.updatedAt,
+    commPrefs: commPreferences,
   };
 }
 
@@ -161,7 +191,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         prisma.organization.count({ where }),
       ]);
 
-      const items = rows.map((org) => toOrgDTO(org as OrgWithParty));
+      const items = await Promise.all(rows.map((org) => toOrgDTO(org as OrgWithParty)));
       reply.send({ items, total, page, limit });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -184,7 +214,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       });
       if (!org) return reply.code(404).send({ error: "not_found" });
       if (!isValidOrgParty(org, tenantId)) return reply.code(404).send({ error: "not_found" });
-      reply.send(toOrgDTO(org as OrgWithParty));
+      reply.send(await toOrgDTO(org as OrgWithParty));
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
@@ -256,7 +286,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         });
       });
 
-      return reply.code(201).send(toOrgDTO(created as OrgWithParty));
+      return reply.code(201).send(await toOrgDTO(created as OrgWithParty));
     } catch (e: any) {
       const { status, payload } = errorReply(e);
       return reply.code(status).send(payload);
@@ -348,6 +378,10 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const hasPartyUpdates = Object.keys(partyData).length > 0;
       const hasOrgUpdates = Object.keys(orgData).length > 0;
 
+      // Handle commPreferences if provided
+      const commPreferences = (b as any).commPreferences;
+      const hasCommPrefs = commPreferences && Array.isArray(commPreferences);
+
       const [updatedParty, updatedOrg] = await prisma.$transaction(async (tx) => {
         const party = hasPartyUpdates
           ? await tx.party.update({ where: { id: org.partyId }, data: partyData })
@@ -356,8 +390,19 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         return [party, organization];
       });
 
+      // Update comm preferences after transaction
+      if (hasCommPrefs && org.partyId) {
+        try {
+          const updates: CommPreferenceUpdate[] = commPreferences;
+          await CommPrefsService.updateCommPreferences(org.partyId, updates, undefined, "organization_api");
+        } catch (prefErr) {
+          req.log.warn({ prefErr }, "Failed to update comm preferences");
+          // Don't fail the whole request if comm prefs fail
+        }
+      }
+
       const merged = { ...updatedOrg, party: updatedParty };
-      reply.send(toOrgDTO(merged as OrgWithParty));
+      reply.send(await toOrgDTO(merged as OrgWithParty));
     } catch (e: any) {
       const { status, payload } = errorReply(e);
       reply.status(status).send(payload);

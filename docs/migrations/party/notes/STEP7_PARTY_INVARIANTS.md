@@ -177,28 +177,28 @@ TagAssignment_taggedPartyId_tagId_idx ✓
 ## Migration Files
 
 ### Created Files
-1. [`prisma/migrations/20251226_step7_party_constraints_and_indexes/migration.sql`](./prisma/migrations/20251226_step7_party_constraints_and_indexes/migration.sql)
+1. [`prisma/migrations/20251226_step7_party_constraints_and_indexes/migration.sql`](../../../../prisma/migrations/20251226_step7_party_constraints_and_indexes/migration.sql)
    - Adds NOT NULL constraints
    - Fixes AnimalOwner FK behavior
    - Creates 9 performance indexes
 
-2. [`prisma/sql/validate_step7_pre_constraints.sql`](./prisma/sql/validate_step7_pre_constraints.sql)
+2. [`prisma/sql/validate_step7_pre_constraints.sql`](../../../../prisma/sql/validate_step7_pre_constraints.sql)
    - Pre-migration validation queries
    - Checks for NULL values
    - Checks for orphaned references
 
-3. [`prisma/sql/validate_step7_post_constraints.sql`](./prisma/sql/validate_step7_post_constraints.sql)
+3. [`prisma/sql/validate_step7_post_constraints.sql`](../../../../prisma/sql/validate_step7_post_constraints.sql)
    - Post-migration validation queries
    - Verifies constraints and indexes
 
-4. [`scripts/validate-party-constraints.mjs`](./scripts/validate-party-constraints.mjs)
+4. [`scripts/validate-party-constraints.mjs`](../../../../scripts/validate-party-constraints.mjs)
    - Node.js validation script (pre-migration)
 
-5. [`scripts/validate-step7-post.mjs`](./scripts/validate-step7-post.mjs)
+5. [`scripts/validate-step7-post.mjs`](../../../../scripts/validate-step7-post.mjs)
    - Node.js validation script (post-migration)
 
 ### Modified Files
-1. [`prisma/schema.prisma`](./prisma/schema.prisma)
+1. [`prisma/schema.prisma`](../../../../prisma/schema.prisma)
    - Updated 5 models to reflect NOT NULL constraints
    - Updated AnimalOwner FK behavior to RESTRICT
 
@@ -250,9 +250,9 @@ Consider for future iterations:
 ## Documentation References
 
 - [Party Migration Baseline](./PARTY_MIGRATION_BASELINE.md)
-- [Migration Inventory](./MIGRATION_INVENTORY.md)
+- [Migration Inventory](../artifacts/MIGRATION_INVENTORY.md)
 - [Party Constraints Analysis](./PARTY_CONSTRAINTS_ANALYSIS.md)
-- [Step 6 Validation Queries](../breederhq/VALIDATION_QUERIES_STEP6_*.md)
+- [Step 6 Validation Queries](../validation-queries/VALIDATION_QUERIES_STEP6_*.md)
 
 ## Audit Trail
 
@@ -280,3 +280,4 @@ Consider for future iterations:
 **Validation Status**: ✅ All Checks Passed
 **Database Impact**: Strengthened integrity, improved performance
 **Application Impact**: Type safety improved, no breaking changes expected
+

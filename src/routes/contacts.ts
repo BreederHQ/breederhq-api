@@ -1,6 +1,8 @@
 // src/routes/contacts.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { CommPrefsService } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
 
 /**
  * Contact schema alignment
@@ -148,10 +150,35 @@ function resolveOrganizationName(organization: any, includeArchived: boolean) {
   return organization.party.name ?? null;
 }
 
-function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
+async function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
   const { organization, party, ...rest } = row;
   const hasParty = !!party;
   const includeArchivedOrg = options.includeArchivedOrg ?? true;
+
+  // Fetch communication preferences if we have a partyId
+  let commPreferences: any = null;
+  if (row.partyId) {
+    try {
+      const prefs = await CommPrefsService.getCommPreferences(row.partyId);
+      // Convert array to object keyed by channel for easier frontend access
+      commPreferences = {};
+      for (const pref of prefs) {
+        const channel = pref.channel.toLowerCase();
+        // Store the full preference level (ALLOW, NOT_PREFERRED, NEVER)
+        commPreferences[channel] = pref.preference;
+        // Always include compliance fields for EMAIL and SMS (even if null)
+        if (channel === 'email' || channel === 'sms') {
+          commPreferences[`${channel}Compliance`] = pref.compliance;
+          commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
+          commPreferences[`${channel}ComplianceSource`] = pref.complianceSource;
+        }
+      }
+    } catch (err) {
+      // If preferences fetch fails, continue without them
+      console.error('Failed to fetch comm preferences:', err);
+    }
+  }
+
   return {
     ...rest,
     display_name: hasParty ? party.name : rest.display_name,
@@ -165,6 +192,7 @@ function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } =
     zip: hasParty ? party.postalCode : rest.zip,
     country: hasParty ? party.country : rest.country,
     organizationName: resolveOrganizationName(organization, includeArchivedOrg),
+    commPrefs: commPreferences,
   };
 }
 
@@ -286,7 +314,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
-      const items = rows.map((row) => toContactResponse(row));
+      const items = await Promise.all(rows.map((row) => toContactResponse(row)));
 
       return reply.send({ items, total, page, limit });
     } catch (err) {
@@ -335,7 +363,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!row) return reply.code(404).send({ error: "not_found" });
 
-      return reply.send(toContactResponse(row, { includeArchivedOrg: includeArchived }));
+      return reply.send(await toContactResponse(row, { includeArchivedOrg: includeArchived }));
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
@@ -672,7 +700,15 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       partyData.name = dataCore.display_name;
     }
 
-    if (Object.keys(dataCore).length === 0) {
+    // Handle commPreferences if provided
+    let commPreferences: any = null;
+    if (body.commPreferences && Array.isArray(body.commPreferences)) {
+      // We'll update these after the transaction
+      commPreferences = body.commPreferences;
+    }
+
+    // Allow updating just preferences, or require at least one field to update
+    if (Object.keys(dataCore).length === 0 && !commPreferences) {
       return reply.code(400).send({ error: "no_update_fields" });
     }
 
@@ -712,37 +748,87 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           await tx.party.update({ where: { id: partyId }, data: partyData });
         }
 
-        return tx.contact.update({
-          where: { id: existing.id },
-          data: dataCore,
-          select: {
-            id: true,
-            tenantId: true,
-            organizationId: true,
-            display_name: true,
-            first_name: true,
-            last_name: true,
-            nickname: true,
-            email: true,
-            phoneE164: true,
-            whatsappE164: true,
-            street: true,
-            street2: true,
-            city: true,
-            state: true,
-            zip: true,
-            country: true,
-            // notes: true, // uncomment if you have this field in your schema
-            archived: true,
-            createdAt: true,
-            updatedAt: true,
-            organization: ORGANIZATION_SELECT,
-            party: PARTY_SELECT,
-          },
-        });
+        // Only update contact if we have changes to make
+        if (Object.keys(dataCore).length > 0) {
+          return tx.contact.update({
+            where: { id: existing.id },
+            data: dataCore,
+            select: {
+              id: true,
+              tenantId: true,
+              organizationId: true,
+              partyId: true,
+              display_name: true,
+              first_name: true,
+              last_name: true,
+              nickname: true,
+              email: true,
+              phoneE164: true,
+              whatsappE164: true,
+              street: true,
+              street2: true,
+              city: true,
+              state: true,
+              zip: true,
+              country: true,
+              // notes: true, // uncomment if you have this field in your schema
+              archived: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: ORGANIZATION_SELECT,
+              party: PARTY_SELECT,
+            },
+          });
+        } else {
+          // No contact fields to update, just fetch current data
+          return tx.contact.findUnique({
+            where: { id: existing.id },
+            select: {
+              id: true,
+              tenantId: true,
+              organizationId: true,
+              partyId: true,
+              display_name: true,
+              first_name: true,
+              last_name: true,
+              nickname: true,
+              email: true,
+              phoneE164: true,
+              whatsappE164: true,
+              street: true,
+              street2: true,
+              city: true,
+              state: true,
+              zip: true,
+              country: true,
+              // notes: true, // uncomment if you have this field in your schema
+              archived: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: ORGANIZATION_SELECT,
+              party: PARTY_SELECT,
+            },
+          });
+        }
       });
 
-      return reply.send(toContactResponse(updatedDb));
+      if (!updatedDb) {
+        return reply.code(404).send({ error: "contact_not_found" });
+      }
+
+      // Handle comm preferences update after transaction
+      const finalPartyId = updatedDb.partyId || existing.partyId;
+      if (commPreferences && finalPartyId) {
+        try {
+          const updates: CommPreferenceUpdate[] = commPreferences;
+          await CommPrefsService.updateCommPreferences(finalPartyId, updates, undefined, "contact_api");
+        } catch (prefErr) {
+          req.log.warn({ prefErr }, "Failed to update comm preferences");
+          // Don't fail the whole request if comm prefs fail
+        }
+      }
+
+      return reply.send(await toContactResponse(updatedDb));
     } catch (err: any) {
       req.log.error({ err }, "contacts.patch failed");
       if (err?.code === "P2002") {

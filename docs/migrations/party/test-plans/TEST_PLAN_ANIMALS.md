@@ -34,19 +34,19 @@ npx prisma migrate deploy
 - Database schema updated
 
 ### 2.2 Verify Schema Changes
-Run validation queries 1-3 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation queries 1-3 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] Animal.buyerPartyId column exists
 - [ ] AnimalOwner.partyId column exists
 - [ ] AnimalOwnershipChange JSON columns exist
 
 ### 2.3 Verify Indexes
-Run validation queries 12-15 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation queries 12-15 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] Animal.buyerPartyId index exists
 - [ ] AnimalOwner.partyId index exists
 - [ ] Composite indexes created
 
 ### 2.4 Verify Foreign Keys
-Run validation queries 9-11 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation queries 9-11 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] Animal.buyerPartyId FK to Party
 - [ ] AnimalOwner.partyId FK to Party
 - [ ] FK ON DELETE SET NULL behavior
@@ -90,7 +90,7 @@ C) Backfilling AnimalOwnershipChange JSON...
 ```
 
 ### 3.2 Verify Backfill Completeness
-Run validation queries 4-8 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation queries 4-8 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] Animal.buyerPartyId backfill coverage = 100%
 - [ ] AnimalOwner.partyId backfill coverage = 100%
 - [ ] AnimalOwnershipChange JSON backfill coverage = 100%
@@ -98,7 +98,7 @@ Run validation queries 4-8 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_Q
 - [ ] No unresolved Organization references
 
 ### 3.3 Verify Data Consistency
-Run validation queries 16-19 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation queries 16-19 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] AnimalOwner.partyId matches Contact.partyId
 - [ ] AnimalOwner.partyId matches Organization.partyId
 - [ ] Party table joins work correctly
@@ -411,7 +411,7 @@ WHERE ao."animalId" = {test_animal_id};
 - [ ] Frontend applications continue to function
 
 ### 7.2 Legacy Field Preservation
-Run validation query 22 from [`VALIDATION_QUERIES_ANIMALS.md`](./VALIDATION_QUERIES_ANIMALS.md):
+Run validation query 22 from [`VALIDATION_QUERIES_ANIMALS.md`](../validation-queries/VALIDATION_QUERIES_ANIMALS.md):
 - [ ] All legacy fields still exist
 - [ ] Legacy fields can still be read/written
 
@@ -513,3 +513,4 @@ For questions or issues with this migration, refer to previous migration test pl
 - `TEST_PLAN_TAGS.md`
 - `TEST_PLAN_BREEDING.md`
 - `TEST_PLAN_USER.md`
+

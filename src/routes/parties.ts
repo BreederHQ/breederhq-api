@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { PartyService } from "../services/party-service.js";
 import type { PartySortDir, PartySortKey } from "../services/party-service.js";
 import type { PartyStatus, PartyType } from "../types/party.js";
+import { CommPrefsService } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
 
 function parsePaging(q: any) {
   const page = Math.max(1, parseInt(q?.page ?? "1", 10) || 1);
@@ -100,6 +102,66 @@ const partiesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
+    }
+  });
+
+  // GET /api/v1/parties/:partyId/comm-preferences
+  // Returns communication preferences for a party (all 5 channels)
+  app.get("/parties/:partyId/comm-preferences", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const partyId = idNum((req.params as any).partyId);
+      if (!partyId) return reply.code(400).send({ error: "bad_id" });
+
+      // Verify party belongs to tenant
+      const party = await PartyService.getById(tenantId, partyId, req.log);
+      if (!party) return reply.code(404).send({ error: "not_found" });
+
+      const preferences = await CommPrefsService.getCommPreferences(partyId);
+      return reply.send({ commPreferences: preferences });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get comm preferences");
+      return reply.code(500).send({ error: "get_failed" });
+    }
+  });
+
+  // PATCH /api/v1/parties/:partyId/comm-preferences
+  // Updates communication preferences for a party
+  // Body: { preferences: [{ channel, preference?, compliance?, complianceSource? }] }
+  app.patch("/parties/:partyId/comm-preferences", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const partyId = idNum((req.params as any).partyId);
+      if (!partyId) return reply.code(400).send({ error: "bad_id" });
+
+      // Verify party belongs to tenant
+      const party = await PartyService.getById(tenantId, partyId, req.log);
+      if (!party) return reply.code(404).send({ error: "not_found" });
+
+      const body = req.body as any;
+      if (!Array.isArray(body?.preferences)) {
+        return reply.code(400).send({ error: "preferences must be an array" });
+      }
+
+      const updates: CommPreferenceUpdate[] = body.preferences;
+      const preferences = await CommPrefsService.updateCommPreferences(
+        partyId,
+        updates,
+        undefined, // actorPartyId - could be derived from authenticated user if needed
+        "api" // source
+      );
+
+      return reply.send({ commPreferences: preferences });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to update comm preferences");
+      if ((err as Error).message?.includes("Compliance fields are only allowed")) {
+        return reply.code(400).send({ error: (err as Error).message });
+      }
+      return reply.code(500).send({ error: "update_failed" });
     }
   });
 };
