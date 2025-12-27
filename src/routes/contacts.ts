@@ -1,6 +1,8 @@
 // src/routes/contacts.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { CommPrefsService } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
 
 /**
  * Contact schema alignment
@@ -676,6 +678,13 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: "no_update_fields" });
     }
 
+    // Handle commPreferences if provided
+    let commPreferences: any = null;
+    if (body.commPreferences && Array.isArray(body.commPreferences)) {
+      // We'll update these after the transaction
+      commPreferences = body.commPreferences;
+    }
+
     try {
       const updatedDb = await app.prisma.$transaction(async (tx) => {
         let partyId = existing.partyId;
@@ -719,6 +728,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             id: true,
             tenantId: true,
             organizationId: true,
+            partyId: true,
             display_name: true,
             first_name: true,
             last_name: true,
@@ -741,6 +751,18 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
       });
+
+      // Handle comm preferences update after transaction
+      const finalPartyId = updatedDb.partyId || existing.partyId;
+      if (commPreferences && finalPartyId) {
+        try {
+          const updates: CommPreferenceUpdate[] = commPreferences;
+          await CommPrefsService.updateCommPreferences(finalPartyId, updates, undefined, "contact_api");
+        } catch (prefErr) {
+          req.log.warn({ prefErr }, "Failed to update comm preferences");
+          // Don't fail the whole request if comm prefs fail
+        }
+      }
 
       return reply.send(toContactResponse(updatedDb));
     } catch (err: any) {
