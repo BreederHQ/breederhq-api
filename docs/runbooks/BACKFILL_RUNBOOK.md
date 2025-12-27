@@ -341,4 +341,5 @@ Before running backfills in production:
 
 - [Post-Migration Validation Runbook](./POST_MIGRATION_VALIDATION.md)
 - [Rollback Posture](./ROLLBACK_POSTURE.md)
-- [Party Migration Baseline](../../PARTY_MIGRATION_BASELINE.md)
+- [Party Migration Baseline](../migrations/party/notes/PARTY_MIGRATION_BASELINE.md)
+

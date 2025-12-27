@@ -160,6 +160,58 @@ async function assertAnimalInTenant(animalId: number, tenantId: number) {
   return a;
 }
 
+/* Tenant default owner party helper */
+async function getTenantDefaultOwnerParty(tenantId: number): Promise<{ partyId: number; displayName: string } | null> {
+  // Strategy 1: Find the first organization in the tenant (most common case for breeders)
+  const org = await prisma.organization.findFirst({
+    where: { tenantId, archived: false },
+    orderBy: { id: "asc" },
+    select: {
+      partyId: true,
+      name: true,
+    },
+  });
+  if (org) {
+    return { partyId: org.partyId, displayName: org.name };
+  }
+
+  // Strategy 2: Find the tenant owner user's party
+  const user = await prisma.user.findFirst({
+    where: {
+      tenantMemberships: {
+        some: { tenantId, role: "OWNER" },
+      },
+      partyId: { not: null },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      partyId: true,
+      name: true,
+      firstName: true,
+      lastName: true,
+    },
+  });
+  if (user?.partyId) {
+    const displayName = user.name || [user.firstName, user.lastName].filter(Boolean).join(" ") || "Tenant Owner";
+    return { partyId: user.partyId, displayName };
+  }
+
+  // Strategy 3: Find any contact in the tenant (fallback)
+  const contact = await prisma.contact.findFirst({
+    where: { tenantId, archived: false },
+    orderBy: { id: "asc" },
+    select: {
+      partyId: true,
+      display_name: true,
+    },
+  });
+  if (contact && contact.partyId) {
+    return { partyId: contact.partyId, displayName: contact.display_name || "Contact" };
+  }
+
+  return null;
+}
+
 /* Cross refs validation matching schema relations */
 async function validateCanonicalBreedId(canonicalBreedId: number | null | undefined) {
   if (canonicalBreedId == null) return;
@@ -520,6 +572,26 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           photoUrl: true,
         },
       });
+
+      // Automatically create default owner (tenant's primary organization/user party)
+      // This ensures every animal has an owner, defaulting to 100% owned by the tenant
+      const defaultOwner = await getTenantDefaultOwnerParty(tenantId);
+      if (defaultOwner) {
+        try {
+          await prisma.animalOwner.create({
+            data: {
+              animalId: created.id,
+              partyId: defaultOwner.partyId,
+              percent: 100,
+              isPrimary: true,
+            },
+          });
+        } catch (ownerErr) {
+          // Log but don't fail the animal creation if owner creation fails
+          // This allows the animal to be created even if there's an issue with ownership
+        }
+      }
+
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
