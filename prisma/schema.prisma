@@ -155,6 +155,49 @@ enum ComplianceStatus {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Trait system enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum TraitValueType {
+  BOOLEAN
+  ENUM
+  NUMBER
+  DATE
+  TEXT
+  JSON
+}
+
+enum TraitSource {
+  SELF_REPORTED
+  VET
+  LAB
+  REGISTRY
+}
+
+enum TraitStatus {
+  NOT_PROVIDED
+  PROVIDED
+  PENDING
+  PASS
+  FAIL
+}
+
+enum DocVisibility {
+  PRIVATE
+  BUYERS
+  PUBLIC
+}
+
+enum DocStatus {
+  PLACEHOLDER
+  UPLOADING
+  READY
+  FAILED
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -805,6 +848,7 @@ model Animal {
   Attachment     Attachment[]
   Offspring      Offspring[]                @relation("PromotedAnimal")
   PaymentIntent  PaymentIntent[]
+  AnimalTraitValue AnimalTraitValue[]
   Document       Document[]
 
   @@unique([tenantId, microchip])
@@ -908,6 +952,77 @@ model AnimalPublicListing {
   @@index([tenantId])
 }
 
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Trait System Models
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model TraitDefinition {
+  id                        Int                @id @default(autoincrement())
+  tenantId                  Int?
+  species                   Species
+  key                       String
+  displayName               String
+  category                  String
+  valueType                 TraitValueType
+  enumValues                Json?
+  requiresDocument          Boolean            @default(false)
+  marketplaceVisibleDefault Boolean            @default(false)
+  sortOrder                 Int?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+  animalTraitValues         AnimalTraitValue[]
+
+  @@unique([species, key, tenantId])
+  @@index([species])
+  @@index([tenantId, species])
+}
+
+model AnimalTraitValue {
+  id                Int           @id @default(autoincrement())
+  tenantId          Int
+  animalId          Int
+  traitDefinitionId Int
+  valueBoolean      Boolean?
+  valueNumber       Float?
+  valueText         String?
+  valueDate         DateTime?
+  valueJson         Json?
+  status            TraitStatus?
+  performedAt       DateTime?
+  source            TraitSource?
+  verified          Boolean       @default(false)
+  verifiedAt        DateTime?
+  marketplaceVisible Boolean?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  traitDefinition   TraitDefinition @relation(fields: [traitDefinitionId], references: [id])
+  animal            Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  documents         AnimalTraitValueDocument[]
+
+  @@unique([tenantId, animalId, traitDefinitionId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, traitDefinitionId])
+}
+
+model AnimalTraitValueDocument {
+  id                 Int              @id @default(autoincrement())
+  tenantId           Int
+  animalId           Int
+  animalTraitValueId Int
+  documentId         Int
+  createdAt          DateTime         @default(now())
+  animalTraitValue   AnimalTraitValue @relation(fields: [animalTraitValueId], references: [id], onDelete: Cascade)
+  document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, animalTraitValueId, documentId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, animalTraitValueId])
+  @@index([tenantId, documentId])
+}
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Tags
@@ -2251,7 +2366,20 @@ model Document {
   mimeType    String?
   bytes       Int?
   sha256      String?
+
   data        Json?
+  // Prototype fields for trait document linking
+  visibility         DocVisibility? @default(PRIVATE)
+  status             DocStatus?     @default(PLACEHOLDER)
+  sizeBytes          Int?
+  originalFileName   String?
+  storageProvider    String?
+  bucket             String?
+  objectKey          String?
+  url                String?
+  
+  // Relation to trait values
+  traitValueLinks    AnimalTraitValueDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
