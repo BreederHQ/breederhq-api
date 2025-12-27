@@ -220,6 +220,8 @@ async function requireTenantMembership(
 import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
+import animalTraitsRoutes from "./routes/animal-traits.js";
+import animalDocumentsRoutes from "./routes/animal-documents.js";
 import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
@@ -357,6 +359,8 @@ app.register(
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
+    api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
+    api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(offspringRoutes);     // /api/v1/offspring/*
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
