@@ -700,15 +700,16 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       partyData.name = dataCore.display_name;
     }
 
-    if (Object.keys(dataCore).length === 0) {
-      return reply.code(400).send({ error: "no_update_fields" });
-    }
-
     // Handle commPreferences if provided
     let commPreferences: any = null;
     if (body.commPreferences && Array.isArray(body.commPreferences)) {
       // We'll update these after the transaction
       commPreferences = body.commPreferences;
+    }
+
+    // Allow updating just preferences, or require at least one field to update
+    if (Object.keys(dataCore).length === 0 && !commPreferences) {
+      return reply.code(400).send({ error: "no_update_fields" });
     }
 
     try {
@@ -747,36 +748,73 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           await tx.party.update({ where: { id: partyId }, data: partyData });
         }
 
-        return tx.contact.update({
-          where: { id: existing.id },
-          data: dataCore,
-          select: {
-            id: true,
-            tenantId: true,
-            organizationId: true,
-            partyId: true,
-            display_name: true,
-            first_name: true,
-            last_name: true,
-            nickname: true,
-            email: true,
-            phoneE164: true,
-            whatsappE164: true,
-            street: true,
-            street2: true,
-            city: true,
-            state: true,
-            zip: true,
-            country: true,
-            // notes: true, // uncomment if you have this field in your schema
-            archived: true,
-            createdAt: true,
-            updatedAt: true,
-            organization: ORGANIZATION_SELECT,
-            party: PARTY_SELECT,
-          },
-        });
+        // Only update contact if we have changes to make
+        if (Object.keys(dataCore).length > 0) {
+          return tx.contact.update({
+            where: { id: existing.id },
+            data: dataCore,
+            select: {
+              id: true,
+              tenantId: true,
+              organizationId: true,
+              partyId: true,
+              display_name: true,
+              first_name: true,
+              last_name: true,
+              nickname: true,
+              email: true,
+              phoneE164: true,
+              whatsappE164: true,
+              street: true,
+              street2: true,
+              city: true,
+              state: true,
+              zip: true,
+              country: true,
+              // notes: true, // uncomment if you have this field in your schema
+              archived: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: ORGANIZATION_SELECT,
+              party: PARTY_SELECT,
+            },
+          });
+        } else {
+          // No contact fields to update, just fetch current data
+          return tx.contact.findUnique({
+            where: { id: existing.id },
+            select: {
+              id: true,
+              tenantId: true,
+              organizationId: true,
+              partyId: true,
+              display_name: true,
+              first_name: true,
+              last_name: true,
+              nickname: true,
+              email: true,
+              phoneE164: true,
+              whatsappE164: true,
+              street: true,
+              street2: true,
+              city: true,
+              state: true,
+              zip: true,
+              country: true,
+              // notes: true, // uncomment if you have this field in your schema
+              archived: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: ORGANIZATION_SELECT,
+              party: PARTY_SELECT,
+            },
+          });
+        }
       });
+
+      if (!updatedDb) {
+        return reply.code(404).send({ error: "contact_not_found" });
+      }
 
       // Handle comm preferences update after transaction
       const finalPartyId = updatedDb.partyId || existing.partyId;
