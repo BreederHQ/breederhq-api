@@ -1986,6 +1986,7 @@ enum DocumentScope {
   offspring
   invoice
   contract
+  animal
 }
 
 enum DocumentKind {

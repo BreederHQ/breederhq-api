@@ -159,7 +159,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
 async function seedTraitDefinitions() {
   console.log("🌱 Seeding trait definitions...");
 
-  // First, delete existing global dog trait definitions to allow clean upsert
+  // Delete and recreate for idempotency (Prisma doesn't support null in upsert where clause)
   await prisma.traitDefinition.deleteMany({
     where: {
       species: Species.DOG,
