@@ -1,6 +1,8 @@
 // src/routes/organizations.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { CommPrefsService } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -348,6 +350,10 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const hasPartyUpdates = Object.keys(partyData).length > 0;
       const hasOrgUpdates = Object.keys(orgData).length > 0;
 
+      // Handle commPreferences if provided
+      const commPreferences = (b as any).commPreferences;
+      const hasCommPrefs = commPreferences && Array.isArray(commPreferences);
+
       const [updatedParty, updatedOrg] = await prisma.$transaction(async (tx) => {
         const party = hasPartyUpdates
           ? await tx.party.update({ where: { id: org.partyId }, data: partyData })
@@ -355,6 +361,17 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         const organization = hasOrgUpdates ? await tx.organization.update({ where: { id }, data: orgData }) : org;
         return [party, organization];
       });
+
+      // Update comm preferences after transaction
+      if (hasCommPrefs && org.partyId) {
+        try {
+          const updates: CommPreferenceUpdate[] = commPreferences;
+          await CommPrefsService.updateCommPreferences(org.partyId, updates, undefined, "organization_api");
+        } catch (prefErr) {
+          req.log.warn({ prefErr }, "Failed to update comm preferences");
+          // Don't fail the whole request if comm prefs fail
+        }
+      }
 
       const merged = { ...updatedOrg, party: updatedParty };
       reply.send(toOrgDTO(merged as OrgWithParty));

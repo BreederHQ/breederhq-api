@@ -134,6 +134,25 @@ enum VerificationPurpose {
   OTHER
 }
 
+enum CommChannel {
+  EMAIL
+  SMS
+  PHONE
+  MAIL
+  WHATSAPP
+}
+
+enum PreferenceLevel {
+  ALLOW
+  NOT_PREFERRED
+  NEVER
+}
+
+enum ComplianceStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+}
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
@@ -597,10 +616,47 @@ model Party {
   offspringContracts   OffspringContract[]   @relation("OffspringContractBuyerParty")
   animalBuyers         Animal[]              @relation("AnimalBuyerParty")
   animalOwnerships     AnimalOwner[]         @relation("AnimalOwnerParty")
+  commPreferences      PartyCommPreference[]
+  commPreferenceEvents PartyCommPreferenceEvent[]
 
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
+}
+
+model PartyCommPreference {
+  id       Int       @id @default(autoincrement())
+  partyId  Int
+  channel  CommChannel
+  preference PreferenceLevel @default(ALLOW)
+  compliance ComplianceStatus?
+  complianceSetAt DateTime?
+  complianceSource String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@unique([partyId, channel])
+  @@index([partyId])
+  @@index([channel, compliance])
+}
+
+model PartyCommPreferenceEvent {
+  id       Int       @id @default(autoincrement())
+  partyId  Int
+  channel  CommChannel
+  prevPreference PreferenceLevel?
+  newPreference PreferenceLevel?
+  prevCompliance ComplianceStatus?
+  newCompliance ComplianceStatus?
+  actorPartyId Int?
+  reason String?
+  source String?
+  createdAt DateTime @default(now())
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@index([partyId, createdAt])
+  @@index([channel, createdAt])
 }
 
 model Contact {
