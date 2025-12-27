@@ -150,10 +150,33 @@ function resolveOrganizationName(organization: any, includeArchived: boolean) {
   return organization.party.name ?? null;
 }
 
-function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
+async function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
   const { organization, party, ...rest } = row;
   const hasParty = !!party;
   const includeArchivedOrg = options.includeArchivedOrg ?? true;
+
+  // Fetch communication preferences if we have a partyId
+  let commPreferences: any = null;
+  if (row.partyId) {
+    try {
+      const prefs = await CommPrefsService.getCommPreferences(row.partyId);
+      // Convert array to object keyed by channel for easier frontend access
+      commPreferences = {};
+      for (const pref of prefs) {
+        const channel = pref.channel.toLowerCase();
+        commPreferences[channel] = pref.preference === 'ALLOW';
+        // Also include compliance info
+        if (pref.compliance) {
+          commPreferences[`${channel}Compliance`] = pref.compliance;
+          commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
+        }
+      }
+    } catch (err) {
+      // If preferences fetch fails, continue without them
+      console.error('Failed to fetch comm preferences:', err);
+    }
+  }
+
   return {
     ...rest,
     display_name: hasParty ? party.name : rest.display_name,
@@ -167,6 +190,7 @@ function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } =
     zip: hasParty ? party.postalCode : rest.zip,
     country: hasParty ? party.country : rest.country,
     organizationName: resolveOrganizationName(organization, includeArchivedOrg),
+    commPrefs: commPreferences,
   };
 }
 
@@ -288,7 +312,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
-      const items = rows.map((row) => toContactResponse(row));
+      const items = await Promise.all(rows.map((row) => toContactResponse(row)));
 
       return reply.send({ items, total, page, limit });
     } catch (err) {
@@ -337,7 +361,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!row) return reply.code(404).send({ error: "not_found" });
 
-      return reply.send(toContactResponse(row, { includeArchivedOrg: includeArchived }));
+      return reply.send(await toContactResponse(row, { includeArchivedOrg: includeArchived }));
     } catch (err) {
       req.log?.error?.(err as any);
       return reply.code(500).send({ error: "get_failed" });
@@ -764,7 +788,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      return reply.send(toContactResponse(updatedDb));
+      return reply.send(await toContactResponse(updatedDb));
     } catch (err: any) {
       req.log.error({ err }, "contacts.patch failed");
       if (err?.code === "P2002") {
