@@ -22,19 +22,17 @@
 
 BEGIN;
 
--- Update animal documents to use scope='animal'
-UPDATE "Document"
-SET "scope" = 'animal'
-WHERE "animalId" IS NOT NULL
-  AND "scope" = 'offspring'
-  AND "offspringId" IS NULL;
-
-COMMIT;
-
--- Report affected rows
+-- Update animal documents to use scope='animal' and report actual rows modified
+WITH updated AS (
+  UPDATE "Document"
+  SET "scope" = 'animal'
+  WHERE "animalId" IS NOT NULL
+    AND "scope" = 'offspring'
+    AND "offspringId" IS NULL
+  RETURNING 1
+)
 SELECT
   'Backfill complete. Updated ' || count(*) || ' documents to scope=''animal''' AS result
-FROM "Document"
-WHERE "animalId" IS NOT NULL
-  AND "scope" = 'animal'
-  AND "offspringId" IS NULL;
+FROM updated;
+
+COMMIT;
