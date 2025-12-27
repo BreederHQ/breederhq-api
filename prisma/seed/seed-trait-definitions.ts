@@ -26,7 +26,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     valueType: TraitValueType.ENUM,
     enumValues: ["Excellent", "Good", "Fair", "Borderline", "Mild", "Moderate", "Severe", "Pending"],
     requiresDocument: true,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 100,
   },
   {
@@ -36,7 +36,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     category: "Orthopedic",
     valueType: TraitValueType.JSON,
     requiresDocument: true,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 110,
   },
   {
@@ -47,7 +47,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     valueType: TraitValueType.ENUM,
     enumValues: ["Normal", "Grade_I", "Grade_II", "Grade_III", "Pending"],
     requiresDocument: true,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 120,
   },
   {
@@ -58,7 +58,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     valueType: TraitValueType.ENUM,
     enumValues: ["Grade_0", "Grade_1", "Grade_2", "Grade_3", "Grade_4", "Pending"],
     requiresDocument: false,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 130,
   },
 
@@ -71,7 +71,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     valueType: TraitValueType.ENUM,
     enumValues: ["Normal", "Abnormal", "Pending"],
     requiresDocument: true,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 200,
   },
 
@@ -84,7 +84,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     valueType: TraitValueType.ENUM,
     enumValues: ["Normal", "Abnormal", "Pending"],
     requiresDocument: false,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 300,
   },
 
@@ -96,7 +96,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     category: "Genetic",
     valueType: TraitValueType.BOOLEAN,
     requiresDocument: false,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 400,
   },
   {
@@ -118,7 +118,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     category: "Reproductive",
     valueType: TraitValueType.BOOLEAN,
     requiresDocument: false,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 500,
   },
   {
@@ -151,7 +151,7 @@ const DOG_TRAIT_DEFINITIONS: TraitDefinitionSeed[] = [
     category: "General",
     valueType: TraitValueType.TEXT,
     requiresDocument: false,
-    marketplaceVisibleDefault: true,
+    marketplaceVisibleDefault: false,
     sortOrder: 610,
   },
 ];
