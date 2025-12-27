@@ -395,7 +395,99 @@ curl -X PUT "$API_URL/api/v1/animals/$ANIMAL_ID/traits" \
 }
 ```
 
-### 2. Missing Title for Document
+### 2. Value Type Mismatch (ENUM expects valueText)
+```bash
+curl -X PUT "$API_URL/api/v1/animals/$ANIMAL_ID/traits" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "updates": [
+      {
+        "traitKey": "dog.hips.ofa",
+        "valueNumber": 123
+      }
+    ]
+  }'
+```
+
+**Expected:** HTTP 400
+```json
+{
+  "error": "value_type_mismatch",
+  "message": "Trait dog.hips.ofa expects valueText (type: ENUM)"
+}
+```
+
+### 3. Invalid ENUM Value
+```bash
+curl -X PUT "$API_URL/api/v1/animals/$ANIMAL_ID/traits" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "updates": [
+      {
+        "traitKey": "dog.hips.ofa",
+        "valueText": "InvalidGrade"
+      }
+    ]
+  }'
+```
+
+**Expected:** HTTP 400
+```json
+{
+  "error": "invalid_enum_value",
+  "message": "Invalid value \"InvalidGrade\" for dog.hips.ofa. Allowed: Excellent, Good, Fair, Borderline, Mild, Moderate, Severe, Pending"
+}
+```
+
+### 4. Invalid PennHIP JSON Structure
+```bash
+curl -X PUT "$API_URL/api/v1/animals/$ANIMAL_ID/traits" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "updates": [
+      {
+        "traitKey": "dog.hips.pennhip",
+        "valueJson": {"invalid": "structure"}
+      }
+    ]
+  }'
+```
+
+**Expected:** HTTP 400
+```json
+{
+  "error": "invalid_pennhip_json",
+  "message": "PennHIP JSON must have shape: { di: number, notes?: string, side?: \"left\" | \"right\" | \"both\" }"
+}
+```
+
+### 5. Trait Not Found for Species (Document Linking)
+```bash
+curl -X POST "$API_URL/api/v1/animals/$ANIMAL_ID/documents" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Test Document",
+    "linkTraitKeys": ["cat.trait.notdog"]
+  }'
+```
+
+**Expected:** HTTP 404
+```json
+{
+  "error": "trait_not_found_for_species",
+  "message": "Trait cat.trait.notdog not found for species DOG"
+}
+```
+
+### 6. Missing Title for Document
 ```bash
 curl -X POST "$API_URL/api/v1/animals/$ANIMAL_ID/documents" \
   -H "x-tenant-id": $TENANT_ID" \
@@ -413,7 +505,7 @@ curl -X POST "$API_URL/api/v1/animals/$ANIMAL_ID/documents" \
 }
 ```
 
-### 3. Animal Not Found
+### 7. Animal Not Found
 ```bash
 curl -X GET "$API_URL/api/v1/animals/999999/traits" \
   -H "x-tenant-id: $TENANT_ID" \

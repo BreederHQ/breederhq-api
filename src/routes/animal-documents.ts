@@ -99,6 +99,9 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     if (!body.title) return reply.code(400).send({ error: "title_required" });
 
+    // PROTOTYPE: Document ownership is determined by animalId, not scope.
+    // Using "offspring" as least-wrong existing scope value until ANIMAL scope exists.
+    // In production, add DocumentScope.ANIMAL enum value.
     const createdDoc = await prisma.document.create({
       data: {
         tenantId, animalId, scope: "offspring", title: body.title,
@@ -114,6 +117,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     if (Array.isArray(body.linkTraitKeys) && body.linkTraitKeys.length > 0) {
       for (const traitKey of body.linkTraitKeys) {
+        // Validate trait belongs to this animal's species
         const def = await prisma.traitDefinition.findFirst({
           where: {
             species: animal.species, key: traitKey,
@@ -121,7 +125,12 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
           },
         });
 
-        if (!def) continue;
+        if (!def) {
+          return reply.code(404).send({
+            error: "trait_not_found_for_species",
+            message: `Trait ${traitKey} not found for species ${animal.species}`,
+          });
+        }
 
         let traitValue = await prisma.animalTraitValue.findUnique({
           where: { tenantId_animalId_traitDefinitionId: { tenantId, animalId, traitDefinitionId: def.id } },
@@ -165,6 +174,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     if (!body.title) return reply.code(400).send({ error: "title_required" });
 
+    // Validate trait belongs to this animal's species
     const def = await prisma.traitDefinition.findFirst({
       where: {
         species: animal.species, key: traitKey,
@@ -173,9 +183,14 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
     });
 
     if (!def) {
-      return reply.code(404).send({ error: "trait_not_found", message: `Trait ${traitKey} not found for species ${animal.species}` });
+      return reply.code(404).send({
+        error: "trait_not_found_for_species",
+        message: `Trait ${traitKey} not found for species ${animal.species}`
+      });
     }
 
+    // PROTOTYPE: Document ownership is determined by animalId, not scope.
+    // Using "offspring" as least-wrong existing scope value until ANIMAL scope exists.
     const createdDoc = await prisma.document.create({
       data: {
         tenantId, animalId, scope: "offspring", title: body.title,
@@ -217,6 +232,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     await assertAnimalInTenant(animalId, tenantId);
 
+    // SAFETY: Verify document belongs to this tenant AND this animal before deletion
     const doc = await prisma.document.findUnique({
       where: { id: documentId },
       select: { id: true, tenantId: true, animalId: true },
@@ -226,7 +242,10 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       return reply.code(404).send({ error: "document_not_found" });
     }
 
+    // Delete trait links first (explicit cascade safety)
     await prisma.animalTraitValueDocument.deleteMany({ where: { documentId } });
+
+    // Delete the document
     await prisma.document.delete({ where: { id: documentId } });
 
     return reply.code(204).send();

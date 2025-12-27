@@ -26,6 +26,16 @@ async function assertAnimalInTenant(animalId: number, tenantId: number) {
   return animal;
 }
 
+// Validate PennHIP JSON structure
+function validatePennHIPJson(value: any): boolean {
+  if (!value || typeof value !== "object") return false;
+  // Expected shape: { di: number, notes?: string, side: "left" | "right" | "both" }
+  if (typeof value.di !== "number") return false;
+  if (value.notes !== undefined && value.notes !== null && typeof value.notes !== "string") return false;
+  if (value.side && !["left", "right", "both"].includes(value.side)) return false;
+  return true;
+}
+
 const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /api/v1/animals/:animalId/traits
   app.get("/animals/:animalId/traits", async (req, reply) => {
@@ -37,12 +47,13 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const animal = await assertAnimalInTenant(animalId, tenantId);
 
+    // Get trait definitions for this species, sorted by category and sortOrder
     const definitions = await prisma.traitDefinition.findMany({
       where: {
         species: animal.species,
         OR: [{ tenantId: null }, { tenantId: tenantId }],
       },
-      orderBy: [{ category: "asc" }, { sortOrder: "asc" }],
+      orderBy: [{ sortOrder: "asc" }, { category: "asc" }],
     });
 
     const existingValues = await prisma.animalTraitValue.findMany({
@@ -71,6 +82,8 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     for (const def of definitions) {
       const value = valueMap.get(def.id);
+
+      // HARDENED: Always return all value keys (null if unused)
       const item = {
         traitKey: def.key,
         displayName: def.displayName,
@@ -84,7 +97,13 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           text: value.valueText,
           date: value.valueDate,
           json: value.valueJson,
-        } : null,
+        } : {
+          boolean: null,
+          number: null,
+          text: null,
+          date: null,
+          json: null,
+        },
         status: value?.status || null,
         performedAt: value?.performedAt || null,
         source: value?.source || null,
@@ -92,7 +111,7 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         verifiedAt: value?.verifiedAt || null,
         marketplaceVisible: value?.marketplaceVisible || null,
         notes: value?.notes || null,
-        traitValueId: value?.id || null,
+        traitValueId: value?.id || null,  // Always present, null if not yet created
         documents: value?.documents?.map(d => ({
           documentId: d.document.id,
           title: d.document.title,
@@ -108,10 +127,17 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       categoryMap.get(def.category)!.push(item);
     }
 
-    const categories = Array.from(categoryMap.entries()).map(([category, items]) => ({
-      category,
-      items,
-    }));
+    // HARDENED: Sort categories by the first item's sortOrder
+    const categories = Array.from(categoryMap.entries())
+      .sort((a, b) => {
+        const aSort = a[1][0]?.sortOrder || 999;
+        const bSort = b[1][0]?.sortOrder || 999;
+        return aSort - bSort;
+      })
+      .map(([category, items]) => ({
+        category,
+        items,  // Already sorted by sortOrder in the query
+      }));
 
     return reply.send({ animalId, species: animal.species, categories });
   });
@@ -134,26 +160,87 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const def = await prisma.traitDefinition.findFirst({
         where: {
-          species: animal.species,
-          key: traitKey,
+          species: animal.species, key: traitKey,
           OR: [{ tenantId: null }, { tenantId: tenantId }],
         },
       });
 
       if (!def) {
-        return reply.code(404).send({ 
-          error: "trait_not_found", 
-          message: `Trait ${traitKey} not found for species ${animal.species}` 
+        return reply.code(404).send({
+          error: "trait_not_found",
+          message: `Trait ${traitKey} not found for species ${animal.species}`
         });
       }
 
       const valueData: any = {};
-      if (def.valueType === "BOOLEAN" && upd.valueBoolean !== undefined) valueData.valueBoolean = Boolean(upd.valueBoolean);
-      else if (def.valueType === "NUMBER" && upd.valueNumber !== undefined) valueData.valueNumber = Number(upd.valueNumber);
-      else if (def.valueType === "TEXT" && upd.valueText !== undefined) valueData.valueText = String(upd.valueText);
-      else if (def.valueType === "DATE" && upd.valueDate !== undefined) valueData.valueDate = new Date(upd.valueDate);
-      else if (def.valueType === "JSON" && upd.valueJson !== undefined) valueData.valueJson = upd.valueJson;
-      else if (def.valueType === "ENUM" && upd.valueText !== undefined) valueData.valueText = String(upd.valueText);
+
+      // HARDENED: Strict value type validation with clear error messages
+      if (def.valueType === "BOOLEAN") {
+        if (upd.valueBoolean === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueBoolean (type: BOOLEAN)`,
+          });
+        }
+        valueData.valueBoolean = Boolean(upd.valueBoolean);
+      } else if (def.valueType === "NUMBER") {
+        if (upd.valueNumber === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueNumber (type: NUMBER)`,
+          });
+        }
+        valueData.valueNumber = Number(upd.valueNumber);
+      } else if (def.valueType === "TEXT") {
+        if (upd.valueText === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueText (type: TEXT)`,
+          });
+        }
+        valueData.valueText = String(upd.valueText);
+      } else if (def.valueType === "DATE") {
+        if (upd.valueDate === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueDate (type: DATE)`,
+          });
+        }
+        valueData.valueDate = new Date(upd.valueDate);
+      } else if (def.valueType === "JSON") {
+        if (upd.valueJson === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueJson (type: JSON)`,
+          });
+        }
+        // HARDENED: PennHIP-specific validation
+        if (traitKey === "dog.hips.pennhip") {
+          if (!validatePennHIPJson(upd.valueJson)) {
+            return reply.code(400).send({
+              error: "invalid_pennhip_json",
+              message: `PennHIP JSON must have shape: { di: number, notes?: string, side?: "left" | "right" | "both" }`,
+            });
+          }
+        }
+        valueData.valueJson = upd.valueJson;
+      } else if (def.valueType === "ENUM") {
+        if (upd.valueText === undefined) {
+          return reply.code(400).send({
+            error: "value_type_mismatch",
+            message: `Trait ${traitKey} expects valueText (type: ENUM)`,
+          });
+        }
+        // HARDENED: Validate against enumValues
+        const enumVals = Array.isArray(def.enumValues) ? def.enumValues : [];
+        if (enumVals.length > 0 && !enumVals.includes(upd.valueText)) {
+          return reply.code(400).send({
+            error: "invalid_enum_value",
+            message: `Invalid value "${upd.valueText}" for ${traitKey}. Allowed: ${enumVals.join(", ")}`,
+          });
+        }
+        valueData.valueText = String(upd.valueText);
+      }
 
       await prisma.animalTraitValue.upsert({
         where: { tenantId_animalId_traitDefinitionId: { tenantId, animalId, traitDefinitionId: def.id } },
