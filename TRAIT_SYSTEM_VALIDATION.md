@@ -643,3 +643,87 @@ All return stable, predictable JSON structures suitable for UI prototyping.
 Documents are metadata-only (no S3 integration in this phase).
 Trait definitions are seeded globally (tenantId=null) for all DOG animals.
 Document scope for animal uploads is "animal" (not "offspring").
+
+## Production Deployment Verification
+
+### Database Schema Verification
+
+After deploying migration `20251227_add_trait_system` to production:
+
+**1. Verify trait tables exist:**
+```bash
+psql $DATABASE_URL -c "select to_regclass('public.\"TraitDefinition\"') as traitdef, to_regclass('public.\"AnimalTraitValue\"') as traitval, to_regclass('public.\"AnimalTraitValueDocument\"') as traitdoc;"
+```
+Expected: All three table names present (not null)
+
+**2. Verify trait enums exist:**
+```bash
+psql $DATABASE_URL -c "select typname from pg_type where typname in ('TraitValueType','DocVisibility','DocStatus') order by typname;"
+```
+Expected: DocStatus, DocVisibility, TraitValueType
+
+**3. Verify Document columns added:**
+```bash
+psql $DATABASE_URL -c "select column_name from information_schema.columns where table_name='Document' and column_name in ('visibility','status','sizeBytes','originalFileName','storageProvider','bucket','objectKey','url') order by column_name;"
+```
+Expected: All 8 columns present
+
+**4. Verify TraitDefinition schema:**
+```bash
+psql $DATABASE_URL -c "select column_name, data_type from information_schema.columns where table_name='TraitDefinition' order by ordinal_position;"
+```
+Expected columns: id, tenantId, species, key, displayName, category, valueType, enumValues, requiresDocument, marketplaceVisibleDefault, sortOrder, createdAt, updatedAt
+
+### Seed Data Verification
+
+After running `npx dotenv -e .env.prod.migrate --override -- tsx prisma/seed/seed-trait-definitions.ts`:
+
+**1. Verify 12 DOG traits seeded:**
+```bash
+psql $DATABASE_URL -c "select count(*) as dog_traits from \"TraitDefinition\" where \"tenantId\" is null and species='DOG';"
+```
+Expected: 12
+
+**2. Verify all marketplaceVisibleDefault are false:**
+```bash
+psql $DATABASE_URL -c "select count(*) as bad_defaults from \"TraitDefinition\" where \"tenantId\" is null and species='DOG' and \"marketplaceVisibleDefault\"=true;"
+```
+Expected: 0
+
+**3. List all seeded DOG traits:**
+```bash
+psql $DATABASE_URL -c "select key, category, \"displayName\", \"valueType\" from \"TraitDefinition\" where \"tenantId\" is null and species='DOG' order by \"sortOrder\";"
+```
+Expected output:
+| key                         | category     | displayName             | valueType |
+|-----------------------------|--------------|-------------------------|-----------|
+| dog.hips.ofa                | Orthopedic   | OFA Hips                | ENUM      |
+| dog.hips.pennhip            | Orthopedic   | PennHIP                 | JSON      |
+| dog.elbows.ofa              | Orthopedic   | OFA Elbows              | ENUM      |
+| dog.patella.luxation        | Orthopedic   | Patella Luxation        | ENUM      |
+| dog.eyes.caer               | Eyes         | CAER Eye Exam           | ENUM      |
+| dog.cardiac.exam            | Cardiac      | Cardiac Exam            | ENUM      |
+| dog.genetics.panelCompleted | Genetic      | Genetic Panel Completed | BOOLEAN   |
+| dog.genetics.summary        | Genetic      | Genetic Summary         | JSON      |
+| dog.repro.proven            | Reproductive | Proven Breeding Record  | BOOLEAN   |
+| dog.repro.semenAnalysis     | Reproductive | Semen Analysis          | ENUM      |
+| dog.id.microchip            | General      | Microchipped            | BOOLEAN   |
+| dog.registry.akcNumber      | General      | AKC Registration Number | TEXT      |
+
+### API Smoke Test
+
+Once deployed, test with a known DOG animal ID from production:
+
+```bash
+# Get traits for a dog (should return categories even if no values set)
+curl -X GET "$API_URL/api/v1/animals/{animalId}/traits" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN"
+
+# Get documents for a dog
+curl -X GET "$API_URL/api/v1/animals/{animalId}/documents" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -H "Authorization: Bearer $AUTH_TOKEN"
+```
+
+Expected: Traits endpoint returns 6 categories (Orthopedic, Eyes, Cardiac, Genetic, Reproductive, General) with items.
