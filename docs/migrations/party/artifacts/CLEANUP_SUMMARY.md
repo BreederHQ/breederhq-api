@@ -82,7 +82,7 @@
 ### Phase 1: ✅ Analysis Complete (NOW)
 
 **Deliverables:**
-- [LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md) - Full cleanup plan
+- [LEGACY_IDENTITY_CLEANUP_PLAN.md](../notes/LEGACY_IDENTITY_CLEANUP_PLAN.md) - Full cleanup plan
 - This summary document
 
 ### Phase 2: Backend Code Cleanup (SAFE TO DO NOW)
@@ -218,7 +218,7 @@ return {
 
 4. **Document Migration State** ✅ DONE
 
-   - ✅ Created [LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md)
+   - ✅ Created [LEGACY_IDENTITY_CLEANUP_PLAN.md](../notes/LEGACY_IDENTITY_CLEANUP_PLAN.md)
    - ✅ Created this summary
 
 ### Impact of Immediate Actions
@@ -334,7 +334,7 @@ All validation SQL scripts already exist in `prisma/sql/`:
 
 ## Files Created
 
-1. **[LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md)** - Complete cleanup plan (84KB, ~2000 lines)
+1. **[LEGACY_IDENTITY_CLEANUP_PLAN.md](../notes/LEGACY_IDENTITY_CLEANUP_PLAN.md)** - Complete cleanup plan (84KB, ~2000 lines)
    - Full inventory of legacy columns
    - Domain-by-domain cleanup tasks
    - SQL migration scripts
@@ -350,9 +350,10 @@ All validation SQL scripts already exist in `prisma/sql/`:
 
 ## Questions?
 
-See the full [LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md) for:
+See the full [LEGACY_IDENTITY_CLEANUP_PLAN.md](../notes/LEGACY_IDENTITY_CLEANUP_PLAN.md) for:
 - Detailed code examples
 - SQL migration scripts
 - Validation procedures
 - Rollback plans
 - Domain-specific guidance
+

@@ -60,7 +60,7 @@
 
 ---
 
-#### B. [CLEANUP_SUMMARY.md](./CLEANUP_SUMMARY.md) (Executive Summary)
+#### B. [CLEANUP_SUMMARY.md](../artifacts/CLEANUP_SUMMARY.md) (Executive Summary)
 
 **Size:** ~500 lines, high-level overview
 
@@ -76,7 +76,7 @@
 
 ---
 
-#### C. [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md) (Action Plan)
+#### C. [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md) (Action Plan)
 
 **Size:** ~400 lines, tactical checklist
 
@@ -267,7 +267,7 @@ For each of 13 domains, provided:
 
 **Estimated Effort:** 2-3 days
 
-**Follow:** [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md)
+**Follow:** [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md)
 
 ---
 
@@ -341,8 +341,8 @@ For each of 13 domains, provided:
 | File | Size | Use For |
 |------|------|---------|
 | [LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md) | 2000 lines | Complete reference guide |
-| [CLEANUP_SUMMARY.md](./CLEANUP_SUMMARY.md) | 500 lines | Executive summary, share with team |
-| [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md) | 400 lines | Implementation checklist for Phase 2 |
+| [CLEANUP_SUMMARY.md](../artifacts/CLEANUP_SUMMARY.md) | 500 lines | Executive summary, share with team |
+| [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md) | 400 lines | Implementation checklist for Phase 2 |
 | [CLEANUP_DELIVERABLES.md](./CLEANUP_DELIVERABLES.md) | 300 lines | Handoff documentation (this file) |
 
 ---
@@ -361,7 +361,7 @@ For each of 13 domains, provided:
 
 **Answer:** Backend dual-write logic can be removed now (Phase 2). Database columns and compatibility functions must wait until frontend migration (Phases 3-5).
 
-**Details:** See [CLEANUP_SUMMARY.md](./CLEANUP_SUMMARY.md) - "What Can Be Done TODAY"
+**Details:** See [CLEANUP_SUMMARY.md](../artifacts/CLEANUP_SUMMARY.md) - "What Can Be Done TODAY"
 
 ---
 
@@ -369,7 +369,7 @@ For each of 13 domains, provided:
 
 **Answer:** Follow the 5-phase plan. Phase 2 (backend cleanup) can start immediately.
 
-**Details:** See [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md) for step-by-step instructions.
+**Details:** See [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md) for step-by-step instructions.
 
 ---
 
@@ -389,7 +389,7 @@ For each of 13 domains, provided:
 - Phase 4 (database): 1 day
 - Phase 5 (final cleanup): 4 hours
 
-**Details:** See [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md) - "Estimated Effort"
+**Details:** See [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md) - "Estimated Effort"
 
 ---
 
@@ -503,11 +503,11 @@ Refs: Steps 6A-6M post-migration cleanup
 
 **Questions about this cleanup plan?**
 - Refer to [LEGACY_IDENTITY_CLEANUP_PLAN.md](./LEGACY_IDENTITY_CLEANUP_PLAN.md) for detailed guidance
-- Check [CLEANUP_SUMMARY.md](./CLEANUP_SUMMARY.md) for quick reference
-- Use [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md) for implementation
+- Check [CLEANUP_SUMMARY.md](../artifacts/CLEANUP_SUMMARY.md) for quick reference
+- Use [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md) for implementation
 
 **Ready to start?**
-- Begin with Phase 2 (backend cleanup) - see [PHASE2_CHECKLIST.md](./PHASE2_CHECKLIST.md)
+- Begin with Phase 2 (backend cleanup) - see [PHASE2_CHECKLIST.md](../checklists/PHASE2_CHECKLIST.md)
 - Coordinate with frontend team for Phase 3
 - Follow domain execution order for Phase 4
 
@@ -518,3 +518,4 @@ Refs: Steps 6A-6M post-migration cleanup
 ✅ **Analysis Complete**
 ✅ **Documentation Complete**
 ✅ **Ready for Execution**
+
