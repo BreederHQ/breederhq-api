@@ -172,7 +172,7 @@ curl -X POST "$API_URL/api/v1/animals/$ANIMAL_ID/traits/dog.hips.pennhip/documen
   "id": 1,
   "tenantId": 1,
   "animalId": 123,
-  "scope": "offspring",
+  "scope": "animal",
   "kind": "generic",
   "title": "PennHIP Report 2025",
   "originalFileName": "pennhip-report.pdf",
@@ -266,7 +266,7 @@ curl -X POST "$API_URL/api/v1/animals/$ANIMAL_ID/documents" \
   "id": 2,
   "tenantId": 1,
   "animalId": 123,
-  "scope": "offspring",
+  "scope": "animal",
   "kind": "generic",
   "title": "CAER Eye Exam 2025",
   "originalFileName": "caer-exam.pdf",
@@ -569,6 +569,65 @@ WHERE "tenantId" IS NULL
   AND "marketplaceVisibleDefault" = true;
 ```
 **Expected:** 0 (none should have true)
+
+## Backfill: DocumentScope.ANIMAL Migration
+
+### Context
+The DocumentScope enum was extended to include "animal" value. Previously, animal documents were incorrectly created with scope="offspring". This backfill corrects existing data.
+
+### Verification Query (Before Backfill)
+Run this query to see how many documents need correction:
+
+```sql
+SELECT count(*) 
+FROM "Document"
+WHERE "animalId" IS NOT NULL 
+  AND "scope" = 'offspring' 
+  AND "offspringId" IS NULL;
+```
+
+**Expected before backfill:** May be > 0 if animal documents were created before the corrective commit.
+
+### Running the Backfill
+
+**Using psql:**
+```bash
+psql -h localhost -U your_user -d breederhq_dev -f prisma/sql/backfills/20251227_backfill_document_scope_animal.sql
+```
+
+**Or run manually:**
+```sql
+BEGIN;
+
+UPDATE "Document"
+SET "scope" = 'animal'
+WHERE "animalId" IS NOT NULL
+  AND "scope" = 'offspring'
+  AND "offspringId" IS NULL;
+
+COMMIT;
+```
+
+### Verification Query (After Backfill)
+Run the same query again to confirm all documents are corrected:
+
+```sql
+SELECT count(*) 
+FROM "Document"
+WHERE "animalId" IS NOT NULL 
+  AND "scope" = 'offspring' 
+  AND "offspringId" IS NULL;
+```
+
+**Expected after backfill:** 0
+
+### Safety Notes
+- The backfill only affects documents with:
+  - `animalId IS NOT NULL` (it's an animal document)
+  - `scope = 'offspring'` (needs correction)
+  - `offspringId IS NULL` (safety: not a genuine offspring document)
+- Run this backfill once per environment after deploying the schema change that added DocumentScope.ANIMAL
+
 
 ## Summary
 
