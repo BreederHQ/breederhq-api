@@ -164,11 +164,13 @@ async function toContactResponse(row: any, options: { includeArchivedOrg?: boole
       commPreferences = {};
       for (const pref of prefs) {
         const channel = pref.channel.toLowerCase();
-        commPreferences[channel] = pref.preference === 'ALLOW';
-        // Also include compliance info
-        if (pref.compliance) {
+        // Store the full preference level (ALLOW, NOT_PREFERRED, NEVER)
+        commPreferences[channel] = pref.preference;
+        // Always include compliance fields for EMAIL and SMS (even if null)
+        if (channel === 'email' || channel === 'sms') {
           commPreferences[`${channel}Compliance`] = pref.compliance;
           commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
+          commPreferences[`${channel}ComplianceSource`] = pref.complianceSource;
         }
       }
     } catch (err) {
