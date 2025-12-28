@@ -237,6 +237,7 @@ import waitlistRoutes from "./routes/waitlist.js"; // <— NEW
 import invoicesRoutes from "./routes/invoices.js"; // Finance MVP
 import paymentsRoutes from "./routes/payments.js"; // Finance MVP
 import expensesRoutes from "./routes/expenses.js"; // Finance MVP
+import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 
 // ---------- TS typing: prisma + req.tenantId/req.userId ----------
 declare module "fastify" {
@@ -372,6 +373,7 @@ app.register(
     api.register(invoicesRoutes);      // /api/v1/invoices/* Finance MVP
     api.register(paymentsRoutes);      // /api/v1/payments/* Finance MVP
     api.register(expensesRoutes);      // /api/v1/expenses/* Finance MVP
+    api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
   },
   { prefix: "/api/v1" }
 );
