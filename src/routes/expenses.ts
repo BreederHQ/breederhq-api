@@ -1,0 +1,223 @@
+// src/routes/expenses.ts
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import prisma from "../prisma.js";
+import {
+  validateExpenseAnchors,
+  type ExpenseAnchors,
+} from "../services/finance/anchor-validator.js";
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+function parseIntOrNull(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function parsePaging(q: any) {
+  const page = Math.max(1, Number(q?.page ?? 1) || 1);
+  const limit = Math.min(200, Math.max(1, Number(q?.limit ?? 50) || 50));
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+}
+
+function errorReply(err: unknown) {
+  const any = err as any;
+  const code = any?.code;
+  if (code === "P2002") {
+    return { status: 409, payload: { error: "duplicate", detail: any?.meta?.target } };
+  }
+  if (code === "P2025") {
+    return { status: 404, payload: { error: "not_found" } };
+  }
+  return { status: 500, payload: { error: "internal_error", detail: any?.message } };
+}
+
+function expenseDTO(e: any) {
+  return {
+    id: e.id,
+    tenantId: e.tenantId,
+    amountCents: e.amountCents,
+    currency: e.currency,
+    incurredAt: e.incurredAt,
+    category: e.category,
+    description: e.description,
+    vendorPartyId: e.vendorPartyId,
+    breedingPlanId: e.breedingPlanId,
+    offspringGroupId: e.offspringGroupId,
+    animalId: e.animalId,
+    notes: e.notes,
+    createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
+  };
+}
+
+/* ───────────────────────── routes ───────────────────────── */
+
+const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // POST /expenses - Create expense
+  app.post("/expenses", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const body = req.body as any;
+
+      // Validate anchors (optional for expenses, but if provided must be only one)
+      const anchors: ExpenseAnchors = {
+        breedingPlanId: parseIntOrNull(body.breedingPlanId),
+        offspringGroupId: parseIntOrNull(body.offspringGroupId),
+        animalId: parseIntOrNull(body.animalId),
+      };
+      validateExpenseAnchors(anchors);
+
+      const amountCents = Number(body.amountCents);
+      if (!Number.isInteger(amountCents) || amountCents <= 0) {
+        return reply.code(400).send({ error: "invalid_amountCents" });
+      }
+
+      if (!body.category) {
+        return reply.code(400).send({ error: "category_required" });
+      }
+
+      const incurredAt = body.incurredAt ? new Date(body.incurredAt) : new Date();
+
+      const expense = await prisma.expense.create({
+        data: {
+          tenantId,
+          amountCents,
+          currency: body.currency || "USD",
+          incurredAt,
+          category: body.category,
+          description: body.description || null,
+          vendorPartyId: parseIntOrNull(body.vendorPartyId),
+          breedingPlanId: anchors.breedingPlanId,
+          offspringGroupId: anchors.offspringGroupId,
+          animalId: anchors.animalId,
+          notes: body.notes || null,
+          data: body.data || null,
+        },
+      });
+
+      return reply.code(201).send(expenseDTO(expense));
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /expenses - List expenses with filters
+  app.get("/expenses", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const query = req.query as any;
+      const { page, limit, skip } = parsePaging(query);
+
+      const where: any = { tenantId };
+
+      if (query.category) where.category = query.category;
+      if (query.vendorPartyId) where.vendorPartyId = parseIntOrNull(query.vendorPartyId);
+      if (query.breedingPlanId) where.breedingPlanId = parseIntOrNull(query.breedingPlanId);
+      if (query.offspringGroupId) where.offspringGroupId = parseIntOrNull(query.offspringGroupId);
+      if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
+
+      if (query.dateFrom || query.dateTo) {
+        where.incurredAt = {};
+        if (query.dateFrom) where.incurredAt.gte = new Date(query.dateFrom);
+        if (query.dateTo) where.incurredAt.lte = new Date(query.dateTo);
+      }
+
+      const [data, total] = await Promise.all([
+        prisma.expense.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { incurredAt: "desc" },
+        }),
+        prisma.expense.count({ where }),
+      ]);
+
+      return reply.code(200).send({
+        data: data.map(expenseDTO),
+        meta: { page, limit, total },
+      });
+    } catch (err) {
+      const { status, payload} = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /expenses/:id - Get single expense
+  app.get("/expenses/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const expense = await prisma.expense.findFirst({
+        where: { id, tenantId },
+      });
+
+      if (!expense) return reply.code(404).send({ error: "not_found" });
+
+      return reply.code(200).send(expenseDTO(expense));
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // PATCH /expenses/:id - Update expense
+  app.patch("/expenses/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const body = req.body as any;
+      const updates: any = {};
+
+      if (body.amountCents !== undefined) updates.amountCents = Number(body.amountCents);
+      if (body.incurredAt !== undefined) updates.incurredAt = new Date(body.incurredAt);
+      if (body.category !== undefined) updates.category = body.category;
+      if (body.description !== undefined) updates.description = body.description;
+      if (body.notes !== undefined) updates.notes = body.notes;
+
+      const expense = await prisma.expense.updateMany({
+        where: { id, tenantId },
+        data: updates,
+      });
+
+      if (expense.count === 0) return reply.code(404).send({ error: "not_found" });
+
+      const updated = await prisma.expense.findUnique({ where: { id } });
+      return reply.code(200).send(expenseDTO(updated));
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // DELETE /expenses/:id - Delete expense
+  app.delete("/expenses/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const deleted = await prisma.expense.deleteMany({
+        where: { id, tenantId },
+      });
+
+      if (deleted.count === 0) return reply.code(404).send({ error: "not_found" });
+
+      return reply.code(204).send();
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+};
+
+export default routes;

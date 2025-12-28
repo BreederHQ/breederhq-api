@@ -61,6 +61,7 @@ await app.register(cors, {
     "x-xsrf-token",
     "x-requested-with", // fix preflight failures from fetch/axios
     "x-admin-token",    // <— NEW: required for admin-protected routes
+    "idempotency-key",  // Finance MVP: idempotency for invoice/payment creation
   ],
   exposedHeaders: ["set-cookie"],
 });
@@ -233,6 +234,9 @@ import tagsRoutes from "./routes/tags.js";
 import tenantRoutes from "./routes/tenant.js";
 import userRoutes from "./routes/user.js";
 import waitlistRoutes from "./routes/waitlist.js"; // <— NEW
+import invoicesRoutes from "./routes/invoices.js"; // Finance MVP
+import paymentsRoutes from "./routes/payments.js"; // Finance MVP
+import expensesRoutes from "./routes/expenses.js"; // Finance MVP
 
 // ---------- TS typing: prisma + req.tenantId/req.userId ----------
 declare module "fastify" {
@@ -365,6 +369,9 @@ app.register(
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
     api.register(tagsRoutes);
+    api.register(invoicesRoutes);      // /api/v1/invoices/* Finance MVP
+    api.register(paymentsRoutes);      // /api/v1/payments/* Finance MVP
+    api.register(expensesRoutes);      // /api/v1/expenses/* Finance MVP
   },
   { prefix: "/api/v1" }
 );
