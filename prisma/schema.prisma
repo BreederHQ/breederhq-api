@@ -2177,6 +2177,7 @@ model Invoice {
   Documents            Document[]
   Contract             Contract?
   Attachments          Attachment[]          @relation("AttachmentInvoice")
+  EmailSendLogs        EmailSendLog[]
 
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
@@ -2453,16 +2454,21 @@ model EmailSendLog {
   provider    String         @default("resend")
   providerMessageId String?
 
+  relatedInvoiceId Int?
+  invoice          Invoice? @relation(fields: [relatedInvoiceId], references: [id], onDelete: SetNull)
+
   status EmailSendStatus @default(queued)
   error  Json?
   metadata Json?
 
   createdAt DateTime @default(now())
 
+  @@unique([tenantId, templateKey, relatedInvoiceId])
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([providerMessageId])
   @@index([createdAt])
+  @@index([relatedInvoiceId])
 }
 
 model MessageThread {

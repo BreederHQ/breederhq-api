@@ -450,6 +450,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             html: emailContent.html,
             text: emailContent.text,
             templateKey: "invoice_issued",
+            relatedInvoiceId: id,
+            category: "transactional",
             metadata: { invoiceId: id, invoiceNumber: beforeUpdate.invoiceNumber },
           }).catch((err) => {
             req.log.error({ err, invoiceId: id }, "Failed to send invoice email");

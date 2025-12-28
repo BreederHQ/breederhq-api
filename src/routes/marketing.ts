@@ -8,7 +8,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const tenantId = Number((req as any).tenantId);
     if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    const { to, subject, html, text, templateKey, metadata } = req.body as any;
+    const { to, subject, html, text, templateKey, metadata, category } = req.body as any;
 
     if (!to || !subject) {
       return reply.code(400).send({ error: "missing_required_fields", required: ["to", "subject"] });
@@ -16,6 +16,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     if (!html && !text) {
       return reply.code(400).send({ error: "missing_email_body", required: "html or text" });
+    }
+
+    if (!category || (category !== "transactional" && category !== "marketing")) {
+      return reply.code(400).send({ error: "invalid_category", allowed: ["transactional", "marketing"] });
     }
 
     try {
@@ -27,6 +31,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         text,
         templateKey,
         metadata,
+        category,
       });
 
       if (!result.ok) {
@@ -36,6 +41,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.send({
         ok: true,
         messageId: result.providerMessageId,
+        skipped: result.skipped,
       });
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
