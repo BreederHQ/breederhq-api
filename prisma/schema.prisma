@@ -1966,6 +1966,23 @@ enum InvoiceStatus {
   cancelled
 }
 
+enum InvoiceCategory {
+  DEPOSIT
+  SERVICE
+  GOODS
+  MIXED
+  OTHER
+}
+
+enum LineItemKind {
+  DEPOSIT
+  SERVICE_FEE
+  GOODS
+  DISCOUNT
+  TAX
+  OTHER
+}
+
 enum PaymentStatus {
   pending
   succeeded
@@ -2131,11 +2148,12 @@ model Invoice {
 
   invoiceNumber String  // Server-generated, format: INV-YYYY-NNNN
   number        String? // Legacy field, keep for compatibility
-  currency      String        @default("USD")
+  currency      String          @default("USD")
   amountCents   Int
   balanceCents  Int
   depositCents  Int?
-  status        InvoiceStatus @default(draft)
+  status        InvoiceStatus   @default(draft)
+  category      InvoiceCategory @default(OTHER)
   dueAt         DateTime?
   issuedAt      DateTime?
   paidAt        DateTime?
@@ -2183,8 +2201,9 @@ model InvoiceLineItem {
   invoiceId Int
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
+  kind          LineItemKind @default(OTHER)
   description   String
-  qty           Int     @default(1)
+  qty           Int          @default(1)
   unitCents     Int
   discountCents Int?
   taxRate       Float?
