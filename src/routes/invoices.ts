@@ -58,6 +58,7 @@ function invoiceDTO(inv: any) {
     balanceCents: inv.balanceCents,
     currency: inv.currency,
     status: inv.status,
+    category: inv.category,
     issuedAt: inv.issuedAt,
     dueAt: inv.dueAt,
     paidAt: inv.paidAt,
@@ -121,9 +122,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         _sum: { amountCents: true },
       });
 
-      // Deposits outstanding (will be refined in Track B with explicit deposit classification)
-      // For now, no explicit deposit category exists, so we return 0
-      const depositsOutstandingCents = 0;
+      // Deposits outstanding (invoices with category DEPOSIT or MIXED, not void, with balance > 0)
+      const depositsResult = await prisma.invoice.aggregate({
+        where: {
+          tenantId,
+          category: { in: ["DEPOSIT", "MIXED"] },
+          status: { not: "void" },
+          balanceCents: { gt: 0 },
+        },
+        _sum: { balanceCents: true },
+      });
+      const depositsOutstandingCents = depositsResult._sum.balanceCents || 0;
 
       return reply.code(200).send({
         outstandingTotalCents: outstandingResult._sum.balanceCents || 0,
@@ -173,7 +182,45 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "clientPartyId_required" });
       }
 
-      const amountCents = Number(body.amountCents);
+      // Line items support (optional for backward compatibility)
+      const lineItems: any[] = body.lineItems || [];
+      let amountCents = Number(body.amountCents);
+      let invoiceCategory = body.category || "OTHER";
+
+      // If line items provided, compute total and category from them
+      if (lineItems.length > 0) {
+        // Validate line items
+        for (const item of lineItems) {
+          if (!item.description || !item.unitCents || !item.qty) {
+            return reply.code(400).send({ error: "invalid_line_item" });
+          }
+        }
+
+        // Compute total from line items
+        amountCents = lineItems.reduce((sum: number, item: any) => {
+          const qty = Number(item.qty) || 1;
+          const unitCents = Number(item.unitCents) || 0;
+          return sum + (qty * unitCents);
+        }, 0);
+
+        // Determine category from line item kinds
+        const kinds = lineItems.map((item: any) => item.kind || "OTHER");
+        const hasDeposit = kinds.includes("DEPOSIT");
+        const hasOther = kinds.some((k: string) => k !== "DEPOSIT");
+
+        if (hasDeposit && !hasOther) {
+          invoiceCategory = "DEPOSIT";
+        } else if (hasDeposit && hasOther) {
+          invoiceCategory = "MIXED";
+        } else if (kinds.includes("SERVICE_FEE")) {
+          invoiceCategory = "SERVICE";
+        } else if (kinds.includes("GOODS")) {
+          invoiceCategory = "GOODS";
+        } else {
+          invoiceCategory = "OTHER";
+        }
+      }
+
       if (!Number.isInteger(amountCents) || amountCents <= 0) {
         return reply.code(400).send({ error: "invalid_amountCents" });
       }
@@ -197,6 +244,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             balanceCents: amountCents, // Initially unpaid
             currency: body.currency || "USD",
             status: "draft",
+            category: invoiceCategory,
             issuedAt: body.issuedAt ? new Date(body.issuedAt) : null,
             dueAt: body.dueAt ? new Date(body.dueAt) : null,
             paymentTerms: body.paymentTerms || null,
@@ -204,6 +252,31 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             data: body.data || null,
           },
         });
+
+        // Create line items if provided
+        if (lineItems.length > 0) {
+          for (const item of lineItems) {
+            const qty = Number(item.qty) || 1;
+            const unitCents = Number(item.unitCents) || 0;
+            const totalCents = qty * unitCents;
+
+            await tx.invoiceLineItem.create({
+              data: {
+                tenantId,
+                invoiceId: invoice.id,
+                kind: item.kind || "OTHER",
+                description: item.description,
+                qty,
+                unitCents,
+                totalCents,
+                discountCents: item.discountCents || null,
+                taxRate: item.taxRate || null,
+                category: item.category || null,
+                itemCode: item.itemCode || null,
+              },
+            });
+          }
+        }
 
         return invoiceDTO(invoice);
       });
