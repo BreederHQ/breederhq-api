@@ -490,6 +490,87 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(status).send(payload);
     }
   });
+
+  // POST /invoices/:id/attachments - Create invoice attachment
+  app.post("/invoices/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const invoice = await prisma.invoice.findFirst({ where: { id, tenantId } });
+      if (!invoice) return reply.code(404).send({ error: "invoice_not_found" });
+
+      const b = req.body as any;
+      const required = ["kind", "storageProvider", "storageKey", "filename", "mime", "bytes"];
+      for (const k of required) {
+        if (!(k in b)) return reply.code(400).send({ error: `missing_field_${k}` });
+      }
+
+      const created = await prisma.attachment.create({
+        data: {
+          tenantId,
+          invoiceId: id,
+          kind: b.kind,
+          storageProvider: b.storageProvider,
+          storageKey: b.storageKey,
+          filename: b.filename,
+          mime: b.mime,
+          bytes: Number(b.bytes) || 0,
+          createdByUserId: b.createdByUserId ?? null,
+        },
+      });
+
+      return reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /invoices/:id/attachments - List invoice attachments
+  app.get("/invoices/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const invoice = await prisma.invoice.findFirst({ where: { id, tenantId } });
+      if (!invoice) return reply.code(404).send({ error: "invoice_not_found" });
+
+      const attachments = await prisma.attachment.findMany({
+        where: { invoiceId: id, tenantId },
+        orderBy: { createdAt: "desc" },
+      });
+
+      return reply.code(200).send(attachments);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // DELETE /invoices/:id/attachments/:aid - Delete invoice attachment
+  app.delete("/invoices/:id/attachments/:aid", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      const aid = parseIntOrNull((req.params as any).aid);
+      if (!id || !aid) return reply.code(400).send({ error: "invalid_id" });
+
+      const attachment = await prisma.attachment.findFirst({ where: { id: aid, tenantId } });
+      if (!attachment) return reply.code(404).send({ error: "attachment_not_found" });
+      if (attachment.invoiceId !== id) {
+        return reply.code(409).send({ error: "attachment_does_not_belong_to_invoice" });
+      }
+
+      await prisma.attachment.delete({ where: { id: aid } });
+      return reply.send({ ok: true, deleted: aid });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
 };
 
 export default routes;
