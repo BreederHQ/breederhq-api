@@ -78,30 +78,112 @@ This:
 
 ## Safety Guardrails
 
-### Production Protection
+### Non-Negotiable Rules Enforced by Guard
 
-The `prisma-guard.js` script provides absolute protection:
+The `prisma-guard.js` script enforces **strict invariants** that cannot be bypassed:
 
-1. **BLOCKED:** ANY operation against bhq_prod
-2. **BLOCKED:** `prisma migrate` commands in prototype mode
-3. **BLOCKED:** Using .env.proto with non-proto database
+#### 1. Production Database - Absolute Block
+- **BLOCKED:** ANY operation against bhq_prod (including status checks)
+- Production must only be accessed through controlled deployment pipelines
+- No exceptions
+
+#### 2. Prototype Mode - Strict Constraints
+When using `.env.proto`:
+- **BLOCKED:** All `prisma migrate` commands (dev, deploy, reset, etc.)
+- **BLOCKED:** `prisma db pull` (would overwrite schema.prisma source of truth)
+- **REQUIRED:** DATABASE_URL must point to bhq_proto
+- **REQUIRED:** Use only `npm run db:proto:push` and `npm run db:proto:reset`
+
+#### 3. Database-Script Matching
+- **BLOCKED:** Running `db:proto:*` scripts against bhq_dev or bhq_prod
+- **BLOCKED:** Running prototype scripts without .env.proto loaded
+- Guard detects npm script name and validates DATABASE_URL matches
+
+#### 4. Dotenv Enforcement
+- **REQUIRED:** All commands must use `npx dotenv -e <env-file>`
+- **BLOCKED:** Commands without DATABASE_URL set
+- Prevents accidental runs against wrong database
 
 ### How Protection Works
 
 ```javascript
 // Detects prototype mode from .env.proto
 const isPrototypeMode = envFileArg && envFileArg.includes('proto');
+const isProtoScript = process.env.npm_lifecycle_event?.includes('proto');
 
-// Blocks ALL prod operations
+// ABSOLUTE BLOCK: Production
 if (isProdDatabase) {
   exitWithError('NO operations allowed against bhq_prod');
 }
 
-// Blocks migrations in prototype mode
-if (isPrototypeMode && prismaCommand === 'migrate') {
-  exitWithError('Prisma Migrate not allowed in prototype mode');
+// STRICT PROTOTYPE MODE CHECKS
+if (isPrototypeMode) {
+  // Block ALL migrate commands
+  if (prismaCommand === 'migrate') {
+    exitWithError('Prisma Migrate not allowed in prototype mode');
+  }
+
+  // Block db pull (corrupts source of truth)
+  if (fullCommand === 'db pull') {
+    exitWithError('db pull not allowed in prototype mode');
+  }
+
+  // Enforce bhq_proto ONLY
+  if (!isProtoDatabase) {
+    exitWithError('DATABASE_URL must contain "bhq_proto"');
+  }
+}
+
+// INVERSE CHECK: Block db:proto:* against wrong databases
+if (isProtoScript && !isProtoDatabase) {
+  exitWithError('db:proto:* scripts require bhq_proto database');
 }
 ```
+
+### What Happens When Guard Blocks a Command
+
+**Example 1: Attempting migrate in prototype mode**
+```bash
+$ npm run db:proto:push
+# (but someone manually changed the command to "prisma migrate dev")
+
+❌ PRISMA GUARD: OPERATION BLOCKED
+
+BLOCKED: Prisma Migrate not allowed in prototype mode.
+
+Prototype mode uses "prisma db push" exclusively.
+Migrations are frozen. Schema changes go directly to schema.prisma.
+
+Use:
+  npm run db:proto:push   (apply schema changes)
+  npm run db:proto:reset  (reset database)
+
+See: PROTOTYPE_MODE.md
+```
+
+**Example 2: Wrong database loaded**
+```bash
+$ npx dotenv -e .env.dev -- npm run db:proto:push
+
+❌ PRISMA GUARD: OPERATION BLOCKED
+
+BLOCKED: db:proto:* scripts require bhq_proto database.
+
+Script: db:proto:push
+DATABASE_URL contains: bhq_dev
+
+db:proto:push and db:proto:reset can ONLY be used with bhq_proto.
+Check that .env.proto is loaded correctly.
+
+See: PROTOTYPE_MODE.md
+```
+
+**What to Do:**
+1. Read the error message carefully
+2. Check you're using the correct npm script (`db:proto:push` or `db:proto:reset`)
+3. Verify `.env.proto` exists and contains bhq_proto connection
+4. Do NOT try to bypass the guard
+5. See `PROTOTYPE_MODE.md` at repo root for rules
 
 ## Available Commands
 
