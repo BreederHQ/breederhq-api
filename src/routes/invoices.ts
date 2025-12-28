@@ -13,6 +13,8 @@ import {
   determineInvoiceScope,
   type InvoiceAnchors,
 } from "../services/finance/anchor-validator.js";
+import { sendEmail } from "../services/email-service.js";
+import { renderInvoiceEmail } from "../services/email-templates.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -407,6 +409,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Never allow changing invoiceNumber or amountCents after creation
 
+      // Get current invoice before update
+      const beforeUpdate = await prisma.invoice.findFirst({
+        where: { id, tenantId },
+        include: {
+          clientParty: { select: { email: true, name: true } },
+          tenant: { select: { name: true } },
+        },
+      });
+
+      if (!beforeUpdate) return reply.code(404).send({ error: "not_found" });
+
       const invoice = await prisma.invoice.updateMany({
         where: { id, tenantId },
         data: updates,
@@ -415,6 +428,35 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (invoice.count === 0) return reply.code(404).send({ error: "not_found" });
 
       const updated = await prisma.invoice.findUnique({ where: { id } });
+
+      // If status changed to "issued", send email
+      if (body.status === "issued" && beforeUpdate.status !== "issued") {
+        const clientEmail = beforeUpdate.clientParty?.email;
+        if (clientEmail) {
+          const emailContent = renderInvoiceEmail({
+            invoiceNumber: beforeUpdate.invoiceNumber,
+            amountCents: beforeUpdate.amountCents,
+            currency: beforeUpdate.currency,
+            dueAt: beforeUpdate.dueAt,
+            clientName: beforeUpdate.clientParty?.name || "Valued Customer",
+            tenantName: beforeUpdate.tenant?.name || "BreederHQ",
+          });
+
+          // Fire and forget email send, log in background
+          sendEmail({
+            tenantId,
+            to: clientEmail,
+            subject: emailContent.subject,
+            html: emailContent.html,
+            text: emailContent.text,
+            templateKey: "invoice_issued",
+            metadata: { invoiceId: id, invoiceNumber: beforeUpdate.invoiceNumber },
+          }).catch((err) => {
+            req.log.error({ err, invoiceId: id }, "Failed to send invoice email");
+          });
+        }
+      }
+
       return reply.code(200).send(invoiceDTO(updated));
     } catch (err) {
       const { status, payload } = errorReply(err);
