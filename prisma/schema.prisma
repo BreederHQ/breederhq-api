@@ -2459,11 +2459,11 @@ enum TemplateStatus {
 }
 
 enum TemplateCategory {
-  TRANSACTIONAL
-  MARKETING
-  NOTIFICATION
-  AUTO_REPLY
-  CUSTOM
+  transactional
+  marketing
+  notification
+  auto_reply
+  custom
 }
 
 enum AutoReplyTriggerType {
