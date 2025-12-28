@@ -314,3 +314,220 @@ _(To be filled during validation execution)_
 4. Test migration on production-like staging environment
 5. Schedule maintenance window for migration execution
 6. Verify data integrity post-migration
+
+---
+
+## EXECUTED VALIDATION (DEV Environment)
+
+### Validation Date
+2025-12-28
+
+### Environment Status
+
+**DEV Database**: Connected successfully
+- Host: ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech
+- Database: bhq_dev
+
+**DEV API Server**: Not operational
+- Pre-existing import error in email-service.ts prevents server startup
+- Error: `The requested module './comm-prefs-service.js' does not provide an export named 'canContactViaChannel'`
+- Note: This import error exists in the codebase and is unrelated to the Template/AutoReply schema changes
+- Runtime API validation deferred until import error is resolved
+
+---
+
+### 1. SCHEMA VALIDATION (EXECUTED)
+
+#### 1.1 TemplateCategory Enum Values
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT enumlabel FROM pg_enum WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'TemplateCategory') ORDER BY enumsortorder;"
+```
+
+**Result**:
+```
+     enumlabel      
+--------------------
+ auto_reply
+ invoice_message
+ birth_announcement
+ waitlist_update
+ general_follow_up
+ custom
+(6 rows)
+```
+
+**Status**: ✅ PASS - TemplateCategory enum contains purpose-based values as designed
+
+---
+
+#### 1.2 EmailSendCategory Enum Values
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT enumlabel FROM pg_enum WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'EmailSendCategory') ORDER BY enumsortorder;"
+```
+
+**Result**:
+```
+   enumlabel   
+---------------
+ transactional
+ marketing
+(2 rows)
+```
+
+**Status**: ✅ PASS - EmailSendCategory enum created with correct send classification values
+
+---
+
+#### 1.3 EmailSendLog.category Column Type
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_name = 'EmailSendLog' AND column_name = 'category';"
+```
+
+**Result**:
+```
+ column_name |  data_type   |     udt_name      
+-------------+--------------+-------------------
+ category    | USER-DEFINED | EmailSendCategory
+(1 row)
+```
+
+**Status**: ✅ PASS - EmailSendLog.category correctly uses EmailSendCategory enum
+
+---
+
+#### 1.4 Template.category Column Type
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_name = 'Template' AND column_name = 'category';"
+```
+
+**Result**:
+```
+ column_name |  data_type   |     udt_name     
+-------------+--------------+------------------
+ category    | USER-DEFINED | TemplateCategory
+(1 row)
+```
+
+**Status**: ✅ PASS - Template.category correctly uses TemplateCategory enum
+
+---
+
+### 2. DATABASE STATE VERIFICATION (EXECUTED)
+
+#### 2.1 Template Records
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT COUNT(*) as template_count FROM \"Template\";"
+```
+
+**Result**:
+```
+ template_count 
+----------------
+              0
+(1 row)
+```
+
+**Note**: No existing templates in DEV - clean slate for future validation
+
+---
+
+#### 2.2 EmailSendLog Records
+
+**Command**:
+```bash
+psql -h ep-empty-scene-ae29f2je.c-2.us-east-2.aws.neon.tech -U bhq_app -d bhq_dev \
+  -c "SELECT COUNT(*) as email_log_count FROM \"EmailSendLog\";"
+```
+
+**Result**:
+```
+ email_log_count 
+-----------------
+               0
+(1 row)
+```
+
+**Note**: No existing email logs in DEV - clean slate for future validation
+
+---
+
+### 3. RUNTIME API VALIDATION (DEFERRED)
+
+The following validation scenarios are documented and ready for execution once the API server import error is resolved:
+
+#### 3.1 Template Save-Time Validation
+- **Test A**: POST template with invalid variable `{{unknown.field}}` → Expect HTTP 400 with validation error
+- **Test B**: POST template with valid variable `{{tenant.name}}` → Expect HTTP 200 with created template
+
+#### 3.2 DM Auto-Reply Success Path
+- Create active template with category `auto_reply`
+- Create AutoReplyRule with trigger `dm_first_message_from_party`
+- Send inbound DM from non-tenant party
+- Verify automated message created with `isAutomated: true`
+- Verify AutoReplyLog record with `status: 'sent'`
+
+#### 3.3 DM Auto-Reply Failure Path
+- Create AutoReplyRule with invalid templateId
+- Send inbound DM
+- Verify inbound message succeeds
+- Verify AutoReplyLog record with `status: 'failed'` and reason populated
+
+#### 3.4 Invoice Email Category Storage
+- Issue invoice (PATCH status = issued)
+- Verify EmailSendLog record with `category: 'transactional'`
+- Verify invoice email idempotency (duplicate issue attempts rejected)
+
+#### 3.5 Marketing Email Category Storage
+- POST /api/v1/marketing/email/send with `category: 'marketing'`
+- Verify EmailSendLog record with `category: 'marketing'`
+
+---
+
+### 4. VALIDATION SUMMARY
+
+| Validation Type | Status | Evidence |
+|----------------|--------|----------|
+| TemplateCategory enum values | ✅ PASS | DB query confirms purpose-based values |
+| EmailSendCategory enum creation | ✅ PASS | DB query confirms transactional/marketing values |
+| EmailSendLog.category type | ✅ PASS | DB schema shows EmailSendCategory type |
+| Template.category type | ✅ PASS | DB schema shows TemplateCategory type |
+| Database state | ✅ CLEAN | No existing records, ready for validation |
+| Runtime API validation | ⏸️ DEFERRED | Blocked by pre-existing import error |
+
+**Conclusion**: Schema changes successfully applied to DEV database. Category split (TemplateCategory vs EmailSendCategory) is correctly implemented at the database level. Runtime API validation scenarios are documented and ready for execution once `canContactViaChannel` import is resolved in email-service.ts.
+
+---
+
+### 5. NEXT STEPS FOR RUNTIME VALIDATION
+
+To complete runtime validation:
+
+1. Resolve import error in src/services/email-service.ts
+   - Either implement `canContactViaChannel` in comm-prefs-service.ts
+   - Or remove/stub the comm preference check temporarily for validation
+
+2. Start DEV server:
+   ```bash
+   npm run dev
+   ```
+
+3. Execute validation scenarios documented in Section 3
+
+4. Update this document with actual curl commands and responses
+
+5. Record psql query results for AutoReplyLog and EmailSendLog tables
