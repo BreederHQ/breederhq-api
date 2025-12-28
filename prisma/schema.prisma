@@ -2459,11 +2459,17 @@ enum TemplateStatus {
 }
 
 enum TemplateCategory {
+  auto_reply
+  invoice_message
+  birth_announcement
+  waitlist_update
+  general_follow_up
+  custom
+}
+
+enum EmailSendCategory {
   transactional
   marketing
-  notification
-  auto_reply
-  custom
 }
 
 enum AutoReplyTriggerType {
@@ -2584,7 +2590,7 @@ model EmailSendLog {
 
   templateKey String?
   templateId  Int?
-  category    TemplateCategory?
+  category    EmailSendCategory?
   provider    String         @default("resend")
   providerMessageId String?
 
