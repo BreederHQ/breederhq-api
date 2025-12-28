@@ -26,8 +26,8 @@
     "db:studio": "npx dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
     "db:pull": "npx dotenv -e .env.studio -- prisma db pull --schema=prisma/schema.prisma",
     "db:gen": "prisma generate --schema=prisma/schema.prisma",
-    "db:proto:reset": "npx dotenv -e .env.proto -- node scripts/prisma-guard.js -- prisma db push --force-reset --accept-data-loss --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
-    "db:proto:push": "npx dotenv -e .env.proto -- node scripts/prisma-guard.js -- prisma db push --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
+    "db:proto:reset": "npx dotenv -e .env.dev -- node scripts/prisma-guard.js -- prisma db push --force-reset --accept-data-loss --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
+    "db:proto:push": "npx dotenv -e .env.dev -- node scripts/prisma-guard.js -- prisma db push --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
     "ci:prototype:check": "node scripts/check-prototype-mode.js",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
