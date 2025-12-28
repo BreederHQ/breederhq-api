@@ -57,18 +57,31 @@ const isProdDatabase = DATABASE_URL.includes('bhq_prod');
 const isDevDatabase = DATABASE_URL.includes('bhq_dev');
 const dbLabel = sanitizeDbLabel(DATABASE_URL);
 
-// ABSOLUTE BLOCK 1: Never allow ANY operation against production
-if (isProdDatabase) {
+// PRODUCTION ALLOWLIST: Only specific read-only diff and controlled apply operations
+const isProdMigrateDiff = isProdDatabase && fullCommand.startsWith('migrate diff');
+const isProdControlledApply =
+  isProdDatabase &&
+  fullCommand.startsWith('db execute') &&
+  npmScript === 'db:prod:align:apply' &&
+  commandArgs.includes('--file') &&
+  commandArgs.some(arg => arg.includes('prisma_prod_align.sql'));
+
+// ABSOLUTE BLOCK 1: Never allow operations against production EXCEPT allowlisted commands
+if (isProdDatabase && !isProdMigrateDiff && !isProdControlledApply) {
   exitWithError(
     `BLOCKED: Operation "${fullCommand}" attempted against PRODUCTION database.\n\n` +
-    'NO operations are allowed against bhq_prod.\n' +
-    'Production must only be accessed through controlled deployment pipelines.\n\n' +
-    `Database detected: ${dbLabel}`
+    'Only read-only diff and controlled alignment operations are allowed against bhq_prod:\n' +
+    '  - prisma migrate diff (via npm run db:prod:align:diff)\n' +
+    '  - prisma db execute --file prisma_prod_align.sql (via npm run db:prod:align:apply)\n\n' +
+    'ALL other operations blocked.\n' +
+    'See: docs/runbooks/PROD_SCHEMA_ALIGNMENT_DB_PUSH_ONLY.md\n\n' +
+    `Database detected: ${dbLabel}\n` +
+    `Script: ${npmScript || 'none'}`
   );
 }
 
-// ABSOLUTE BLOCK 2: Block ALL prisma migrate commands during this phase
-if (prismaCommand === 'migrate') {
+// ABSOLUTE BLOCK 2: Block ALL prisma migrate commands EXCEPT migrate diff for prod alignment
+if (prismaCommand === 'migrate' && prismaSubcommand !== 'diff') {
   exitWithError(
     `BLOCKED: Prisma Migrate not allowed during db push workflow phase.\n\n` +
     'Migrations are paused. Use "prisma db push" exclusively.\n' +
@@ -76,11 +89,24 @@ if (prismaCommand === 'migrate') {
     'Use:\n' +
     '  npm run db:dev:push   (apply schema changes)\n' +
     '  npm run db:dev:reset  (reset database)\n\n' +
+    'Exception: "prisma migrate diff" is allowed for prod alignment only.\n' +
     'See: docs/runbooks/DEV_DB_WORKFLOW_DB_PUSH_ONLY.md'
   );
 }
 
-// ABSOLUTE BLOCK 3: Block prisma db pull
+// ABSOLUTE BLOCK 3: Block prisma db push against production
+if (fullCommand.startsWith('db push') && isProdDatabase) {
+  exitWithError(
+    `BLOCKED: "prisma db push" NEVER allowed against production.\n\n` +
+    'Production schema changes must use controlled SQL alignment:\n' +
+    '  1. npm run db:prod:align:diff (generate SQL)\n' +
+    '  2. Review prisma_prod_align.sql\n' +
+    '  3. npm run db:prod:align:apply (execute SQL)\n\n' +
+    'See: docs/runbooks/PROD_SCHEMA_ALIGNMENT_DB_PUSH_ONLY.md'
+  );
+}
+
+// ABSOLUTE BLOCK 4: Block prisma db pull
 if (fullCommand === 'db pull') {
   exitWithError(
     `BLOCKED: "prisma db pull" not allowed during db push workflow phase.\n\n` +
