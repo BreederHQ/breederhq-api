@@ -29,7 +29,14 @@ The project accumulated migration debt:
 
 Prototype mode uses a dedicated Neon database: `bhq_proto`
 
-Configuration: `.env.proto`
+Configuration: `.env.dev` (local override)
+
+To enable prototype mode:
+1. Set `DATABASE_URL` in `.env.dev` to your bhq_proto connection string
+2. Keep this change local - **never commit** the bhq_proto URL to `.env.dev`
+3. `.env.dev` remains gitignored
+
+Example (local only):
 ```env
 DATABASE_URL="postgresql://bhq_proto_user:PASSWORD@ep-proto.region.aws.neon.tech/bhq_proto?sslmode=require"
 ```
@@ -88,15 +95,15 @@ The `prisma-guard.js` script enforces **strict invariants** that cannot be bypas
 - No exceptions
 
 #### 2. Prototype Mode - Strict Constraints
-When using `.env.proto`:
+When using `db:proto:*` scripts:
 - **BLOCKED:** All `prisma migrate` commands (dev, deploy, reset, etc.)
 - **BLOCKED:** `prisma db pull` (would overwrite schema.prisma source of truth)
-- **REQUIRED:** DATABASE_URL must point to bhq_proto
+- **REQUIRED:** DATABASE_URL in `.env.dev` must point to bhq_proto
 - **REQUIRED:** Use only `npm run db:proto:push` and `npm run db:proto:reset`
 
 #### 3. Database-Script Matching
 - **BLOCKED:** Running `db:proto:*` scripts against bhq_dev or bhq_prod
-- **BLOCKED:** Running prototype scripts without .env.proto loaded
+- **BLOCKED:** Running prototype scripts without DATABASE_URL set to bhq_proto
 - Guard detects npm script name and validates DATABASE_URL matches
 
 #### 4. Dotenv Enforcement
@@ -107,9 +114,9 @@ When using `.env.proto`:
 ### How Protection Works
 
 ```javascript
-// Detects prototype mode from .env.proto
-const isPrototypeMode = envFileArg && envFileArg.includes('proto');
+// Detects prototype scripts from npm script name
 const isProtoScript = process.env.npm_lifecycle_event?.includes('proto');
+const isPrototypeMode = envFileArg && envFileArg.includes('proto');
 
 // ABSOLUTE BLOCK: Production
 if (isProdDatabase) {
@@ -161,19 +168,23 @@ Use:
 See: PROTOTYPE_MODE.md
 ```
 
-**Example 2: Wrong database loaded**
+**Example 2: Wrong database configured**
 ```bash
-$ npx dotenv -e .env.dev -- npm run db:proto:push
+$ npm run db:proto:push
+# (but .env.dev has DATABASE_URL pointing to bhq_dev)
 
 ❌ PRISMA GUARD: OPERATION BLOCKED
 
 BLOCKED: db:proto:* scripts require bhq_proto database.
 
 Script: db:proto:push
-DATABASE_URL contains: bhq_dev
+Current database: bhq_dev
 
 db:proto:push and db:proto:reset can ONLY be used with bhq_proto.
-Check that .env.proto is loaded correctly.
+To use prototype mode:
+  1. Set DATABASE_URL in .env.dev to your bhq_proto connection string
+  2. Keep this change local (do not commit)
+  3. Run npm run db:proto:push or db:proto:reset
 
 See: PROTOTYPE_MODE.md
 ```
@@ -181,7 +192,7 @@ See: PROTOTYPE_MODE.md
 **What to Do:**
 1. Read the error message carefully
 2. Check you're using the correct npm script (`db:proto:push` or `db:proto:reset`)
-3. Verify `.env.proto` exists and contains bhq_proto connection
+3. Verify DATABASE_URL in `.env.dev` points to bhq_proto (locally, not committed)
 4. Do NOT try to bypass the guard
 5. See `PROTOTYPE_MODE.md` at repo root for rules
 
@@ -400,7 +411,7 @@ npm run db:prod:deploy
 
 ### Step 6: Resume Normal Workflow
 
-- Remove or archive .env.proto
+- Restore DATABASE_URL in `.env.dev` to bhq_dev connection
 - Update README to indicate migrations are active
 - Future changes use `prisma migrate dev`
 
@@ -417,7 +428,7 @@ npm run db:prod:deploy
 ### DON'T
 
 ❌ Try to create migrations in prototype mode
-❌ Use .env.proto with production database
+❌ Commit bhq_proto DATABASE_URL to `.env.dev`
 ❌ Expect to preserve prototype database data
 ❌ Mix prototype mode with migration commands
 ❌ Edit existing migration files

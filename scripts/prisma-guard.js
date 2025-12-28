@@ -100,11 +100,13 @@ if (isPrototypeMode) {
 
   // Enforce bhq_proto database ONLY in prototype mode
   if (!isProtoDatabase) {
+    const dbType = DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' :
+                   DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown';
     exitWithError(
       `BLOCKED: Prototype mode requires bhq_proto database.\n\n` +
       'DATABASE_URL must contain "bhq_proto".\n' +
-      `Current DATABASE_URL contains: ${DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' : DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown database'}\n\n` +
-      'Check your .env.proto file.\n\n' +
+      `Current database: ${dbType}\n\n` +
+      'Check your .env.dev file and ensure DATABASE_URL points to bhq_proto.\n\n' +
       'See: PROTOTYPE_MODE.md'
     );
   }
@@ -114,16 +116,37 @@ if (isPrototypeMode) {
 // Detect if npm script name contains "proto"
 const npmScript = process.env.npm_lifecycle_event || '';
 const isProtoScript = npmScript.includes('proto');
+const isDevDatabase = DATABASE_URL.includes('bhq_dev');
 
-if (isProtoScript && !isProtoDatabase) {
-  exitWithError(
-    `BLOCKED: db:proto:* scripts require bhq_proto database.\n\n` +
-    `Script: ${npmScript}\n` +
-    `DATABASE_URL contains: ${DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' : DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown database'}\n\n` +
-    'db:proto:push and db:proto:reset can ONLY be used with bhq_proto.\n' +
-    'Check that .env.proto is loaded correctly.\n\n' +
-    'See: PROTOTYPE_MODE.md'
-  );
+if (isProtoScript) {
+  // Block if not bhq_proto
+  if (!isProtoDatabase) {
+    const dbType = isDevDatabase ? 'bhq_dev' :
+                   isProdDatabase ? 'bhq_prod' : 'unknown';
+    exitWithError(
+      `BLOCKED: db:proto:* scripts require bhq_proto database.\n\n` +
+      `Script: ${npmScript}\n` +
+      `Current database: ${dbType}\n\n` +
+      'db:proto:push and db:proto:reset can ONLY be used with bhq_proto.\n' +
+      'To use prototype mode:\n' +
+      '  1. Set DATABASE_URL in .env.dev to your bhq_proto connection string\n' +
+      '  2. Keep this change local (do not commit)\n' +
+      '  3. Run npm run db:proto:push or db:proto:reset\n\n' +
+      'See: PROTOTYPE_MODE.md'
+    );
+  }
+
+  // Explicitly block bhq_dev and bhq_prod
+  if (isDevDatabase || isProdDatabase) {
+    exitWithError(
+      `BLOCKED: db:proto:* scripts cannot target bhq_dev or bhq_prod.\n\n` +
+      `Script: ${npmScript}\n` +
+      `Attempted database: ${isDevDatabase ? 'bhq_dev' : 'bhq_prod'}\n\n` +
+      'Prototype scripts are designed for bhq_proto only.\n' +
+      'Update DATABASE_URL in .env.dev to point to bhq_proto.\n\n' +
+      'See: PROTOTYPE_MODE.md'
+    );
+  }
 }
 
 // Block dev commands against prod (legacy check, redundant with absolute block above)
@@ -139,7 +162,6 @@ if (isProdDatabase && DEV_ONLY_COMMANDS.some(cmd => fullCommand.startsWith(cmd))
 
 // Block prod deploy commands against dev when using prod env file
 // (This catches mistakes where someone runs prod script with wrong env)
-const isDevDatabase = DATABASE_URL.includes('bhq_dev');
 if (isDevDatabase && fullCommand.startsWith('migrate deploy')) {
   console.warn('\n⚠️  WARNING: Running "migrate deploy" against DEV database.');
   console.warn('This is unusual. Normally you would use "migrate dev" for development.\n');
