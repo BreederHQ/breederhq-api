@@ -29,12 +29,12 @@ The project accumulated migration debt:
 
 Prototype mode uses a dedicated Neon database: `bhq_proto`
 
-Configuration: `.env.dev` (local override)
+Configuration: `.env.dev.migrate` (local-only)
 
 To enable prototype mode:
-1. Set `DATABASE_URL` in `.env.dev` to your bhq_proto connection string
-2. Keep this change local - **never commit** the bhq_proto URL to `.env.dev`
-3. `.env.dev` remains gitignored
+1. Set `DATABASE_URL` in `.env.dev.migrate` to your bhq_proto connection string
+2. Keep this change local - **never commit** the bhq_proto URL to `.env.dev.migrate`
+3. `.env.dev.migrate` remains gitignored
 
 Example (local only):
 ```env
@@ -182,7 +182,7 @@ Current database: bhq_dev
 
 db:proto:push and db:proto:reset can ONLY be used with bhq_proto.
 To use prototype mode:
-  1. Set DATABASE_URL in .env.dev to your bhq_proto connection string
+  1. Set DATABASE_URL in .env.dev.migrate to your bhq_proto connection string
   2. Keep this change local (do not commit)
   3. Run npm run db:proto:push or db:proto:reset
 
@@ -379,7 +379,7 @@ Review schema.prisma for:
 ### Step 2: Generate Clean Baseline
 
 ```bash
-# Temporarily switch to dev environment
+# Use dev environment (ensure .env.dev.migrate points to bhq_dev)
 npx dotenv -e .env.dev.migrate -- \
   prisma migrate dev --create-only --name production_baseline
 ```
@@ -411,7 +411,7 @@ npm run db:prod:deploy
 
 ### Step 6: Resume Normal Workflow
 
-- Restore DATABASE_URL in `.env.dev` to bhq_dev connection
+- Restore DATABASE_URL in `.env.dev.migrate` to bhq_dev connection
 - Update README to indicate migrations are active
 - Future changes use `prisma migrate dev`
 
@@ -428,7 +428,7 @@ npm run db:prod:deploy
 ### DON'T
 
 ❌ Try to create migrations in prototype mode
-❌ Commit bhq_proto DATABASE_URL to `.env.dev`
+❌ Commit bhq_proto DATABASE_URL to `.env.dev.migrate`
 ❌ Expect to preserve prototype database data
 ❌ Mix prototype mode with migration commands
 ❌ Edit existing migration files
