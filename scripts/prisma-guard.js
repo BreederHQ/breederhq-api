@@ -73,8 +73,9 @@ if (isProdDatabase) {
   );
 }
 
-// PROTOTYPE MODE: Block migrate commands, allow only db push
+// PROTOTYPE MODE: Strict invariants enforcement
 if (isPrototypeMode) {
+  // Block ALL prisma migrate commands
   if (prismaCommand === 'migrate') {
     exitWithError(
       `BLOCKED: Prisma Migrate not allowed in prototype mode.\n\n` +
@@ -82,17 +83,47 @@ if (isPrototypeMode) {
       'Migrations are frozen. Schema changes go directly to schema.prisma.\n\n' +
       'Use:\n' +
       '  npm run db:proto:push   (apply schema changes)\n' +
-      '  npm run db:proto:reset  (reset database)'
+      '  npm run db:proto:reset  (reset database)\n\n' +
+      'See: PROTOTYPE_MODE.md'
     );
   }
 
-  if (!isProtoDatabase) {
+  // Block prisma db pull (can corrupt schema.prisma as source of truth)
+  if (fullCommand === 'db pull') {
     exitWithError(
-      `BLOCKED: Prototype mode env file (.env.proto) loaded but DATABASE_URL does not point to bhq_proto.\n\n` +
-      'Prototype mode requires DATABASE_URL to contain "bhq_proto".\n' +
-      'Check your .env.proto file.'
+      `BLOCKED: "prisma db pull" not allowed in prototype mode.\n\n` +
+      'Prototype mode: schema.prisma is the ONLY source of truth.\n' +
+      'Pulling from database would overwrite schema.prisma.\n\n' +
+      'See: PROTOTYPE_MODE.md'
     );
   }
+
+  // Enforce bhq_proto database ONLY in prototype mode
+  if (!isProtoDatabase) {
+    exitWithError(
+      `BLOCKED: Prototype mode requires bhq_proto database.\n\n` +
+      'DATABASE_URL must contain "bhq_proto".\n' +
+      `Current DATABASE_URL contains: ${DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' : DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown database'}\n\n` +
+      'Check your .env.proto file.\n\n' +
+      'See: PROTOTYPE_MODE.md'
+    );
+  }
+}
+
+// INVERSE CHECK: Block db:proto:* scripts against non-prototype databases
+// Detect if npm script name contains "proto"
+const npmScript = process.env.npm_lifecycle_event || '';
+const isProtoScript = npmScript.includes('proto');
+
+if (isProtoScript && !isProtoDatabase) {
+  exitWithError(
+    `BLOCKED: db:proto:* scripts require bhq_proto database.\n\n` +
+    `Script: ${npmScript}\n` +
+    `DATABASE_URL contains: ${DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' : DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown database'}\n\n` +
+    'db:proto:push and db:proto:reset can ONLY be used with bhq_proto.\n' +
+    'Check that .env.proto is loaded correctly.\n\n' +
+    'See: PROTOTYPE_MODE.md'
+  );
 }
 
 // Block dev commands against prod (legacy check, redundant with absolute block above)
