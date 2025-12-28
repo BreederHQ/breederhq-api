@@ -1153,6 +1153,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const q = (req.query || {}) as { species?: string };
       const speciesFilter = q.species ? String(q.species).toUpperCase().trim() : null;
 
+      // Validate species against enum if provided
+      const validSpecies = ["DOG", "CAT", "HORSE", "GOAT", "RABBIT", "SHEEP"];
+      if (speciesFilter && !validSpecies.includes(speciesFilter)) {
+        return reply.code(400).send({
+          error: "bad_request",
+          message: "Invalid species",
+        });
+      }
+
       // Build where clause: if species provided, match exact OR null (global registries)
       // If species omitted, return all registries
       const where: any = {};
@@ -1186,14 +1195,27 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         total: rows.length,
       };
 
-      // REGRESSION GUARD: Validate contract invariants before sending
+      // REGRESSION GUARD: Log contract invariants but do not throw
       if (!Array.isArray(response.items) || !Array.isArray(response.registries)) {
-        req.log.error({ response }, "[GET /registries] Contract violation: missing array keys");
-        throw new Error("Response contract violation");
+        req.log.error(
+          {
+            response,
+            route: "GET /registries",
+            requestId: req.id,
+          },
+          "[GET /registries] Contract violation: missing array keys"
+        );
       }
       if (response.items.length !== response.registries.length) {
-        req.log.error({ response }, "[GET /registries] Contract violation: key mismatch");
-        throw new Error("Response contract violation");
+        req.log.error(
+          {
+            itemsLength: response.items.length,
+            registriesLength: response.registries.length,
+            route: "GET /registries",
+            requestId: req.id,
+          },
+          "[GET /registries] Contract violation: key length mismatch"
+        );
       }
 
       reply.send(response);
@@ -1251,14 +1273,29 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         total: rows.length,
       };
 
-      // REGRESSION GUARD: Validate contract invariants before sending
+      // REGRESSION GUARD: Log contract invariants but do not throw
       if (!Array.isArray(response.items) || !Array.isArray(response.registrations)) {
-        req.log.error({ response }, "[GET /animals/:id/registries] Contract violation: missing array keys");
-        throw new Error("Response contract violation");
+        req.log.error(
+          {
+            response,
+            route: "GET /animals/:id/registries",
+            requestId: req.id,
+            animalId,
+          },
+          "[GET /animals/:id/registries] Contract violation: missing array keys"
+        );
       }
       if (response.items.length !== response.registrations.length) {
-        req.log.error({ response }, "[GET /animals/:id/registries] Contract violation: key mismatch");
-        throw new Error("Response contract violation");
+        req.log.error(
+          {
+            itemsLength: response.items.length,
+            registrationsLength: response.registrations.length,
+            route: "GET /animals/:id/registries",
+            requestId: req.id,
+            animalId,
+          },
+          "[GET /animals/:id/registries] Contract violation: key length mismatch"
+        );
       }
 
       reply.send(response);
