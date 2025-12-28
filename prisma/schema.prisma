@@ -530,6 +530,8 @@ model Tenant {
   IdempotencyKey         IdempotencyKey[]
   Campaign               Campaign[]
   CampaignAttribution    CampaignAttribution[]
+  EmailSendLog           EmailSendLog[]
+  MessageThread          MessageThread[]
   Task                   Task[]
   HealthEvent            HealthEvent[]
   Document               Document[]
@@ -667,6 +669,8 @@ model Party {
   expenseVendors       Expense[]             @relation("ExpenseVendor")
   commPreferences      PartyCommPreference[]
   commPreferenceEvents PartyCommPreferenceEvent[]
+  messageParticipants  MessageParticipant[]  @relation("MessageParticipantParty")
+  sentMessages         Message[]             @relation("MessageSenderParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -2429,6 +2433,88 @@ model CampaignAttribution {
   @@index([tenantId])
   @@index([campaignId])
   @@index([offspringId])
+}
+
+enum EmailSendStatus {
+  queued
+  sent
+  failed
+}
+
+model EmailSendLog {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  to      String
+  from    String
+  subject String
+
+  templateKey String?
+  provider    String         @default("resend")
+  providerMessageId String?
+
+  status EmailSendStatus @default(queued)
+  error  Json?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([providerMessageId])
+  @@index([createdAt])
+}
+
+model MessageThread {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  subject String?
+  archived Boolean @default(false)
+
+  participants MessageParticipant[]
+  messages Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, updatedAt])
+}
+
+model MessageParticipant {
+  id       Int    @id @default(autoincrement())
+  threadId Int
+  thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  partyId Int
+  party   Party @relation("MessageParticipantParty", fields: [partyId], references: [id], onDelete: Cascade)
+
+  unreadCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([threadId, partyId])
+  @@index([threadId])
+  @@index([partyId])
+}
+
+model Message {
+  id       Int    @id @default(autoincrement())
+  threadId Int
+  thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  senderPartyId Int
+  senderParty   Party @relation("MessageSenderParty", fields: [senderPartyId], references: [id], onDelete: Cascade)
+
+  body String @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([senderPartyId])
 }
 
 // ---------- Tasks ----------
