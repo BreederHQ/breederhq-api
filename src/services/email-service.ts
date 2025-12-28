@@ -17,43 +17,69 @@ export interface SendEmailParams {
   text?: string;
   templateKey?: string;
   metadata?: Record<string, any>;
+  relatedInvoiceId?: number;
+  category: "transactional" | "marketing";
 }
 
 export interface SendEmailResult {
   ok: boolean;
   providerMessageId?: string;
   error?: string;
+  skipped?: boolean;
 }
 
 /**
  * Send email via Resend and log to EmailSendLog.
- * Enforces PartyCommPreference (EMAIL channel) before sending.
+ * - Enforces PartyCommPreference (EMAIL channel) for marketing emails only.
+ * - Transactional emails (invoices, receipts, etc.) bypass preferences.
+ * - Invoice emails are idempotent via unique constraint on (tenantId, templateKey, relatedInvoiceId).
  */
 export async function sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-  const { tenantId, to, subject, html, text, templateKey, metadata } = params;
+  const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category } = params;
 
-  // Validate recipient party comm preferences
-  const party = await prisma.party.findFirst({
-    where: { tenantId, email: { equals: to, mode: "insensitive" } },
-  });
-
-  if (party) {
-    const allowed = await canContactViaChannel(party.id, "EMAIL");
-    if (!allowed) {
-      const logId = await prisma.emailSendLog.create({
-        data: {
+  // Idempotency check for invoice emails
+  if (templateKey === "invoice_issued" && relatedInvoiceId) {
+    const existing = await prisma.emailSendLog.findUnique({
+      where: {
+        tenantId_templateKey_relatedInvoiceId: {
           tenantId,
-          to,
-          from: FROM,
-          subject,
           templateKey,
-          provider: "resend",
-          status: "failed",
-          error: { reason: "comm_preference_blocked", channel: "EMAIL" },
-          metadata,
+          relatedInvoiceId,
         },
-      });
-      return { ok: false, error: "recipient_has_blocked_email" };
+      },
+      select: { id: true, status: true },
+    });
+
+    if (existing && existing.status === "sent") {
+      return { ok: true, skipped: true, error: "invoice_email_already_sent" };
+    }
+  }
+
+  // Validate recipient party comm preferences (marketing only)
+  if (category === "marketing") {
+    const party = await prisma.party.findFirst({
+      where: { tenantId, email: { equals: to, mode: "insensitive" } },
+    });
+
+    if (party) {
+      const allowed = await canContactViaChannel(party.id, "EMAIL");
+      if (!allowed) {
+        await prisma.emailSendLog.create({
+          data: {
+            tenantId,
+            to,
+            from: FROM,
+            subject,
+            templateKey,
+            provider: "resend",
+            relatedInvoiceId,
+            status: "failed",
+            error: { reason: "comm_preference_blocked", channel: "EMAIL" },
+            metadata,
+          },
+        });
+        return { ok: false, error: "recipient_has_blocked_email" };
+      }
     }
   }
 
@@ -76,6 +102,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
           subject,
           templateKey,
           provider: "resend",
+          relatedInvoiceId,
           status: "failed",
           error: { resendError: error },
           metadata,
@@ -94,6 +121,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         templateKey,
         provider: "resend",
         providerMessageId: messageId,
+        relatedInvoiceId,
         status: "sent",
         metadata,
       },
@@ -109,6 +137,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         subject,
         templateKey,
         provider: "resend",
+        relatedInvoiceId,
         status: "failed",
         error: { exception: err.message },
         metadata,
