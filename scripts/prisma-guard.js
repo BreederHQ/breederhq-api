@@ -24,9 +24,9 @@ const prismaSubcommand = commandArgs[2];
 // Combine for easier checking
 const fullCommand = `${prismaCommand} ${prismaSubcommand || ''}`.trim();
 
-// Detect prototype mode from env file in command line
-const envFileArg = process.argv.find(arg => arg.includes('.env'));
-const isPrototypeMode = envFileArg && envFileArg.includes('proto');
+// Detect prototype mode from npm script name
+const npmScript = process.env.npm_lifecycle_event || '';
+const isPrototypeMode = npmScript.includes('proto');
 
 // List of dangerous dev commands that should never run against prod
 const DEV_ONLY_COMMANDS = [
@@ -106,19 +106,19 @@ if (isPrototypeMode) {
       `BLOCKED: Prototype mode requires bhq_proto database.\n\n` +
       'DATABASE_URL must contain "bhq_proto".\n' +
       `Current database: ${dbType}\n\n` +
-      'Check your .env.dev file and ensure DATABASE_URL points to bhq_proto.\n\n' +
+      'To use prototype mode:\n' +
+      '  1. Set DATABASE_URL in .env.dev.migrate to your bhq_proto connection string\n' +
+      '  2. Keep this change local (do not commit)\n' +
+      '  3. Run npm run db:proto:push or db:proto:reset\n\n' +
       'See: PROTOTYPE_MODE.md'
     );
   }
 }
 
 // INVERSE CHECK: Block db:proto:* scripts against non-prototype databases
-// Detect if npm script name contains "proto"
-const npmScript = process.env.npm_lifecycle_event || '';
-const isProtoScript = npmScript.includes('proto');
 const isDevDatabase = DATABASE_URL.includes('bhq_dev');
 
-if (isProtoScript) {
+if (isPrototypeMode) {
   // Block if not bhq_proto
   if (!isProtoDatabase) {
     const dbType = isDevDatabase ? 'bhq_dev' :
@@ -129,7 +129,7 @@ if (isProtoScript) {
       `Current database: ${dbType}\n\n` +
       'db:proto:push and db:proto:reset can ONLY be used with bhq_proto.\n' +
       'To use prototype mode:\n' +
-      '  1. Set DATABASE_URL in .env.dev to your bhq_proto connection string\n' +
+      '  1. Set DATABASE_URL in .env.dev.migrate to your bhq_proto connection string\n' +
       '  2. Keep this change local (do not commit)\n' +
       '  3. Run npm run db:proto:push or db:proto:reset\n\n' +
       'See: PROTOTYPE_MODE.md'
@@ -143,7 +143,7 @@ if (isProtoScript) {
       `Script: ${npmScript}\n` +
       `Attempted database: ${isDevDatabase ? 'bhq_dev' : 'bhq_prod'}\n\n` +
       'Prototype scripts are designed for bhq_proto only.\n' +
-      'Update DATABASE_URL in .env.dev to point to bhq_proto.\n\n' +
+      'Update DATABASE_URL in .env.dev.migrate to point to bhq_proto.\n\n' +
       'See: PROTOTYPE_MODE.md'
     );
   }

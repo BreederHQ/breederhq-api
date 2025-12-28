@@ -19,9 +19,9 @@ You are Claude Code operating in the breederhq-api repository.
 - **Source of truth:** `prisma/schema.prisma` only
 
 ## Database Targets
-- **Prototype database:** bhq_proto (disposable, via .env.dev with local DATABASE_URL override)
+- **Prototype database:** bhq_proto (disposable, via .env.dev.migrate with local DATABASE_URL override)
 - **Production:** bhq_prod - COMPLETELY BLOCKED by guards
-- **Dev database:** bhq_dev - NOT USED during prototype mode (but .env.dev is the env file)
+- **Dev database:** bhq_dev - NOT USED during prototype mode (but .env.dev.migrate is the env file)
 
 ## Safety Constraints
 - Do not print, log, or commit database credentials or full connection strings

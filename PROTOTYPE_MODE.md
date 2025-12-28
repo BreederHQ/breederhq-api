@@ -3,15 +3,15 @@
 **Database:** bhq_proto (disposable)
 **Branch:** dev only
 **Source of Truth:** prisma/schema.prisma
-**Environment File:** .env.dev (with local DATABASE_URL override)
+**Environment File:** .env.dev.migrate (local-only)
 
 ## Non-Negotiable Rules
 
 1. **Setup:**
-   - Prototype scripts use `.env.dev`
-   - To enable prototype mode locally: set `DATABASE_URL` in `.env.dev` to your bhq_proto connection string
+   - Prototype scripts use `.env.dev.migrate`
+   - To enable prototype mode locally: set `DATABASE_URL` in `.env.dev.migrate` to your bhq_proto connection string
    - **Never commit** this DATABASE_URL change - keep it local only
-   - `.env.dev` remains gitignored / local-only
+   - `.env.dev.migrate` remains gitignored / local-only
 
 2. **Use only these commands:**
    - `npm run db:proto:push` - apply schema changes
