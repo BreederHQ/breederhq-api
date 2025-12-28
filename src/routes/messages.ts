@@ -67,14 +67,27 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       if (tenantParty && senderPartyId !== tenantParty.id) {
-        evaluateAndSendAutoReply({
-          prisma,
-          tenantId,
-          threadId: thread.id,
-          inboundSenderPartyId: senderPartyId,
-        }).catch((err) => {
-          console.error("Auto-reply evaluation failed:", err);
-        });
+        try {
+          await evaluateAndSendAutoReply({
+            prisma,
+            tenantId,
+            threadId: thread.id,
+            inboundSenderPartyId: senderPartyId,
+          });
+        } catch (autoReplyErr: any) {
+          await prisma.autoReplyLog.create({
+            data: {
+              tenantId,
+              channel: "dm",
+              partyId: senderPartyId,
+              threadId: thread.id,
+              status: "failed",
+              reason: `Auto-reply evaluation error: ${autoReplyErr.message || "unknown"}`,
+            },
+          }).catch((logErr) => {
+            console.error("Failed to log auto-reply error:", logErr);
+          });
+        }
       }
 
       return reply.send({ ok: true, thread });
@@ -286,14 +299,27 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       if (tenantParty && user.partyId !== tenantParty.id) {
-        evaluateAndSendAutoReply({
-          prisma,
-          tenantId,
-          threadId,
-          inboundSenderPartyId: user.partyId,
-        }).catch((err) => {
-          console.error("Auto-reply evaluation failed:", err);
-        });
+        try {
+          await evaluateAndSendAutoReply({
+            prisma,
+            tenantId,
+            threadId,
+            inboundSenderPartyId: user.partyId,
+          });
+        } catch (autoReplyErr: any) {
+          await prisma.autoReplyLog.create({
+            data: {
+              tenantId,
+              channel: "dm",
+              partyId: user.partyId,
+              threadId,
+              status: "failed",
+              reason: `Auto-reply evaluation error: ${autoReplyErr.message || "unknown"}`,
+            },
+          }).catch((logErr) => {
+            console.error("Failed to log auto-reply error:", logErr);
+          });
+        }
       }
 
       return reply.send({ ok: true, message });

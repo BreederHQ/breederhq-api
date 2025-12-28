@@ -9,7 +9,6 @@ interface RenderContext {
   animal?: Record<string, any>;
   litter?: Record<string, any>;
   invoice?: Record<string, any>;
-  breeder?: Record<string, any>;
   [key: string]: any;
 }
 
@@ -19,7 +18,6 @@ const ALLOWED_NAMESPACES = [
   "animal",
   "litter",
   "invoice",
-  "breeder",
 ];
 
 /**
@@ -104,6 +102,7 @@ export async function validateTemplate(params: {
 
 /**
  * Render a template by ID with provided context
+ * Validates variables at render time (defense in depth)
  */
 export async function renderTemplate(params: {
   prisma: PrismaClient;
@@ -130,6 +129,19 @@ export async function renderTemplate(params: {
   }
 
   const content = template.content[0];
+
+  const allText = [
+    content.subject || "",
+    content.bodyText,
+    content.bodyHtml || "",
+  ].join(" ");
+
+  const variables = extractVariables(allText);
+  const validation = validateVariables(variables);
+
+  if (!validation.valid) {
+    throw new Error(`Template contains invalid variables: ${validation.errors.join(", ")}`);
+  }
 
   return {
     subject: content.subject ? renderMustache(content.subject, context) : undefined,

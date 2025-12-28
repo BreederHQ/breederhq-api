@@ -62,8 +62,6 @@ export async function sendTemplatedEmail(
 
   const rendered = await renderTemplate({ prisma, templateId, context });
 
-  const categoryEnum = category === "transactional" ? "TRANSACTIONAL" : "MARKETING";
-
   return sendEmail({
     tenantId,
     to,
@@ -85,8 +83,6 @@ export async function sendTemplatedEmail(
  */
 export async function sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
   const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category } = params;
-
-  const categoryEnum = category === "transactional" ? "TRANSACTIONAL" : "MARKETING";
 
   // Idempotency check for invoice emails
   if (templateKey === "invoice_issued" && relatedInvoiceId) {
@@ -170,7 +166,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         from: FROM,
         subject,
         templateKey,
-        category: categoryEnum,
+        category,
         provider: "resend",
         providerMessageId: messageId,
         relatedInvoiceId,
@@ -188,7 +184,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         from: FROM,
         subject,
         templateKey,
-        category: categoryEnum,
+        category,
         provider: "resend",
         relatedInvoiceId,
         status: "failed",
