@@ -18,7 +18,7 @@ function parseIntOrNull(v: unknown): number | null {
 
 function parsePaging(q: any) {
   const page = Math.max(1, Number(q?.page ?? 1) || 1);
-  const limit = Math.min(200, Math.max(1, Number(q?.limit ?? 50) || 50);
+  const limit = Math.min(200, Math.max(1, Number(q?.limit ?? 50) || 50));
   const skip = (page - 1) * limit;
   return { page, limit, skip };
 }
