@@ -1146,6 +1146,45 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
+  /* REGISTRY MASTER DATA */
+  // GET /registries - List all registries, optionally filtered by species
+  app.get("/registries", async (req, reply) => {
+    try {
+      const q = (req.query || {}) as { species?: string };
+      const speciesFilter = q.species ? String(q.species).toUpperCase() : null;
+
+      // Build where clause: if species provided, match exact OR null (global registries)
+      const where: any = {};
+      if (speciesFilter) {
+        where.OR = [
+          { species: speciesFilter as Species },
+          { species: null },
+        ];
+      }
+
+      const registries = await prisma.registry.findMany({
+        where,
+        orderBy: [{ species: "asc" }, { name: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          species: true,
+          country: true,
+          url: true,
+        },
+      });
+
+      reply.send({ registries, total: registries.length });
+    } catch (err: any) {
+      req.log.error({ err, query: req.query }, "[GET /registries] Failed to fetch registries");
+      reply.code(500).send({
+        error: "failed_to_fetch_registries",
+        message: err?.message || "An error occurred while fetching registries"
+      });
+    }
+  });
+
   /* REGISTRY IDENTIFIERS */
   // GET /animals/:id/registries
   app.get("/animals/:id/registries", async (req, reply) => {
@@ -1171,7 +1210,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
-    reply.send({ items: rows, total: rows.length });
+    reply.send({ registrations: rows, total: rows.length });
   });
 
   // POST /animals/:id/registries
