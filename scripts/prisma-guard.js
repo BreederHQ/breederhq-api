@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Prisma Safety Guard
+ * Prisma Safety Guard - Dev DB Push Workflow
  *
- * Prevents accidental database operations against production.
- * Enforces prototype mode constraints when using .env.proto.
+ * Enforces safe database operations during db push workflow phase.
+ * Migrations are paused - all schema changes use db push only.
  *
  * Usage: node scripts/prisma-guard.js -- prisma <command> [args...]
  */
@@ -24,24 +24,9 @@ const prismaSubcommand = commandArgs[2];
 // Combine for easier checking
 const fullCommand = `${prismaCommand} ${prismaSubcommand || ''}`.trim();
 
-// Detect prototype mode from npm script name
+// Detect script mode from npm script name
 const npmScript = process.env.npm_lifecycle_event || '';
-const isPrototypeMode = npmScript.includes('proto');
-
-// List of dangerous dev commands that should never run against prod
-const DEV_ONLY_COMMANDS = [
-  'migrate dev',
-  'db push',
-  'migrate reset',
-  'db seed'
-];
-
-// Commands allowed against prod
-const PROD_ALLOWED_COMMANDS = [
-  'migrate deploy',
-  'migrate resolve',
-  'migrate status'
-];
+const isDevScript = npmScript.startsWith('db:dev:');
 
 function exitWithError(message) {
   console.error('\n❌ PRISMA GUARD: OPERATION BLOCKED\n');
@@ -50,128 +35,78 @@ function exitWithError(message) {
   process.exit(1);
 }
 
-// Check if DATABASE_URL is set
+function sanitizeDbLabel(url) {
+  if (!url) return 'unknown';
+  if (url.includes('bhq_prod')) return 'bhq_prod';
+  if (url.includes('bhq_dev')) return 'bhq_dev';
+  if (url.includes('bhq_proto')) return 'bhq_proto';
+  return 'unknown';
+}
+
+// REQUIRED: DATABASE_URL must be set
 if (!DATABASE_URL) {
   exitWithError(
     'DATABASE_URL is not set.\n' +
     'Ensure you are using dotenv to load the correct environment file:\n' +
-    '  npx dotenv -e .env.dev.migrate -- <command>'
+    '  npx dotenv -e .env.dev.migrate --override -- <command>'
   );
 }
 
-// Check if DATABASE_URL contains prod database name
+// Detect database type from URL
 const isProdDatabase = DATABASE_URL.includes('bhq_prod');
-const isProtoDatabase = DATABASE_URL.includes('bhq_proto');
+const isDevDatabase = DATABASE_URL.includes('bhq_dev');
+const dbLabel = sanitizeDbLabel(DATABASE_URL);
 
-// ABSOLUTE BLOCK: Never allow ANY operation against production
+// ABSOLUTE BLOCK 1: Never allow ANY operation against production
 if (isProdDatabase) {
   exitWithError(
     `BLOCKED: Operation "${fullCommand}" attempted against PRODUCTION database.\n\n` +
-    'NO operations are allowed against bhq_prod from this guard.\n' +
+    'NO operations are allowed against bhq_prod.\n' +
     'Production must only be accessed through controlled deployment pipelines.\n\n' +
-    'Current DATABASE_URL contains: bhq_prod'
+    `Database detected: ${dbLabel}`
   );
 }
 
-// PROTOTYPE MODE: Strict invariants enforcement
-if (isPrototypeMode) {
-  // Block ALL prisma migrate commands
-  if (prismaCommand === 'migrate') {
-    exitWithError(
-      `BLOCKED: Prisma Migrate not allowed in prototype mode.\n\n` +
-      'Prototype mode uses "prisma db push" exclusively.\n' +
-      'Migrations are frozen. Schema changes go directly to schema.prisma.\n\n' +
-      'Use:\n' +
-      '  npm run db:proto:push   (apply schema changes)\n' +
-      '  npm run db:proto:reset  (reset database)\n\n' +
-      'See: PROTOTYPE_MODE.md'
-    );
-  }
-
-  // Block prisma db pull (can corrupt schema.prisma as source of truth)
-  if (fullCommand === 'db pull') {
-    exitWithError(
-      `BLOCKED: "prisma db pull" not allowed in prototype mode.\n\n` +
-      'Prototype mode: schema.prisma is the ONLY source of truth.\n' +
-      'Pulling from database would overwrite schema.prisma.\n\n' +
-      'See: PROTOTYPE_MODE.md'
-    );
-  }
-
-  // Enforce bhq_proto database ONLY in prototype mode
-  if (!isProtoDatabase) {
-    const dbType = DATABASE_URL.includes('bhq_dev') ? 'bhq_dev' :
-                   DATABASE_URL.includes('bhq_prod') ? 'bhq_prod' : 'unknown';
-    exitWithError(
-      `BLOCKED: Prototype mode requires bhq_proto database.\n\n` +
-      'DATABASE_URL must contain "bhq_proto".\n' +
-      `Current database: ${dbType}\n\n` +
-      'To use prototype mode:\n' +
-      '  1. Set DATABASE_URL in .env.dev.migrate to your bhq_proto connection string\n' +
-      '  2. Keep this change local (do not commit)\n' +
-      '  3. Run npm run db:proto:push or db:proto:reset\n\n' +
-      'See: PROTOTYPE_MODE.md'
-    );
-  }
-}
-
-// INVERSE CHECK: Block db:proto:* scripts against non-prototype databases
-const isDevDatabase = DATABASE_URL.includes('bhq_dev');
-
-if (isPrototypeMode) {
-  // Block if not bhq_proto
-  if (!isProtoDatabase) {
-    const dbType = isDevDatabase ? 'bhq_dev' :
-                   isProdDatabase ? 'bhq_prod' : 'unknown';
-    exitWithError(
-      `BLOCKED: db:proto:* scripts require bhq_proto database.\n\n` +
-      `Script: ${npmScript}\n` +
-      `Current database: ${dbType}\n\n` +
-      'db:proto:push and db:proto:reset can ONLY be used with bhq_proto.\n' +
-      'To use prototype mode:\n' +
-      '  1. Set DATABASE_URL in .env.dev.migrate to your bhq_proto connection string\n' +
-      '  2. Keep this change local (do not commit)\n' +
-      '  3. Run npm run db:proto:push or db:proto:reset\n\n' +
-      'See: PROTOTYPE_MODE.md'
-    );
-  }
-
-  // Explicitly block bhq_dev and bhq_prod
-  if (isDevDatabase || isProdDatabase) {
-    exitWithError(
-      `BLOCKED: db:proto:* scripts cannot target bhq_dev or bhq_prod.\n\n` +
-      `Script: ${npmScript}\n` +
-      `Attempted database: ${isDevDatabase ? 'bhq_dev' : 'bhq_prod'}\n\n` +
-      'Prototype scripts are designed for bhq_proto only.\n' +
-      'Update DATABASE_URL in .env.dev.migrate to point to bhq_proto.\n\n' +
-      'See: PROTOTYPE_MODE.md'
-    );
-  }
-}
-
-// Block dev commands against prod (legacy check, redundant with absolute block above)
-if (isProdDatabase && DEV_ONLY_COMMANDS.some(cmd => fullCommand.startsWith(cmd))) {
+// ABSOLUTE BLOCK 2: Block ALL prisma migrate commands during this phase
+if (prismaCommand === 'migrate') {
   exitWithError(
-    `Attempted to run "${fullCommand}" against PRODUCTION database.\n\n` +
-    'Dev commands like "migrate dev" and "db push" are not allowed against bhq_prod.\n' +
-    'Production databases should only use "migrate deploy".\n\n' +
-    'If you intended to work on dev, use:\n' +
-    '  npx dotenv -e .env.dev.migrate -- npm run <script>'
+    `BLOCKED: Prisma Migrate not allowed during db push workflow phase.\n\n` +
+    'Migrations are paused. Use "prisma db push" exclusively.\n' +
+    'Schema changes go directly to schema.prisma.\n\n' +
+    'Use:\n' +
+    '  npm run db:dev:push   (apply schema changes)\n' +
+    '  npm run db:dev:reset  (reset database)\n\n' +
+    'See: docs/runbooks/DEV_DB_WORKFLOW_DB_PUSH_ONLY.md'
   );
 }
 
-// Block prod deploy commands against dev when using prod env file
-// (This catches mistakes where someone runs prod script with wrong env)
-if (isDevDatabase && fullCommand.startsWith('migrate deploy')) {
-  console.warn('\n⚠️  WARNING: Running "migrate deploy" against DEV database.');
-  console.warn('This is unusual. Normally you would use "migrate dev" for development.\n');
-  // Allow but warn - sometimes this is intentional for testing
+// ABSOLUTE BLOCK 3: Block prisma db pull
+if (fullCommand === 'db pull') {
+  exitWithError(
+    `BLOCKED: "prisma db pull" not allowed during db push workflow phase.\n\n` +
+    'Schema.prisma is the ONLY source of truth.\n' +
+    'Pulling from database would overwrite schema.prisma.\n\n' +
+    'See: docs/runbooks/DEV_DB_WORKFLOW_DB_PUSH_ONLY.md'
+  );
+}
+
+// ENFORCE: db:dev:* scripts must target bhq_dev
+if (isDevScript) {
+  if (!isDevDatabase) {
+    exitWithError(
+      `BLOCKED: db:dev:* scripts require bhq_dev database.\n\n` +
+      `Script: ${npmScript}\n` +
+      `Current database: ${dbLabel}\n\n` +
+      'db:dev:push and db:dev:reset can ONLY be used with bhq_dev.\n' +
+      'Update DATABASE_URL in .env.dev.migrate to point to bhq_dev.\n\n' +
+      'See: docs/runbooks/DEV_DB_WORKFLOW_DB_PUSH_ONLY.md'
+    );
+  }
 }
 
 // All checks passed
 console.log('✓ Prisma guard: Safety checks passed');
-console.log(`  Mode: ${isPrototypeMode ? 'PROTOTYPE' : 'normal'}`);
-console.log(`  Database: ${isProdDatabase ? 'bhq_prod' : isDevDatabase ? 'bhq_dev' : isProtoDatabase ? 'bhq_proto' : 'other'}`);
+console.log(`  Database: ${dbLabel}`);
 console.log(`  Command: ${fullCommand}\n`);
 
 // Execute the actual prisma command
