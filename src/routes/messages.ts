@@ -1,6 +1,7 @@
 // src/routes/messages.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
@@ -59,6 +60,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         },
       });
+
+      // Check if sender is non-tenant party, evaluate auto-reply
+      const tenantParty = await prisma.party.findFirst({
+        where: { tenantId, type: "ORGANIZATION" },
+      });
+
+      if (tenantParty && senderPartyId !== tenantParty.id) {
+        evaluateAndSendAutoReply({
+          prisma,
+          tenantId,
+          threadId: thread.id,
+          inboundSenderPartyId: senderPartyId,
+        }).catch((err) => {
+          console.error("Auto-reply evaluation failed:", err);
+        });
+      }
 
       return reply.send({ ok: true, thread });
     } catch (err: any) {
@@ -262,6 +279,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { threadId, partyId: user.partyId },
         data: { lastReadAt: now },
       });
+
+      // Check if sender is non-tenant party, evaluate auto-reply
+      const tenantParty = await prisma.party.findFirst({
+        where: { tenantId, type: "ORGANIZATION" },
+      });
+
+      if (tenantParty && user.partyId !== tenantParty.id) {
+        evaluateAndSendAutoReply({
+          prisma,
+          tenantId,
+          threadId,
+          inboundSenderPartyId: user.partyId,
+        }).catch((err) => {
+          console.error("Auto-reply evaluation failed:", err);
+        });
+      }
 
       return reply.send({ ok: true, message });
     } catch (err: any) {
