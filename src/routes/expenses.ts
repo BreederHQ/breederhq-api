@@ -46,6 +46,7 @@ function expenseDTO(e: any) {
     offspringGroupId: e.offspringGroupId,
     animalId: e.animalId,
     notes: e.notes,
+    data: e.data,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -116,33 +117,62 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const where: any = { tenantId };
 
+      // Text search on vendor name and description
+      if (query.q) {
+        where.OR = [
+          { description: { contains: String(query.q), mode: "insensitive" } },
+          { notes: { contains: String(query.q), mode: "insensitive" } },
+        ];
+      }
+
       if (query.category) where.category = query.category;
       if (query.vendorPartyId) where.vendorPartyId = parseIntOrNull(query.vendorPartyId);
       if (query.breedingPlanId) where.breedingPlanId = parseIntOrNull(query.breedingPlanId);
       if (query.offspringGroupId) where.offspringGroupId = parseIntOrNull(query.offspringGroupId);
       if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
 
-      if (query.dateFrom || query.dateTo) {
-        where.incurredAt = {};
-        if (query.dateFrom) where.incurredAt.gte = new Date(query.dateFrom);
-        if (query.dateTo) where.incurredAt.lte = new Date(query.dateTo);
+      // Anchored/unanchored filters
+      if (query.anchoredOnly === "true" || query.anchoredOnly === "1") {
+        where.OR = [
+          { breedingPlanId: { not: null } },
+          { offspringGroupId: { not: null } },
+          { animalId: { not: null } },
+        ];
       }
+      if (query.unanchoredOnly === "true" || query.unanchoredOnly === "1") {
+        where.breedingPlanId = null;
+        where.offspringGroupId = null;
+        where.animalId = null;
+      }
+
+      // Incurred date range
+      if (query.incurredFrom || query.incurredTo) {
+        where.incurredAt = {};
+        if (query.incurredFrom) where.incurredAt.gte = new Date(query.incurredFrom);
+        if (query.incurredTo) where.incurredAt.lte = new Date(query.incurredTo);
+      }
+
+      // Sorting
+      const allowedSortFields = ["incurredAt", "createdAt", "amountCents", "category"];
+      const sortBy = allowedSortFields.includes(query.sortBy) ? query.sortBy : "incurredAt";
+      const sortDir = query.sortDir === "asc" ? "asc" : "desc";
 
       const [data, total] = await Promise.all([
         prisma.expense.findMany({
           where,
           skip,
           take: limit,
-          orderBy: { incurredAt: "desc" },
+          orderBy: { [sortBy]: sortDir },
         }),
         prisma.expense.count({ where }),
       ]);
 
       return reply.code(200).send({
-        data: data.map(expenseDTO),
-        meta: { page, limit, total },
+        items: data.map(expenseDTO),
+        total,
       });
     } catch (err) {
+      console.error("[expenses GET] Error:", err);
       const { status, payload} = errorReply(err);
       return reply.code(status).send(payload);
     }

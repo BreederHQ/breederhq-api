@@ -130,26 +130,34 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (query.invoiceId) where.invoiceId = parseIntOrNull(query.invoiceId);
       if (query.status) where.status = query.status;
+      if (query.methodType) where.methodType = query.methodType;
+      if (query.processor) where.processor = query.processor;
 
-      if (query.dateFrom || query.dateTo) {
+      // Received date range
+      if (query.receivedFrom || query.receivedTo) {
         where.receivedAt = {};
-        if (query.dateFrom) where.receivedAt.gte = new Date(query.dateFrom);
-        if (query.dateTo) where.receivedAt.lte = new Date(query.dateTo);
+        if (query.receivedFrom) where.receivedAt.gte = new Date(query.receivedFrom);
+        if (query.receivedTo) where.receivedAt.lte = new Date(query.receivedTo);
       }
+
+      // Sorting
+      const allowedSortFields = ["receivedAt", "createdAt", "amountCents"];
+      const sortBy = allowedSortFields.includes(query.sortBy) ? query.sortBy : "receivedAt";
+      const sortDir = query.sortDir === "asc" ? "asc" : "desc";
 
       const [data, total] = await Promise.all([
         prisma.payment.findMany({
           where,
           skip,
           take: limit,
-          orderBy: { receivedAt: "desc" },
+          orderBy: { [sortBy]: sortDir },
         }),
         prisma.payment.count({ where }),
       ]);
 
       return reply.code(200).send({
-        data: data.map(paymentDTO),
-        meta: { page, limit, total },
+        items: data.map(paymentDTO),
+        total,
       });
     } catch (err) {
       const { status, payload } = errorReply(err);

@@ -71,6 +71,73 @@ function invoiceDTO(inv: any) {
 /* ───────────────────────── routes ───────────────────────── */
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // GET /finance/summary - Finance home summary tiles
+  app.get("/finance/summary", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      // Get current month range
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+      // Outstanding total (all non-void invoices with balance > 0)
+      const outstandingResult = await prisma.invoice.aggregate({
+        where: {
+          tenantId,
+          status: { not: "void" },
+          balanceCents: { gt: 0 },
+        },
+        _sum: { balanceCents: true },
+      });
+
+      // Invoiced MTD (total of invoices issued this month, not void)
+      const invoicedMtdResult = await prisma.invoice.aggregate({
+        where: {
+          tenantId,
+          status: { not: "void" },
+          issuedAt: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amountCents: true },
+      });
+
+      // Collected MTD (payments received this month)
+      const collectedMtdResult = await prisma.payment.aggregate({
+        where: {
+          tenantId,
+          receivedAt: { gte: startOfMonth, lte: endOfMonth },
+          status: "succeeded",
+        },
+        _sum: { amountCents: true },
+      });
+
+      // Expenses MTD (expenses incurred this month)
+      const expensesMtdResult = await prisma.expense.aggregate({
+        where: {
+          tenantId,
+          incurredAt: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amountCents: true },
+      });
+
+      // Deposits outstanding (will be refined in Track B with explicit deposit classification)
+      // For now, no explicit deposit category exists, so we return 0
+      const depositsOutstandingCents = 0;
+
+      return reply.code(200).send({
+        outstandingTotalCents: outstandingResult._sum.balanceCents || 0,
+        invoicedMtdCents: invoicedMtdResult._sum.amountCents || 0,
+        collectedMtdCents: collectedMtdResult._sum.amountCents || 0,
+        expensesMtdCents: expensesMtdResult._sum.amountCents || 0,
+        depositsOutstandingCents,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
   // POST /invoices - Create invoice with idempotency
   app.post("/invoices", async (req, reply) => {
     try {
@@ -162,32 +229,66 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const where: any = { tenantId };
 
-      if (query.status) where.status = query.status;
+      // Status filter (single or multiple comma-separated)
+      if (query.status) {
+        const statuses = String(query.status).split(",").map(s => s.trim());
+        if (statuses.length === 1) {
+          where.status = statuses[0];
+        } else {
+          where.status = { in: statuses };
+        }
+      }
+
+      // Outstanding only filter (issued, partially_paid, or overdue)
+      if (query.outstandingOnly === "true" || query.outstandingOnly === "1") {
+        where.status = { in: ["issued", "partially_paid"] };
+        where.balanceCents = { gt: 0 };
+      }
+
+      // Text search on invoice number
+      if (query.q) {
+        where.invoiceNumber = { contains: String(query.q), mode: "insensitive" };
+      }
+
+      // Party and anchor filters
       if (query.clientPartyId) where.clientPartyId = parseIntOrNull(query.clientPartyId);
       if (query.offspringId) where.offspringId = parseIntOrNull(query.offspringId);
       if (query.offspringGroupId) where.groupId = parseIntOrNull(query.offspringGroupId);
       if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
       if (query.breedingPlanId) where.breedingPlanId = parseIntOrNull(query.breedingPlanId);
 
-      if (query.dateFrom || query.dateTo) {
+      // Issued date range
+      if (query.issuedFrom || query.issuedTo) {
         where.issuedAt = {};
-        if (query.dateFrom) where.issuedAt.gte = new Date(query.dateFrom);
-        if (query.dateTo) where.issuedAt.lte = new Date(query.dateTo);
+        if (query.issuedFrom) where.issuedAt.gte = new Date(query.issuedFrom);
+        if (query.issuedTo) where.issuedAt.lte = new Date(query.issuedTo);
       }
+
+      // Due date range
+      if (query.dueFrom || query.dueTo) {
+        where.dueAt = {};
+        if (query.dueFrom) where.dueAt.gte = new Date(query.dueFrom);
+        if (query.dueTo) where.dueAt.lte = new Date(query.dueTo);
+      }
+
+      // Sorting
+      const allowedSortFields = ["issuedAt", "dueAt", "createdAt", "amountCents", "invoiceNumber"];
+      const sortBy = allowedSortFields.includes(query.sortBy) ? query.sortBy : "createdAt";
+      const sortDir = query.sortDir === "asc" ? "asc" : "desc";
 
       const [data, total] = await Promise.all([
         prisma.invoice.findMany({
           where,
           skip,
           take: limit,
-          orderBy: { createdAt: "desc" },
+          orderBy: { [sortBy]: sortDir },
         }),
         prisma.invoice.count({ where }),
       ]);
 
       return reply.code(200).send({
-        data: data.map(invoiceDTO),
-        meta: { page, limit, total },
+        items: data.map(invoiceDTO),
+        total,
       });
     } catch (err) {
       const { status, payload } = errorReply(err);
