@@ -2482,6 +2482,8 @@ model MessageThread {
   participants MessageParticipant[]
   messages Message[]
 
+  lastMessageAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2497,7 +2499,7 @@ model MessageParticipant {
   partyId Int
   party   Party @relation("MessageParticipantParty", fields: [partyId], references: [id], onDelete: Cascade)
 
-  unreadCount Int @default(0)
+  lastReadAt DateTime?
 
   createdAt DateTime @default(now())
 

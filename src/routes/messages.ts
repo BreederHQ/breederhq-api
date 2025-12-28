@@ -28,15 +28,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     const senderPartyId = user.partyId;
+    const now = new Date();
 
     try {
       const thread = await prisma.messageThread.create({
         data: {
           tenantId,
           subject,
+          lastMessageAt: now,
           participants: {
             create: [
-              { partyId: senderPartyId },
+              { partyId: senderPartyId, lastReadAt: now },
               { partyId: recipientPartyId },
             ],
           },
@@ -82,12 +84,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // Get threads where user is a participant
       const participantRecords = await prisma.messageParticipant.findMany({
         where: { partyId: user.partyId },
-        select: { threadId: true, unreadCount: true },
+        select: { threadId: true, lastReadAt: true },
       });
 
       const threadIds = participantRecords.map((p) => p.threadId);
+      if (threadIds.length === 0) {
+        return reply.send({ threads: [] });
+      }
+
       const threads = await prisma.messageThread.findMany({
         where: { id: { in: threadIds }, tenantId },
         include: {
@@ -102,13 +109,34 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         orderBy: { updatedAt: "desc" },
       });
 
-      const threadsWithUnread = threads.map((t) => {
-        const participant = participantRecords.find((p) => p.threadId === t.id);
-        return {
-          ...t,
-          unreadCount: participant?.unreadCount || 0,
-        };
-      });
+      // Calculate unread count efficiently
+      const threadsWithUnread = await Promise.all(
+        threads.map(async (t) => {
+          const participant = participantRecords.find((p) => p.threadId === t.id);
+          const lastReadAt = participant?.lastReadAt;
+
+          // Count messages created after lastReadAt, excluding sender's own messages
+          const unreadCount = lastReadAt
+            ? await prisma.message.count({
+                where: {
+                  threadId: t.id,
+                  createdAt: { gt: lastReadAt },
+                  senderPartyId: { not: user.partyId },
+                },
+              })
+            : await prisma.message.count({
+                where: {
+                  threadId: t.id,
+                  senderPartyId: { not: user.partyId },
+                },
+              });
+
+          return {
+            ...t,
+            unreadCount,
+          };
+        })
+      );
 
       return reply.send({ threads: threadsWithUnread });
     } catch (err: any) {
@@ -159,10 +187,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(403).send({ error: "forbidden" });
       }
 
-      // Mark as read (reset unreadCount)
+      // Mark as read: update lastReadAt to now
       await prisma.messageParticipant.updateMany({
         where: { threadId, partyId: user.partyId },
-        data: { unreadCount: 0 },
+        data: { lastReadAt: new Date() },
       });
 
       return reply.send({ thread });
@@ -210,6 +238,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(403).send({ error: "forbidden" });
       }
 
+      const now = new Date();
+
       const message = await prisma.message.create({
         data: {
           threadId,
@@ -221,16 +251,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      // Update thread updatedAt
+      // Update thread lastMessageAt and updatedAt
       await prisma.messageThread.update({
         where: { id: threadId },
-        data: { updatedAt: new Date() },
+        data: { lastMessageAt: now, updatedAt: now },
       });
 
-      // Increment unreadCount for other participants
+      // Update sender's lastReadAt (they've seen their own message)
       await prisma.messageParticipant.updateMany({
-        where: { threadId, partyId: { not: user.partyId } },
-        data: { unreadCount: { increment: 1 } },
+        where: { threadId, partyId: user.partyId },
+        data: { lastReadAt: now },
       });
 
       return reply.send({ ok: true, message });
