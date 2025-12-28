@@ -4,6 +4,20 @@
 
 This runbook describes the safe migration workflow for the breederhq-api project using Prisma v6 with Neon PostgreSQL databases.
 
+## ⚠️ Known Issue: Incomplete Baseline Migration
+
+**IMPORTANT**: The baseline migration `20251014074658_baseline` is incomplete and causes shadow DB validation to fail. See [MIGRATION_BASELINE_ISSUE.md](./MIGRATION_BASELINE_ISSUE.md) for details and workarounds.
+
+**Current Status** (as of 2025-12-28):
+- ✅ Dev database: Schema up to date
+- ✅ Prod database: Schema up to date
+- ❌ Shadow DB: Will fail on fresh replay
+
+**Recommended workflow** until baseline is fixed:
+1. Use `db push` for dev iterations
+2. Create migrations with `--create-only` and manual SQL review
+3. Apply using `migrate deploy` or mark as `--applied` after manual verification
+
 ## Database Environment Setup
 
 ### Development Environment

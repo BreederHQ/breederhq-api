@@ -18,6 +18,7 @@
     "validate:sql": "npx dotenv -e .env.dev -- tsx scripts/validate-party-migration.ts",
     "db:dev:migrate": "npx dotenv -e .env.dev.migrate -- node scripts/prisma-guard.js -- prisma migrate dev --schema=prisma/schema.prisma",
     "db:dev:migrate:createonly": "npx dotenv -e .env.dev.migrate -- node scripts/prisma-guard.js -- prisma migrate dev --create-only --schema=prisma/schema.prisma",
+    "db:dev:push": "npx dotenv -e .env.dev.migrate -- node scripts/prisma-guard.js -- prisma db push --schema=prisma/schema.prisma",
     "db:dev:status": "npx dotenv -e .env.dev.migrate -- node scripts/prisma-guard.js -- prisma migrate status --schema=prisma/schema.prisma",
     "db:prod:deploy": "npx dotenv -e .env.prod.migrate -- node scripts/prisma-guard.js -- prisma migrate deploy --schema=prisma/schema.prisma",
     "db:prod:status": "npx dotenv -e .env.prod.migrate -- node scripts/prisma-guard.js -- prisma migrate status --schema=prisma/schema.prisma",
