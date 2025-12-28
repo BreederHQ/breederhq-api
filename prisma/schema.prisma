@@ -545,6 +545,9 @@ model Tenant {
   AnimalOwnershipChange  AnimalOwnershipChange[]
   PaymentIntent          PaymentIntent[]
   AnimalTraitValue       AnimalTraitValue[]
+  Template               Template[]
+  AutoReplyRule          AutoReplyRule[]
+  AutoReplyLog           AutoReplyLog[]
 
   @@index([name])
 }
@@ -670,6 +673,8 @@ model Party {
   commPreferenceEvents PartyCommPreferenceEvent[]
   messageParticipants  MessageParticipant[]  @relation("MessageParticipantParty")
   sentMessages         Message[]             @relation("MessageSenderParty")
+  createdTemplates     Template[]            @relation("TemplateCreatedBy")
+  autoReplyLogs        AutoReplyLog[]        @relation("AutoReplyLogParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -2441,6 +2446,133 @@ enum EmailSendStatus {
   failed
 }
 
+enum TemplateChannel {
+  email
+  dm
+  social
+}
+
+enum TemplateStatus {
+  draft
+  active
+  archived
+}
+
+enum TemplateCategory {
+  TRANSACTIONAL
+  MARKETING
+  NOTIFICATION
+  AUTO_REPLY
+  CUSTOM
+}
+
+enum AutoReplyTriggerType {
+  dm_first_message_from_party
+  dm_after_hours
+}
+
+enum AutoReplyStatus {
+  sent
+  skipped
+  failed
+}
+
+model Template {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String
+  key         String? // stable identifier for system templates
+  channel     TemplateChannel
+  category    TemplateCategory
+  status      TemplateStatus @default(draft)
+  description String?        @db.Text
+
+  createdByPartyId Int?
+  createdByParty   Party? @relation("TemplateCreatedBy", fields: [createdByPartyId], references: [id], onDelete: SetNull)
+
+  content      TemplateContent[]
+  autoReplyRules AutoReplyRule[]
+
+  lastUsedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId, channel])
+  @@index([tenantId, status])
+  @@index([tenantId, category])
+}
+
+model TemplateContent {
+  id         Int      @id @default(autoincrement())
+  templateId Int
+  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  subject      String? // email only
+  bodyText     String  @db.Text
+  bodyHtml     String? @db.Text // email only
+  metadataJson Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([templateId])
+}
+
+model AutoReplyRule {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  channel  TemplateChannel
+  enabled  Boolean @default(true)
+
+  templateId Int
+  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  triggerType      AutoReplyTriggerType
+  cooldownMinutes  Int                  @default(60)
+  businessHoursJson Json?
+
+  logs AutoReplyLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, channel, enabled])
+  @@index([templateId])
+}
+
+model AutoReplyLog {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  channel  TemplateChannel
+  partyId  Int
+  party    Party @relation("AutoReplyLogParty", fields: [partyId], references: [id], onDelete: Cascade)
+
+  threadId Int?
+  thread   MessageThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  ruleId Int?
+  rule   AutoReplyRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  templateId Int?
+
+  status AutoReplyStatus
+  reason String?         @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, partyId])
+  @@index([tenantId, channel, createdAt])
+  @@index([threadId])
+  @@index([ruleId])
+}
+
 model EmailSendLog {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -2451,6 +2583,8 @@ model EmailSendLog {
   subject String
 
   templateKey String?
+  templateId  Int?
+  category    TemplateCategory?
   provider    String         @default("resend")
   providerMessageId String?
 
@@ -2469,6 +2603,8 @@ model EmailSendLog {
   @@index([providerMessageId])
   @@index([createdAt])
   @@index([relatedInvoiceId])
+  @@index([templateId])
+  @@index([tenantId, category])
 }
 
 model MessageThread {
@@ -2481,6 +2617,7 @@ model MessageThread {
 
   participants MessageParticipant[]
   messages Message[]
+  autoReplyLogs AutoReplyLog[]
 
   lastMessageAt DateTime?
 
@@ -2517,6 +2654,9 @@ model Message {
   senderParty   Party @relation("MessageSenderParty", fields: [senderPartyId], references: [id], onDelete: Cascade)
 
   body String @db.Text
+
+  isAutomated      Boolean @default(false)
+  automationRuleId Int?
 
   createdAt DateTime @default(now())
 
