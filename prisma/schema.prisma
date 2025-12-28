@@ -525,6 +525,9 @@ model Tenant {
   Invoice                Invoice[]
   InvoiceLineItem        InvoiceLineItem[]
   Payment                Payment[]
+  Expense                Expense[]
+  Sequence               Sequence[]
+  IdempotencyKey         IdempotencyKey[]
   Campaign               Campaign[]
   CampaignAttribution    CampaignAttribution[]
   Task                   Task[]
@@ -661,6 +664,7 @@ model Party {
   offspringContracts   OffspringContract[]   @relation("OffspringContractBuyerParty")
   animalBuyers         Animal[]              @relation("AnimalBuyerParty")
   animalOwnerships     AnimalOwner[]         @relation("AnimalOwnerParty")
+  expenseVendors       Expense[]             @relation("ExpenseVendor")
   commPreferences      PartyCommPreference[]
   commPreferenceEvents PartyCommPreferenceEvent[]
 
@@ -849,9 +853,11 @@ model Animal {
   TestResult     TestResult[]
   Attachment     Attachment[]
   Offspring      Offspring[]                @relation("PromotedAnimal")
-  PaymentIntent  PaymentIntent[]
+  PaymentIntent    PaymentIntent[]
   AnimalTraitValue AnimalTraitValue[]
-  Document       Document[]
+  Document         Document[]
+  Invoice          Invoice[]
+  Expense          Expense[]
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -1227,8 +1233,10 @@ model BreedingPlan {
   TestResults      TestResult[]
   BreedingAttempts BreedingAttempt[]
   PregnancyChecks  PregnancyCheck[]
-  Attachments      Attachment[]
-  Parties          PlanParty[]
+  Attachments Attachment[]
+  Parties     PlanParty[]
+  Invoice     Invoice[]
+  Expense     Expense[]
 
   archived  Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -1479,6 +1487,7 @@ model OffspringGroup {
   Task      Task[]
   Document  Document[]
   Contract  Contract[]
+  Expense   Expense[]
 
   @@unique([planId])
   @@index([tenantId])
@@ -1844,6 +1853,14 @@ model Attachment {
   attachmentPartyId Int?
   attachmentParty   Party? @relation("AttachmentParty", fields: [attachmentPartyId], references: [id], onDelete: SetNull)
 
+  // Finance MVP: receipts and documents for invoices, payments, expenses
+  invoiceId Int?
+  invoice   Invoice? @relation("AttachmentInvoice", fields: [invoiceId], references: [id], onDelete: SetNull)
+  paymentId Int?
+  payment   Payment? @relation("AttachmentPayment", fields: [paymentId], references: [id], onDelete: SetNull)
+  expenseId Int?
+  expense   Expense? @relation("AttachmentExpense", fields: [expenseId], references: [id], onDelete: SetNull)
+
   kind            String
   storageProvider String
   storageKey      String
@@ -1865,6 +1882,9 @@ model Attachment {
   @@index([offspringGroupId])
   @@index([offspringId])
   @@index([attachmentPartyId])
+  @@index([invoiceId])
+  @@index([paymentId])
+  @@index([expenseId])
 }
 
 model PlanParty {
@@ -1937,7 +1957,8 @@ enum FinanceScope {
 
 enum InvoiceStatus {
   draft
-  open
+  issued
+  partially_paid
   paid
   void
   uncollectible
@@ -1952,6 +1973,21 @@ enum PaymentStatus {
   refunded
   disputed
   cancelled
+}
+
+enum ExpenseCategory {
+  VETERINARY
+  FEED
+  SUPPLIES
+  BREEDING_FEE
+  BOARDING
+  TRAINING
+  TRANSPORT
+  MARKETING
+  ADMINISTRATIVE
+  FACILITIES
+  INSURANCE
+  OTHER
 }
 
 enum CampaignChannel {
@@ -2035,6 +2071,42 @@ enum SignatureStatus {
 }
 
 // ---------- Finance ----------
+
+/**
+ * Sequence counter for server-side numbering (invoice numbers, etc.)
+ * Tenant-scoped, per-year counter for generating unique sequential numbers
+ */
+model Sequence {
+  id         Int      @id @default(autoincrement())
+  tenantId   Int
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key        String   // e.g., "invoice"
+  year       Int
+  nextNumber Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, key, year])
+  @@index([tenantId, key, year])
+}
+
+/**
+ * IdempotencyKey for preventing duplicate operations
+ * Stores request hash and response for exact-match replay
+ */
+model IdempotencyKey {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key          String   // Client-provided idempotency key
+  requestHash  String   // Hash of request body
+  responseBody String?  // Stored response payload
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, key])
+  @@index([tenantId, createdAt])
+}
+
 model Invoice {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -2051,17 +2123,24 @@ model Invoice {
   clientPartyId Int?
   clientParty   Party? @relation("InvoiceParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
 
-  number       String?
-  currency     String        @default("USD")
-  amountCents  Int
-  balanceCents Int
-  depositCents Int?
-  status       InvoiceStatus @default(draft)
-  dueAt        DateTime?
-  issuedAt     DateTime?
-  paidAt       DateTime?
-  voidedAt     DateTime?
-  paymentTerms String?
+  // Finance MVP anchor fields
+  animalId       Int?
+  animal         Animal? @relation(fields: [animalId], references: [id], onDelete: SetNull)
+  breedingPlanId Int?
+  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  invoiceNumber String  // Server-generated, format: INV-YYYY-NNNN
+  number        String? // Legacy field, keep for compatibility
+  currency      String        @default("USD")
+  amountCents   Int
+  balanceCents  Int
+  depositCents  Int?
+  status        InvoiceStatus @default(draft)
+  dueAt         DateTime?
+  issuedAt      DateTime?
+  paidAt        DateTime?
+  voidedAt      DateTime?
+  paymentTerms  String?
 
   externalProvider String?
   externalId       String?
@@ -2072,22 +2151,28 @@ model Invoice {
   notes String?
   data  Json?
 
-  LineItems InvoiceLineItem[]
-  Payments  Payment[]
-  Documents Document[]
-  Contract  Contract?
+  LineItems            InvoiceLineItem[]
+  Payments             Payment[]
+  Documents            Document[]
+  Contract             Contract?
+  Attachments          Attachment[]          @relation("AttachmentInvoice")
 
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   OffspringInvoiceLink OffspringInvoiceLink[]
   PaymentIntent        PaymentIntent[]
 
+  @@unique([tenantId, invoiceNumber])
   @@index([tenantId])
+  @@index([tenantId, clientPartyId, status])
+  @@index([tenantId, offspringId])
+  @@index([tenantId, groupId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, breedingPlanId])
   @@index([scope, groupId])
   @@index([scope, offspringId])
   @@index([status])
   @@index([clientPartyId])
-  @@index([tenantId, clientPartyId])
 }
 
 model InvoiceLineItem {
@@ -2121,11 +2206,15 @@ model Payment {
   invoiceId Int
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
-  status      PaymentStatus @default(pending)
-  amountCents Int
-  method      String?
-  reference   String?
-  paidAt      DateTime?
+  status         PaymentStatus @default(pending)
+  amountCents    Int
+  receivedAt     DateTime      // When payment was received
+  methodType     String?       // e.g., "card", "bank_transfer", "cash", "check"
+  processor      String?       // e.g., "stripe", "square", "manual"
+  processorRef   String?       // Reference from payment processor
+  method         String?       // Legacy field
+  reference      String?       // Legacy field
+  paidAt         DateTime?     // Legacy field
 
   externalProvider String?
   externalId       String?
@@ -2136,11 +2225,59 @@ model Payment {
   notes String?
   data  Json?
 
+  Attachments Attachment[] @relation("AttachmentPayment")
+
   createdAt DateTime @default(now())
 
   @@index([tenantId])
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, receivedAt])
   @@index([invoiceId])
   @@index([status])
+}
+
+/**
+ * Expense tracking for business operations
+ * Can be anchored to breeding plans, offspring groups, animals, or general operations
+ */
+model Expense {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  amountCents Int
+  currency    String           @default("USD")
+  incurredAt  DateTime
+  category    ExpenseCategory
+  description String?
+
+  // Optional vendor/supplier
+  vendorPartyId Int?
+  vendorParty   Party? @relation("ExpenseVendor", fields: [vendorPartyId], references: [id], onDelete: SetNull)
+
+  // Anchor fields - expense can be linked to one of these
+  breedingPlanId   Int?
+  breedingPlan     BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+  offspringGroupId Int?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: SetNull)
+  animalId         Int?
+  animal           Animal? @relation(fields: [animalId], references: [id], onDelete: SetNull)
+
+  notes String?
+  data  Json?
+
+  Attachments Attachment[] @relation("AttachmentExpense")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, incurredAt])
+  @@index([tenantId, breedingPlanId])
+  @@index([tenantId, offspringGroupId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, vendorPartyId])
+  @@index([tenantId, category])
 }
 
 model AnimalOwnershipChange {
