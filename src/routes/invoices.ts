@@ -360,12 +360,41 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           skip,
           take: limit,
           orderBy: { [sortBy]: sortDir },
+          include: {
+            clientParty: {
+              select: {
+                name: true,
+                contact: { select: { display_name: true } },
+                organization: { select: { name: true } },
+              },
+            },
+          },
         }),
         prisma.invoice.count({ where }),
       ]);
 
+      // Map to DTO with clientPartyName resolved
+      const items = data.map((inv: any) => {
+        const dto = invoiceDTO(inv);
+        // Resolve client name from party -> contact/org
+        const party = inv.clientParty;
+        let clientPartyName: string | null = null;
+        if (party) {
+          clientPartyName = party.name
+            || party.contact?.display_name
+            || party.organization?.name
+            || null;
+        }
+        return {
+          ...dto,
+          // Frontend expects totalCents, backend uses amountCents
+          totalCents: dto.amountCents,
+          clientPartyName,
+        };
+      });
+
       return reply.code(200).send({
-        items: data.map(invoiceDTO),
+        items,
         total,
       });
     } catch (err) {
