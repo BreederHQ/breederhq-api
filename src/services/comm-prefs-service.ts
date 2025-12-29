@@ -54,6 +54,21 @@ export async function getCommPreferences(partyId: number): Promise<CommPreferenc
 }
 
 /**
+ * Check if a party can be contacted via a specific channel.
+ * Returns true if the party allows contact on this channel (preference is ALLOW).
+ */
+export async function canContactViaChannel(partyId: number, channel: CommChannel): Promise<boolean> {
+  const pref = await prisma.partyCommPreference.findUnique({
+    where: { partyId_channel: { partyId, channel } },
+  });
+
+  // Default is ALLOW if no preference is set
+  if (!pref) return true;
+
+  return pref.preference === "ALLOW";
+}
+
+/**
  * Update (upsert) communication preferences. Only creates events when values actually change.
  * Validates compliance fields are only set for EMAIL and SMS channels.
  */
