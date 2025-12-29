@@ -62,7 +62,6 @@ const isProdMigrateDiff = isProdDatabase && fullCommand.startsWith('migrate diff
 const isProdControlledApply =
   isProdDatabase &&
   fullCommand.startsWith('db execute') &&
-  npmScript === 'db:prod:align:apply' &&
   commandArgs.includes('--file') &&
   commandArgs.some(arg => arg.includes('prisma_prod_align.sql'));
 
