@@ -193,7 +193,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (lineItems.length > 0) {
         // Validate line items
         for (const item of lineItems) {
-          if (!item.description || !item.unitCents || !item.qty) {
+          // unitCents can be 0 (free item) or negative (discount), so check type not truthiness
+          const unitCents = Number(item.unitCents);
+          const qty = Number(item.qty);
+          if (!item.description || !Number.isFinite(unitCents) || !Number.isFinite(qty) || qty <= 0) {
             return reply.code(400).send({ error: "invalid_line_item" });
           }
         }
