@@ -113,10 +113,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.send({ threads: [] });
     }
 
+    const currentUserPartyId = user.partyId;
+
     try {
       // Get threads where user is a participant
       const participantRecords = await prisma.messageParticipant.findMany({
-        where: { partyId: user.partyId },
+        where: { partyId: currentUserPartyId },
         select: { threadId: true, lastReadAt: true },
       });
 
@@ -151,13 +153,13 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 where: {
                   threadId: t.id,
                   createdAt: { gt: lastReadAt },
-                  senderPartyId: { not: user.partyId },
+                  senderPartyId: { not: currentUserPartyId },
                 },
               })
             : await prisma.message.count({
                 where: {
                   threadId: t.id,
-                  senderPartyId: { not: user.partyId },
+                  senderPartyId: { not: currentUserPartyId },
                 },
               });
 
