@@ -55,3 +55,4 @@ prisma/migrations.bak/
 tmp/route-backups/
 prisma/schema.backup.prisma
 cookies.txt
+.env.proto

@@ -1146,32 +1146,174 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
+  /* REGISTRY MASTER DATA */
+  // GET /registries - List all registries, optionally filtered by species
+  app.get("/registries", async (req, reply) => {
+    try {
+      const q = (req.query || {}) as { species?: string };
+      const speciesFilter = q.species ? String(q.species).toUpperCase().trim() : null;
+
+      // Validate species against enum if provided
+      const validSpecies = ["DOG", "CAT", "HORSE", "GOAT", "RABBIT", "SHEEP"];
+      if (speciesFilter && !validSpecies.includes(speciesFilter)) {
+        return reply.code(400).send({
+          error: "bad_request",
+          message: "Invalid species",
+        });
+      }
+
+      // Build where clause: if species provided, match exact OR null (global registries)
+      // If species omitted, return all registries
+      const where: any = {};
+      if (speciesFilter) {
+        where.OR = [
+          { species: speciesFilter as Species },
+          { species: null },
+        ];
+      }
+
+      const rows = await prisma.registry.findMany({
+        where,
+        orderBy: [{ name: "asc" }], // Alphabetical by name for consistency
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          species: true,
+          country: true,
+          url: true,
+        },
+      });
+
+      // COMPATIBILITY BRIDGE: Dual-key response envelope.
+      // Both 'items' (canonical) and 'registries' (legacy) are provided
+      // to ensure zero client breakage during transition. The authoritative
+      // key is 'items'. Remove 'registries' key after one full release cycle.
+      const response = {
+        items: rows,
+        registries: rows,
+        total: rows.length,
+      };
+
+      // REGRESSION GUARD: Log contract invariants but do not throw
+      if (!Array.isArray(response.items) || !Array.isArray(response.registries)) {
+        req.log.error(
+          {
+            response,
+            route: "GET /registries",
+            requestId: req.id,
+          },
+          "[GET /registries] Contract violation: missing array keys"
+        );
+      }
+      if (response.items.length !== response.registries.length) {
+        req.log.error(
+          {
+            itemsLength: response.items.length,
+            registriesLength: response.registries.length,
+            route: "GET /registries",
+            requestId: req.id,
+          },
+          "[GET /registries] Contract violation: key length mismatch"
+        );
+      }
+
+      reply.send(response);
+    } catch (err: any) {
+      req.log.error(
+        {
+          err: { message: err?.message, stack: err?.stack },
+          query: req.query,
+          route: "GET /registries",
+          requestId: req.id,
+        },
+        "[GET /registries] Failed to fetch registries"
+      );
+      reply.code(500).send({
+        error: "internal_error",
+        message: "Failed to load registries",
+      });
+    }
+  });
+
   /* REGISTRY IDENTIFIERS */
   // GET /animals/:id/registries
   app.get("/animals/:id/registries", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
-    const animalId = parseIntStrict((req.params as { id: string }).id);
-    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+    try {
+      const tenantId = await assertTenant(req, reply);
+      if (!tenantId) return;
+      const animalId = parseIntStrict((req.params as { id: string }).id);
+      if (!animalId) return reply.code(400).send({ error: "id_invalid" });
 
-    await assertAnimalInTenant(animalId, tenantId);
+      await assertAnimalInTenant(animalId, tenantId);
 
-    const rows = await prisma.animalRegistryIdentifier.findMany({
-      where: { animalId },
-      orderBy: [{ createdAt: "desc" }],
-      select: {
-        id: true,
-        registryId: true,
-        identifier: true,
-        registrarOfRecord: true,
-        issuedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        registry: { select: { id: true, name: true, code: true, species: true } },
-      },
-    });
+      const rows = await prisma.animalRegistryIdentifier.findMany({
+        where: { animalId },
+        orderBy: [{ createdAt: "desc" }],
+        select: {
+          id: true,
+          registryId: true,
+          identifier: true,
+          registrarOfRecord: true,
+          issuedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          registry: { select: { id: true, name: true, code: true, species: true } },
+        },
+      });
 
-    reply.send({ items: rows, total: rows.length });
+      // COMPATIBILITY BRIDGE: Dual-key response envelope.
+      // Both 'items' (canonical) and 'registrations' (legacy) are provided
+      // to ensure zero client breakage during transition. The authoritative
+      // key is 'items'. Remove 'registrations' key after one full release cycle.
+      // Safe to return empty arrays when animal has zero registrations.
+      const response = {
+        items: rows,
+        registrations: rows,
+        total: rows.length,
+      };
+
+      // REGRESSION GUARD: Log contract invariants but do not throw
+      if (!Array.isArray(response.items) || !Array.isArray(response.registrations)) {
+        req.log.error(
+          {
+            response,
+            route: "GET /animals/:id/registries",
+            requestId: req.id,
+            animalId,
+          },
+          "[GET /animals/:id/registries] Contract violation: missing array keys"
+        );
+      }
+      if (response.items.length !== response.registrations.length) {
+        req.log.error(
+          {
+            itemsLength: response.items.length,
+            registrationsLength: response.registrations.length,
+            route: "GET /animals/:id/registries",
+            requestId: req.id,
+            animalId,
+          },
+          "[GET /animals/:id/registries] Contract violation: key length mismatch"
+        );
+      }
+
+      reply.send(response);
+    } catch (err: any) {
+      req.log.error(
+        {
+          err: { message: err?.message, stack: err?.stack },
+          params: req.params,
+          route: "GET /animals/:id/registries",
+          requestId: req.id,
+        },
+        "[GET /animals/:id/registries] Failed to fetch animal registrations"
+      );
+      reply.code(500).send({
+        error: "internal_error",
+        message: "Failed to load registrations",
+      });
+    }
   });
 
   // POST /animals/:id/registries
