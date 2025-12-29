@@ -22,25 +22,18 @@ function resolveStatus(partyArchived: boolean | null | undefined, backingArchive
   return "ACTIVE";
 }
 
-function collectTags(contact: any, organization: any, type: PartyType): string[] {
+function collectTags(party: any): string[] {
+  // Tags are on Party directly, not on Contact/Organization
   const seen = new Set<string>();
   const tags: string[] = [];
-  const addFrom = (assignments: any[] | null | undefined) => {
-    if (!assignments) return;
-    for (const row of assignments) {
-      const name = trimToNull(row?.tag?.name);
-      if (!name || seen.has(name)) continue;
-      seen.add(name);
-      tags.push(name);
-    }
-  };
+  const assignments = party?.tagAssignments;
+  if (!assignments) return tags;
 
-  if (type === "PERSON") addFrom(contact?.tagAssignments);
-  if (type === "ORGANIZATION") addFrom(organization?.tagAssignments);
-
-  if (type !== "PERSON" && type !== "ORGANIZATION") {
-    addFrom(contact?.tagAssignments);
-    addFrom(organization?.tagAssignments);
+  for (const row of assignments) {
+    const name = trimToNull(row?.tag?.name);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    tags.push(name);
   }
 
   return tags;
@@ -123,7 +116,7 @@ export function toPartyRead(row: any, logger?: Logger): PartyRead {
   const backingArchived = contact?.archived ?? organization?.archived ?? null;
   const status = resolveStatus(row?.archived ?? null, backingArchived);
 
-  const tags = collectTags(contact, organization, type);
+  const tags = collectTags(row);
 
   const createdAt = toIso(row?.createdAt ?? contact?.createdAt ?? organization?.createdAt ?? null);
   const updatedAt = toIso(row?.updatedAt ?? contact?.updatedAt ?? organization?.updatedAt ?? null);
