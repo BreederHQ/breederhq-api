@@ -53,7 +53,7 @@ const CONTACT_SELECT = {
         party: { select: { name: true, archived: true } },
       },
     },
-    tagAssignments: TAG_ASSIGNMENT_SELECT,
+    // Note: tagAssignments is on Party, not Contact
   },
 } as const;
 
@@ -96,6 +96,7 @@ const PARTY_SELECT = {
     updatedAt: true,
     contact: CONTACT_SELECT,
     organization: ORGANIZATION_SELECT,
+    tagAssignments: TAG_ASSIGNMENT_SELECT,
   },
 } as const;
 
