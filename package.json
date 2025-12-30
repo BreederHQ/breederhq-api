@@ -16,6 +16,8 @@
     "test:contracts": "npx dotenv -e .env.dev -- tsx --test tests/party-api-contracts.test.ts",
     "test:regression": "npx dotenv -e .env.dev -- tsx --test tests/party-migration-regression.test.ts",
     "validate:sql": "npx dotenv -e .env.dev -- tsx scripts/validate-party-migration.ts",
+    "prisma:validate": "prisma validate --schema=prisma/schema.prisma",
+    "prisma:gen": "prisma generate --schema=prisma/schema.prisma",
     "db:dev:sync": "npm run db:dev:push && npm run db:gen",
     "db:dev:push": "npx dotenv -e .env.dev.migrate --override -- node scripts/prisma-guard.js -- prisma db push --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
     "db:dev:reset": "npx dotenv -e .env.dev.migrate --override -- node scripts/prisma-guard.js -- prisma db push --force-reset --accept-data-loss --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.prisma",
@@ -25,6 +27,9 @@
     "db:prod:align:verify": "npx dotenv -e .env.prod.migrate --override -- node scripts/prod-align-verify.mjs",
     "db:studio": "npx dotenv -e .env.studio -- prisma studio --schema=prisma/schema.prisma",
     "db:gen": "prisma generate --schema=prisma/schema.prisma",
+    "db:v2:dev:status": "node scripts/run-with-env.js .env.v2.dev prisma migrate status --schema=prisma/schema.prisma",
+    "db:v2:dev:migrate": "node scripts/run-with-env.js .env.v2.dev prisma migrate dev --schema=prisma/schema.prisma",
+    "db:v2:prod:deploy": "node scripts/run-with-env.js .env.v2.prod prisma migrate deploy --schema=prisma/schema.prisma",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {
