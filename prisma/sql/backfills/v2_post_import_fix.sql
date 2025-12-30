@@ -14,13 +14,17 @@
 DROP TABLE IF EXISTS "_prisma_migrations";
 
 -- ============================================================================
--- 2. RESET ALL SEQUENCES (Discovery-Driven)
+-- 2. RESET ALL SEQUENCES (pg_depend Ownership-Based)
 -- ============================================================================
 -- After data-only import, sequences are not updated to match imported data.
--- This uses pg_sequences to discover all sequences, then resets each to MAX(col).
+-- This uses pg_depend to discover sequence ownership via the dependency catalog,
+-- which is the authoritative source for sequence-to-column relationships.
 --
--- NOTE: Tables with UUID primary keys or non-serial IDs are automatically
--- skipped because they have no associated sequence.
+-- This approach:
+-- - Works for any column name (not just 'id')
+-- - Works if tables or sequences are renamed
+-- - Is idempotent and safe to re-run
+-- - Only resets sequences that are actually owned by table columns
 
 DO $$
 DECLARE
@@ -29,43 +33,43 @@ DECLARE
   reset_count integer := 0;
   skip_count integer := 0;
 BEGIN
-  -- Iterate through all sequences in public schema that follow the naming
-  -- convention TableName_columnName_seq (Prisma's default pattern)
+  -- Use pg_depend with deptype='a' (auto dependency) to find sequences
+  -- that are owned by table columns. This is the authoritative way to
+  -- discover sequence ownership without relying on naming conventions.
+  --
+  -- We use seq.oid::regclass::text for the sequence name because regclass
+  -- automatically provides the properly quoted identifier (e.g., "Animal_id_seq")
+  -- which is required for setval() to work with PascalCase names.
   FOR seq_record IN
     SELECT
-      s.sequencename AS seq_name,
-      -- Extract table name by removing the _id_seq suffix
-      -- This handles PascalCase table names correctly
-      CASE
-        WHEN s.sequencename LIKE '%_id_seq' THEN
-          SUBSTRING(s.sequencename FROM 1 FOR LENGTH(s.sequencename) - 7)
-        ELSE NULL
-      END AS table_name
+      seq.oid::regclass::text AS seq_name,
+      d.refobjid::regclass::text AS table_name,
+      a.attname AS column_name
     FROM pg_sequences s
+    JOIN pg_class seq ON seq.relname = s.sequencename
+    JOIN pg_namespace ns ON ns.oid = seq.relnamespace AND ns.nspname = s.schemaname
+    JOIN pg_depend d ON d.objid = seq.oid AND d.deptype = 'a'
+    JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
     WHERE s.schemaname = 'public'
-      AND s.sequencename LIKE '%_id_seq'
     ORDER BY s.sequencename
   LOOP
-    -- Skip if we couldn't parse the table name
-    IF seq_record.table_name IS NULL THEN
-      skip_count := skip_count + 1;
-      CONTINUE;
-    END IF;
-
     BEGIN
-      -- Get max id value from the table
-      EXECUTE format('SELECT COALESCE(MAX(id), 0) FROM %I', seq_record.table_name)
+      -- Get max value from the owning column (using the actual column name)
+      -- table_name from regclass is already properly quoted
+      EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %s', seq_record.column_name, seq_record.table_name)
         INTO max_val;
 
       -- Reset sequence if there's data
+      -- seq_name from regclass is already properly quoted for setval
       IF max_val > 0 THEN
-        -- Use setval with the sequence name directly (already properly cased)
-        EXECUTE format('SELECT setval(%L, %s, true)', seq_record.seq_name, max_val);
-        RAISE NOTICE 'Reset %: setval to %', seq_record.seq_name, max_val;
+        EXECUTE format('SELECT setval(%L::regclass, %s, true)', seq_record.seq_name, max_val);
+        RAISE NOTICE 'Reset %: setval to % (table: %, column: %)',
+          seq_record.seq_name, max_val, seq_record.table_name, seq_record.column_name;
         reset_count := reset_count + 1;
       END IF;
     EXCEPTION WHEN OTHERS THEN
-      -- Table might not exist or have different column types - skip silently
+      -- Log and skip on error (shouldn't happen with pg_depend-based discovery)
+      RAISE NOTICE 'Skipped %: %', seq_record.seq_name, SQLERRM;
       skip_count := skip_count + 1;
     END;
   END LOOP;
