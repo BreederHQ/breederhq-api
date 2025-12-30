@@ -375,8 +375,10 @@ ERROR:  relation "TableName" does not exist
 
 | Script | Description |
 |--------|-------------|
-| `npm run db:v2:dev:move` | **One-command migration** (runs all steps below) |
+| `npm run db:v2:dev:move` | **One-command migration** for dev (runs all steps below) |
+| `npm run db:v2:prod:move` | **One-command migration** for prod |
 | `npm run db:v2:preflight:dev:move` | Preflight checks for dev data migration |
+| `npm run db:v2:preflight:prod:move` | Preflight checks for prod data migration |
 | `npm run db:v2:dump:v1:dev:snapshot` | Dump data from v1 dev snapshot |
 | `npm run db:v2:dump:v1:prod:snapshot` | Dump data from v1 prod snapshot |
 | `npm run db:v2:import:dev:data` | Import data to v2 dev |
@@ -387,6 +389,9 @@ ERROR:  relation "TableName" does not exist
 | `npm run db:v2:validate:prod` | Validate v2 prod data integrity |
 | `npm run db:v2:dev:status` | Check v2 dev migration status |
 | `npm run db:v2:prod:status` | Check v2 prod migration status |
+| `npm run db:v2:dev:baseline` | Mark init migration as applied on dev |
+| `npm run db:v2:prod:baseline` | Mark init migration as applied on prod |
+| `npm run db:v2:shadow:prepare:dev` | Create citext extension in shadow database |
 
 ---
 
@@ -394,17 +399,20 @@ ERROR:  relation "TableName" does not exist
 
 | File | Purpose |
 |------|---------|
-| `scripts/db/v2/dev-move-runbook.js` | One-command migration wrapper |
+| `scripts/db/v2/dev-move-runbook.js` | One-command migration wrapper for dev |
+| `scripts/db/v2/prod-move-runbook.js` | One-command migration wrapper for prod |
 | `scripts/db/v2/preflight-dev-move.js` | Preflight checks for dev migration |
-| `scripts/db/v2/dump-v1-data.sh` | Shell script for pg_dump |
-| `scripts/db/v2/import-v1-data.sh` | Shell script for psql import |
+| `scripts/db/v2/preflight-prod-move.js` | Preflight checks for prod migration |
 | `scripts/db/v2/run-dump.js` | Node wrapper for dump (cross-platform) |
 | `scripts/db/v2/run-import.js` | Node wrapper for import (cross-platform) |
 | `scripts/db/v2/run-postimport.js` | Node wrapper for post-import fixes |
 | `scripts/db/v2/validate-post-import.ts` | TypeScript validation harness |
+| `scripts/db/v2/db-ident.js` | Database identity probing for debugging |
+| `scripts/db/v2/prepare-shadow.js` | Shadow database preparation (citext extension) |
 | `prisma/sql/backfills/v2_pre_import_drop_fks.sql` | Drop FK constraints before import (Neon compat) |
 | `prisma/sql/backfills/v2_post_import_restore_fks.sql` | Restore FK constraints after import |
 | `prisma/sql/backfills/v2_post_import_fix.sql` | Post-import fixes (sequences, cleanup) |
-| `prisma/sql/validation/v2_post_import_checks.sql` | Validation queries |
 | `.env.v1.dev.snapshot.example` | Template for v1 dev snapshot connection |
 | `.env.v1.prod.snapshot.example` | Template for v1 prod snapshot connection |
+| `.env.v2.dev.example` | Template for v2 dev connection (includes shadow DB) |
+| `.env.v2.prod.example` | Template for v2 prod connection |
