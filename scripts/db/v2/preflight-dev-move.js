@@ -64,6 +64,40 @@ function check(name, passed, message) {
   }
 }
 
+/**
+ * Validates a database URL is a direct connection (not pooled).
+ * Returns { valid: boolean, reason: string }
+ */
+function validateDirectUrl(url, varName) {
+  if (!url || url.length === 0) {
+    return { valid: false, reason: `${varName} is empty` };
+  }
+
+  // Must start with postgres:// or postgresql://
+  if (!url.startsWith("postgres://") && !url.startsWith("postgresql://")) {
+    return { valid: false, reason: `${varName} must start with postgres:// or postgresql://` };
+  }
+
+  // Reject known pooler patterns (Neon pooler, pgbouncer)
+  const poolerPatterns = [
+    "pooler",
+    "pgbouncer",
+    ":6543",  // Neon pooler port
+    "pgbouncer=true",
+  ];
+
+  for (const pattern of poolerPatterns) {
+    if (url.toLowerCase().includes(pattern.toLowerCase())) {
+      return {
+        valid: false,
+        reason: `${varName} appears to be a pooler URL (contains '${pattern}'). Use direct connection URL instead.`
+      };
+    }
+  }
+
+  return { valid: true, reason: "" };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Run preflight checks
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,9 +169,8 @@ allPassed =
 // Check 4: V1_DEV_SNAPSHOT_DIRECT_URL is set
 // ─────────────────────────────────────────────────────────────────────────────
 const v1Env = parseEnvFile(v1EnvPath);
-const v1UrlSet =
-  v1Env && v1Env["V1_DEV_SNAPSHOT_DIRECT_URL"] &&
-  v1Env["V1_DEV_SNAPSHOT_DIRECT_URL"].length > 0;
+const v1Url = v1Env ? v1Env["V1_DEV_SNAPSHOT_DIRECT_URL"] : null;
+const v1UrlSet = v1Url && v1Url.length > 0;
 
 allPassed =
   check(
@@ -145,6 +178,19 @@ allPassed =
     v1UrlSet,
     `Edit ${v1EnvFile} and set V1_DEV_SNAPSHOT_DIRECT_URL`
   ) && allPassed;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check 4b: V1_DEV_SNAPSHOT_DIRECT_URL is a valid direct URL
+// ─────────────────────────────────────────────────────────────────────────────
+if (v1UrlSet) {
+  const v1UrlValidation = validateDirectUrl(v1Url, "V1_DEV_SNAPSHOT_DIRECT_URL");
+  allPassed =
+    check(
+      "V1_DEV_SNAPSHOT_DIRECT_URL is direct (not pooler)",
+      v1UrlValidation.valid,
+      v1UrlValidation.reason
+    ) && allPassed;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Check 5: v2 dev env file exists
@@ -165,9 +211,8 @@ allPassed =
 // Check 6: DATABASE_DIRECT_URL (v2 dev) is set
 // ─────────────────────────────────────────────────────────────────────────────
 const v2Env = parseEnvFile(v2EnvPath);
-const v2UrlSet =
-  v2Env && v2Env["DATABASE_DIRECT_URL"] &&
-  v2Env["DATABASE_DIRECT_URL"].length > 0;
+const v2DirectUrl = v2Env ? v2Env["DATABASE_DIRECT_URL"] : null;
+const v2UrlSet = v2DirectUrl && v2DirectUrl.length > 0;
 
 allPassed =
   check(
@@ -175,6 +220,19 @@ allPassed =
     v2UrlSet,
     `Edit ${v2EnvFile} and set DATABASE_DIRECT_URL`
   ) && allPassed;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check 6b: DATABASE_DIRECT_URL (v2 dev) is a valid direct URL
+// ─────────────────────────────────────────────────────────────────────────────
+if (v2UrlSet) {
+  const v2UrlValidation = validateDirectUrl(v2DirectUrl, "DATABASE_DIRECT_URL");
+  allPassed =
+    check(
+      "DATABASE_DIRECT_URL (v2 dev) is direct (not pooler)",
+      v2UrlValidation.valid,
+      v2UrlValidation.reason
+    ) && allPassed;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Check 7: pg_dump available
