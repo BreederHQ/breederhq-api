@@ -77,6 +77,77 @@ const mergedEnv = { ...process.env, ...fileEnv };
 // Sensitive keys to redact in any logging
 const SENSITIVE_KEYS = ['DATABASE_URL', 'DATABASE_DIRECT_URL'];
 
+// ═══════════════════════════════════════════════════════════════════════
+// GUARDRAILS: Prevent common misconfigurations
+// ═══════════════════════════════════════════════════════════════════════
+
+// Check for forbidden SHADOW_DATABASE_URL (we use Prisma's auto-shadow)
+if (mergedEnv.SHADOW_DATABASE_URL) {
+  console.error(`
+═══════════════════════════════════════════════════════════════════════
+❌ BLOCKED: SHADOW_DATABASE_URL Detected
+═══════════════════════════════════════════════════════════════════════
+
+SHADOW_DATABASE_URL is set in your environment or ${envFile}.
+
+This project uses Prisma's auto-shadow database feature. Prisma will
+automatically create and drop shadow databases as needed during
+\`prisma migrate dev\`.
+
+ACTIONS:
+  1. Remove SHADOW_DATABASE_URL from ${envFile}
+  2. Remove shadowDatabaseUrl from prisma/schema.prisma (if present)
+  3. Ensure DATABASE_DIRECT_URL uses a role with CREATE DATABASE privileges
+
+DOCUMENTATION:
+  See: docs/runbooks/PRISMA_MIGRATION_WORKFLOW.md
+
+═══════════════════════════════════════════════════════════════════════
+`);
+  process.exit(1);
+}
+
+// Check for pooler URL in DATABASE_URL when running migrations
+const isMigrateCommand = commandArgs.some(arg =>
+  arg === 'migrate' || arg.includes('migrate')
+);
+
+if (isMigrateCommand) {
+  const dbUrl = mergedEnv.DATABASE_URL || '';
+  const directUrl = mergedEnv.DATABASE_DIRECT_URL || '';
+
+  // Prisma uses DATABASE_DIRECT_URL for migrations when available
+  // But warn if DATABASE_URL is a pooler and no direct URL is set
+  if (dbUrl.includes('-pooler') && !directUrl) {
+    console.error(`
+═══════════════════════════════════════════════════════════════════════
+❌ BLOCKED: Pooler URL Detected for Migration
+═══════════════════════════════════════════════════════════════════════
+
+DATABASE_URL contains '-pooler' but DATABASE_DIRECT_URL is not set.
+
+Prisma migrations require a direct database connection (not pooled).
+Pooled connections through PgBouncer do not support the transaction
+modes required for DDL operations.
+
+ACTIONS:
+  1. Set DATABASE_DIRECT_URL to use the direct (non-pooler) endpoint
+  2. DATABASE_URL can remain as the pooler URL for runtime queries
+
+EXAMPLE:
+  DATABASE_URL=postgresql://user:pass@host-pooler.neon.tech/db
+  DATABASE_DIRECT_URL=postgresql://user:pass@host.neon.tech/db
+                                            ^^^^ no -pooler
+
+DOCUMENTATION:
+  See: docs/runbooks/PRISMA_MIGRATION_WORKFLOW.md
+
+═══════════════════════════════════════════════════════════════════════
+`);
+    process.exit(1);
+  }
+}
+
 // Log status (redacted)
 console.log(`\n🔧 run-with-env: Loading environment from ${envFile}`);
 console.log('━'.repeat(60));
