@@ -27,6 +27,7 @@ END $$;
 
 -- Dynamically restore all FK constraints
 -- ON_ERROR_STOP=1 in psql will cause this to fail on first error
+-- Note: relname is already quoted by regclass::text, so use %s not %I
 DO $$
 DECLARE
   r RECORD;
@@ -35,7 +36,15 @@ DECLARE
 BEGIN
   FOR r IN SELECT conname, relname, condef FROM _bhq_fk_backup ORDER BY relname, conname
   LOOP
-    add_sql := format('ALTER TABLE %I ADD CONSTRAINT %I %s', r.relname, r.conname, r.condef);
+    -- Safety: skip null relnames (should not happen)
+    IF r.relname IS NULL THEN
+      RAISE NOTICE 'Skipping constraint % with NULL relname', r.conname;
+      CONTINUE;
+    END IF;
+
+    -- relname from regclass::text is already properly quoted/schema-qualified
+    -- conname needs %I quoting, condef is a constraint definition (use %s)
+    add_sql := format('ALTER TABLE %s ADD CONSTRAINT %I %s', r.relname, r.conname, r.condef);
     RAISE NOTICE 'Restoring: %.%', r.relname, r.conname;
     EXECUTE add_sql;
     restored_count := restored_count + 1;
