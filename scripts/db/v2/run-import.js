@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+/**
+ * run-import.js - Cross-platform wrapper for import-v1-data.sh
+ *
+ * Loads environment from .env.v2.{env} and runs psql import.
+ *
+ * Usage: node scripts/db/v2/run-import.js [dev|prod]
+ */
+
+import { spawn } from "child_process";
+import { readFileSync, existsSync, statSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = resolve(__dirname, "..", "..", "..");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse arguments
+// ─────────────────────────────────────────────────────────────────────────────
+const env = process.argv[2];
+
+if (!env || !["dev", "prod"].includes(env)) {
+  console.error("Usage: node scripts/db/v2/run-import.js [dev|prod]");
+  process.exit(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Determine env file and required var
+// ─────────────────────────────────────────────────────────────────────────────
+const envFile = `.env.v2.${env}`;
+const envPath = resolve(rootDir, envFile);
+const requiredVar =
+  env === "dev" ? "V2_DEV_DIRECT_URL" : "V2_PROD_DIRECT_URL";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check env file exists
+// ─────────────────────────────────────────────────────────────────────────────
+if (!existsSync(envPath)) {
+  console.error(`\n❌ Environment file not found: ${envFile}`);
+  console.error(`\nExpected path: ${envPath}`);
+  console.error(`\nTo create this file:`);
+  console.error(`  1. Copy ${envFile}.example to ${envFile}`);
+  console.error(`  2. Fill in the DATABASE_DIRECT_URL value`);
+  console.error(
+    `\nSee docs/runbooks/DB_V1_TO_V2_DATA_MOVE_OPTION_B.md for details.\n`
+  );
+  process.exit(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse env file
+// ─────────────────────────────────────────────────────────────────────────────
+function parseEnvFile(filePath) {
+  const env = {};
+  const content = readFileSync(filePath, "utf-8");
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) continue;
+
+    const key = trimmed.slice(0, eqIndex).trim();
+    let value = trimmed.slice(eqIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    env[key] = value;
+  }
+
+  return env;
+}
+
+const fileEnv = parseEnvFile(envPath);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Get target URL (use DATABASE_DIRECT_URL from env file)
+// ─────────────────────────────────────────────────────────────────────────────
+const targetUrl =
+  fileEnv["DATABASE_DIRECT_URL"] || process.env["DATABASE_DIRECT_URL"];
+
+if (!targetUrl) {
+  console.error(`\n❌ Required environment variable not set: DATABASE_DIRECT_URL`);
+  console.error(`\nCheck your ${envFile} file.\n`);
+  process.exit(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check input file exists
+// ─────────────────────────────────────────────────────────────────────────────
+const inFile = resolve(rootDir, "tmp", "v1_data.sql");
+
+if (!existsSync(inFile)) {
+  console.error(`\n❌ Input file not found: ${inFile}`);
+  console.error("\nRun the dump command first:");
+  console.error(`  npm run db:v2:dump:v1:${env}:snapshot\n`);
+  process.exit(1);
+}
+
+const fileSize = statSync(inFile).size;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Log status
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+console.log(`run-import.js: Importing data to v2 ${env}`);
+console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+console.log(`  Environment file: ${envFile}`);
+console.log(`  DATABASE_DIRECT_URL: [SET - REDACTED]`);
+console.log(`  Input file: ${inFile}`);
+console.log(`  File size: ${fileSize} bytes`);
+console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Run psql import
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("Starting psql import (ON_ERROR_STOP=1)...");
+console.log("This will fail immediately on any constraint violation.\n");
+
+const child = spawn(
+  "psql",
+  [targetUrl, "-v", "ON_ERROR_STOP=1", "-f", inFile],
+  {
+    stdio: "inherit",
+    env: { ...process.env, ...fileEnv },
+    cwd: rootDir,
+  }
+);
+
+child.on("exit", (code) => {
+  if (code === 0) {
+    console.log("\n✓ Import completed successfully\n");
+  } else {
+    console.error("\n❌ Import failed with exit code:", code);
+    console.error("\nCheck the error above for details.");
+    console.error("Common issues:");
+    console.error("  - FK constraint violations");
+    console.error("  - Enum value mismatches");
+    console.error("  - Missing tables\n");
+  }
+  process.exit(code || 0);
+});
+
+child.on("error", (err) => {
+  console.error(`\n❌ Failed to start psql: ${err.message}`);
+  console.error("Make sure psql is installed and in your PATH.\n");
+  process.exit(1);
+});
