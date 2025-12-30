@@ -12,29 +12,12 @@ build/
 
 # Local env files (never commit secrets)
 .env
-.env.local
-.env.*.local
-.env.dev
-.env.dev.*
-.env.test
-.env.test.*
-.env.production.local
-.env.prod.migrate
-.env.v2.dev
-.env.v2.prod
-.env.v1.dev.snapshot
-.env.v1.prod.snapshot
+.env.*
 
 # Env templates (commit these)
-!.env.dev.example
-!.env.dev.migrate.example
-!.env.studio.example
-!.env.prod.migrate.example
-!.env.v2.dev.example
-!.env.v2.prod.example
+!.env.example
 !.env.v1.dev.snapshot.example
 !.env.v1.prod.snapshot.example
-!.env.example
 
 # Logs
 *.log
