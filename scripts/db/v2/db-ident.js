@@ -103,6 +103,49 @@ export function printDbIdent(label, ident) {
  * @param {string[]} requiredTables - List of table names to check (PascalCase)
  * @returns {Promise<{present: string[], missing: string[]}>}
  */
+/**
+ * Compares two database identities and checks if they appear to be the same.
+ * Returns { isSame: boolean, reason: string }
+ */
+export function compareDbIdents(source, dest) {
+  // Check if host + database name match (strong indicator of same DB)
+  if (source.host === dest.host && source.db === dest.db) {
+    return {
+      isSame: true,
+      reason: `Same database: ${source.db} on ${source.host}`,
+    };
+  }
+
+  // Check if host matches but different database
+  if (source.host === dest.host && source.db !== dest.db) {
+    return {
+      isSame: false,
+      reason: `Different databases (${source.db} vs ${dest.db}) on same host`,
+    };
+  }
+
+  // Different hosts - safe
+  return {
+    isSame: false,
+    reason: `Different hosts (${source.host} vs ${dest.host})`,
+  };
+}
+
+/**
+ * Prints source and destination database identities side by side.
+ */
+export function printSourceDestIdents(sourceIdent, destIdent) {
+  console.log("\n┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│  DATABASE IDENTITY VERIFICATION                                 │");
+  console.log("├─────────────────────────────────────────────────────────────────┤");
+  console.log("│  SOURCE (v1)              │  DESTINATION (v2)                   │");
+  console.log("├─────────────────────────────────────────────────────────────────┤");
+  console.log(`│  Database: ${sourceIdent.db.padEnd(14)} │  Database: ${destIdent.db.padEnd(22)} │`);
+  console.log(`│  Host:     ${sourceIdent.host.slice(0, 14).padEnd(14)} │  Host:     ${destIdent.host.slice(0, 22).padEnd(22)} │`);
+  console.log(`│  Tables:   ${String(sourceIdent.tableCount).padEnd(14)} │  Tables:   ${String(destIdent.tableCount).padEnd(22)} │`);
+  console.log("└─────────────────────────────────────────────────────────────────┘\n");
+}
+
 export function checkRequiredTables(dbUrl, envVars, cwd, requiredTables) {
   return new Promise((resolve, reject) => {
     // Use pg_class with exact name matching - this works reliably for PascalCase tables

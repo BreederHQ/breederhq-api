@@ -11,6 +11,7 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { probeDbIdent, printDbIdent } from "./db-ident.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..", "..", "..");
@@ -124,45 +125,69 @@ try {
   // ignore if already exists
 }
 
-console.log("Starting pg_dump (data-only)...");
-console.log(`Output file: ${outFile}\n`);
+// ─────────────────────────────────────────────────────────────────────────────
+// Main function with identity verification
+// ─────────────────────────────────────────────────────────────────────────────
+async function main() {
+  // Probe and print database identity before dump
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("Pre-flight: Database Identity Verification");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-// Note: We do NOT use --disable-triggers because Neon (managed Postgres)
-// blocks DISABLE TRIGGER ALL for non-superusers. Instead, we drop FK
-// constraints before import and restore them after.
-//
-// We exclude _prisma_migrations because v2 has its own migration history.
-// Including v1's migrations would cause duplicate key violations.
-const child = spawn(
-  "pg_dump",
-  [
-    "--data-only",
-    "--no-owner",
-    "--no-acl",
-    "--exclude-table=_prisma_migrations",
-    "--exclude-table=_prisma_migrations_lock",
-    "--dbname",
-    sourceUrl,
-    "--file",
-    outFile,
-  ],
-  {
-    stdio: "inherit",
-    env: mergedEnv,
-    cwd: rootDir,
+  try {
+    const ident = await probeDbIdent(sourceUrl, mergedEnv, rootDir);
+    printDbIdent(`Source (v1 ${env})`, ident);
+    console.log("✓ Source database identity verified\n");
+  } catch (err) {
+    console.error(`⚠ Warning: Could not verify source identity: ${err.message}`);
+    console.error("  Proceeding with dump anyway.\n");
   }
-);
 
-child.on("exit", (code) => {
-  if (code === 0) {
-    console.log("\n✓ pg_dump completed successfully");
-    console.log(`  Output: ${outFile}\n`);
-  }
-  process.exit(code || 0);
-});
+  console.log("Starting pg_dump (data-only)...");
+  console.log(`Output file: ${outFile}\n`);
 
-child.on("error", (err) => {
-  console.error(`\n❌ Failed to start pg_dump: ${err.message}`);
-  console.error("Make sure pg_dump is installed and in your PATH.\n");
+  // Note: We do NOT use --disable-triggers because Neon (managed Postgres)
+  // blocks DISABLE TRIGGER ALL for non-superusers. Instead, we drop FK
+  // constraints before import and restore them after.
+  //
+  // We exclude _prisma_migrations because v2 has its own migration history.
+  // Including v1's migrations would cause duplicate key violations.
+  const child = spawn(
+    "pg_dump",
+    [
+      "--data-only",
+      "--no-owner",
+      "--no-acl",
+      "--exclude-table=_prisma_migrations",
+      "--exclude-table=_prisma_migrations_lock",
+      "--dbname",
+      sourceUrl,
+      "--file",
+      outFile,
+    ],
+    {
+      stdio: "inherit",
+      env: mergedEnv,
+      cwd: rootDir,
+    }
+  );
+
+  child.on("exit", (code) => {
+    if (code === 0) {
+      console.log("\n✓ pg_dump completed successfully");
+      console.log(`  Output: ${outFile}\n`);
+    }
+    process.exit(code || 0);
+  });
+
+  child.on("error", (err) => {
+    console.error(`\n❌ Failed to start pg_dump: ${err.message}`);
+    console.error("Make sure pg_dump is installed and in your PATH.\n");
+    process.exit(1);
+  });
+}
+
+main().catch((err) => {
+  console.error(`\n❌ Unexpected error: ${err.message}\n`);
   process.exit(1);
 });
