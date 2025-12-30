@@ -46,7 +46,6 @@
     "db:v2:preflight:prod:move": "node scripts/db/v2/preflight-prod-move.js",
     "db:v2:dev:move": "node scripts/db/v2/dev-move-runbook.js",
     "db:v2:prod:move": "node scripts/db/v2/prod-move-runbook.js",
-    "db:v2:shadow:prepare:dev": "node scripts/db/v2/prepare-shadow.js dev",
     "db:v2:dev:baseline": "node scripts/run-with-env.js .env.v2.dev prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
     "db:v2:prod:baseline": "node scripts/run-with-env.js .env.v2.prod prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"

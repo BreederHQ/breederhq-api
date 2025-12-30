@@ -128,31 +128,17 @@ Use this carefully and only when you're certain about the database state.
 
 ## Shadow Database
 
-### What It Does
-The shadow database (`bhq_shadow_dev`) is used by Prisma during `migrate dev` to:
-1. Replay all migrations from scratch in isolation
-2. Detect conflicts or breaking changes
-3. Generate accurate migration diffs
+Prisma automatically creates and drops a shadow database during `migrate dev`. No manual configuration is needed.
 
-### Configuration
-Shadow database is configured in `prisma/schema.prisma`:
+### How It Works
+1. Prisma uses `DATABASE_DIRECT_URL` (bypasses connection pooling)
+2. Creates a temporary shadow database in the same Neon project
+3. Replays all migrations to validate them
+4. Drops the shadow database when done
 
-```prisma
-datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-}
-```
-
-Both variables are set in `.env.dev.migrate`:
-- `DATABASE_URL`: Points to `bhq_dev` (main dev database)
-- `SHADOW_DATABASE_URL`: Points to `bhq_shadow_dev` (ephemeral test database)
-
-### Shadow DB Requirements
-- Must be accessible by the `bhq_migrator` role
-- Should be empty or Prisma-managed (Prisma will reset it during migrations)
-- Only needed for `migrate dev`, not for `migrate deploy`
+### Requirements
+- The `bhq_migrator` role must have `CREATE DATABASE` privileges (Neon provides this by default)
+- Use `.env.v2.dev` which has `DATABASE_DIRECT_URL` configured
 
 ## Common Scenarios
 
@@ -160,23 +146,20 @@ Both variables are set in `.env.dev.migrate`:
 
 ```bash
 # 1. Make changes to prisma/schema.prisma
-# 2. Create migration (create-only to review first)
-npm run db:dev:migrate:createonly -- --name add_new_feature
+# 2. Create and apply migration to dev
+npm run db:v2:dev:migrate -- --name add_new_feature
 
 # 3. Review the generated SQL in prisma/migrations/YYYYMMDDHHMMSS_add_new_feature/
 
-# 4. Apply to dev
-npm run db:dev:migrate
+# 4. Test your changes locally
 
-# 5. Test your changes locally
-
-# 6. Commit migration files to git
+# 5. Commit migration files to git
 git add prisma/migrations/YYYYMMDDHHMMSS_add_new_feature/
 git add prisma/schema.prisma
 git commit -m "feat: add new feature schema"
 
-# 7. After PR merge and deploy, apply to prod
-npm run db:prod:deploy
+# 6. After PR merge and deploy, apply to prod
+npm run db:v2:prod:deploy
 ```
 
 ### Scenario 2: Migration Status is Out of Sync
@@ -185,8 +168,8 @@ If you see "migrations from database not found locally":
 
 1. Check if someone else deployed migrations you don't have locally
 2. Pull latest code: `git pull origin dev`
-3. Check status again: `npm run db:dev:status`
-4. If still out of sync, use `db:prod:resolve` carefully
+3. Check status again: `npm run db:v2:dev:status`
+4. If still out of sync, use `db:v2:prod:baseline` carefully
 
 ### Scenario 3: Testing Migration Deployment Process
 
@@ -194,10 +177,10 @@ To test the deployment process safely:
 
 ```bash
 # Check what would be deployed
-npm run db:prod:status
+npm run db:v2:prod:status
 
 # If you want to test deploy behavior without running against prod,
-# you can temporarily point .env.prod.migrate to a test database
+# create a new Neon branch from prod and update .env.v2.prod temporarily
 # (DO NOT commit this change)
 ```
 
@@ -205,18 +188,18 @@ npm run db:prod:status
 
 ### Error: "DATABASE_URL is not set"
 - Ensure you're using `npm run` commands, not calling `prisma` directly
-- Check that the env file exists (`.env.dev.migrate` or `.env.prod.migrate`)
+- Check that the env file exists (`.env.v2.dev` or `.env.v2.prod`)
 
 ### Error: "OPERATION BLOCKED - attempted to run against PRODUCTION"
 - **Good!** The guard is working.
-- You tried to run `migrate dev` against `bhq_prod`
-- Use `.env.dev.migrate` for development or `db:prod:deploy` for production
+- You tried to run `migrate dev` against production
+- Use `npm run db:v2:dev:migrate` for development
+- Use `npm run db:v2:prod:deploy` for production
 
 ### Error: "Migration failed to apply to shadow database"
 - Usually means an existing migration has an issue
 - Check the specific migration file mentioned in the error
-- The shadow DB might have stale state (Prisma should auto-reset it)
-- Verify `SHADOW_DATABASE_URL` is set correctly in `.env.dev.migrate`
+- Prisma auto-creates shadow databases; ensure `bhq_migrator` has CREATE DATABASE privilege
 
 ### Error: "Relation already exists" in migration SQL
 - Check if the migration is trying to create something that already exists
@@ -225,22 +208,16 @@ npm run db:prod:status
 
 ## Environment Variables Reference
 
-### .env.dev.migrate
+### .env.v2.dev (development)
 ```bash
-DATABASE_URL=postgresql://bhq_migrator:<password>@<host>/bhq_dev?sslmode=require&channel_binding=require
-SHADOW_DATABASE_URL=postgresql://bhq_migrator:<password>@<host>/bhq_shadow_dev?sslmode=require&channel_binding=require
+DATABASE_URL=postgresql://bhq_app:<password>@<host>-pooler/<database>?sslmode=require
+DATABASE_DIRECT_URL=postgresql://bhq_migrator:<password>@<host>/<database>?sslmode=require
 ```
 
-### .env.dev (runtime, not migrations)
+### .env.v2.prod (production)
 ```bash
-DATABASE_URL=postgresql://bhq_app:<password>@<host>/bhq_dev?sslmode=require&channel_binding=require
-NODE_ENV=development
-PORT=6001
-```
-
-### .env.prod.migrate
-```bash
-DATABASE_URL=postgresql://bhq_migrator:<password>@<host>/bhq_prod?sslmode=require&channel_binding=require
+DATABASE_URL=postgresql://bhq_app:<password>@<host>-pooler/<database>?sslmode=require
+DATABASE_DIRECT_URL=postgresql://bhq_migrator:<password>@<host>/<database>?sslmode=require
 ```
 
 ## Security Notes
