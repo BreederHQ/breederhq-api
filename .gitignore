@@ -21,6 +21,7 @@ build/
 !.env.prod.example
 !.env.prod.migrate.example
 !.env.v1.*.example
+!.env.v2.*.example
 
 # Logs
 *.log
