@@ -18,7 +18,7 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, statSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import { probeDbIdent, printDbIdent } from "./db-ident.js";
+import { probeDbIdent, printDbIdent, compareDbIdents, printSourceDestIdents } from "./db-ident.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..", "..", "..");
@@ -96,6 +96,19 @@ if (!targetUrl) {
   console.error(`\n❌ Required environment variable not set: DATABASE_DIRECT_URL`);
   console.error(`\nCheck your ${envFile} file.\n`);
   process.exit(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Get source URL (v1 snapshot) for same-database guard
+// ─────────────────────────────────────────────────────────────────────────────
+const v1EnvFile = `.env.v1.${env}.snapshot`;
+const v1EnvPath = resolve(rootDir, v1EnvFile);
+const v1RequiredVar = env === "dev" ? "V1_DEV_SNAPSHOT_DIRECT_URL" : "V1_PROD_SNAPSHOT_DIRECT_URL";
+
+let sourceUrl = null;
+if (existsSync(v1EnvPath)) {
+  const v1Env = parseEnvFile(v1EnvPath);
+  sourceUrl = v1Env[v1RequiredVar] || process.env[v1RequiredVar];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,9 +219,38 @@ function runPsqlCommand(sql, description) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function main() {
   try {
-    // Probe database identity for debugging
-    const ident = await probeDbIdent(targetUrl, fileEnv, rootDir);
-    printDbIdent("Import", ident);
+    // ─────────────────────────────────────────────────────────────────────────
+    // WRONG-TARGET GUARD: Verify source != destination before proceeding
+    // ─────────────────────────────────────────────────────────────────────────
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Pre-flight: Database Identity Verification");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    // Probe destination (v2)
+    const destIdent = await probeDbIdent(targetUrl, fileEnv, rootDir);
+
+    // If we have source URL, probe and compare
+    if (sourceUrl) {
+      const sourceIdent = await probeDbIdent(sourceUrl, {}, rootDir);
+      printSourceDestIdents(sourceIdent, destIdent);
+
+      // Check if they appear to be the same database
+      const comparison = compareDbIdents(sourceIdent, destIdent);
+      if (comparison.isSame) {
+        console.error("❌ WRONG-TARGET GUARD: SOURCE AND DESTINATION ARE THE SAME DATABASE!");
+        console.error(`   Reason: ${comparison.reason}`);
+        console.error("\n   This would overwrite your source data. Aborting.\n");
+        process.exit(1);
+      }
+
+      console.log(`✓ Source and destination are different: ${comparison.reason}\n`);
+    } else {
+      // No source URL - just print destination and warn
+      printDbIdent("Destination (v2)", destIdent);
+      console.log("⚠ Warning: Could not verify source database identity.");
+      console.log(`  ${v1EnvFile} not found or ${v1RequiredVar} not set.`);
+      console.log("  Proceeding with import, but please verify manually.\n");
+    }
 
     // Step 0 (safety): Truncate _prisma_migrations if exists
     // This is a safety net in case someone runs an old dump that still
