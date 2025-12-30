@@ -130,12 +130,17 @@ console.log(`Output file: ${outFile}\n`);
 // Note: We do NOT use --disable-triggers because Neon (managed Postgres)
 // blocks DISABLE TRIGGER ALL for non-superusers. Instead, we drop FK
 // constraints before import and restore them after.
+//
+// We exclude _prisma_migrations because v2 has its own migration history.
+// Including v1's migrations would cause duplicate key violations.
 const child = spawn(
   "pg_dump",
   [
     "--data-only",
     "--no-owner",
     "--no-acl",
+    "--exclude-table=_prisma_migrations",
+    "--exclude-table=_prisma_migrations_lock",
     "--dbname",
     sourceUrl,
     "--file",
