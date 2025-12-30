@@ -36,6 +36,7 @@ BEGIN
 END $$;
 
 -- Dynamically drop all FK constraints
+-- Note: relname is already quoted by regclass::text, so use %s not %I
 DO $$
 DECLARE
   r RECORD;
@@ -43,7 +44,15 @@ DECLARE
 BEGIN
   FOR r IN SELECT conname, relname FROM _bhq_fk_backup ORDER BY relname, conname
   LOOP
-    drop_sql := format('ALTER TABLE %I DROP CONSTRAINT %I', r.relname, r.conname);
+    -- Safety: skip null relnames (should not happen)
+    IF r.relname IS NULL THEN
+      RAISE NOTICE 'Skipping constraint % with NULL relname', r.conname;
+      CONTINUE;
+    END IF;
+
+    -- relname from regclass::text is already properly quoted/schema-qualified
+    -- conname needs %I quoting
+    drop_sql := format('ALTER TABLE %s DROP CONSTRAINT %I', r.relname, r.conname);
     RAISE NOTICE 'Dropping: %.%', r.relname, r.conname;
     EXECUTE drop_sql;
   END LOOP;
