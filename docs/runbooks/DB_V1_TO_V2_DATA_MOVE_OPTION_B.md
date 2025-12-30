@@ -11,6 +11,11 @@ This runbook covers the data-only logical copy approach for migrating data from 
 - If import fails, stop and report the exact error - do not implement fallback logic
 - Never copy directly from live v1 prod - always use snapshot branches
 
+**Neon compatibility:**
+- We do NOT use `--disable-triggers` in pg_dump because Neon (managed Postgres) blocks `DISABLE TRIGGER ALL` for non-superusers
+- Instead, the import process temporarily drops FK constraints, imports data, then restores FK constraints
+- FK constraint definitions are backed up to `_bhq_fk_backup` table during import
+
 ## Prerequisites
 
 ### 1. Required Tools
@@ -385,6 +390,8 @@ ERROR:  relation "TableName" does not exist
 | `scripts/db/v2/run-import.js` | Node wrapper for import (cross-platform) |
 | `scripts/db/v2/run-postimport.js` | Node wrapper for post-import fixes |
 | `scripts/db/v2/validate-post-import.ts` | TypeScript validation harness |
+| `prisma/sql/backfills/v2_pre_import_drop_fks.sql` | Drop FK constraints before import (Neon compat) |
+| `prisma/sql/backfills/v2_post_import_restore_fks.sql` | Restore FK constraints after import |
 | `prisma/sql/backfills/v2_post_import_fix.sql` | Post-import fixes (sequences, cleanup) |
 | `prisma/sql/validation/v2_post_import_checks.sql` | Validation queries |
 | `.env.v1.dev.snapshot.example` | Template for v1 dev snapshot connection |

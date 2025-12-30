@@ -127,11 +127,13 @@ try {
 console.log("Starting pg_dump (data-only)...");
 console.log(`Output file: ${outFile}\n`);
 
+// Note: We do NOT use --disable-triggers because Neon (managed Postgres)
+// blocks DISABLE TRIGGER ALL for non-superusers. Instead, we drop FK
+// constraints before import and restore them after.
 const child = spawn(
   "pg_dump",
   [
     "--data-only",
-    "--disable-triggers",
     "--no-owner",
     "--no-acl",
     "--dbname",
