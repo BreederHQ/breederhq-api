@@ -2,35 +2,28 @@
 
 These environment files are **DEPRECATED** and must not be used.
 
+## Contents
+
+| File | Original Purpose | Status |
+|------|------------------|--------|
+| `.env.dev.migrate.example` | v1 dev migrate template | Deprecated |
+| `.env.prod.migrate.example` | v1 prod migrate template | Deprecated |
+| `.env.studio.example` | Prisma Studio template | Use `npm run db:studio` instead |
+
 ## Why Archived?
 
-These files were used by the v1 database workflow which has been replaced by v2:
-
-- `.env.dev.migrate` → Points to v1 bhq_dev, use `.env.v2.dev` instead
-- `.env.prod.migrate` → Points to v1 bhq_prod, use `.env.v2.prod` instead
-- `.env.studio` → Use `.env.v2.dev` with `npm run db:studio` instead
+The v1→v2 database migration is complete. These files were used during the migration process and are no longer needed.
 
 ## Current Workflow
 
-For v2 database operations, use:
+For database operations, use the npm scripts directly:
 
-| Purpose | Env File | Command |
-|---------|----------|---------|
-| Dev migrations | `.env.v2.dev` | `npm run db:v2:dev:migrate` |
-| Dev status | `.env.v2.dev` | `npm run db:v2:dev:status` |
-| Prod deploy | `.env.v2.prod` | `npm run db:v2:prod:deploy` |
-| Prod status | `.env.v2.prod` | `npm run db:v2:prod:status` |
-| Prisma Studio | `.env.v2.dev` | `npm run db:studio` |
+| Purpose | Command |
+|---------|---------|
+| Dev migrations | `npm run db:v2:dev:migrate` |
+| Dev status | `npm run db:v2:dev:status` |
+| Prod deploy | `npm run db:v2:prod:deploy` |
+| Prod status | `npm run db:v2:prod:status` |
+| Prisma Studio | `npm run db:studio` |
 
-## v1→v2 Data Migration
-
-For migrating data from v1 snapshots, use:
-
-| Purpose | Env File |
-|---------|----------|
-| v1 dev snapshot source | `.env.v1.dev.snapshot` |
-| v1 prod snapshot source | `.env.v1.prod.snapshot` |
-| v2 dev target | `.env.v2.dev` |
-| v2 prod target | `.env.v2.prod` |
-
-See `docs/runbooks/DB_V1_TO_V2_DATA_MOVE_OPTION_B.md` for full instructions.
+See `docs/runbooks/DB_WORKFLOW_LOCKOUT.md` for the authoritative workflow documentation.
