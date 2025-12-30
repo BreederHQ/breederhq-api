@@ -240,6 +240,7 @@ import expensesRoutes from "./routes/expenses.js"; // Finance MVP
 import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
+import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
@@ -385,6 +386,7 @@ app.register(
     api.register(expensesRoutes);      // /api/v1/expenses/* Finance MVP
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
+    api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
   },
   { prefix: "/api/v1" }
 );
