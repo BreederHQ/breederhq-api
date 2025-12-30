@@ -35,8 +35,12 @@ All schema changes, migrations, and data writes must go through v2 workflows.
 |--------|---------|
 | `npm run db:v2:dev:status` | Check migration status on v2 dev |
 | `npm run db:v2:dev:migrate` | Create and apply migrations on v2 dev |
+| `npm run db:v2:dev:baseline` | Mark init migration as applied (after data import) |
+| `npm run db:v2:dev:move` | One-command v1→v2 data migration for dev |
 | `npm run db:v2:prod:status` | Check migration status on v2 prod |
 | `npm run db:v2:prod:deploy` | Deploy migrations to v2 prod |
+| `npm run db:v2:prod:baseline` | Mark init migration as applied (after data import) |
+| `npm run db:v2:prod:move` | One-command v1→v2 data migration for prod |
 
 ### v1 Snapshot Dumps (ALLOWED - Read-Only)
 
@@ -44,6 +48,25 @@ All schema changes, migrations, and data writes must go through v2 workflows.
 |--------|---------|
 | `npm run db:v2:dump:v1:dev:snapshot` | Dump data from v1 dev snapshot |
 | `npm run db:v2:dump:v1:prod:snapshot` | Dump data from v1 prod snapshot |
+
+### v2 Data Import (ALLOWED)
+
+| Script | Purpose |
+|--------|---------|
+| `npm run db:v2:import:dev:data` | Import v1 data dump to v2 dev |
+| `npm run db:v2:import:prod:data` | Import v1 data dump to v2 prod |
+| `npm run db:v2:postimport:dev` | Run post-import fixes on v2 dev |
+| `npm run db:v2:postimport:prod` | Run post-import fixes on v2 prod |
+| `npm run db:v2:validate:dev` | Validate v2 dev data integrity |
+| `npm run db:v2:validate:prod` | Validate v2 prod data integrity |
+| `npm run db:v2:preflight:dev:move` | Preflight checks for dev migration |
+| `npm run db:v2:preflight:prod:move` | Preflight checks for prod migration |
+
+### Shadow Database (ALLOWED - Dev Only)
+
+| Script | Purpose |
+|--------|---------|
+| `npm run db:v2:shadow:prepare:dev` | Create citext extension in shadow DB |
 
 ### Utility Scripts (ALLOWED)
 
