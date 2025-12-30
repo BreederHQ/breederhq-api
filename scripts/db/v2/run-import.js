@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
- * run-import.js - Cross-platform wrapper for import-v1-data.sh
+ * run-import.js - Cross-platform wrapper for v1 → v2 data import
  *
- * Loads environment from .env.v2.{env} and runs psql import.
+ * Loads environment from .env.v2.{env} and runs psql import with
+ * FK constraint handling for Neon compatibility.
+ *
+ * Flow:
+ *   1. Drop FK constraints (v2_pre_import_drop_fks.sql)
+ *   2. Import data (v1_data.sql)
+ *   3. Restore FK constraints (v2_post_import_restore_fks.sql)
  *
  * Usage: node scripts/db/v2/run-import.js [dev|prod]
  */
@@ -30,8 +36,6 @@ if (!env || !["dev", "prod"].includes(env)) {
 // ─────────────────────────────────────────────────────────────────────────────
 const envFile = `.env.v2.${env}`;
 const envPath = resolve(rootDir, envFile);
-const requiredVar =
-  env === "dev" ? "V2_DEV_DIRECT_URL" : "V2_PROD_DIRECT_URL";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Check env file exists
@@ -93,14 +97,26 @@ if (!targetUrl) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Check input file exists
+// Check input files exist
 // ─────────────────────────────────────────────────────────────────────────────
 const inFile = resolve(rootDir, "tmp", "v1_data.sql");
+const dropFksFile = resolve(rootDir, "prisma", "sql", "backfills", "v2_pre_import_drop_fks.sql");
+const restoreFksFile = resolve(rootDir, "prisma", "sql", "backfills", "v2_post_import_restore_fks.sql");
 
 if (!existsSync(inFile)) {
   console.error(`\n❌ Input file not found: ${inFile}`);
   console.error("\nRun the dump command first:");
   console.error(`  npm run db:v2:dump:v1:${env}:snapshot\n`);
+  process.exit(1);
+}
+
+if (!existsSync(dropFksFile)) {
+  console.error(`\n❌ FK drop script not found: ${dropFksFile}\n`);
+  process.exit(1);
+}
+
+if (!existsSync(restoreFksFile)) {
+  console.error(`\n❌ FK restore script not found: ${restoreFksFile}\n`);
   process.exit(1);
 }
 
@@ -119,37 +135,80 @@ console.log(`  File size: ${fileSize} bytes`);
 console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Run psql import
+// Helper to run psql with a file
 // ─────────────────────────────────────────────────────────────────────────────
-console.log("Starting psql import (ON_ERROR_STOP=1)...");
-console.log("This will fail immediately on any constraint violation.\n");
+function runPsql(sqlFile, description) {
+  return new Promise((resolve, reject) => {
+    console.log(`\n▶ ${description}...`);
+    console.log(`  File: ${sqlFile}\n`);
 
-const child = spawn(
-  "psql",
-  [targetUrl, "-v", "ON_ERROR_STOP=1", "-f", inFile],
-  {
-    stdio: "inherit",
-    env: { ...process.env, ...fileEnv },
-    cwd: rootDir,
-  }
-);
+    const child = spawn(
+      "psql",
+      [targetUrl, "-v", "ON_ERROR_STOP=1", "-f", sqlFile],
+      {
+        stdio: "inherit",
+        env: { ...process.env, ...fileEnv },
+        cwd: rootDir,
+      }
+    );
 
-child.on("exit", (code) => {
-  if (code === 0) {
-    console.log("\n✓ Import completed successfully\n");
-  } else {
-    console.error("\n❌ Import failed with exit code:", code);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        console.log(`\n✓ ${description} completed\n`);
+        resolve();
+      } else {
+        reject(new Error(`${description} failed with exit code ${code}`));
+      }
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`Failed to start psql: ${err.message}`));
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main import flow
+// ─────────────────────────────────────────────────────────────────────────────
+async function main() {
+  try {
+    // Step 1: Drop FK constraints
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Step 1/3: Drop FK constraints");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    await runPsql(dropFksFile, "Drop FK constraints");
+
+    // Step 2: Import data
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Step 2/3: Import v1 data");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    await runPsql(inFile, "Import v1 data");
+
+    // Step 3: Restore FK constraints
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Step 3/3: Restore FK constraints");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    await runPsql(restoreFksFile, "Restore FK constraints");
+
+    // Success
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("✓ Import completed successfully");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    process.exit(0);
+
+  } catch (err) {
+    console.error("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.error(`❌ ${err.message}`);
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.error("\nCheck the error above for details.");
     console.error("Common issues:");
-    console.error("  - FK constraint violations");
+    console.error("  - Data violates FK constraints");
     console.error("  - Enum value mismatches");
-    console.error("  - Missing tables\n");
+    console.error("  - Missing tables");
+    console.error("\nNote: If FK drop succeeded but import failed, FKs are NOT");
+    console.error("restored. You may need to restore manually or reset the DB.\n");
+    process.exit(1);
   }
-  process.exit(code || 0);
-});
+}
 
-child.on("error", (err) => {
-  console.error(`\n❌ Failed to start psql: ${err.message}`);
-  console.error("Make sure psql is installed and in your PATH.\n");
-  process.exit(1);
-});
+main();
