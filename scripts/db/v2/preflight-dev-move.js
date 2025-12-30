@@ -53,13 +53,23 @@ function parseEnvFile(filePath) {
   return env;
 }
 
-function check(name, passed, message) {
+/**
+ * Check helper with optional error token for machine detection.
+ * @param {string} name - Check name
+ * @param {boolean} passed - Whether check passed
+ * @param {string} message - Human-readable failure message
+ * @param {string} [errorToken] - Optional machine-readable error token
+ */
+function check(name, passed, message, errorToken) {
   if (passed) {
     console.log(`  ✓ ${name}`);
     return true;
   } else {
     console.log(`  ✗ ${name}`);
     console.log(`    → ${message}`);
+    if (errorToken) {
+      console.log(`    [${errorToken}]`);
+    }
     return false;
   }
 }
@@ -162,7 +172,8 @@ allPassed =
   check(
     `File exists: ${v1EnvFile}`,
     v1EnvExists,
-    `Create from template: cp ${v1EnvFile}.example ${v1EnvFile}`
+    `Create from template: cp ${v1EnvFile}.example ${v1EnvFile}`,
+    "ERR_MISSING_V1_SNAPSHOT_ENV_FILE"
   ) && allPassed;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +187,8 @@ allPassed =
   check(
     "V1_DEV_SNAPSHOT_DIRECT_URL is set",
     v1UrlSet,
-    `Edit ${v1EnvFile} and set V1_DEV_SNAPSHOT_DIRECT_URL`
+    `Edit ${v1EnvFile} and set V1_DEV_SNAPSHOT_DIRECT_URL`,
+    "ERR_MISSING_V1_SNAPSHOT_URL"
   ) && allPassed;
 
 // ─────────────────────────────────────────────────────────────────────────────

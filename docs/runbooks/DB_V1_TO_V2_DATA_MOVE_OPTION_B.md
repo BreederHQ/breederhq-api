@@ -59,7 +59,47 @@ npm run db:v2:prod:deploy  # if migrations pending
 
 ## Section A: v1 Dev Snapshot → v2 Dev
 
-### Quick Setup
+### Fast Path (One Command)
+
+Use this if you want to run the full migration with a single command.
+
+**Step 0: Setup environment file**
+
+```bash
+# Create the v1 snapshot env file from template
+cp .env.v1.dev.snapshot.example .env.v1.dev.snapshot
+```
+
+Then edit `.env.v1.dev.snapshot` and set `V1_DEV_SNAPSHOT_DIRECT_URL`:
+
+1. Go to [Neon Console](https://console.neon.tech)
+2. Select your v1 dev project
+3. Go to **Branches** → Create a snapshot branch (or use existing)
+4. Copy the **DIRECT** connection string (port 5432, NOT the pooled one with port 6543)
+5. Paste into `V1_DEV_SNAPSHOT_DIRECT_URL=postgresql://...`
+
+**Step 1: Run the migration**
+
+```bash
+npm run db:v2:dev:move
+```
+
+This single command:
+- Runs all preflight checks
+- Dumps data from v1 dev snapshot
+- Imports data to v2 dev
+- Runs post-import fixes (sequences, cleanup)
+- Validates data integrity
+
+If any step fails, the command stops and shows what to fix.
+
+---
+
+### Verbose Path (Step-by-Step)
+
+Use this for debugging or if you need to run individual steps.
+
+#### Quick Setup
 
 ```bash
 # 1. Create the v1 snapshot env file from template
@@ -72,7 +112,7 @@ cp .env.v1.dev.snapshot.example .env.v1.dev.snapshot
 npm run db:v2:preflight:dev:move
 ```
 
-### Preconditions Checklist
+#### Preconditions Checklist
 
 - [ ] v1 dev snapshot branch exists in Neon
 - [ ] `.env.v1.dev.snapshot` created with `V1_DEV_SNAPSHOT_DIRECT_URL`
@@ -80,7 +120,7 @@ npm run db:v2:preflight:dev:move
 - [ ] v2 dev schema is up to date (`npm run db:v2:dev:status` shows no pending migrations)
 - [ ] Preflight passes: `npm run db:v2:preflight:dev:move`
 
-### Step 0: Run Preflight Check
+#### Step 0: Run Preflight Check
 
 ```bash
 npm run db:v2:preflight:dev:move
@@ -120,7 +160,7 @@ Tools:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-### Step 1: Dump Data from v1 Dev Snapshot
+#### Step 1: Dump Data from v1 Dev Snapshot
 
 ```bash
 npm run db:v2:dump:v1:dev:snapshot
@@ -143,7 +183,7 @@ Output file: ./tmp/v1_data.sql
 ✓ pg_dump completed successfully
 ```
 
-### Step 2: Import Data to v2 Dev
+#### Step 2: Import Data to v2 Dev
 
 ```bash
 npm run db:v2:import:dev:data
@@ -164,7 +204,7 @@ Starting psql import (ON_ERROR_STOP=1)...
 ✓ Import completed successfully
 ```
 
-### Step 3: Run Post-Import Fixes
+#### Step 3: Run Post-Import Fixes
 
 ```bash
 npm run db:v2:postimport:dev
@@ -172,7 +212,7 @@ npm run db:v2:postimport:dev
 
 This drops the `_prisma_migrations` table (v1 artifact) and resets all sequences.
 
-### Step 4: Check Prisma Migration Status
+#### Step 4: Check Prisma Migration Status
 
 ```bash
 npm run db:v2:dev:status
@@ -187,7 +227,7 @@ If baseline migration needs to be marked:
 npm run db:v2:dev:migrate
 ```
 
-### Step 5: Run Validation
+#### Step 5: Run Validation
 
 ```bash
 npm run db:v2:validate:dev
@@ -318,6 +358,7 @@ ERROR:  relation "TableName" does not exist
 
 | Script | Description |
 |--------|-------------|
+| `npm run db:v2:dev:move` | **One-command migration** (runs all steps below) |
 | `npm run db:v2:preflight:dev:move` | Preflight checks for dev data migration |
 | `npm run db:v2:dump:v1:dev:snapshot` | Dump data from v1 dev snapshot |
 | `npm run db:v2:dump:v1:prod:snapshot` | Dump data from v1 prod snapshot |
@@ -336,6 +377,7 @@ ERROR:  relation "TableName" does not exist
 
 | File | Purpose |
 |------|---------|
+| `scripts/db/v2/dev-move-runbook.js` | One-command migration wrapper |
 | `scripts/db/v2/preflight-dev-move.js` | Preflight checks for dev migration |
 | `scripts/db/v2/dump-v1-data.sh` | Shell script for pg_dump |
 | `scripts/db/v2/import-v1-data.sh` | Shell script for psql import |
