@@ -18,6 +18,7 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, statSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { probeDbIdent, printDbIdent } from "./db-ident.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..", "..", "..");
@@ -205,6 +206,10 @@ function runPsqlCommand(sql, description) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function main() {
   try {
+    // Probe database identity for debugging
+    const ident = await probeDbIdent(targetUrl, fileEnv, rootDir);
+    printDbIdent("Import", ident);
+
     // Step 0 (safety): Truncate _prisma_migrations if exists
     // This is a safety net in case someone runs an old dump that still
     // contains _prisma_migrations data. v2 has its own migration history.
