@@ -1,3 +1,6 @@
+-- Enable citext extension (required for case-insensitive email columns)
+CREATE EXTENSION IF NOT EXISTS citext;
+
 -- CreateEnum
 CREATE TYPE "PartyType" AS ENUM ('CONTACT', 'ORGANIZATION');
 

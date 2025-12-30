@@ -62,12 +62,6 @@ All schema changes, migrations, and data writes must go through v2 workflows.
 | `npm run db:v2:preflight:dev:move` | Preflight checks for dev migration |
 | `npm run db:v2:preflight:prod:move` | Preflight checks for prod migration |
 
-### Shadow Database (ALLOWED - Dev Only)
-
-| Script | Purpose |
-|--------|---------|
-| `npm run db:v2:shadow:prepare:dev` | Create citext extension in shadow DB |
-
 ### Utility Scripts (ALLOWED)
 
 | Script | Purpose |

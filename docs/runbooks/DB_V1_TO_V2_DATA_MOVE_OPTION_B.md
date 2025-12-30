@@ -391,7 +391,6 @@ ERROR:  relation "TableName" does not exist
 | `npm run db:v2:prod:status` | Check v2 prod migration status |
 | `npm run db:v2:dev:baseline` | Mark init migration as applied on dev |
 | `npm run db:v2:prod:baseline` | Mark init migration as applied on prod |
-| `npm run db:v2:shadow:prepare:dev` | Create citext extension in shadow database |
 
 ---
 
@@ -408,11 +407,10 @@ ERROR:  relation "TableName" does not exist
 | `scripts/db/v2/run-postimport.js` | Node wrapper for post-import fixes |
 | `scripts/db/v2/validate-post-import.ts` | TypeScript validation harness |
 | `scripts/db/v2/db-ident.js` | Database identity probing for debugging |
-| `scripts/db/v2/prepare-shadow.js` | Shadow database preparation (citext extension) |
 | `prisma/sql/backfills/v2_pre_import_drop_fks.sql` | Drop FK constraints before import (Neon compat) |
 | `prisma/sql/backfills/v2_post_import_restore_fks.sql` | Restore FK constraints after import |
 | `prisma/sql/backfills/v2_post_import_fix.sql` | Post-import fixes (sequences, cleanup) |
 | `.env.v1.dev.snapshot.example` | Template for v1 dev snapshot connection |
 | `.env.v1.prod.snapshot.example` | Template for v1 prod snapshot connection |
-| `.env.v2.dev.example` | Template for v2 dev connection (includes shadow DB) |
+| `.env.v2.dev.example` | Template for v2 dev connection |
 | `.env.v2.prod.example` | Template for v2 prod connection |
