@@ -21,8 +21,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO bhq_app;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 3. Sequence permissions (for auto-increment columns)
+--    UPDATE is required for nextval() calls during INSERT
 -- ═══════════════════════════════════════════════════════════════════════════
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bhq_app;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO bhq_app;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 4. Default privileges for FUTURE tables and sequences
@@ -32,7 +33,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE bhq_migrator IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bhq_app;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE bhq_migrator IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO bhq_app;
+  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO bhq_app;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 5. Verification query (optional - shows granted privileges)
