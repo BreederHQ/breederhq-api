@@ -212,7 +212,7 @@ async function main() {
     console.log("Step 0/4: Safety truncate _prisma_migrations (if exists)");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     await runPsqlCommand(
-      `TRUNCATE TABLE IF EXISTS "_prisma_migrations" CASCADE;`,
+      `DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_prisma_migrations') THEN TRUNCATE TABLE "_prisma_migrations"; END IF; END $$;`,
       "Truncate _prisma_migrations"
     );
 
