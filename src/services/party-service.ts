@@ -53,7 +53,7 @@ const CONTACT_SELECT = {
         party: { select: { name: true, archived: true } },
       },
     },
-    tagAssignments: TAG_ASSIGNMENT_SELECT,
+    // Note: tagAssignments is on Party, not Contact
   },
 } as const;
 
@@ -96,6 +96,7 @@ const PARTY_SELECT = {
     updatedAt: true,
     contact: CONTACT_SELECT,
     organization: ORGANIZATION_SELECT,
+    tagAssignments: TAG_ASSIGNMENT_SELECT,
   },
 } as const;
 
@@ -121,21 +122,23 @@ function mapPartyTypeToDb(type?: PartyType) {
 }
 
 function buildSearchOr(search: string) {
+  // For optional relations, use direct nested query without 'is' wrapper
+  // This correctly handles null relations (no match when relation doesn't exist)
   return [
     { name: { contains: search, mode: "insensitive" } },
     { email: { contains: search, mode: "insensitive" } },
     { phoneE164: { contains: search, mode: "insensitive" } },
     { whatsappE164: { contains: search, mode: "insensitive" } },
-    { contact: { is: { display_name: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { first_name: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { last_name: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { nickname: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { email: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { phoneE164: { contains: search, mode: "insensitive" } } } },
-    { contact: { is: { whatsappE164: { contains: search, mode: "insensitive" } } } },
-    { organization: { is: { name: { contains: search, mode: "insensitive" } } } },
-    { organization: { is: { email: { contains: search, mode: "insensitive" } } } },
-    { organization: { is: { phone: { contains: search, mode: "insensitive" } } } },
+    { contact: { display_name: { contains: search, mode: "insensitive" } } },
+    { contact: { first_name: { contains: search, mode: "insensitive" } } },
+    { contact: { last_name: { contains: search, mode: "insensitive" } } },
+    { contact: { nickname: { contains: search, mode: "insensitive" } } },
+    { contact: { email: { contains: search, mode: "insensitive" } } },
+    { contact: { phoneE164: { contains: search, mode: "insensitive" } } },
+    { contact: { whatsappE164: { contains: search, mode: "insensitive" } } },
+    { organization: { name: { contains: search, mode: "insensitive" } } },
+    { organization: { email: { contains: search, mode: "insensitive" } } },
+    { organization: { phone: { contains: search, mode: "insensitive" } } },
   ];
 }
 
@@ -150,20 +153,22 @@ function buildWhere(params: PartyListParams) {
     and.push({ archived: true });
   } else if (params.status === "ACTIVE") {
     and.push({ archived: false });
+    // Exclude parties with archived backing records (direct nested query for optional relations)
     and.push({
       NOT: {
         OR: [
-          { contact: { is: { archived: true } } },
-          { organization: { is: { archived: true } } },
+          { contact: { archived: true } },
+          { organization: { archived: true } },
         ],
       },
     });
   } else if (params.status === "INACTIVE") {
     and.push({ archived: false });
+    // Include parties with archived backing records
     and.push({
       OR: [
-        { contact: { is: { archived: true } } },
-        { organization: { is: { archived: true } } },
+        { contact: { archived: true } },
+        { organization: { archived: true } },
       ],
     });
   }
