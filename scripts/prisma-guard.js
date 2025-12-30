@@ -29,8 +29,8 @@ const fullCommand = `${prismaCommand} ${prismaSubcommand || ''}`.trim();
 // Detect script mode from npm script name
 const npmScript = process.env.npm_lifecycle_event || '';
 const isDevScript = npmScript.startsWith('db:dev:');
-const isV2DevScript = npmScript === 'db:v2:dev:status' || npmScript === 'db:v2:dev:migrate';
-const isV2ProdScript = npmScript === 'db:v2:prod:deploy';
+const isV2DevScript = npmScript === 'db:dev:status' || npmScript === 'db:dev:migrate';
+const isV2ProdScript = npmScript === 'db:prod:deploy';
 
 function exitWithError(message) {
   console.error('\n❌ PRISMA GUARD: OPERATION BLOCKED\n');
@@ -61,7 +61,7 @@ if (!DATABASE_URL) {
     'DATABASE_URL is not set.\n' +
     'Ensure you are using the correct environment file:\n' +
     '  v1 workflow: npx dotenv -e .env.dev.migrate --override -- <command>\n' +
-    '  v2 workflow: node scripts/run-with-env.js .env.v2.dev <command>'
+    '  v2 workflow: node scripts/run-with-env.js .env.dev.migrate <command>'
   );
 }
 
@@ -101,7 +101,7 @@ if (isV2Database) {
         `BLOCKED: v2 dev scripts require a v2 development database.\n\n` +
         `Script: ${npmScript}\n` +
         `Current database: ${dbLabel}\n\n` +
-        'Ensure .env.v2.dev points to the Neon v2 development branch.'
+        'Ensure .env.dev.migrate points to the Neon v2 development branch.'
       );
     }
     // Allow migrate dev and migrate status for v2 dev
@@ -111,8 +111,8 @@ if (isV2Database) {
       exitWithError(
         `BLOCKED: "db push" not allowed in v2 workflow.\n\n` +
         'The v2 workflow uses Prisma Migrate exclusively:\n' +
-        '  npm run db:v2:dev:migrate   (create/apply migrations)\n' +
-        '  npm run db:v2:dev:status    (check migration status)'
+        '  npm run db:dev:migrate   (create/apply migrations)\n' +
+        '  npm run db:dev:status    (check migration status)'
       );
     }
   }
@@ -124,7 +124,7 @@ if (isV2Database) {
         `BLOCKED: v2 prod scripts require a v2 production database.\n\n` +
         `Script: ${npmScript}\n` +
         `Current database: ${dbLabel}\n\n` +
-        'Ensure .env.v2.prod points to the Neon v2 production branch.'
+        'Ensure .env.prod.migrate points to the Neon v2 production branch.'
       );
     }
     if (!fullCommand.startsWith('migrate deploy')) {
@@ -138,7 +138,7 @@ if (isV2Database) {
       exitWithError(
         `BLOCKED: "migrate dev" NEVER allowed against production.\n\n` +
         'Use migrate deploy to apply migrations to production:\n' +
-        '  npm run db:v2:prod:deploy'
+        '  npm run db:prod:deploy'
       );
     }
   }

@@ -7,7 +7,7 @@
  * - Working tree is clean
  * - .env.v1.dev.snapshot file exists
  * - V1_DEV_SNAPSHOT_DIRECT_URL is set
- * - .env.v2.dev file exists
+ * - .env.dev.migrate file exists
  * - DATABASE_DIRECT_URL (v2 dev) is set
  *
  * Usage: node scripts/db/v2/preflight-dev-move.js
@@ -208,7 +208,7 @@ if (v1UrlSet) {
 // Check 5: v2 dev env file exists
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\nv2 Dev configuration:");
-const v2EnvFile = ".env.v2.dev";
+const v2EnvFile = ".env.dev.migrate";
 const v2EnvPath = resolve(rootDir, v2EnvFile);
 const v2EnvExists = existsSync(v2EnvPath);
 
@@ -291,10 +291,10 @@ console.log("\n━━━━━━━━━━━━━━━━━━━━━�
 if (allPassed) {
   console.log("✓ All preflight checks PASSED");
   console.log("\nReady to run:");
-  console.log("  npm run db:v2:dump:v1:dev:snapshot");
-  console.log("  npm run db:v2:import:dev:data");
-  console.log("  npm run db:v2:postimport:dev");
-  console.log("  npm run db:v2:validate:dev");
+  console.log("  npm run db:move:dev:dump");
+  console.log("  npm run db:move:dev:import");
+  console.log("  npm run db:move:dev:postimport");
+  console.log("  npm run db:dev:validate");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   process.exit(0);
 } else {
