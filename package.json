@@ -42,6 +42,7 @@
     "db:v2:postimport:prod": "node scripts/db/v2/run-postimport.js prod",
     "db:v2:validate:dev": "node scripts/run-with-env.js .env.v2.dev tsx scripts/db/v2/validate-post-import.ts",
     "db:v2:validate:prod": "node scripts/run-with-env.js .env.v2.prod tsx scripts/db/v2/validate-post-import.ts",
+    "db:v2:preflight:dev:move": "node scripts/db/v2/preflight-dev-move.js",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {

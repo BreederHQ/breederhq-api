@@ -59,12 +59,66 @@ npm run db:v2:prod:deploy  # if migrations pending
 
 ## Section A: v1 Dev Snapshot → v2 Dev
 
+### Quick Setup
+
+```bash
+# 1. Create the v1 snapshot env file from template
+cp .env.v1.dev.snapshot.example .env.v1.dev.snapshot
+
+# 2. Edit and set V1_DEV_SNAPSHOT_DIRECT_URL to your v1 dev snapshot branch URL
+#    (Create a snapshot branch in Neon first if you haven't already)
+
+# 3. Run preflight to verify configuration
+npm run db:v2:preflight:dev:move
+```
+
 ### Preconditions Checklist
 
 - [ ] v1 dev snapshot branch exists in Neon
 - [ ] `.env.v1.dev.snapshot` created with `V1_DEV_SNAPSHOT_DIRECT_URL`
 - [ ] `.env.v2.dev` exists with `DATABASE_URL` and `DATABASE_DIRECT_URL`
 - [ ] v2 dev schema is up to date (`npm run db:v2:dev:status` shows no pending migrations)
+- [ ] Preflight passes: `npm run db:v2:preflight:dev:move`
+
+### Step 0: Run Preflight Check
+
+```bash
+npm run db:v2:preflight:dev:move
+```
+
+This verifies:
+- On git branch `dev`
+- Working tree is clean
+- `.env.v1.dev.snapshot` exists with `V1_DEV_SNAPSHOT_DIRECT_URL` set
+- `.env.v2.dev` exists with `DATABASE_DIRECT_URL` set
+- `pg_dump` and `psql` are available
+
+**Expected output (all checks pass):**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Preflight: v1 Dev Snapshot → v2 Dev Data Migration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Git checks:
+  ✓ On branch 'dev'
+  ✓ Working tree clean
+
+v1 Snapshot configuration:
+  ✓ File exists: .env.v1.dev.snapshot
+  ✓ V1_DEV_SNAPSHOT_DIRECT_URL is set
+
+v2 Dev configuration:
+  ✓ File exists: .env.v2.dev
+  ✓ DATABASE_DIRECT_URL (v2 dev) is set
+
+Tools:
+  ✓ pg_dump available
+  ✓ psql available
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ All preflight checks PASSED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
 
 ### Step 1: Dump Data from v1 Dev Snapshot
 
@@ -264,6 +318,7 @@ ERROR:  relation "TableName" does not exist
 
 | Script | Description |
 |--------|-------------|
+| `npm run db:v2:preflight:dev:move` | Preflight checks for dev data migration |
 | `npm run db:v2:dump:v1:dev:snapshot` | Dump data from v1 dev snapshot |
 | `npm run db:v2:dump:v1:prod:snapshot` | Dump data from v1 prod snapshot |
 | `npm run db:v2:import:dev:data` | Import data to v2 dev |
@@ -281,6 +336,7 @@ ERROR:  relation "TableName" does not exist
 
 | File | Purpose |
 |------|---------|
+| `scripts/db/v2/preflight-dev-move.js` | Preflight checks for dev migration |
 | `scripts/db/v2/dump-v1-data.sh` | Shell script for pg_dump |
 | `scripts/db/v2/import-v1-data.sh` | Shell script for psql import |
 | `scripts/db/v2/run-dump.js` | Node wrapper for dump (cross-platform) |
