@@ -135,6 +135,13 @@ enum VerificationPurpose {
   OTHER
 }
 
+enum PortalAccessStatus {
+  NO_ACCESS
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
 enum CommChannel {
   EMAIL
   SMS
@@ -378,6 +385,12 @@ model User {
   Task                Task[]
   HealthEvent         HealthEvent[]
   ContractParty       ContractParty[]
+
+  // Portal access management
+  portalAccess            PortalAccess?  @relation("PortalAccessUser")
+  portalAccessesCreatedBy PortalAccess[] @relation("PortalAccessCreatedBy")
+  portalAccessesUpdatedBy PortalAccess[] @relation("PortalAccessUpdatedBy")
+  portalInvitesSentBy     PortalInvite[] @relation("PortalInviteSentBy")
 
   @@index([partyId])
   @@index([defaultTenantId])
@@ -684,6 +697,7 @@ model Party {
   sentMessages         Message[]                  @relation("MessageSenderParty")
   createdTemplates     Template[]                 @relation("TemplateCreatedBy")
   autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
+  portalAccess         PortalAccess?              @relation("PortalAccessParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -3082,4 +3096,62 @@ model AccountingIntegration {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, provider])
+}
+
+/**
+ * Portal Access Management
+ * Controls client portal access per Party (Contact or Organization)
+ */
+
+model PortalAccess {
+  id      Int   @id @default(autoincrement())
+  partyId Int   @unique
+  party   Party @relation("PortalAccessParty", fields: [partyId], references: [id], onDelete: Cascade)
+
+  status PortalAccessStatus @default(NO_ACCESS)
+
+  // Linked user (created when invite is accepted)
+  userId String? @unique
+  user   User?   @relation("PortalAccessUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  // Timestamps
+  invitedAt   DateTime?
+  activatedAt DateTime?
+  suspendedAt DateTime?
+  lastLoginAt DateTime?
+
+  // Audit
+  createdByUserId String?
+  updatedByUserId String?
+  createdBy       User?   @relation("PortalAccessCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy       User?   @relation("PortalAccessUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invites PortalInvite[]
+
+  @@index([partyId])
+  @@index([userId])
+  @@index([status])
+}
+
+model PortalInvite {
+  id             Int          @id @default(autoincrement())
+  portalAccessId Int
+  portalAccess   PortalAccess @relation(fields: [portalAccessId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique
+  expiresAt DateTime
+  sentAt    DateTime  @default(now())
+  usedAt    DateTime?
+
+  // Audit
+  sentByUserId String?
+  sentBy       User?   @relation("PortalInviteSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([portalAccessId])
+  @@index([expiresAt])
 }
