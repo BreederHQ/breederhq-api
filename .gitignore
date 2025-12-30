@@ -22,6 +22,8 @@ build/
 .env.prod.migrate
 .env.v2.dev
 .env.v2.prod
+.env.v1.dev.snapshot
+.env.v1.prod.snapshot
 
 # Env templates (commit these)
 !.env.dev.example
@@ -30,6 +32,8 @@ build/
 !.env.prod.migrate.example
 !.env.v2.dev.example
 !.env.v2.prod.example
+!.env.v1.dev.snapshot.example
+!.env.v1.prod.snapshot.example
 !.env.example
 
 # Logs
