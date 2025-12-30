@@ -6,6 +6,7 @@
  * FK constraint handling for Neon compatibility.
  *
  * Flow:
+ *   0. Safety truncate _prisma_migrations (v2 has own migration history)
  *   1. Drop FK constraints (v2_pre_import_drop_fks.sql)
  *   2. Import data (v1_data.sql)
  *   3. Restore FK constraints (v2_post_import_restore_fks.sql)
@@ -168,25 +169,68 @@ function runPsql(sqlFile, description) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper to run inline SQL command
+// ─────────────────────────────────────────────────────────────────────────────
+function runPsqlCommand(sql, description) {
+  return new Promise((resolve, reject) => {
+    console.log(`\n▶ ${description}...`);
+
+    const child = spawn(
+      "psql",
+      [targetUrl, "-v", "ON_ERROR_STOP=1", "-c", sql],
+      {
+        stdio: "inherit",
+        env: { ...process.env, ...fileEnv },
+        cwd: rootDir,
+      }
+    );
+
+    child.on("exit", (code) => {
+      if (code === 0) {
+        console.log(`✓ ${description} completed\n`);
+        resolve();
+      } else {
+        reject(new Error(`${description} failed with exit code ${code}`));
+      }
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`Failed to start psql: ${err.message}`));
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main import flow
 // ─────────────────────────────────────────────────────────────────────────────
 async function main() {
   try {
+    // Step 0 (safety): Truncate _prisma_migrations if exists
+    // This is a safety net in case someone runs an old dump that still
+    // contains _prisma_migrations data. v2 has its own migration history.
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Step 0/4: Safety truncate _prisma_migrations (if exists)");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    await runPsqlCommand(
+      `TRUNCATE TABLE IF EXISTS "_prisma_migrations" CASCADE;`,
+      "Truncate _prisma_migrations"
+    );
+
     // Step 1: Drop FK constraints
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log("Step 1/3: Drop FK constraints");
+    console.log("Step 1/4: Drop FK constraints");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     await runPsql(dropFksFile, "Drop FK constraints");
 
     // Step 2: Import data
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log("Step 2/3: Import v1 data");
+    console.log("Step 2/4: Import v1 data");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     await runPsql(inFile, "Import v1 data");
 
     // Step 3: Restore FK constraints
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log("Step 3/3: Restore FK constraints");
+    console.log("Step 3/4: Restore FK constraints");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     await runPsql(restoreFksFile, "Restore FK constraints");
 

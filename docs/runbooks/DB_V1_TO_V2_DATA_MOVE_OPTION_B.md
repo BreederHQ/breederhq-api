@@ -173,6 +173,8 @@ npm run db:v2:dump:v1:dev:snapshot
 
 This creates `./tmp/v1_data.sql` containing data-only dump.
 
+> **Note:** The dump automatically excludes `_prisma_migrations` and `_prisma_migrations_lock` tables. v2 has its own migration history that should not be overwritten.
+
 **Expected output:**
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -204,7 +206,17 @@ run-import.js: Importing data to v2 dev
   Input file: ./tmp/v1_data.sql
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Starting psql import (ON_ERROR_STOP=1)...
+Step 0/4: Safety truncate _prisma_migrations (if exists)
+✓ Truncate _prisma_migrations completed
+
+Step 1/4: Drop FK constraints
+✓ Drop FK constraints completed
+
+Step 2/4: Import v1 data
+✓ Import v1 data completed
+
+Step 3/4: Restore FK constraints
+✓ Restore FK constraints completed
 
 ✓ Import completed successfully
 ```
