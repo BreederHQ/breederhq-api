@@ -598,22 +598,30 @@ model Organization {
   country  String?
   archived Boolean @default(false)
 
+  // Marketplace MVP: public program profile fields
+  programSlug        String?
+  isPublicProgram    Boolean @default(false)
+  programBio         String? @db.Text
+  publicContactEmail String?
+
   contacts            Contact[]
-  animals             Animal[]            @relation("OrgAnimals")
+  animals             Animal[]       @relation("OrgAnimals")
   memberships         Membership[]
-  createdCustomBreeds CustomBreed[]       @relation("CreatedByOrganization")
+  createdCustomBreeds CustomBreed[]  @relation("CreatedByOrganization")
   breedingPlans       BreedingPlan[]
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
   Invitation          Invitation[]
   externalProvider    String?
   externalId          String?
 
   @@unique([id, tenantId])
   @@unique([tenantId, name])
+  @@unique([tenantId, programSlug])
   @@index([archived])
   @@index([name])
   @@index([tenantId])
+  @@index([isPublicProgram])
 }
 
 model Membership {
@@ -654,28 +662,28 @@ model Party {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization         Organization?         @relation("OrganizationParty")
-  contact              Contact?              @relation("ContactParty")
-  users                User[]                @relation("UserParty")
-  attachments          Attachment[]          @relation("AttachmentParty")
-  tagAssignments       TagAssignment[]       @relation("TagAssignmentTaggedParty")
-  breedingAttempts     BreedingAttempt[]     @relation("BreedingAttemptStudOwner")
-  planParties          PlanParty[]           @relation("PlanPartyRole")
-  waitlistEntries      WaitlistEntry[]       @relation("WaitlistParty")
-  offspringGroupBuyers OffspringGroupBuyer[] @relation("OffspringGroupBuyerParty")
-  offspringBuyers      Offspring[]           @relation("OffspringBuyerParty")
-  invoiceParties       Invoice[]             @relation("InvoiceParty")
-  contractParties      ContractParty[]       @relation("ContractPartyRole")
-  offspringContracts   OffspringContract[]   @relation("OffspringContractBuyerParty")
-  animalBuyers         Animal[]              @relation("AnimalBuyerParty")
-  animalOwnerships     AnimalOwner[]         @relation("AnimalOwnerParty")
-  expenseVendors       Expense[]             @relation("ExpenseVendor")
+  organization         Organization?              @relation("OrganizationParty")
+  contact              Contact?                   @relation("ContactParty")
+  users                User[]                     @relation("UserParty")
+  attachments          Attachment[]               @relation("AttachmentParty")
+  tagAssignments       TagAssignment[]            @relation("TagAssignmentTaggedParty")
+  breedingAttempts     BreedingAttempt[]          @relation("BreedingAttemptStudOwner")
+  planParties          PlanParty[]                @relation("PlanPartyRole")
+  waitlistEntries      WaitlistEntry[]            @relation("WaitlistParty")
+  offspringGroupBuyers OffspringGroupBuyer[]      @relation("OffspringGroupBuyerParty")
+  offspringBuyers      Offspring[]                @relation("OffspringBuyerParty")
+  invoiceParties       Invoice[]                  @relation("InvoiceParty")
+  contractParties      ContractParty[]            @relation("ContractPartyRole")
+  offspringContracts   OffspringContract[]        @relation("OffspringContractBuyerParty")
+  animalBuyers         Animal[]                   @relation("AnimalBuyerParty")
+  animalOwnerships     AnimalOwner[]              @relation("AnimalOwnerParty")
+  expenseVendors       Expense[]                  @relation("ExpenseVendor")
   commPreferences      PartyCommPreference[]
   commPreferenceEvents PartyCommPreferenceEvent[]
-  messageParticipants  MessageParticipant[]  @relation("MessageParticipantParty")
-  sentMessages         Message[]             @relation("MessageSenderParty")
-  createdTemplates     Template[]            @relation("TemplateCreatedBy")
-  autoReplyLogs        AutoReplyLog[]        @relation("AutoReplyLogParty")
+  messageParticipants  MessageParticipant[]       @relation("MessageParticipantParty")
+  sentMessages         Message[]                  @relation("MessageSenderParty")
+  createdTemplates     Template[]                 @relation("TemplateCreatedBy")
+  autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -683,16 +691,16 @@ model Party {
 }
 
 model PartyCommPreference {
-  id       Int       @id @default(autoincrement())
-  partyId  Int
-  channel  CommChannel
-  preference PreferenceLevel @default(ALLOW)
-  compliance ComplianceStatus?
-  complianceSetAt DateTime?
+  id               Int               @id @default(autoincrement())
+  partyId          Int
+  channel          CommChannel
+  preference       PreferenceLevel   @default(ALLOW)
+  compliance       ComplianceStatus?
+  complianceSetAt  DateTime?
   complianceSource String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  party            Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
 
   @@unique([partyId, channel])
   @@index([partyId])
@@ -700,18 +708,18 @@ model PartyCommPreference {
 }
 
 model PartyCommPreferenceEvent {
-  id       Int       @id @default(autoincrement())
-  partyId  Int
-  channel  CommChannel
+  id             Int               @id @default(autoincrement())
+  partyId        Int
+  channel        CommChannel
   prevPreference PreferenceLevel?
-  newPreference PreferenceLevel?
+  newPreference  PreferenceLevel?
   prevCompliance ComplianceStatus?
-  newCompliance ComplianceStatus?
-  actorPartyId Int?
-  reason String?
-  source String?
-  createdAt DateTime @default(now())
-  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  newCompliance  ComplianceStatus?
+  actorPartyId   Int?
+  reason         String?
+  source         String?
+  createdAt      DateTime          @default(now())
+  party          Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
 
   @@index([partyId, createdAt])
   @@index([channel, createdAt])
@@ -748,9 +756,9 @@ model Contact {
 
   // Relations
 
-  archived           Boolean             @default(false)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   externalProvider String?
   externalId       String?
@@ -851,17 +859,17 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments TagAssignment[]
-  owners         AnimalOwner[]
-  registryIds    AnimalRegistryIdentifier[]
-  shares         AnimalShare[]              @relation("ShareAnimal")
-  publicListing  AnimalPublicListing?
-  createdAt      DateTime                   @default(now())
-  updatedAt      DateTime                   @updatedAt
-  archived       Boolean                    @default(false)
-  TestResult     TestResult[]
-  Attachment     Attachment[]
-  Offspring      Offspring[]                @relation("PromotedAnimal")
+  tagAssignments   TagAssignment[]
+  owners           AnimalOwner[]
+  registryIds      AnimalRegistryIdentifier[]
+  shares           AnimalShare[]              @relation("ShareAnimal")
+  publicListing    AnimalPublicListing?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  archived         Boolean                    @default(false)
+  TestResult       TestResult[]
+  Attachment       Attachment[]
+  Offspring        Offspring[]                @relation("PromotedAnimal")
   PaymentIntent    PaymentIntent[]
   AnimalTraitValue AnimalTraitValue[]
   Document         Document[]
@@ -969,7 +977,6 @@ model AnimalPublicListing {
   @@index([tenantId])
 }
 
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Trait System Models
@@ -998,28 +1005,28 @@ model TraitDefinition {
 }
 
 model AnimalTraitValue {
-  id                Int           @id @default(autoincrement())
-  tenantId          Int
-  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  animalId          Int
-  traitDefinitionId Int
-  valueBoolean      Boolean?
-  valueNumber       Float?
-  valueText         String?
-  valueDate         DateTime?
-  valueJson         Json?
-  status            TraitStatus?
-  performedAt       DateTime?
-  source            TraitSource?
-  verified          Boolean       @default(false)
-  verifiedAt        DateTime?
+  id                 Int                        @id @default(autoincrement())
+  tenantId           Int
+  tenant             Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId           Int
+  traitDefinitionId  Int
+  valueBoolean       Boolean?
+  valueNumber        Float?
+  valueText          String?
+  valueDate          DateTime?
+  valueJson          Json?
+  status             TraitStatus?
+  performedAt        DateTime?
+  source             TraitSource?
+  verified           Boolean                    @default(false)
+  verifiedAt         DateTime?
   marketplaceVisible Boolean?
-  notes             String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  traitDefinition   TraitDefinition @relation(fields: [traitDefinitionId], references: [id])
-  animal            Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  documents         AnimalTraitValueDocument[]
+  notes              String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  traitDefinition    TraitDefinition            @relation(fields: [traitDefinitionId], references: [id])
+  animal             Animal                     @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  documents          AnimalTraitValueDocument[]
 
   @@unique([tenantId, animalId, traitDefinitionId])
   @@index([tenantId, animalId])
@@ -1041,6 +1048,7 @@ model AnimalTraitValueDocument {
   @@index([tenantId, animalTraitValueId])
   @@index([tenantId, documentId])
 }
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Tags
@@ -1242,10 +1250,10 @@ model BreedingPlan {
   TestResults      TestResult[]
   BreedingAttempts BreedingAttempt[]
   PregnancyChecks  PregnancyCheck[]
-  Attachments Attachment[]
-  Parties     PlanParty[]
-  Invoice     Invoice[]
-  Expense     Expense[]
+  Attachments      Attachment[]
+  Parties          PlanParty[]
+  Invoice          Invoice[]
+  Expense          Expense[]
 
   archived  Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -1474,6 +1482,11 @@ model OffspringGroup {
   coverImageUrl String?
   themeName     String?
 
+  // Marketplace MVP: public listing fields
+  listingSlug        String?
+  listingTitle       String?
+  listingDescription String? @db.Text
+
   notes String?
   data  Json?
 
@@ -1499,6 +1512,7 @@ model OffspringGroup {
   Expense   Expense[]
 
   @@unique([planId])
+  @@unique([tenantId, listingSlug])
   @@index([tenantId])
   @@index([tenantId, species, expectedBirthOn])
   @@index([tenantId, damId, actualBirthOn])
@@ -1506,6 +1520,7 @@ model OffspringGroup {
   @@index([linkState])
   @@index([placementStartAt])
   @@index([placementCompletedAt])
+  @@index([published])
 }
 
 model OffspringGroupBuyer {
@@ -2106,7 +2121,7 @@ model Sequence {
   id         Int      @id @default(autoincrement())
   tenantId   Int
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  key        String   // e.g., "invoice"
+  key        String // e.g., "invoice"
   year       Int
   nextNumber Int      @default(1)
   createdAt  DateTime @default(now())
@@ -2124,9 +2139,9 @@ model IdempotencyKey {
   id           Int      @id @default(autoincrement())
   tenantId     Int
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  key          String   // Client-provided idempotency key
-  requestHash  String   // Hash of request body
-  responseBody String?  // Stored response payload
+  key          String // Client-provided idempotency key
+  requestHash  String // Hash of request body
+  responseBody String? // Stored response payload
   createdAt    DateTime @default(now())
 
   @@unique([tenantId, key])
@@ -2151,11 +2166,11 @@ model Invoice {
 
   // Finance MVP anchor fields
   animalId       Int?
-  animal         Animal? @relation(fields: [animalId], references: [id], onDelete: SetNull)
+  animal         Animal?       @relation(fields: [animalId], references: [id], onDelete: SetNull)
   breedingPlanId Int?
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
 
-  invoiceNumber String  // Server-generated, format: INV-YYYY-NNNN
+  invoiceNumber String // Server-generated, format: INV-YYYY-NNNN
   number        String? // Legacy field, keep for compatibility
   currency      String          @default("USD")
   amountCents   Int
@@ -2178,12 +2193,12 @@ model Invoice {
   notes String?
   data  Json?
 
-  LineItems            InvoiceLineItem[]
-  Payments             Payment[]
-  Documents            Document[]
-  Contract             Contract?
-  Attachments          Attachment[]          @relation("AttachmentInvoice")
-  EmailSendLogs        EmailSendLog[]
+  LineItems     InvoiceLineItem[]
+  Payments      Payment[]
+  Documents     Document[]
+  Contract      Contract?
+  Attachments   Attachment[]      @relation("AttachmentInvoice")
+  EmailSendLogs EmailSendLog[]
 
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
@@ -2235,15 +2250,15 @@ model Payment {
   invoiceId Int
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
-  status         PaymentStatus @default(pending)
-  amountCents    Int
-  receivedAt     DateTime      // When payment was received
-  methodType     String?       // e.g., "card", "bank_transfer", "cash", "check"
-  processor      String?       // e.g., "stripe", "square", "manual"
-  processorRef   String?       // Reference from payment processor
-  method         String?       // Legacy field
-  reference      String?       // Legacy field
-  paidAt         DateTime?     // Legacy field
+  status       PaymentStatus @default(pending)
+  amountCents  Int
+  receivedAt   DateTime // When payment was received
+  methodType   String? // e.g., "card", "bank_transfer", "cash", "check"
+  processor    String? // e.g., "stripe", "square", "manual"
+  processorRef String? // Reference from payment processor
+  method       String? // Legacy field
+  reference    String? // Legacy field
+  paidAt       DateTime? // Legacy field
 
   externalProvider String?
   externalId       String?
@@ -2275,7 +2290,7 @@ model Expense {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   amountCents Int
-  currency    String           @default("USD")
+  currency    String          @default("USD")
   incurredAt  DateTime
   category    ExpenseCategory
   description String?
@@ -2286,11 +2301,11 @@ model Expense {
 
   // Anchor fields - expense can be linked to one of these
   breedingPlanId   Int?
-  breedingPlan     BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+  breedingPlan     BreedingPlan?   @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
   offspringGroupId Int?
   offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: SetNull)
   animalId         Int?
-  animal           Animal? @relation(fields: [animalId], references: [id], onDelete: SetNull)
+  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: SetNull)
 
   notes String?
   data  Json?
@@ -2493,18 +2508,18 @@ model Template {
   key         String? // stable identifier for system templates
   channel     TemplateChannel
   category    TemplateCategory
-  status      TemplateStatus @default(draft)
-  description String?        @db.Text
+  status      TemplateStatus   @default(draft)
+  description String?          @db.Text
 
   createdByPartyId Int?
   createdByParty   Party? @relation("TemplateCreatedBy", fields: [createdByPartyId], references: [id], onDelete: SetNull)
 
-  content      TemplateContent[]
+  content        TemplateContent[]
   autoReplyRules AutoReplyRule[]
 
   lastUsedAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@unique([tenantId, key])
   @@index([tenantId, channel])
@@ -2533,14 +2548,14 @@ model AutoReplyRule {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channel  TemplateChannel
-  enabled  Boolean @default(true)
+  channel TemplateChannel
+  enabled Boolean         @default(true)
 
   templateId Int
   template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  triggerType      AutoReplyTriggerType
-  cooldownMinutes  Int                  @default(60)
+  triggerType       AutoReplyTriggerType
+  cooldownMinutes   Int                  @default(60)
   businessHoursJson Json?
 
   logs AutoReplyLog[]
@@ -2557,9 +2572,9 @@ model AutoReplyLog {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channel  TemplateChannel
-  partyId  Int
-  party    Party @relation("AutoReplyLogParty", fields: [partyId], references: [id], onDelete: Cascade)
+  channel TemplateChannel
+  partyId Int
+  party   Party           @relation("AutoReplyLogParty", fields: [partyId], references: [id], onDelete: Cascade)
 
   threadId Int?
   thread   MessageThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
@@ -2589,17 +2604,17 @@ model EmailSendLog {
   from    String
   subject String
 
-  templateKey String?
-  templateId  Int?
-  category    EmailSendCategory?
-  provider    String         @default("resend")
+  templateKey       String?
+  templateId        Int?
+  category          EmailSendCategory?
+  provider          String             @default("resend")
   providerMessageId String?
 
   relatedInvoiceId Int?
   invoice          Invoice? @relation(fields: [relatedInvoiceId], references: [id], onDelete: SetNull)
 
-  status EmailSendStatus @default(queued)
-  error  Json?
+  status   EmailSendStatus @default(queued)
+  error    Json?
   metadata Json?
 
   createdAt DateTime @default(now())
@@ -2619,11 +2634,17 @@ model MessageThread {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  subject String?
+  subject  String?
   archived Boolean @default(false)
 
-  participants MessageParticipant[]
-  messages Message[]
+  // Marketplace MVP: inquiry context fields
+  inquiryType       String? // "MARKETPLACE" | "WAITLIST" | "GENERAL" | null
+  sourceListingSlug String?
+  guestEmail        String?
+  guestName         String?
+
+  participants  MessageParticipant[]
+  messages      Message[]
   autoReplyLogs AutoReplyLog[]
 
   lastMessageAt DateTime?
@@ -2633,10 +2654,11 @@ model MessageThread {
 
   @@index([tenantId])
   @@index([tenantId, updatedAt])
+  @@index([inquiryType])
 }
 
 model MessageParticipant {
-  id       Int    @id @default(autoincrement())
+  id       Int           @id @default(autoincrement())
   threadId Int
   thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
@@ -2653,7 +2675,7 @@ model MessageParticipant {
 }
 
 model Message {
-  id       Int    @id @default(autoincrement())
+  id       Int           @id @default(autoincrement())
   threadId Int
   thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
@@ -2767,19 +2789,19 @@ model Document {
   bytes       Int?
   sha256      String?
 
-  data        Json?
+  data             Json?
   // Prototype fields for trait document linking
-  visibility         DocVisibility? @default(PRIVATE)
-  status             DocStatus?     @default(PLACEHOLDER)
-  sizeBytes          Int?
-  originalFileName   String?
-  storageProvider    String?
-  bucket             String?
-  objectKey          String?
-  url                String?
-  
+  visibility       DocVisibility? @default(PRIVATE)
+  status           DocStatus?     @default(PLACEHOLDER)
+  sizeBytes        Int?
+  originalFileName String?
+  storageProvider  String?
+  bucket           String?
+  objectKey        String?
+  url              String?
+
   // Relation to trait values
-  traitValueLinks    AnimalTraitValueDocument[]
+  traitValueLinks AnimalTraitValueDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2867,8 +2889,8 @@ model ContractParty {
   contractId Int
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
-  userId  String?
-  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   partyId Int?
   party   Party? @relation("ContractPartyRole", fields: [partyId], references: [id], onDelete: SetNull)

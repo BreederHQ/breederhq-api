@@ -239,6 +239,10 @@ import paymentsRoutes from "./routes/payments.js"; // Finance MVP
 import expensesRoutes from "./routes/expenses.js"; // Finance MVP
 import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
+import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
+
+// ---------- Feature Flags ----------
+const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
 
 // ---------- TS typing: prisma + req.tenantId/req.userId ----------
 declare module "fastify" {
@@ -258,6 +262,11 @@ app.register(
     api.register(sessionRoutes);                   // /api/v1/session/*
     api.register(accountRoutes);                   // /api/v1/account/*
     api.register(tenantRoutes);                    // /api/v1/tenants/*
+
+    // Marketplace MVP: public routes (no auth required for reads, auth for inquiries)
+    if (MARKETPLACE_PUBLIC_ENABLED) {
+      api.register(publicMarketplaceRoutes, { prefix: "/public/marketplace" }); // /api/v1/public/marketplace/*
+    }
   },
   { prefix: "/api/v1" }
 );
