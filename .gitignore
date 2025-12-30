@@ -16,8 +16,11 @@ build/
 
 # Env templates (commit these)
 !.env.example
-!.env.v1.dev.snapshot.example
-!.env.v1.prod.snapshot.example
+!.env.dev.example
+!.env.dev.migrate.example
+!.env.prod.example
+!.env.prod.migrate.example
+!.env.v1.*.example
 
 # Logs
 *.log
