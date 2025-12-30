@@ -56,7 +56,12 @@ export function probeDbIdent(dbUrl, envVars, cwd) {
       }
 
       // Parse output: first line is db,schema,host,port; second line is table_count
-      const lines = stdout.trim().split("\n").filter(Boolean);
+      // Handle CRLF on Windows
+      const lines = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
       if (lines.length < 2) {
         reject(new Error(`Unexpected db-ident output: ${stdout}`));
         return;
@@ -91,20 +96,25 @@ export function printDbIdent(label, ident) {
 
 /**
  * Checks if required v2 tables exist in the database.
+ * Uses pg_class with exact name matching for Prisma PascalCase tables.
  * @param {string} dbUrl - Database connection URL
  * @param {object} envVars - Environment variables
  * @param {string} cwd - Working directory
- * @param {string[]} requiredTables - List of table names to check
+ * @param {string[]} requiredTables - List of table names to check (PascalCase)
  * @returns {Promise<{present: string[], missing: string[]}>}
  */
 export function checkRequiredTables(dbUrl, envVars, cwd, requiredTables) {
   return new Promise((resolve, reject) => {
+    // Use pg_class with exact name matching - this works reliably for PascalCase tables
+    // information_schema.tables also works but pg_class is more direct
     const tableList = requiredTables.map((t) => `'${t}'`).join(",");
     const sql = `
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-        AND table_name IN (${tableList});
+      SELECT c.relname
+      FROM pg_class c
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relname IN (${tableList});
     `;
 
     const child = spawn("psql", [dbUrl, "-t", "-A", "-c", sql], {
@@ -130,7 +140,12 @@ export function checkRequiredTables(dbUrl, envVars, cwd, requiredTables) {
         return;
       }
 
-      const present = stdout.trim().split("\n").filter(Boolean);
+      // Handle CRLF on Windows - split on \r\n or \n, then trim each line
+      const present = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
       const missing = requiredTables.filter((t) => !present.includes(t));
 
       resolve({ present, missing });
