@@ -66,6 +66,13 @@ await app.register(rateLimit, {
 });
 
 // ---------- CORS ----------
+// Production: always allow these origins for breederhq.com subdomains
+const PROD_ORIGINS = [
+  "https://app.breederhq.com",
+  "https://portal.breederhq.com",
+  "https://marketplace.breederhq.com",
+];
+
 // Dev-only: allow local Caddy HTTPS subdomains
 const DEV_TEST_ORIGINS = [
   "https://app.breederhq.test",
@@ -78,7 +85,7 @@ await app.register(cors, {
     if (!origin) return cb(null, true); // server-to-server/curl
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return cb(null, true);
     if (IS_DEV && DEV_TEST_ORIGINS.includes(origin)) return cb(null, true);
-    if (ALLOWED_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin) || PROD_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
     app.log.warn({ origin }, "CORS: origin not allowed");
     return cb(new Error("CORS: origin not allowed"), false);
   },
