@@ -10,6 +10,15 @@ import {
   COOKIE_NAME,
   parseVerifiedSession,
 } from "./utils/session.js";
+import {
+  deriveSurface,
+  resolveActorContext,
+  createSurfaceGateMiddleware,
+  Surface,
+  ActorContext,
+  SURFACE_ACCESS_DENIED,
+  ACTOR_CONTEXT_UNRESOLVABLE,
+} from "./middleware/actor-context.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -77,7 +86,8 @@ await app.register(cors, {
     "x-csrf-token",
     "x-xsrf-token",
     "x-requested-with", // fix preflight failures from fetch/axios
-    "x-admin-token",    // <— NEW: required for admin-protected routes
+    "x-admin-token",    // required for admin-protected routes
+    "x-surface",        // dev-only: surface override for testing
     "idempotency-key",  // Finance MVP: idempotency for invoice/payment creation
   ],
   exposedHeaders: ["set-cookie"],
@@ -86,9 +96,10 @@ await app.register(cors, {
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/", async () => ({ ok: true }));
-app.get("/__diag", async () => ({
+app.get("/__diag", async (req) => ({
   ok: true,
   time: new Date().toISOString(),
+  surface: deriveSurface(req),
   env: {
     BHQ_ENV: process.env.BHQ_ENV || "unknown",
     NODE_ENV: process.env.NODE_ENV || "unknown",
@@ -164,9 +175,11 @@ app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string
   done(null, obj);
 });
 
-// ---------- Request logging ----------
+// ---------- Request logging + surface derivation ----------
 app.addHook("onRequest", async (req) => {
-  req.log.info({ m: req.method, url: req.url }, "REQ");
+  // Derive and attach surface early for all routes
+  (req as any).surface = deriveSurface(req);
+  req.log.info({ m: req.method, url: req.url, surface: (req as any).surface }, "REQ");
 });
 
 // ---------- Helpers: session + membership ----------
@@ -252,7 +265,7 @@ import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Man
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
 
-// ---------- TS typing: prisma + req.tenantId/req.userId ----------
+// ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext ----------
 declare module "fastify" {
   interface FastifyInstance {
     prisma: typeof prisma;
@@ -260,6 +273,8 @@ declare module "fastify" {
   interface FastifyRequest {
     tenantId: number | null;
     userId?: string;
+    surface?: Surface;
+    actorContext?: ActorContext;
   }
 }
 
@@ -315,6 +330,8 @@ app.register(
     api.decorateRequest("tenantId", null as unknown as number);
 
     api.addHook("preHandler", async (req, reply) => {
+      const surface = (req as any).surface as Surface;
+
       // Normalize path (strip query) and be tolerant of prefixes
       const full = req.url || "/";
       const pathOnly = full.split("?")[0] || "/";
@@ -332,6 +349,7 @@ app.register(
       // 1) /species is always public (GET only)
       if (m === "GET" && isSpeciesPath) {
         (req as any).tenantId = null;
+        (req as any).actorContext = "PUBLIC";
         return;
       }
 
@@ -341,9 +359,48 @@ app.register(
         const hasOrgId = q.organizationId != null || /(^|[?&])organizationId=/.test(full);
         if (!hasOrgId) {
           (req as any).tenantId = null;
+          (req as any).actorContext = "PUBLIC";
           return;
         }
         // if orgId present → require tenant/membership below
+      }
+
+      // ---------- Session verification ----------
+      const sess = parseVerifiedSession(req);
+      if (!sess) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+      (req as any).userId = sess.userId;
+
+      // ---------- Surface-based ActorContext resolution ----------
+      const resolved = await resolveActorContext(surface, sess.userId);
+      if (!resolved) {
+        return reply.code(403).send({
+          error: surface === "MARKETPLACE" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED,
+          message: `Access denied for surface: ${surface}`,
+          surface,
+        });
+      }
+      (req as any).actorContext = resolved.context;
+
+      // ---------- PLATFORM surface requires STAFF context ----------
+      if (surface === "PLATFORM" && resolved.context !== "STAFF") {
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          message: "Platform requires staff access",
+          surface,
+          context: resolved.context,
+        });
+      }
+
+      // ---------- PORTAL surface requires CLIENT context ----------
+      if (surface === "PORTAL" && resolved.context !== "CLIENT") {
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          message: "Portal requires client access",
+          surface,
+          context: resolved.context,
+        });
       }
 
       // ---------- normal tenant resolution + membership ----------
@@ -352,10 +409,10 @@ app.register(
       if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
 
       if (!tId) {
-        // Use signature-verified session parsing
-        const sess = parseVerifiedSession(req);
-        if (sess?.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
+        if (sess.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
           tId = sess.tenantId;
+        } else if (resolved.tenantId) {
+          tId = resolved.tenantId;
         }
       }
 
@@ -364,16 +421,19 @@ app.register(
         return;
       }
 
-      if (!tId) {
-        return reply
-          .code(400)
-          .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
+      // For STAFF on PLATFORM, require tenant context
+      if (surface === "PLATFORM" && resolved.context === "STAFF") {
+        if (!tId) {
+          return reply
+            .code(400)
+            .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
+        }
+
+        const ok = await requireTenantMembership(app, req, reply, tId);
+        if (!ok) return;
       }
 
-      const ok = await requireTenantMembership(app, req, reply, tId);
-      if (!ok) return;
-
-      (req as any).tenantId = tId;
+      (req as any).tenantId = tId || null;
     });
 
     // Tenant-scoped resources
