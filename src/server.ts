@@ -9,6 +9,8 @@ import {
   getCookieSecret,
   COOKIE_NAME,
   parseVerifiedSession,
+  validateCsrfToken,
+  Surface as SessionSurface,
 } from "./utils/session.js";
 import {
   deriveSurface,
@@ -151,40 +153,134 @@ app.get("/__diag", async (req, reply) => {
   };
 });
 
-// ---------- CSRF (double-submit cookie) ----------
+// ---------- CSRF (surface-bound double-submit cookie) + Origin Validation ----------
 function normalizePath(url?: string) {
   const pathOnly = (url || "/").split("?")[0] || "/";
   const trimmed = pathOnly.replace(/\/+$/, "");
   return trimmed || "/";
 }
 
-function isCsrfExempt(pathname: string, method: string) {
-  // Auth bootstrap routes lack an existing CSRF cookie (login/logout handshake).
-  if (!pathname.startsWith("/api/v1/auth")) return false;
+/**
+ * CSRF exemption list - keep minimal!
+ * Login is exempt because the user doesn't have a CSRF cookie yet.
+ * Registration is exempt for same reason.
+ * dev-login is exempt (dev only).
+ */
+function isCsrfExempt(pathname: string, method: string): boolean {
   const m = method.toUpperCase();
-  switch (pathname) {
-    case "/api/v1/auth/login":
-      return m === "POST";
-    case "/api/v1/auth/dev-login":
-    case "/api/v1/auth/logout":
-      return m === "GET" || m === "POST";
-    default:
-      return false;
+  if (m !== "POST") return false;
+
+  // Auth bootstrap routes - user has no CSRF token yet
+  if (pathname === "/api/v1/auth/login") return true;
+  if (pathname === "/api/v1/auth/register") return true;
+  if (pathname === "/api/v1/auth/dev-login") return true;
+  // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
+
+  // Portal activation - user may not have CSRF token for portal surface yet
+  if (pathname === "/api/v1/portal/activate") return true;
+
+  return false;
+}
+
+/**
+ * Validate Origin header for state-changing requests.
+ * Returns { valid: true } or { valid: false, detail: string }.
+ */
+function validateOrigin(
+  origin: string | undefined,
+  requestHost: string,
+  surface: Surface
+): { valid: true } | { valid: false; detail: string } {
+  // If no Origin header, check if this is likely a server-to-server request
+  // Browsers always send Origin for cross-origin requests and for same-origin POST/etc
+  if (!origin) {
+    // For now, allow missing Origin for backward compatibility with some clients
+    // This is less strict but avoids breaking existing integrations
+    // The CSRF token check provides the primary protection
+    return { valid: true };
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const originHost = originUrl.hostname.toLowerCase();
+
+    // Define allowed origin hosts per surface
+    // In production: exact subdomain match
+    // In dev: allow localhost variants and .test domains
+    const isLocalhost = originHost === "localhost" || originHost === "127.0.0.1";
+    const isTestDomain = originHost.endsWith(".breederhq.test");
+
+    // Allow local dev origins on any surface
+    if (IS_DEV && (isLocalhost || isTestDomain)) {
+      return { valid: true };
+    }
+
+    // Production: validate origin matches surface
+    switch (surface) {
+      case "PLATFORM":
+        if (originHost === "app.breederhq.com" ||
+            originHost.startsWith("app-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+      case "PORTAL":
+        if (originHost === "portal.breederhq.com" ||
+            originHost.startsWith("portal-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+      case "MARKETPLACE":
+        if (originHost === "marketplace.breederhq.com" ||
+            originHost.startsWith("marketplace-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+    }
+
+    // In dev mode, be more permissive for development convenience
+    if (IS_DEV) {
+      return { valid: true };
+    }
+
+    return { valid: false, detail: "origin_mismatch" };
+  } catch {
+    return { valid: false, detail: "invalid_origin" };
   }
 }
 
 app.addHook("preHandler", async (req, reply) => {
-  // Let safe and preflight through
+  // Let safe and preflight methods through
   const m = req.method.toUpperCase();
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
 
   const pathOnly = normalizePath(req.url);
+  const surface = (req as any).surface as Surface;
+
+  // Check exemptions first
   if (isCsrfExempt(pathOnly, m)) return;
 
-  const csrfHeader = req.headers["x-csrf-token"];
+  // 1) Validate Origin header
+  const originHeader = req.headers.origin as string | undefined;
+  const originResult = validateOrigin(originHeader, req.hostname || "", surface);
+  if (!originResult.valid) {
+    return reply.code(403).send({
+      error: "CSRF_FAILED",
+      detail: originResult.detail,
+      surface,
+    });
+  }
+
+  // 2) Validate surface-bound CSRF token
+  const csrfHeader = req.headers["x-csrf-token"] as string | undefined;
   const csrfCookie = req.cookies?.["XSRF-TOKEN"];
-  if (!csrfHeader || !csrfCookie || String(csrfHeader) !== String(csrfCookie)) {
-    return reply.code(403).send({ error: "csrf_failed" });
+  const csrfResult = validateCsrfToken(csrfHeader, csrfCookie, surface as SessionSurface);
+
+  if (!csrfResult.valid) {
+    return reply.code(403).send({
+      error: "CSRF_FAILED",
+      detail: csrfResult.detail,
+      surface,
+    });
   }
 });
 

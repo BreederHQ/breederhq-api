@@ -10,6 +10,7 @@ import {
   clearSessionCookies,
   parseVerifiedSession,
   sessionLifetimes,
+  Surface,
 } from "../utils/session.js";
 import { deriveSurface } from "../middleware/actor-context.js";
 
@@ -554,7 +555,8 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
     await ensureDefaultTenant(user.id);
     const tenantId = await pickTenantIdForUser(user.id);
-    setSessionCookies(reply, { userId: String(user.id), tenantId });
+    const surface = deriveSurface(req) as Surface;
+    setSessionCookies(reply, { userId: String(user.id), tenantId }, surface);
 
     return reply.send({
       ok: true,
@@ -615,7 +617,8 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       }
     }
 
-    setSessionCookies(reply, { userId: String(user.id), tenantId });
+    const devSurface = deriveSurface(req) as Surface;
+    setSessionCookies(reply, { userId: String(user.id), tenantId }, devSurface);
     if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(bag.redirect));
     return reply.send({
       ok: true,
@@ -639,7 +642,8 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     // Optional rotation if close to expiry
     const { rotateAt } = sessionLifetimes();
     if (sess.exp - Date.now() < rotateAt) {
-      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId });
+      const meSurface = deriveSurface(req) as Surface;
+      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId }, meSurface);
     }
 
     const userRec = await prisma.user.findUnique({
