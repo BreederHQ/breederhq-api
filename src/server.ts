@@ -5,6 +5,25 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import prisma from "./prisma.js";
+import {
+  getCookieSecret,
+  COOKIE_NAME,
+  parseVerifiedSession,
+  validateCsrfToken,
+  Surface as SessionSurface,
+} from "./utils/session.js";
+import {
+  deriveSurface,
+  resolveActorContext,
+  extractPortalTenantSlug,
+  resolvePortalTenant,
+  extractPlatformTenantContext,
+  Surface,
+  ActorContext,
+  SURFACE_ACCESS_DENIED,
+  ACTOR_CONTEXT_UNRESOLVABLE,
+} from "./middleware/actor-context.js";
+import { auditFailure } from "./services/audit.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -15,6 +34,10 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
 const IS_DEV =
   (process.env.BHQ_ENV || process.env.NODE_ENV) === "dev" ||
   String(process.env.NODE_ENV || "").toLowerCase() === "development";
+
+// ---------- Cookie Secret (required for signed cookies) ----------
+// This will throw in production if COOKIE_SECRET is not set
+const COOKIE_SECRET = getCookieSecret();
 
 // ---------- App ----------
 const app: FastifyInstance = Fastify({
@@ -29,9 +52,9 @@ app.decorate("prisma", prisma as any);
 // ---------- Security ----------
 await app.register(helmet, { contentSecurityPolicy: false });
 
-// ---------- Cookie -----------
+// ---------- Cookie (signed) -----------
 await app.register(cookie, {
-  // secret: process.env.COOKIE_SECRET, // uncomment to sign cookies
+  secret: COOKIE_SECRET, // Required for signed cookies - enforced at startup
   hook: "onRequest",
 });
 
@@ -39,14 +62,30 @@ await app.register(cookie, {
 await app.register(rateLimit, {
   global: false,
   ban: 2,
+  errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
 });
 
 // ---------- CORS ----------
+// Production: always allow these origins for breederhq.com subdomains
+const PROD_ORIGINS = [
+  "https://app.breederhq.com",
+  "https://portal.breederhq.com",
+  "https://marketplace.breederhq.com",
+];
+
+// Dev-only: allow local Caddy HTTPS subdomains
+const DEV_TEST_ORIGINS = [
+  "https://app.breederhq.test",
+  "https://portal.breederhq.test",
+  "https://marketplace.breederhq.test",
+];
+
 await app.register(cors, {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true); // server-to-server/curl
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return cb(null, true);
-    if (ALLOWED_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
+    if (IS_DEV && DEV_TEST_ORIGINS.includes(origin)) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin) || PROD_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
     app.log.warn({ origin }, "CORS: origin not allowed");
     return cb(new Error("CORS: origin not allowed"), false);
   },
@@ -60,7 +99,7 @@ await app.register(cors, {
     "x-csrf-token",
     "x-xsrf-token",
     "x-requested-with", // fix preflight failures from fetch/axios
-    "x-admin-token",    // <— NEW: required for admin-protected routes
+    "x-admin-token",    // required for admin-protected routes
     "idempotency-key",  // Finance MVP: idempotency for invoice/payment creation
   ],
   exposedHeaders: ["set-cookie"],
@@ -69,51 +108,201 @@ await app.register(cors, {
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/", async () => ({ ok: true }));
-app.get("/__diag", async () => ({
-  ok: true,
-  time: new Date().toISOString(),
-  env: {
-    BHQ_ENV: process.env.BHQ_ENV || "unknown",
-    NODE_ENV: process.env.NODE_ENV || "unknown",
-    ALLOWED_ORIGINS,
-    IS_DEV,
-  },
-}));
+app.get("/__diag", async (req, reply) => {
+  // In production, only superadmins can access diagnostics
+  // Non-production allows unauthenticated access for debugging
+  if (!IS_DEV) {
+    const sess = parseVerifiedSession(req);
+    if (!sess) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    // Check if user is superadmin
+    const actor = await prisma.user.findUnique({
+      where: { id: sess.userId },
+      select: { isSuperAdmin: true } as any,
+    }) as any;
+    if (!actor?.isSuperAdmin) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+  }
 
-// ---------- CSRF (double-submit cookie) ----------
+  const hostname = req.hostname || "unknown";
+  const surface = deriveSurface(req);
+
+  // Derive tenant context from URL/headers only (no session details exposed)
+  let resolvedTenantId: number | null = null;
+
+  if (surface === "PORTAL") {
+    const slug = extractPortalTenantSlug(req);
+    if (slug) {
+      const tenant = await resolvePortalTenant(slug);
+      resolvedTenantId = tenant?.id ?? null;
+    }
+  } else if (surface === "PLATFORM") {
+    const headerTenantId = req.headers["x-tenant-id"];
+    if (headerTenantId) {
+      const parsed = Number(headerTenantId);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        resolvedTenantId = parsed;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    time: new Date().toISOString(),
+    hostname,
+    surface,
+    resolvedTenantId,
+    env: {
+      BHQ_ENV: process.env.BHQ_ENV || "unknown",
+      NODE_ENV: process.env.NODE_ENV || "unknown",
+      IS_DEV,
+    },
+  };
+});
+
+// ---------- CSRF (surface-bound double-submit cookie) + Origin Validation ----------
 function normalizePath(url?: string) {
   const pathOnly = (url || "/").split("?")[0] || "/";
   const trimmed = pathOnly.replace(/\/+$/, "");
   return trimmed || "/";
 }
 
-function isCsrfExempt(pathname: string, method: string) {
-  // Auth bootstrap routes lack an existing CSRF cookie (login/logout handshake).
-  if (!pathname.startsWith("/api/v1/auth")) return false;
+/**
+ * CSRF exemption list - keep minimal!
+ * Login is exempt because the user doesn't have a CSRF cookie yet.
+ * Registration is exempt for same reason.
+ * dev-login is exempt (dev only).
+ */
+function isCsrfExempt(pathname: string, method: string): boolean {
   const m = method.toUpperCase();
-  switch (pathname) {
-    case "/api/v1/auth/login":
-      return m === "POST";
-    case "/api/v1/auth/dev-login":
-    case "/api/v1/auth/logout":
-      return m === "GET" || m === "POST";
-    default:
-      return false;
+  if (m !== "POST") return false;
+
+  // Auth bootstrap routes - user has no CSRF token yet
+  if (pathname === "/api/v1/auth/login") return true;
+  if (pathname === "/api/v1/auth/register") return true;
+  if (pathname === "/api/v1/auth/dev-login") return true;
+  // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
+
+  // Portal activation - user may not have CSRF token for portal surface yet
+  if (pathname === "/api/v1/portal/activate") return true;
+
+  return false;
+}
+
+/**
+ * Validate Origin header for state-changing requests.
+ * Returns { valid: true } or { valid: false, detail: string }.
+ */
+function validateOrigin(
+  origin: string | undefined,
+  requestHost: string,
+  surface: Surface
+): { valid: true } | { valid: false; detail: string } {
+  // If no Origin header, check if this is likely a server-to-server request
+  // Browsers always send Origin for cross-origin requests and for same-origin POST/etc
+  if (!origin) {
+    // For now, allow missing Origin for backward compatibility with some clients
+    // This is less strict but avoids breaking existing integrations
+    // The CSRF token check provides the primary protection
+    return { valid: true };
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const originHost = originUrl.hostname.toLowerCase();
+
+    // Define allowed origin hosts per surface
+    // In production: exact subdomain match
+    // In dev: allow localhost variants and .test domains
+    const isLocalhost = originHost === "localhost" || originHost === "127.0.0.1";
+    const isTestDomain = originHost.endsWith(".breederhq.test");
+
+    // Allow local dev origins on any surface
+    if (IS_DEV && (isLocalhost || isTestDomain)) {
+      return { valid: true };
+    }
+
+    // Production: validate origin matches surface
+    switch (surface) {
+      case "PLATFORM":
+        if (originHost === "app.breederhq.com" ||
+            originHost.startsWith("app-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+      case "PORTAL":
+        if (originHost === "portal.breederhq.com" ||
+            originHost.startsWith("portal-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+      case "MARKETPLACE":
+        if (originHost === "marketplace.breederhq.com" ||
+            originHost.startsWith("marketplace-") && originHost.endsWith(".vercel.app")) {
+          return { valid: true };
+        }
+        break;
+    }
+
+    // In dev mode, be more permissive for development convenience
+    if (IS_DEV) {
+      return { valid: true };
+    }
+
+    return { valid: false, detail: "origin_mismatch" };
+  } catch {
+    return { valid: false, detail: "invalid_origin" };
   }
 }
 
 app.addHook("preHandler", async (req, reply) => {
-  // Let safe and preflight through
+  // Let safe and preflight methods through
   const m = req.method.toUpperCase();
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
 
   const pathOnly = normalizePath(req.url);
+  const surface = (req as any).surface as Surface;
+
+  // Check exemptions first
   if (isCsrfExempt(pathOnly, m)) return;
 
-  const csrfHeader = req.headers["x-csrf-token"];
+  // 1) Validate Origin header
+  const originHeader = req.headers.origin as string | undefined;
+  const originResult = validateOrigin(originHeader, req.hostname || "", surface);
+  if (!originResult.valid) {
+    // Audit CSRF failure (origin mismatch)
+    await auditFailure(req, "CSRF_FAILED", {
+      reason: originResult.detail,
+      origin: originHeader || null,
+      surface,
+      path: pathOnly,
+    });
+    return reply.code(403).send({
+      error: "CSRF_FAILED",
+      detail: originResult.detail,
+      surface,
+    });
+  }
+
+  // 2) Validate surface-bound CSRF token
+  const csrfHeader = req.headers["x-csrf-token"] as string | undefined;
   const csrfCookie = req.cookies?.["XSRF-TOKEN"];
-  if (!csrfHeader || !csrfCookie || String(csrfHeader) !== String(csrfCookie)) {
-    return reply.code(403).send({ error: "csrf_failed" });
+  const csrfResult = validateCsrfToken(csrfHeader, csrfCookie, surface as SessionSurface);
+
+  if (!csrfResult.valid) {
+    // Audit CSRF failure (token mismatch/missing/surface mismatch)
+    await auditFailure(req, "CSRF_FAILED", {
+      reason: csrfResult.detail,
+      surface,
+      path: pathOnly,
+    });
+    return reply.code(403).send({
+      error: "CSRF_FAILED",
+      detail: csrfResult.detail,
+      surface,
+    });
   }
 });
 
@@ -147,24 +336,28 @@ app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string
   done(null, obj);
 });
 
-// ---------- Request logging ----------
-app.addHook("onRequest", async (req) => {
-  req.log.info({ m: req.method, url: req.url }, "REQ");
+// ---------- Request logging + surface derivation + UNKNOWN rejection ----------
+app.addHook("onRequest", async (req, reply) => {
+  // Derive and attach surface early for all routes
+  const surface = deriveSurface(req);
+  (req as any).surface = surface;
+  req.log.info({ m: req.method, url: req.url, surface }, "REQ");
+
+  // In production, reject UNKNOWN surfaces immediately (before any auth logic)
+  if (surface === "UNKNOWN") {
+    await auditFailure(req, "AUTH_SURFACE_DENIED", {
+      reason: "unknown_hostname",
+      hostname: req.hostname || "unknown",
+    });
+    return reply.code(403).send({
+      error: SURFACE_ACCESS_DENIED,
+      surface: "UNKNOWN",
+    });
+  }
 });
 
 // ---------- Helpers: session + membership ----------
-const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-function parseSessionCookie(raw?: string | null) {
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
-    if (!obj?.userId || !obj?.exp) return null;
-    if (Date.now() >= Number(obj.exp)) return null;
-    return obj as { userId: string; tenantId?: number; iat: number; exp: number };
-  } catch {
-    return null;
-  }
-}
+// Session parsing now uses signature-verified parseVerifiedSession from utils/session.js
 
 // ——— Schema drift guards for tenant tables ———
 let _hasTenants: boolean | null = null;
@@ -186,7 +379,8 @@ async function requireTenantMembership(
   reply: any,
   tenantId: number
 ) {
-  const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
+  // Use signature-verified session parsing
+  const sess = parseVerifiedSession(req);
   if (!sess) {
     reply.code(401).send({ error: "unauthorized" });
     return null;
@@ -211,6 +405,12 @@ async function requireTenantMembership(
   });
 
   if (!membership) {
+    // Audit tenant access denied
+    await auditFailure(req, "AUTH_TENANT_DENIED", {
+      reason: "forbidden_tenant",
+      tenantId,
+      userId: sess.userId,
+    });
     reply.code(403).send({ error: "forbidden_tenant" });
     return null;
   }
@@ -241,11 +441,12 @@ import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
+import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
 
-// ---------- TS typing: prisma + req.tenantId/req.userId ----------
+// ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
 declare module "fastify" {
   interface FastifyInstance {
     prisma: typeof prisma;
@@ -253,6 +454,9 @@ declare module "fastify" {
   interface FastifyRequest {
     tenantId: number | null;
     userId?: string;
+    surface?: Surface;
+    actorContext?: ActorContext;
+    tenantSlug?: string; // PORTAL only: slug from URL path
   }
 }
 
@@ -263,11 +467,9 @@ app.register(
     api.register(sessionRoutes);                   // /api/v1/session/*
     api.register(accountRoutes);                   // /api/v1/account/*
     api.register(tenantRoutes);                    // /api/v1/tenants/*
+    api.register(portalRoutes);                    // /api/v1/portal/* (activation - no auth)
 
-    // Marketplace MVP: public routes (no auth required for reads, auth for inquiries)
-    if (MARKETPLACE_PUBLIC_ENABLED) {
-      api.register(publicMarketplaceRoutes, { prefix: "/public/marketplace" }); // /api/v1/public/marketplace/*
-    }
+    // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
   { prefix: "/api/v1" }
 );
@@ -308,6 +510,8 @@ app.register(
     api.decorateRequest("tenantId", null as unknown as number);
 
     api.addHook("preHandler", async (req, reply) => {
+      const surface = (req as any).surface as Surface;
+
       // Normalize path (strip query) and be tolerant of prefixes
       const full = req.url || "/";
       const pathOnly = full.split("?")[0] || "/";
@@ -325,6 +529,7 @@ app.register(
       // 1) /species is always public (GET only)
       if (m === "GET" && isSpeciesPath) {
         (req as any).tenantId = null;
+        (req as any).actorContext = "PUBLIC";
         return;
       }
 
@@ -334,36 +539,167 @@ app.register(
         const hasOrgId = q.organizationId != null || /(^|[?&])organizationId=/.test(full);
         if (!hasOrgId) {
           (req as any).tenantId = null;
+          (req as any).actorContext = "PUBLIC";
           return;
         }
         // if orgId present → require tenant/membership below
       }
 
-      // ---------- normal tenant resolution + membership ----------
-      let tId: number | undefined;
-      const headerVal = req.headers["x-tenant-id"];
-      if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
+      // ---------- Session verification ----------
+      const sess = parseVerifiedSession(req);
+      if (!sess) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+      (req as any).userId = sess.userId;
 
-      if (!tId) {
-        const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
-        if (sess?.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
-          tId = sess.tenantId;
+      // ---------- Surface-specific tenant context resolution ----------
+      let tenantId: number | null = null;
+
+      if (surface === "PORTAL") {
+        // PORTAL: tenant ONLY from URL slug - no headers, no session
+        const tenantSlug = extractPortalTenantSlug(req);
+
+        if (tenantSlug) {
+          // Resolve slug to tenant ID via database
+          const tenant = await resolvePortalTenant(tenantSlug);
+          if (!tenant) {
+            // Slug provided but tenant not found
+            await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
+              reason: "tenant_slug_not_found",
+              tenantSlug,
+              surface,
+            });
+            return reply.code(403).send({
+              error: ACTOR_CONTEXT_UNRESOLVABLE,
+              surface,
+            });
+          }
+          tenantId = tenant.id;
+          (req as any).tenantSlug = tenant.slug;
+        }
+        // If no slug, tenantId stays null (tenantless route or missing slug)
+
+      } else if (surface === "PLATFORM") {
+        // PLATFORM: tenant from X-Tenant-Id header or session
+        const platformContext = extractPlatformTenantContext(req, sess);
+        tenantId = platformContext.tenantId ?? null;
+
+      }
+      // MARKETPLACE: no tenant context needed, tenantId stays null
+
+      // ---------- Surface-based ActorContext resolution ----------
+      const resolved = await resolveActorContext(surface, sess.userId, tenantId);
+
+      if (!resolved) {
+        // PORTAL without tenant context or no membership → ACTOR_CONTEXT_UNRESOLVABLE
+        // PLATFORM without membership → SURFACE_ACCESS_DENIED
+        // MARKETPLACE should always resolve (PUBLIC)
+        const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
+        const auditAction = surface === "PORTAL" ? "AUTH_TENANT_CONTEXT_REQUIRED" : "AUTH_SURFACE_DENIED";
+        await auditFailure(req, auditAction, {
+          reason: "actor_context_unresolvable",
+          surface,
+          tenantId,
+          userId: sess.userId,
+        });
+        return reply.code(403).send({
+          error: errorCode,
+          surface,
+        });
+      }
+
+      (req as any).actorContext = resolved.context;
+
+      // ---------- Verify surface/context alignment ----------
+      // PLATFORM surface requires STAFF context
+      if (surface === "PLATFORM" && resolved.context !== "STAFF") {
+        await auditFailure(req, "AUTH_SURFACE_DENIED", {
+          reason: "platform_requires_staff",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+          tenantId,
+        });
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          surface,
+        });
+      }
+
+      // PORTAL surface requires CLIENT context
+      if (surface === "PORTAL" && resolved.context !== "CLIENT") {
+        await auditFailure(req, "AUTH_SURFACE_DENIED", {
+          reason: "portal_requires_client",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+          tenantId,
+        });
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          surface,
+        });
+      }
+
+      // MARKETPLACE surface requires PUBLIC context
+      if (surface === "MARKETPLACE" && resolved.context !== "PUBLIC") {
+        await auditFailure(req, "MARKETPLACE_ACCESS_DENIED", {
+          reason: "marketplace_requires_public",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+        });
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          surface,
+        });
+      }
+
+      // ---------- Final tenant context ----------
+      let tId: number | null = resolved.tenantId;
+
+      // For STAFF on PLATFORM, allow header override after initial resolution
+      if (surface === "PLATFORM" && resolved.context === "STAFF") {
+        const headerVal = req.headers["x-tenant-id"];
+        if (headerVal && Number(headerVal) > 0) {
+          tId = Number(headerVal);
         }
       }
 
       if (!(await detectTenants())) {
-        (req as any).tenantId = tId || null;
+        (req as any).tenantId = tId;
         return;
       }
 
-      if (!tId) {
-        return reply
-          .code(400)
-          .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
-      }
+      // For STAFF on PLATFORM, verify tenant membership (except for marketplace routes)
+      if (surface === "PLATFORM" && resolved.context === "STAFF") {
+        // Marketplace routes don't require tenant context - they're cross-tenant
+        // Use exact prefix match to avoid bypassing tenant checks on unrelated routes
+        const isMarketplacePath =
+          pathOnly === "/marketplace" ||
+          pathOnly.startsWith("/marketplace/") ||
+          pathOnly === "/api/v1/marketplace" ||
+          pathOnly.startsWith("/api/v1/marketplace/");
 
-      const ok = await requireTenantMembership(app, req, reply, tId);
-      if (!ok) return;
+        if (!isMarketplacePath) {
+          if (!tId) {
+            // No tenant context → 403 (non-marketplace routes require tenant)
+            await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
+              reason: "tenant_required_for_platform_route",
+              surface,
+              userId: sess.userId,
+              path: pathOnly,
+            });
+            return reply.code(403).send({
+              error: ACTOR_CONTEXT_UNRESOLVABLE,
+              surface,
+            });
+          }
+
+          const ok = await requireTenantMembership(app, req, reply, tId);
+          if (!ok) return;
+        }
+      }
 
       (req as any).tenantId = tId;
     });
@@ -387,6 +723,11 @@ app.register(
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
+
+    // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
+    if (MARKETPLACE_PUBLIC_ENABLED) {
+      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
+    }
   },
   { prefix: "/api/v1" }
 );

@@ -1,5 +1,11 @@
 // src/routes/public-marketplace.ts
-// Public marketplace endpoints - no authentication required
+// Marketplace endpoints - authentication required via surface gate
+//
+// Access control:
+// - MARKETPLACE surface: requires session + MARKETPLACE_ACCESS entitlement → PUBLIC context
+// - PLATFORM surface: requires session + STAFF membership → STAFF context (marketplace as module)
+// - PORTAL surface: no access (rejected by surface gate)
+//
 // All endpoints resolve tenant from program slug, not headers/session
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";

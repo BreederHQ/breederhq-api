@@ -1,8 +1,9 @@
 // src/routes/user.ts
-import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import bcrypt from "bcryptjs";
 import { resolvePartyId } from "../services/party-resolver.js";
+import { getActorId, parseVerifiedSession } from "../utils/session.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -40,30 +41,9 @@ function parseSort(sort?: string) {
   return orderBy.length ? orderBy : [{ createdAt: "desc" }];
 }
 
-function getCookieName() {
-  return process.env.COOKIE_NAME || "bhq_s";
-}
-function decodeSessionCookie(raw: string) {
-  if (!raw) return null;
-  try {
-    const json = Buffer.from(String(raw), "base64url").toString("utf8");
-    const obj = JSON.parse(json);
-    const exp = Number(obj?.exp);
-    const nowMs = Date.now();
-    const expMs = exp > 2_000_000_000 ? exp : exp * 1000;
-    if (!obj?.userId || !expMs || nowMs > expMs) return null;
-    return obj as { userId: string; exp: number };
-  } catch {
-    return null;
-  }
-}
-function getActorId(req: any): string | null {
-  const raw = (req.cookies && req.cookies[getCookieName()]) || "";
-  const sess = decodeSessionCookie(raw);
-  return (sess && String(sess.userId)) || null;
-}
+// Session verification is now imported from utils/session.js
 
-async function requireSession(req: any, reply: any) {
+async function requireSession(req: FastifyRequest, reply: any) {
   const actorId = getActorId(req);
   if (!actorId) {
     reply.code(401).send({ error: "unauthorized" });
@@ -128,8 +108,8 @@ export default async function userRoutes(
   // GET /user → current session user (minimal)
   app.get("/user", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const raw = (req.cookies && req.cookies[getCookieName()]) || "";
-    const sess = decodeSessionCookie(raw);
+    // Use signature-verified session parsing
+    const sess = parseVerifiedSession(req);
     if (!sess) return reply.code(401).send({ user: null });
 
     const user = await prisma.user.findUnique({

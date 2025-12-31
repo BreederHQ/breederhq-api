@@ -116,6 +116,18 @@ enum TenantRole {
   VIEWER
 }
 
+// New enums for unified tenant membership model (STAFF vs CLIENT)
+enum TenantMembershipRole {
+  STAFF   // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
+  CLIENT  // Portal client (created via invite acceptance)
+}
+
+enum TenantMembershipStatus {
+  INVITED    // Invite sent, not yet accepted
+  ACTIVE     // Full access
+  SUSPENDED  // Access revoked
+}
+
 enum ShareScope {
   VIEW
   BREED_PLAN
@@ -140,6 +152,16 @@ enum PortalAccessStatus {
   INVITED
   ACTIVE
   SUSPENDED
+}
+
+// User entitlement enums for marketplace and other feature access
+enum EntitlementKey {
+  MARKETPLACE_ACCESS  // Access to marketplace surface
+}
+
+enum EntitlementStatus {
+  ACTIVE   // Entitlement granted and active
+  REVOKED  // Entitlement revoked
 }
 
 enum CommChannel {
@@ -397,6 +419,28 @@ model User {
   @@index([phoneE164])
   @@index([whatsappE164])
   @@index([country])
+
+  // User entitlements (marketplace access, etc.)
+  entitlements UserEntitlement[]
+}
+
+/**
+ * UserEntitlement - Per-user feature access grants
+ * Used for marketplace access and other user-level permissions.
+ */
+model UserEntitlement {
+  id              Int               @id @default(autoincrement())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key             EntitlementKey
+  status          EntitlementStatus @default(ACTIVE)
+  grantedAt       DateTime          @default(now())
+  revokedAt       DateTime?
+  grantedByUserId String?
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@index([key, status])
 }
 
 model Session {
@@ -569,12 +613,22 @@ model Tenant {
 model TenantMembership {
   userId   String
   tenantId Int
-  role     TenantRole @default(MEMBER)
-  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role     TenantRole       @default(MEMBER)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // New fields for unified membership model
+  membershipRole   TenantMembershipRole   @default(STAFF)
+  membershipStatus TenantMembershipStatus @default(ACTIVE)
+  partyId          Int?                   // Links CLIENT memberships to their Party record
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@id([userId, tenantId])
   @@index([tenantId])
+  @@index([partyId])
+  @@index([membershipRole, membershipStatus])
 }
 
 model BillingAccount {
@@ -3154,4 +3208,54 @@ model PortalInvite {
 
   @@index([portalAccessId])
   @@index([expiresAt])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Audit Event Log
+ * Immutable security event log for auth, access control, and abuse monitoring
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+enum AuditSurface {
+  PLATFORM
+  PORTAL
+  MARKETPLACE
+}
+
+enum AuditActorContext {
+  STAFF
+  CLIENT
+  PUBLIC
+}
+
+model AuditEvent {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Request context
+  requestId String? @db.VarChar(64)
+  ip        String? @db.VarChar(45) // IPv4 or IPv6
+  userAgent String? @db.Text
+
+  // Actor context
+  userId       String?            @db.VarChar(64)
+  surface      AuditSurface
+  actorContext AuditActorContext?
+  tenantId     Int?
+
+  // Event data
+  action     String       @db.VarChar(64)
+  outcome    AuditOutcome
+  detailJson Json?
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([action, createdAt])
 }

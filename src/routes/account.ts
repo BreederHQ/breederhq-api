@@ -1,38 +1,13 @@
 // src/routes/account.ts
-import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
+import { getActorId } from "../utils/session.js";
 
 /**
  * Session cookie:
  * - COOKIE_NAME (env, default "bhq_s")
- * - base64url(JSON.stringify({ userId, tenantId?, iat, exp }))
+ * - signed(base64url(JSON.stringify({ userId, tenantId?, iat, exp })))
  */
-const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-
-type SessionPayload = {
-  userId: string;
-  tenantId?: number;
-  iat: number; // ms
-  exp: number; // ms
-};
-
-function parseSession(raw?: string | null): SessionPayload | null {
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
-    if (!obj?.userId || !obj?.iat || !obj?.exp) return null;
-    return obj as SessionPayload;
-  } catch {
-    return null;
-  }
-}
-
-function getActorId(req: any): string | null {
-  if (req?.user?.id) return String(req.user.id);
-  const sess = parseSession(req.cookies?.[COOKIE_NAME]);
-  if (!sess || Date.now() >= Number(sess.exp)) return null;
-  return String(sess.userId);
-}
 
 /** Normalize possibly-undefined strings to nulls */
 function nullable<T extends string | null | undefined>(v: T): string | null {
