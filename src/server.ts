@@ -13,7 +13,7 @@ import {
 import {
   deriveSurface,
   resolveActorContext,
-  createSurfaceGateMiddleware,
+  extractTenantContext,
   Surface,
   ActorContext,
   SURFACE_ACCESS_DENIED,
@@ -87,7 +87,6 @@ await app.register(cors, {
     "x-xsrf-token",
     "x-requested-with", // fix preflight failures from fetch/axios
     "x-admin-token",    // required for admin-protected routes
-    "x-surface",        // dev-only: surface override for testing
     "idempotency-key",  // Finance MVP: idempotency for invoice/payment creation
   ],
   exposedHeaders: ["set-cookie"],
@@ -372,68 +371,85 @@ app.register(
       }
       (req as any).userId = sess.userId;
 
+      // ---------- Extract tenant context from header/path/session ----------
+      const tenantContext = extractTenantContext(req);
+      if (!tenantContext.tenantId && sess.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
+        tenantContext.tenantId = sess.tenantId;
+      }
+
       // ---------- Surface-based ActorContext resolution ----------
-      const resolved = await resolveActorContext(surface, sess.userId);
+      // Pass tenant context for PORTAL surface resolution
+      const resolved = await resolveActorContext(surface, sess.userId, tenantContext);
+
       if (!resolved) {
+        // PORTAL without tenant context → ACTOR_CONTEXT_UNRESOLVABLE (403)
+        // PLATFORM without membership → SURFACE_ACCESS_DENIED (403)
+        // MARKETPLACE should always resolve (PUBLIC)
+        const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
         return reply.code(403).send({
-          error: surface === "MARKETPLACE" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED,
-          message: `Access denied for surface: ${surface}`,
+          error: errorCode,
           surface,
         });
       }
+
       (req as any).actorContext = resolved.context;
 
-      // ---------- PLATFORM surface requires STAFF context ----------
+      // ---------- Verify surface/context alignment ----------
+      // PLATFORM surface requires STAFF context
       if (surface === "PLATFORM" && resolved.context !== "STAFF") {
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
-          message: "Platform requires staff access",
           surface,
-          context: resolved.context,
         });
       }
 
-      // ---------- PORTAL surface requires CLIENT context ----------
+      // PORTAL surface requires CLIENT context
       if (surface === "PORTAL" && resolved.context !== "CLIENT") {
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
-          message: "Portal requires client access",
           surface,
-          context: resolved.context,
         });
       }
 
-      // ---------- normal tenant resolution + membership ----------
-      let tId: number | undefined;
-      const headerVal = req.headers["x-tenant-id"];
-      if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
+      // MARKETPLACE surface requires PUBLIC context
+      if (surface === "MARKETPLACE" && resolved.context !== "PUBLIC") {
+        return reply.code(403).send({
+          error: SURFACE_ACCESS_DENIED,
+          surface,
+        });
+      }
 
-      if (!tId) {
-        if (sess.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
-          tId = sess.tenantId;
-        } else if (resolved.tenantId) {
-          tId = resolved.tenantId;
+      // ---------- Tenant context from resolution ----------
+      let tId: number | null = resolved.tenantId;
+
+      // For STAFF, allow header override
+      if (resolved.context === "STAFF") {
+        const headerVal = req.headers["x-tenant-id"];
+        if (headerVal && Number(headerVal) > 0) {
+          tId = Number(headerVal);
         }
       }
 
       if (!(await detectTenants())) {
-        (req as any).tenantId = tId || null;
+        (req as any).tenantId = tId;
         return;
       }
 
-      // For STAFF on PLATFORM, require tenant context
+      // For STAFF on PLATFORM, verify tenant membership
       if (surface === "PLATFORM" && resolved.context === "STAFF") {
         if (!tId) {
-          return reply
-            .code(400)
-            .send({ message: "Missing or invalid tenant context (X-Tenant-Id or session tenant)" });
+          // No tenant context → 403 (not 400)
+          return reply.code(403).send({
+            error: ACTOR_CONTEXT_UNRESOLVABLE,
+            surface,
+          });
         }
 
         const ok = await requireTenantMembership(app, req, reply, tId);
         if (!ok) return;
       }
 
-      (req as any).tenantId = tId || null;
+      (req as any).tenantId = tId;
     });
 
     // Tenant-scoped resources
