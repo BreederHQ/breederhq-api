@@ -16,11 +16,12 @@ import { parseVerifiedSession, SessionPayload } from "../utils/session.js";
 
 /**
  * Surface types derived from hostname only.
- * - PLATFORM: app.* or app-* (staff dashboard)
- * - PORTAL: portal.* or portal-* (client portal)
- * - MARKETPLACE: marketplace.* or marketplace-* (public marketplace)
+ * - PLATFORM: app.breederhq.com (staff dashboard)
+ * - PORTAL: portal.breederhq.com (client portal)
+ * - MARKETPLACE: marketplace.breederhq.com (public marketplace)
+ * - UNKNOWN: hostname not in production allowlist (rejected in production)
  */
-export type Surface = "PLATFORM" | "PORTAL" | "MARKETPLACE";
+export type Surface = "PLATFORM" | "PORTAL" | "MARKETPLACE" | "UNKNOWN";
 
 /**
  * ActorContext determines what level of access the user has.
@@ -78,29 +79,57 @@ function isPortalTenantlessRoute(pathname: string): boolean {
   return false;
 }
 
+// ---------- Environment ----------
+const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
+const IS_PROD = NODE_ENV === "production";
+
+// ---------- Production Hostname Allowlist ----------
+/**
+ * In production, ONLY these exact hostnames are allowed.
+ * Any other hostname returns UNKNOWN and is rejected.
+ */
+const PROD_HOSTNAME_MAP: Record<string, Surface> = {
+  "app.breederhq.com": "PLATFORM",
+  "portal.breederhq.com": "PORTAL",
+  "marketplace.breederhq.com": "MARKETPLACE",
+};
+
 // ---------- Surface Derivation ----------
 
 /**
  * Derive surface type from hostname ONLY.
  * No header overrides - hostname is trusted via Fastify trustProxy.
  *
- * Patterns:
- *   app.breederhq.com, app-*.vercel.app, localhost → PLATFORM
- *   portal.breederhq.com, portal-*.vercel.app → PORTAL
- *   marketplace.breederhq.com, marketplace-*.vercel.app → MARKETPLACE
+ * PRODUCTION (NODE_ENV=production):
+ *   Strict allowlist - only exact matches allowed:
+ *   - app.breederhq.com → PLATFORM
+ *   - portal.breederhq.com → PORTAL
+ *   - marketplace.breederhq.com → MARKETPLACE
+ *   - anything else → UNKNOWN (rejected with 403)
+ *
+ * DEVELOPMENT:
+ *   Flexible prefix matching for local dev:
+ *   - portal.breederhq.test, portal-* → PORTAL
+ *   - marketplace.breederhq.test, marketplace-* → MARKETPLACE
+ *   - app.breederhq.test, localhost, 127.0.0.1, etc. → PLATFORM
  */
 export function deriveSurface(req: FastifyRequest): Surface {
   const hostname = (req.hostname || "").toLowerCase();
 
-  // Hostname-only derivation (no header overrides)
-  if (hostname.startsWith("portal.") || hostname.startsWith("portal-")) {
+  // Production: strict allowlist only
+  if (IS_PROD) {
+    return PROD_HOSTNAME_MAP[hostname] || "UNKNOWN";
+  }
+
+  // Development: flexible prefix matching
+  if (hostname === "portal.breederhq.test" || hostname.startsWith("portal.") || hostname.startsWith("portal-")) {
     return "PORTAL";
   }
-  if (hostname.startsWith("marketplace.") || hostname.startsWith("marketplace-")) {
+  if (hostname === "marketplace.breederhq.test" || hostname.startsWith("marketplace.") || hostname.startsWith("marketplace-")) {
     return "MARKETPLACE";
   }
 
-  // Default: PLATFORM (includes app.*, localhost, 127.0.0.1, etc.)
+  // Default: PLATFORM (includes app.breederhq.test, localhost, 127.0.0.1, etc.)
   return "PLATFORM";
 }
 
