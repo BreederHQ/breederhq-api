@@ -20,27 +20,19 @@ const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
 
 /**
- * COOKIE_SECRET is required in production/staging.
- * In dev, it defaults to a dev-only value if not set (logged as warning).
+ * COOKIE_SECRET is required in ALL environments (including dev).
+ * Server refuses to start without it.
  */
 export function getCookieSecret(): string {
   const secret = process.env.COOKIE_SECRET;
   if (secret && secret.length >= 32) {
     return secret;
   }
-  // In development, allow a fallback (but warn)
-  const isDev = NODE_ENV === "development" || NODE_ENV === "dev" || !NODE_ENV;
-  if (isDev) {
-    console.warn(
-      "[session] WARNING: COOKIE_SECRET not set or too short. Using insecure dev default. " +
-      "Set COOKIE_SECRET (min 32 chars) for production!"
-    );
-    return "INSECURE_DEV_SECRET_DO_NOT_USE_IN_PROD";
-  }
-  // Production/staging: crash if secret is missing
+  // No fallback - require COOKIE_SECRET everywhere
   throw new Error(
-    "FATAL: COOKIE_SECRET environment variable is required and must be at least 32 characters. " +
-    "Cannot start server without secure cookie signing."
+    "FATAL: COOKIE_SECRET environment variable is required and must be at least 32 characters.\n" +
+    "Set COOKIE_SECRET in your .env file or environment.\n" +
+    "Example: COOKIE_SECRET=$(openssl rand -base64 32)"
   );
 }
 
