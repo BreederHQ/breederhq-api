@@ -2,7 +2,7 @@
 /**
  * run-import.js - Cross-platform wrapper for v1 → v2 data import
  *
- * Loads environment from .env.v2.{env} and runs psql import with
+ * Loads environment from .env.{env}.migrate and runs psql import with
  * FK constraint handling for Neon compatibility.
  *
  * Flow:
@@ -36,7 +36,7 @@ if (!env || !["dev", "prod"].includes(env)) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Determine env file and required var
 // ─────────────────────────────────────────────────────────────────────────────
-const envFile = `.env.v2.${env}`;
+const envFile = `.env.${env}.migrate`;
 const envPath = resolve(rootDir, envFile);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ const restoreFksFile = resolve(rootDir, "prisma", "sql", "backfills", "v2_post_i
 if (!existsSync(inFile)) {
   console.error(`\n❌ Input file not found: ${inFile}`);
   console.error("\nRun the dump command first:");
-  console.error(`  npm run db:v2:dump:v1:${env}:snapshot\n`);
+  console.error(`  npm run db:move:${env}:dump\n`);
   process.exit(1);
 }
 

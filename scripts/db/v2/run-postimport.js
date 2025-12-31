@@ -2,7 +2,7 @@
 /**
  * run-postimport.js - Cross-platform wrapper for running post-import fixes
  *
- * Loads environment from .env.v2.{env} and runs v2_post_import_fix.sql.
+ * Loads environment from .env.{env}.migrate and runs v2_post_import_fix.sql.
  *
  * Usage: node scripts/db/v2/run-postimport.js [dev|prod]
  */
@@ -33,7 +33,7 @@ if (!env || !["dev", "prod"].includes(env)) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Determine env file
 // ─────────────────────────────────────────────────────────────────────────────
-const envFile = `.env.v2.${env}`;
+const envFile = `.env.${env}.migrate`;
 const envPath = resolve(rootDir, envFile);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,8 +186,8 @@ async function main() {
       console.error("\nThe v2 init migration is not applied to this target,");
       console.error("or the env file points to the wrong database.");
       console.error("\nTo fix:");
-      console.error(`  1. Verify .env.v2.${env} points to the correct v2 database`);
-      console.error(`  2. Run: npm run db:v2:${env}:migrate (to apply v2 schema)`);
+      console.error(`  1. Verify .env.${env}.migrate points to the correct v2 database`);
+      console.error(`  2. Run: npm run db:${env}:migrate (to apply v2 schema)`);
       console.error("  3. Then retry the migration\n");
       process.exit(1);
     }
@@ -200,8 +200,8 @@ async function main() {
 
     console.log("\n✓ Post-import fixes completed successfully");
     console.log("\nNext steps:");
-    console.log(`  1. npm run db:v2:validate:${env}`);
-    console.log(`  2. npm run db:v2:${env}:status\n`);
+    console.log(`  1. npm run db:${env}:validate`);
+    console.log(`  2. npm run db:${env}:status\n`);
     process.exit(0);
   } catch (err) {
     console.error("\n❌ Post-import fixes failed:", err.message);
