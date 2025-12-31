@@ -332,10 +332,7 @@ app.register(
     api.register(tenantRoutes);                    // /api/v1/tenants/*
     api.register(portalRoutes);                    // /api/v1/portal/* (activation - no auth)
 
-    // Marketplace MVP: public routes (no auth required for reads, auth for inquiries)
-    if (MARKETPLACE_PUBLIC_ENABLED) {
-      api.register(publicMarketplaceRoutes, { prefix: "/public/marketplace" }); // /api/v1/public/marketplace/*
-    }
+    // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
   { prefix: "/api/v1" }
 );
@@ -505,18 +502,23 @@ app.register(
         return;
       }
 
-      // For STAFF on PLATFORM, verify tenant membership
+      // For STAFF on PLATFORM, verify tenant membership (except for marketplace routes)
       if (surface === "PLATFORM" && resolved.context === "STAFF") {
-        if (!tId) {
-          // No tenant context → 403
-          return reply.code(403).send({
-            error: ACTOR_CONTEXT_UNRESOLVABLE,
-            surface,
-          });
-        }
+        // Marketplace routes don't require tenant context - they're cross-tenant
+        const isMarketplacePath = pathOnly.includes("/marketplace");
 
-        const ok = await requireTenantMembership(app, req, reply, tId);
-        if (!ok) return;
+        if (!isMarketplacePath) {
+          if (!tId) {
+            // No tenant context → 403 (non-marketplace routes require tenant)
+            return reply.code(403).send({
+              error: ACTOR_CONTEXT_UNRESOLVABLE,
+              surface,
+            });
+          }
+
+          const ok = await requireTenantMembership(app, req, reply, tId);
+          if (!ok) return;
+        }
       }
 
       (req as any).tenantId = tId;
@@ -541,6 +543,11 @@ app.register(
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
+
+    // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
+    if (MARKETPLACE_PUBLIC_ENABLED) {
+      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
+    }
   },
   { prefix: "/api/v1" }
 );

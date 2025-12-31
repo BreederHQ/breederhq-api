@@ -11,6 +11,7 @@ import {
   parseVerifiedSession,
   sessionLifetimes,
 } from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
 
 /**
  * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
@@ -321,6 +322,28 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       userId,
       ttlMinutes: 60,
     });
+
+    // Grant MARKETPLACE_ACCESS entitlement when registered from marketplace surface
+    const surface = deriveSurface(req);
+    if (surface === "MARKETPLACE") {
+      try {
+        await (prisma as any).userEntitlement.upsert({
+          where: { userId_key: { userId, key: "MARKETPLACE_ACCESS" } },
+          create: {
+            userId,
+            key: "MARKETPLACE_ACCESS",
+            status: "ACTIVE",
+            grantedAt: new Date(),
+          },
+          update: {
+            status: "ACTIVE",
+            revokedAt: null,
+          },
+        });
+      } catch {
+        // Ignore if UserEntitlement table not yet migrated
+      }
+    }
 
     return reply.code(201).send({
       ok: true,
