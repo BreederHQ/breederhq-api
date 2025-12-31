@@ -23,6 +23,7 @@ import {
   SURFACE_ACCESS_DENIED,
   ACTOR_CONTEXT_UNRESOLVABLE,
 } from "./middleware/actor-context.js";
+import { auditFailure } from "./services/audit.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -61,6 +62,7 @@ await app.register(cookie, {
 await app.register(rateLimit, {
   global: false,
   ban: 2,
+  errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
 });
 
 // ---------- CORS ----------
@@ -263,6 +265,13 @@ app.addHook("preHandler", async (req, reply) => {
   const originHeader = req.headers.origin as string | undefined;
   const originResult = validateOrigin(originHeader, req.hostname || "", surface);
   if (!originResult.valid) {
+    // Audit CSRF failure (origin mismatch)
+    await auditFailure(req, "CSRF_FAILED", {
+      reason: originResult.detail,
+      origin: originHeader || null,
+      surface,
+      path: pathOnly,
+    });
     return reply.code(403).send({
       error: "CSRF_FAILED",
       detail: originResult.detail,
@@ -276,6 +285,12 @@ app.addHook("preHandler", async (req, reply) => {
   const csrfResult = validateCsrfToken(csrfHeader, csrfCookie, surface as SessionSurface);
 
   if (!csrfResult.valid) {
+    // Audit CSRF failure (token mismatch/missing/surface mismatch)
+    await auditFailure(req, "CSRF_FAILED", {
+      reason: csrfResult.detail,
+      surface,
+      path: pathOnly,
+    });
     return reply.code(403).send({
       error: "CSRF_FAILED",
       detail: csrfResult.detail,
@@ -370,6 +385,12 @@ async function requireTenantMembership(
   });
 
   if (!membership) {
+    // Audit tenant access denied
+    await auditFailure(req, "AUTH_TENANT_DENIED", {
+      reason: "forbidden_tenant",
+      tenantId,
+      userId: sess.userId,
+    });
     reply.code(403).send({ error: "forbidden_tenant" });
     return null;
   }
@@ -523,6 +544,11 @@ app.register(
           const tenant = await resolvePortalTenant(tenantSlug);
           if (!tenant) {
             // Slug provided but tenant not found
+            await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
+              reason: "tenant_slug_not_found",
+              tenantSlug,
+              surface,
+            });
             return reply.code(403).send({
               error: ACTOR_CONTEXT_UNRESOLVABLE,
               surface,
@@ -549,6 +575,13 @@ app.register(
         // PLATFORM without membership → SURFACE_ACCESS_DENIED
         // MARKETPLACE should always resolve (PUBLIC)
         const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
+        const auditAction = surface === "PORTAL" ? "AUTH_TENANT_CONTEXT_REQUIRED" : "AUTH_SURFACE_DENIED";
+        await auditFailure(req, auditAction, {
+          reason: "actor_context_unresolvable",
+          surface,
+          tenantId,
+          userId: sess.userId,
+        });
         return reply.code(403).send({
           error: errorCode,
           surface,
@@ -560,6 +593,13 @@ app.register(
       // ---------- Verify surface/context alignment ----------
       // PLATFORM surface requires STAFF context
       if (surface === "PLATFORM" && resolved.context !== "STAFF") {
+        await auditFailure(req, "AUTH_SURFACE_DENIED", {
+          reason: "platform_requires_staff",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+          tenantId,
+        });
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
           surface,
@@ -568,6 +608,13 @@ app.register(
 
       // PORTAL surface requires CLIENT context
       if (surface === "PORTAL" && resolved.context !== "CLIENT") {
+        await auditFailure(req, "AUTH_SURFACE_DENIED", {
+          reason: "portal_requires_client",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+          tenantId,
+        });
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
           surface,
@@ -576,6 +623,12 @@ app.register(
 
       // MARKETPLACE surface requires PUBLIC context
       if (surface === "MARKETPLACE" && resolved.context !== "PUBLIC") {
+        await auditFailure(req, "MARKETPLACE_ACCESS_DENIED", {
+          reason: "marketplace_requires_public",
+          surface,
+          actualContext: resolved.context,
+          userId: sess.userId,
+        });
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
           surface,
@@ -611,6 +664,12 @@ app.register(
         if (!isMarketplacePath) {
           if (!tId) {
             // No tenant context → 403 (non-marketplace routes require tenant)
+            await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
+              reason: "tenant_required_for_platform_route",
+              surface,
+              userId: sess.userId,
+              path: pathOnly,
+            });
             return reply.code(403).send({
               error: ACTOR_CONTEXT_UNRESOLVABLE,
               surface,

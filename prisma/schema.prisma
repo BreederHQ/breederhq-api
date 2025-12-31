@@ -3209,3 +3209,53 @@ model PortalInvite {
   @@index([portalAccessId])
   @@index([expiresAt])
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Audit Event Log
+ * Immutable security event log for auth, access control, and abuse monitoring
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+enum AuditSurface {
+  PLATFORM
+  PORTAL
+  MARKETPLACE
+}
+
+enum AuditActorContext {
+  STAFF
+  CLIENT
+  PUBLIC
+}
+
+model AuditEvent {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Request context
+  requestId String? @db.VarChar(64)
+  ip        String? @db.VarChar(45) // IPv4 or IPv6
+  userAgent String? @db.Text
+
+  // Actor context
+  userId       String?            @db.VarChar(64)
+  surface      AuditSurface
+  actorContext AuditActorContext?
+  tenantId     Int?
+
+  // Event data
+  action     String       @db.VarChar(64)
+  outcome    AuditOutcome
+  detailJson Json?
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([action, createdAt])
+}

@@ -7,6 +7,7 @@ import {
   maybeRotateSession,
   SessionPayload,
 } from "../utils/session.js";
+import { auditFailure } from "../services/audit.js";
 
 /**
  * Endpoints
@@ -141,6 +142,11 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       });
     }
     if (!isMember) {
+      await auditFailure(req, "AUTH_TENANT_DENIED", {
+        reason: "forbidden_tenant",
+        tenantId: requestedTenantId ?? activeTenantId,
+        userId: sess.userId,
+      });
       return reply.code(403).send({
         error: "forbidden_tenant",
         tenantId: requestedTenantId ?? activeTenantId,

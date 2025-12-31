@@ -13,6 +13,7 @@ import {
   Surface,
 } from "../utils/session.js";
 import { deriveSurface } from "../middleware/actor-context.js";
+import { audit, auditSuccess, auditFailure } from "../services/audit.js";
 
 /**
  * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
@@ -277,8 +278,14 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     const e = String(email).trim().toLowerCase();
     const p = String(password);
 
-    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
-    if (p.length < 8) return reply.code(400).send({ error: "password_too_short" });
+    if (!e || !p) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "email_and_password_required", emailNorm: e || null });
+      return reply.code(400).send({ error: "email_and_password_required" });
+    }
+    if (p.length < 8) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "password_too_short", emailNorm: e });
+      return reply.code(400).send({ error: "password_too_short" });
+    }
 
     const existing = await prisma.user.findUnique({
       where: { email: e },
@@ -326,6 +333,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
     // Grant MARKETPLACE_ACCESS entitlement when registered from marketplace surface
     const surface = deriveSurface(req);
+    let entitlementGranted = false;
     if (surface === "MARKETPLACE") {
       try {
         await (prisma as any).userEntitlement.upsert({
@@ -341,10 +349,22 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
             revokedAt: null,
           },
         });
+        entitlementGranted = true;
+        // Audit marketplace entitlement grant
+        await auditSuccess(req, "MARKETPLACE_ENTITLEMENT_GRANTED", {
+          userId,
+          detail: { trigger: "registration" },
+        });
       } catch {
         // Ignore if UserEntitlement table not yet migrated
       }
     }
+
+    // Audit successful registration
+    await auditSuccess(req, "AUTH_REGISTER_SUCCESS", {
+      userId,
+      detail: { emailNorm: e, isNewUser: !existing, entitlementGranted },
+    });
 
     return reply.code(201).send({
       ok: true,
@@ -531,16 +551,25 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     const e = String(email).trim().toLowerCase();
     const p = String(password);
 
-    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
+    if (!e || !p) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "email_and_password_required", emailNorm: e || null });
+      return reply.code(400).send({ error: "email_and_password_required" });
+    }
 
     const user = await findUserByEmail(e);
-    if (!user || !user.passwordHash) return reply.code(401).send({ error: "invalid_credentials" });
+    if (!user || !user.passwordHash) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "invalid_credentials", emailNorm: e });
+      return reply.code(401).send({ error: "invalid_credentials" });
+    }
 
     // If you want to require verified email, uncomment:
     // if (!user.emailVerifiedAt) return reply.code(403).send({ error: "email_not_verified" });
 
     const ok = await bcrypt.compare(p, user.passwordHash).catch(() => false);
-    if (!ok) return reply.code(401).send({ error: "invalid_credentials" });
+    if (!ok) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "password_mismatch", emailNorm: e, userId: user.id });
+      return reply.code(401).send({ error: "invalid_credentials" });
+    }
 
     // lastLoginAt is optional
     try {
@@ -558,6 +587,13 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     const surface = deriveSurface(req) as Surface;
     setSessionCookies(reply, { userId: String(user.id), tenantId }, surface);
 
+    // Audit successful login
+    await auditSuccess(req, "AUTH_LOGIN_SUCCESS", {
+      userId: user.id,
+      tenantId,
+      detail: { emailNorm: e },
+    });
+
     return reply.send({
       ok: true,
       user: {
@@ -573,8 +609,16 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
   // GET/POST /logout
   const handleLogout = async (req: any, reply: FastifyReply) => {
+    // Get user ID before clearing session for audit
+    const sess = parseVerifiedSession(req);
+    const userId = sess?.userId ?? null;
+
     const bag = (req.body || req.query || {}) as { redirect?: string };
     clearSessionCookies(reply);
+
+    // Audit logout
+    await auditSuccess(req, "AUTH_LOGOUT", { userId });
+
     if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(String(bag.redirect)));
     return reply.send({ ok: true });
   };
