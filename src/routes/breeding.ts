@@ -238,40 +238,13 @@ export function __makeOffspringGroupsService({
 // src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { parseVerifiedSession } from "../utils/session.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
 function toNum(v: any): number | null {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-function readCookie(rawCookie: string | undefined, name: string): string | null {
-  if (!rawCookie) return null;
-  const esc = name.replace(/[-[\]/{}()*+?.\\^$|]/g, "\\$&");
-  const m = rawCookie.match(new RegExp(`(?:^|; )${esc}=([^;]*)`));
-  return m ? decodeURIComponent(m[1]) : null;
-}
-
-function parseBHQSessionTenant(cookieVal: string | null): number | null {
-  if (!cookieVal) return null;
-  try {
-    const payloadB64 = cookieVal.includes(".") ? cookieVal.split(".")[1] : cookieVal;
-    const jsonStr =
-      typeof Buffer !== "undefined"
-        ? Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
-        : (globalThis as any).atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
-    const obj = JSON.parse(jsonStr || "{}");
-    return (
-      toNum((obj as any)?.tenantId) ??
-      toNum((obj as any)?.orgId) ??
-      toNum((obj as any)?.tenantID) ??
-      toNum((obj as any)?.tenant_id) ??
-      null
-    );
-  } catch {
-    return null;
-  }
 }
 
 function resolveTenantIdFromRequest(req: any): number | null {
@@ -283,10 +256,9 @@ function resolveTenantIdFromRequest(req: any): number | null {
     null;
   if (headerTenant) return headerTenant;
 
-  const cookieHeader: string | undefined = (req.headers?.cookie as string | undefined) ?? undefined;
-  const bhq = readCookie(cookieHeader, "bhq_s");
-  const cookieTenant = parseBHQSessionTenant(bhq);
-  if (cookieTenant) return cookieTenant;
+  // Use signature-verified session parsing
+  const sess = parseVerifiedSession(req);
+  if (sess?.tenantId) return sess.tenantId;
 
   const fromReq =
     toNum(req.tenantId) ??

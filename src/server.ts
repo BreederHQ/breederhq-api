@@ -5,6 +5,11 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import prisma from "./prisma.js";
+import {
+  getCookieSecret,
+  COOKIE_NAME,
+  parseVerifiedSession,
+} from "./utils/session.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -15,6 +20,10 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
 const IS_DEV =
   (process.env.BHQ_ENV || process.env.NODE_ENV) === "dev" ||
   String(process.env.NODE_ENV || "").toLowerCase() === "development";
+
+// ---------- Cookie Secret (required for signed cookies) ----------
+// This will throw in production if COOKIE_SECRET is not set
+const COOKIE_SECRET = getCookieSecret();
 
 // ---------- App ----------
 const app: FastifyInstance = Fastify({
@@ -29,9 +38,9 @@ app.decorate("prisma", prisma as any);
 // ---------- Security ----------
 await app.register(helmet, { contentSecurityPolicy: false });
 
-// ---------- Cookie -----------
+// ---------- Cookie (signed) -----------
 await app.register(cookie, {
-  // secret: process.env.COOKIE_SECRET, // uncomment to sign cookies
+  secret: COOKIE_SECRET, // Required for signed cookies - enforced at startup
   hook: "onRequest",
 });
 
@@ -161,18 +170,7 @@ app.addHook("onRequest", async (req) => {
 });
 
 // ---------- Helpers: session + membership ----------
-const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-function parseSessionCookie(raw?: string | null) {
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
-    if (!obj?.userId || !obj?.exp) return null;
-    if (Date.now() >= Number(obj.exp)) return null;
-    return obj as { userId: string; tenantId?: number; iat: number; exp: number };
-  } catch {
-    return null;
-  }
-}
+// Session parsing now uses signature-verified parseVerifiedSession from utils/session.js
 
 // ——— Schema drift guards for tenant tables ———
 let _hasTenants: boolean | null = null;
@@ -194,7 +192,8 @@ async function requireTenantMembership(
   reply: any,
   tenantId: number
 ) {
-  const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
+  // Use signature-verified session parsing
+  const sess = parseVerifiedSession(req);
   if (!sess) {
     reply.code(401).send({ error: "unauthorized" });
     return null;
@@ -353,7 +352,8 @@ app.register(
       if (headerVal && Number(headerVal) > 0) tId = Number(headerVal);
 
       if (!tId) {
-        const sess = parseSessionCookie(req.cookies?.[COOKIE_NAME]);
+        // Use signature-verified session parsing
+        const sess = parseVerifiedSession(req);
         if (sess?.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
           tId = sess.tenantId;
         }

@@ -1,6 +1,12 @@
 // src/routes/session.ts
-import type { FastifyInstance, FastifyPluginOptions, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
+import {
+  parseVerifiedSession,
+  setSessionCookies,
+  maybeRotateSession,
+  SessionPayload,
+} from "../utils/session.js";
 
 /**
  * Endpoints
@@ -10,71 +16,8 @@ import prisma from "../prisma.js";
  * Notes
  * - We DO NOT mutate tenant on GET. Explicit POST is safer & auditable.
  * - If tenant tables are unavailable (schema out of phase), the routes still work in single-tenant mode.
- * - Cookie is a lightweight Base64URL JSON payload (unsigned by design here; add HMAC/JWT later if desired).
+ * - Cookie is signed via @fastify/cookie with COOKIE_SECRET.
  */
-
-type SessionPayload = {
-  userId: string;
-  tenantId?: number; // optional, only used when tenant tables exist
-  iat: number; // ms epoch
-  exp: number; // ms epoch
-};
-
-const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
-const CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
-const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
-
-/** ───────────────────────────────── lifetimes & cookie ───────────────────────────────── */
-function lifetimes() {
-  const dev = NODE_ENV === "development";
-  // If CROSS_SITE=1 → short 24h; else dev = 7d, prod = 24h
-  const ms = CROSS_SITE ? 24 * 60 * 60 * 1000 : (dev ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000);
-  const rotateAt = Math.floor(ms * 0.2);
-  return { ms, rotateAt };
-}
-
-function baseCookie() {
-  const { ms } = lifetimes();
-  return {
-    httpOnly: true,
-    sameSite: (CROSS_SITE ? "none" : "lax") as "none" | "lax",
-    secure: CROSS_SITE || NODE_ENV === "production",
-    path: "/",
-    maxAge: Math.floor(ms / 1000),
-  } as const;
-}
-
-/** ───────────────────────────────── session helpers ───────────────────────────────── */
-function parseSession(raw?: string | null): SessionPayload | null {
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
-    if (!obj?.userId || !obj?.iat || !obj?.exp) return null;
-    return obj as SessionPayload;
-  } catch {
-    return null;
-  }
-}
-
-function setSessionCookie(reply: FastifyReply, s: Omit<SessionPayload, "iat" | "exp">) {
-  const { ms } = lifetimes();
-  const now = Date.now();
-  const payload: SessionPayload = { ...s, iat: now, exp: now + ms };
-  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  reply.setCookie(COOKIE_NAME, encoded, baseCookie());
-}
-
-function maybeRotate(reply: FastifyReply, sess: SessionPayload) {
-  const { rotateAt, ms } = lifetimes();
-  const now = Date.now();
-  if (now >= sess.exp) return false; // expired
-  if (sess.exp - now < rotateAt) {
-    const refreshed = { ...sess, iat: now, exp: now + ms };
-    const encoded = Buffer.from(JSON.stringify(refreshed)).toString("base64url");
-    reply.setCookie(COOKIE_NAME, encoded, baseCookie());
-  }
-  return true;
-}
 
 /** ──────────────────────────────── schema detection ────────────────────────────────
  * We support both:
@@ -165,11 +108,11 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
   app.get("/session", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
 
-    const raw = req.cookies?.[COOKIE_NAME];
-    const sess = parseSession(raw);
+    // Use signature-verified session parsing
+    const sess = parseVerifiedSession(req);
     if (!sess) return reply.code(401).send({ user: null, tenant: null, memberships: [] });
 
-    if (!maybeRotate(reply, sess)) {
+    if (!maybeRotateSession(req, reply, sess)) {
       return reply.code(401).send({ user: null, tenant: null, memberships: [] });
     }
 
@@ -225,8 +168,8 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
   // POST /session/tenant   body: { tenantId: number, saveDefault?: boolean }
   // Explicit tenant switch (CSRF-protected via your global preHandler)
   app.post<{ Body: { tenantId?: number; saveDefault?: boolean } }>("/session/tenant", async (req, reply) => {
-    const raw = req.cookies?.[COOKIE_NAME];
-    const sess = parseSession(raw);
+    // Use signature-verified session parsing
+    const sess = parseVerifiedSession(req);
     if (!sess) return reply.code(401).send({ error: "unauthorized" });
 
     const hasTenants = await detectTenantSupport();
@@ -258,8 +201,8 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       return reply.code(403).send({ error: "forbidden" });
     }
 
-    // Re-issue cookie with new tenantId
-    setSessionCookie(reply, { userId: sess.userId, tenantId });
+    // Re-issue signed cookie with new tenantId
+    setSessionCookies(reply, { userId: sess.userId, tenantId });
 
     // Optionally persist as defaultTenantId (if the column exists)
     if (saveDefault) {
