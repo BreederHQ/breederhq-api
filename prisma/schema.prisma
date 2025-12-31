@@ -154,6 +154,16 @@ enum PortalAccessStatus {
   SUSPENDED
 }
 
+// User entitlement enums for marketplace and other feature access
+enum EntitlementKey {
+  MARKETPLACE_ACCESS  // Access to marketplace surface
+}
+
+enum EntitlementStatus {
+  ACTIVE   // Entitlement granted and active
+  REVOKED  // Entitlement revoked
+}
+
 enum CommChannel {
   EMAIL
   SMS
@@ -409,6 +419,28 @@ model User {
   @@index([phoneE164])
   @@index([whatsappE164])
   @@index([country])
+
+  // User entitlements (marketplace access, etc.)
+  entitlements UserEntitlement[]
+}
+
+/**
+ * UserEntitlement - Per-user feature access grants
+ * Used for marketplace access and other user-level permissions.
+ */
+model UserEntitlement {
+  id              Int               @id @default(autoincrement())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key             EntitlementKey
+  status          EntitlementStatus @default(ACTIVE)
+  grantedAt       DateTime          @default(now())
+  revokedAt       DateTime?
+  grantedByUserId String?
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@index([key, status])
 }
 
 model Session {

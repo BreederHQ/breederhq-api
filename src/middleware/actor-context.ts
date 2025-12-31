@@ -267,6 +267,23 @@ async function checkSuperAdmin(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Check if user has a specific entitlement with ACTIVE status.
+ * Used for MARKETPLACE surface gating.
+ */
+async function hasActiveEntitlement(userId: string, key: string): Promise<boolean> {
+  try {
+    const entitlement = await (prisma as any).userEntitlement.findUnique({
+      where: { userId_key: { userId, key } },
+      select: { status: true },
+    });
+    return entitlement?.status === "ACTIVE";
+  } catch {
+    // UserEntitlement table may not exist yet - deny access
+    return false;
+  }
+}
+
 // ---------- Context Resolution ----------
 
 /**
@@ -302,7 +319,9 @@ export function extractPlatformTenantContext(req: FastifyRequest, session: Sessi
  * - PORTAL: require membership to accessed tenant → CLIENT
  *   - Tenant ONLY from URL slug (resolved via resolvePortalTenant)
  *   - No headers, no session accepted
- * - MARKETPLACE: any valid session → PUBLIC (no tenant context)
+ * - MARKETPLACE: require valid session AND UserEntitlement(MARKETPLACE_ACCESS, ACTIVE) → PUBLIC
+ *   - No tenant context required
+ *   - SuperAdmin bypasses entitlement check
  *
  * @param surface - The derived surface
  * @param userId - The authenticated user ID
@@ -361,9 +380,22 @@ export async function resolveActorContext(
     }
 
     case "MARKETPLACE": {
-      // MARKETPLACE allows PUBLIC context (any valid session)
+      // MARKETPLACE requires valid session AND MARKETPLACE_ACCESS entitlement
       // No tenant context required
-      return { context: "PUBLIC", tenantId: null };
+
+      // SuperAdmin bypasses entitlement check
+      if (isSuperAdmin) {
+        return { context: "PUBLIC", tenantId: null };
+      }
+
+      // Check for MARKETPLACE_ACCESS entitlement
+      const hasMarketplaceAccess = await hasActiveEntitlement(userId, "MARKETPLACE_ACCESS");
+      if (hasMarketplaceAccess) {
+        return { context: "PUBLIC", tenantId: null };
+      }
+
+      // No entitlement → deny access to marketplace surface
+      return null;
     }
 
     default:
