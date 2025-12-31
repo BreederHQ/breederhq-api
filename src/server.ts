@@ -329,11 +329,24 @@ app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string
   done(null, obj);
 });
 
-// ---------- Request logging + surface derivation ----------
-app.addHook("onRequest", async (req) => {
+// ---------- Request logging + surface derivation + UNKNOWN rejection ----------
+app.addHook("onRequest", async (req, reply) => {
   // Derive and attach surface early for all routes
-  (req as any).surface = deriveSurface(req);
-  req.log.info({ m: req.method, url: req.url, surface: (req as any).surface }, "REQ");
+  const surface = deriveSurface(req);
+  (req as any).surface = surface;
+  req.log.info({ m: req.method, url: req.url, surface }, "REQ");
+
+  // In production, reject UNKNOWN surfaces immediately (before any auth logic)
+  if (surface === "UNKNOWN") {
+    await auditFailure(req, "AUTH_SURFACE_DENIED", {
+      reason: "unknown_hostname",
+      hostname: req.hostname || "unknown",
+    });
+    return reply.code(403).send({
+      error: SURFACE_ACCESS_DENIED,
+      surface: "UNKNOWN",
+    });
+  }
 });
 
 // ---------- Helpers: session + membership ----------
