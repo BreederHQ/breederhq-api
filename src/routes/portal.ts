@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import prisma from "../prisma.js";
 import { setSessionCookies, Surface } from "../utils/session.js";
+import { auditSuccess, auditFailure } from "../services/audit.js";
 
 function sha256(input: string | Buffer): string {
   return createHash("sha256").update(input).digest("hex");
@@ -40,6 +41,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.post<{ Body: { token?: string; password?: string } }>(
     "/portal/activate",
+    { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
     async (req, reply) => {
       try {
         const { token, password } = req.body || {};
@@ -68,6 +70,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
 
         if (!invite) {
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: "invalid_token" }, { surface: "PORTAL" });
           return reply.code(400).send({ error: "invalid_token" });
         }
 
@@ -84,11 +87,14 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               return reply.send({ ok: true, tenantSlug: tenant.slug });
             }
           }
+          // Audit replay attempt (not idempotent case)
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: "token_already_used", inviteId: invite.id }, { surface: "PORTAL" });
           return reply.code(400).send({ error: "token_already_used" });
         }
 
         // Check expiration
         if (now >= invite.expiresAt) {
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: "token_expired", inviteId: invite.id }, { surface: "PORTAL" });
           return reply.code(400).send({ error: "token_expired" });
         }
 
@@ -229,15 +235,25 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Use PORTAL surface for portal activation
         setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 
+        // Audit successful activation
+        await auditSuccess(req, "PORTAL_ACTIVATE_SUCCESS", {
+          userId: result.userId,
+          tenantId,
+          surface: "PORTAL",
+          detail: { tenantSlug, isNewUser: result.isNewUser, inviteId: invite.id },
+        });
+
         return reply.send({ ok: true, tenantSlug });
       } catch (err: any) {
         if (err.message === "STAFF_SUPPRESSION") {
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: "staff_suppression" }, { surface: "PORTAL" });
           return reply.code(403).send({
             error: "staff_suppression",
             message: "Users with staff access cannot activate portal invites for the same tenant",
           });
         }
         if (err.message === "MEMBERSHIP_SUSPENDED") {
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: "membership_suspended" }, { surface: "PORTAL" });
           return reply.code(403).send({
             error: "membership_suspended",
             message: "Your access to this portal has been suspended",
