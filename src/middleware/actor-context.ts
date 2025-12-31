@@ -1,5 +1,8 @@
 // src/middleware/actor-context.ts
 // Surface derivation and ActorContext resolution middleware
+//
+// Surface is derived ONLY from req.hostname (trusted via Fastify trustProxy).
+// ActorContext is resolved ONLY from TenantMembership and User.isSuperAdmin.
 
 import type { FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
@@ -8,7 +11,7 @@ import { parseVerifiedSession, SessionPayload } from "../utils/session.js";
 // ---------- Enums and Types ----------
 
 /**
- * Surface types derived from hostname.
+ * Surface types derived from hostname only.
  * - PLATFORM: app.* or app-* (staff dashboard)
  * - PORTAL: portal.* or portal-* (client portal)
  * - MARKETPLACE: marketplace.* or marketplace-* (public marketplace)
@@ -17,9 +20,9 @@ export type Surface = "PLATFORM" | "PORTAL" | "MARKETPLACE";
 
 /**
  * ActorContext determines what level of access the user has.
- * - STAFF: Has TenantMembership (breeder/admin staff)
- * - CLIENT: Has PortalAccess grant (customer viewing their animals)
- * - PUBLIC: Valid session on marketplace surface (browsing public listings)
+ * - STAFF: Has TenantMembership with staff-like role (OWNER, ADMIN, MEMBER, BILLING, VIEWER)
+ * - CLIENT: Has TenantMembership and is accessing portal surface for that tenant
+ * - PUBLIC: Valid session on marketplace surface
  */
 export type ActorContext = "STAFF" | "CLIENT" | "PUBLIC";
 
@@ -40,30 +43,18 @@ export const ACTOR_CONTEXT_UNRESOLVABLE = "ACTOR_CONTEXT_UNRESOLVABLE";
 // ---------- Surface Derivation ----------
 
 /**
- * Derive surface type from hostname.
+ * Derive surface type from hostname ONLY.
+ * No header overrides - hostname is trusted via Fastify trustProxy.
+ *
  * Patterns:
- *   app.breederhq.com, app-*.vercel.app, localhost (dev) → PLATFORM
+ *   app.breederhq.com, app-*.vercel.app, localhost → PLATFORM
  *   portal.breederhq.com, portal-*.vercel.app → PORTAL
  *   marketplace.breederhq.com, marketplace-*.vercel.app → MARKETPLACE
- *
- * In development, X-Surface header can override for testing.
  */
 export function deriveSurface(req: FastifyRequest): Surface {
   const hostname = (req.hostname || "").toLowerCase();
 
-  // Dev override via header (only in development)
-  const isDev =
-    (process.env.BHQ_ENV || process.env.NODE_ENV) === "dev" ||
-    String(process.env.NODE_ENV || "").toLowerCase() === "development";
-
-  if (isDev) {
-    const headerSurface = req.headers["x-surface"];
-    if (headerSurface === "PORTAL") return "PORTAL";
-    if (headerSurface === "MARKETPLACE") return "MARKETPLACE";
-    if (headerSurface === "PLATFORM") return "PLATFORM";
-  }
-
-  // Production hostname patterns
+  // Hostname-only derivation (no header overrides)
   if (hostname.startsWith("portal.") || hostname.startsWith("portal-")) {
     return "PORTAL";
   }
@@ -71,52 +62,47 @@ export function deriveSurface(req: FastifyRequest): Surface {
     return "MARKETPLACE";
   }
 
-  // Default: PLATFORM (includes app.*, localhost, etc.)
+  // Default: PLATFORM (includes app.*, localhost, 127.0.0.1, etc.)
   return "PLATFORM";
 }
 
-// ---------- Grant Checking ----------
+// ---------- Membership Queries ----------
 
 /**
- * Check if user has STAFF access (TenantMembership) for any tenant.
- * Returns the first tenant ID they have membership for, or null.
+ * Get all tenant memberships for a user.
+ * Returns array of { tenantId, role } or empty array if table doesn't exist.
  */
-async function checkStaffGrant(userId: string): Promise<number | null> {
+async function getUserMemberships(userId: string): Promise<Array<{ tenantId: number; role: string }>> {
   try {
-    const membership = await (prisma as any).tenantMembership.findFirst({
+    const memberships = await (prisma as any).tenantMembership.findMany({
       where: { userId },
-      select: { tenantId: true },
+      select: { tenantId: true, role: true },
       orderBy: { tenantId: "asc" },
     });
-    return membership?.tenantId ?? null;
+    return memberships || [];
   } catch {
     // Table might not exist in single-tenant mode
-    return null;
+    return [];
   }
 }
 
 /**
- * Check if user has CLIENT access (PortalAccess with ACTIVE status).
- * Returns true if they have any active portal access.
+ * Check if user has membership to a specific tenant.
  */
-async function checkClientGrant(userId: string): Promise<boolean> {
+async function hasMembershipToTenant(userId: string, tenantId: number): Promise<boolean> {
   try {
-    const access = await (prisma as any).portalAccess.findFirst({
-      where: {
-        userId,
-        status: "ACTIVE",
-      },
-      select: { id: true },
+    const membership = await (prisma as any).tenantMembership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { tenantId: true },
     });
-    return !!access;
+    return !!membership;
   } catch {
-    // Table might not exist
     return false;
   }
 }
 
 /**
- * Check if user is a super admin (bypasses tenant membership requirements).
+ * Check if user is a super admin.
  */
 async function checkSuperAdmin(userId: string): Promise<boolean> {
   try {
@@ -130,59 +116,100 @@ async function checkSuperAdmin(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Get tenant by slug.
+ */
+async function getTenantBySlug(slug: string): Promise<{ id: number } | null> {
+  try {
+    const tenant = await (prisma as any).tenant.findUnique({
+      where: { slug },
+      select: { id: true },
+    });
+    return tenant || null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------- Context Resolution ----------
 
 /**
  * Resolve ActorContext based on surface and user grants.
  *
  * Rules:
- * - PLATFORM surface → must have STAFF context (TenantMembership or SuperAdmin)
- * - PORTAL surface → must have CLIENT context (PortalAccess)
- * - MARKETPLACE surface → PUBLIC context (any valid session)
+ * - PLATFORM: require authenticated session AND (TenantMembership OR superAdmin) → STAFF
+ * - PORTAL: require authenticated session AND membership to accessed tenant → CLIENT
+ *   - Tenant must be derivable from tenantSlug in path or X-Tenant-Id header
+ *   - If tenant context cannot be derived, return ACTOR_CONTEXT_UNRESOLVABLE
+ * - MARKETPLACE: require authenticated session → PUBLIC (no tenant context)
  *
- * Returns null if context cannot be resolved (fail-closed).
+ * @param surface - The derived surface
+ * @param userId - The authenticated user ID
+ * @param tenantContext - Optional tenant context (from header or path)
  */
 export async function resolveActorContext(
   surface: Surface,
-  userId: string
+  userId: string,
+  tenantContext?: { tenantId?: number; tenantSlug?: string }
 ): Promise<{ context: ActorContext; tenantId: number | null } | null> {
-  // Check super admin first (has STAFF access everywhere)
   const isSuperAdmin = await checkSuperAdmin(userId);
 
   switch (surface) {
     case "PLATFORM": {
-      // PLATFORM requires STAFF context
+      // PLATFORM requires STAFF context (any TenantMembership or superAdmin)
       if (isSuperAdmin) {
-        // Super admins default to first tenant or null
-        const staffTenantId = await checkStaffGrant(userId);
-        return { context: "STAFF", tenantId: staffTenantId };
+        const memberships = await getUserMemberships(userId);
+        const defaultTenantId = memberships[0]?.tenantId ?? null;
+        return { context: "STAFF", tenantId: defaultTenantId };
       }
-      const staffTenantId = await checkStaffGrant(userId);
-      if (staffTenantId) {
-        return { context: "STAFF", tenantId: staffTenantId };
+
+      const memberships = await getUserMemberships(userId);
+      if (memberships.length > 0) {
+        // Has at least one membership → STAFF
+        return { context: "STAFF", tenantId: memberships[0].tenantId };
       }
-      // No staff access → fail
+
+      // No membership, not superAdmin → deny
       return null;
     }
 
     case "PORTAL": {
-      // PORTAL requires CLIENT context
-      // Note: Staff can also access portal (they might be testing or have dual role)
-      const hasClientAccess = await checkClientGrant(userId);
-      if (hasClientAccess) {
-        return { context: "CLIENT", tenantId: null };
+      // PORTAL requires CLIENT context with valid tenant context
+      // SuperAdmins can access any tenant's portal for support
+
+      // First, resolve tenant ID from context
+      let resolvedTenantId: number | null = null;
+
+      if (tenantContext?.tenantId && Number.isInteger(tenantContext.tenantId) && tenantContext.tenantId > 0) {
+        resolvedTenantId = tenantContext.tenantId;
+      } else if (tenantContext?.tenantSlug) {
+        const tenant = await getTenantBySlug(tenantContext.tenantSlug);
+        resolvedTenantId = tenant?.id ?? null;
       }
-      // Super admins can access portal for support/debugging
+
+      // If no tenant context, cannot resolve CLIENT
+      if (!resolvedTenantId) {
+        return null; // Will result in ACTOR_CONTEXT_UNRESOLVABLE
+      }
+
+      // SuperAdmin can access any tenant's portal
       if (isSuperAdmin) {
-        return { context: "CLIENT", tenantId: null };
+        return { context: "CLIENT", tenantId: resolvedTenantId };
       }
-      // No client access → fail
+
+      // Check if user has membership to this tenant
+      const hasMembership = await hasMembershipToTenant(userId, resolvedTenantId);
+      if (hasMembership) {
+        return { context: "CLIENT", tenantId: resolvedTenantId };
+      }
+
+      // No membership to this tenant → deny
       return null;
     }
 
     case "MARKETPLACE": {
       // MARKETPLACE allows PUBLIC context (any valid session)
-      // They might also have STAFF or CLIENT grants, but on marketplace they're PUBLIC
+      // No tenant context required
       return { context: "PUBLIC", tenantId: null };
     }
 
@@ -191,19 +218,47 @@ export async function resolveActorContext(
   }
 }
 
+// ---------- Tenant Context Extraction ----------
+
+/**
+ * Extract tenant context from request (header or path).
+ */
+export function extractTenantContext(req: FastifyRequest): { tenantId?: number; tenantSlug?: string } {
+  const result: { tenantId?: number; tenantSlug?: string } = {};
+
+  // Check X-Tenant-Id header
+  const headerTenantId = req.headers["x-tenant-id"];
+  if (headerTenantId) {
+    const parsed = Number(headerTenantId);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      result.tenantId = parsed;
+    }
+  }
+
+  // Check for tenant slug in path (e.g., /t/:tenantSlug/...)
+  const url = req.url || "";
+  const slugMatch = url.match(/^\/t\/([a-z0-9-]+)/i);
+  if (slugMatch) {
+    result.tenantSlug = slugMatch[1].toLowerCase();
+  }
+
+  return result;
+}
+
 // ---------- Middleware ----------
 
 /**
  * Surface gate middleware factory.
  *
  * Creates a preHandler hook that:
- * 1. Derives surface from hostname
+ * 1. Derives surface from hostname (no header override)
  * 2. Verifies session exists
- * 3. Resolves ActorContext based on surface + grants
- * 4. Attaches surface, actorContext, session to request
- * 5. Returns 403 if access is denied
+ * 3. Extracts tenant context from header/path
+ * 4. Resolves ActorContext based on surface + membership
+ * 5. Attaches surface, actorContext, tenantId to request
+ * 6. Returns 403 if access is denied
  *
- * @param options.requireAuth - If false, allows unauthenticated requests (for public routes)
+ * @param options.requireAuth - If false, allows unauthenticated requests
  */
 export function createSurfaceGateMiddleware(options?: { requireAuth?: boolean }) {
   const requireAuth = options?.requireAuth ?? true;
@@ -212,7 +267,7 @@ export function createSurfaceGateMiddleware(options?: { requireAuth?: boolean })
     req: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> {
-    // 1. Derive surface
+    // 1. Derive surface from hostname only
     const surface = deriveSurface(req);
     (req as any).surface = surface;
 
@@ -232,43 +287,35 @@ export function createSurfaceGateMiddleware(options?: { requireAuth?: boolean })
     }
 
     (req as any).session = session;
+    (req as any).userId = session.userId;
 
-    // 3. Resolve ActorContext
-    const resolved = await resolveActorContext(surface, session.userId);
+    // 3. Extract tenant context
+    const tenantContext = extractTenantContext(req);
+
+    // Also check session for tenant context
+    if (!tenantContext.tenantId && session.tenantId && Number.isInteger(session.tenantId) && session.tenantId > 0) {
+      tenantContext.tenantId = session.tenantId;
+    }
+
+    // 4. Resolve ActorContext
+    const resolved = await resolveActorContext(surface, session.userId, tenantContext);
 
     if (!resolved) {
       // Could not resolve context → fail closed
-      const errorCode =
-        surface === "PLATFORM"
-          ? SURFACE_ACCESS_DENIED
-          : surface === "PORTAL"
-          ? SURFACE_ACCESS_DENIED
-          : ACTOR_CONTEXT_UNRESOLVABLE;
+      // PORTAL without tenant context → ACTOR_CONTEXT_UNRESOLVABLE
+      // PLATFORM without membership → SURFACE_ACCESS_DENIED
+      const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
 
       reply.code(403).send({
         error: errorCode,
-        message: `Access denied for surface: ${surface}`,
         surface,
       });
       return;
     }
 
-    // 4. Attach context to request
+    // 5. Attach context to request
     (req as any).actorContext = resolved.context;
-
-    // Set tenantId from resolution, but allow header override for STAFF
-    if (resolved.context === "STAFF") {
-      const headerTenantId = req.headers["x-tenant-id"];
-      if (headerTenantId && Number(headerTenantId) > 0) {
-        (req as any).tenantId = Number(headerTenantId);
-      } else if (session.tenantId && Number.isInteger(session.tenantId)) {
-        (req as any).tenantId = session.tenantId;
-      } else {
-        (req as any).tenantId = resolved.tenantId;
-      }
-    } else {
-      (req as any).tenantId = resolved.tenantId;
-    }
+    (req as any).tenantId = resolved.tenantId;
   };
 }
 
@@ -286,8 +333,7 @@ export function requireActorContext(...allowed: ActorContext[]) {
     if (!context || !allowed.includes(context)) {
       reply.code(403).send({
         error: SURFACE_ACCESS_DENIED,
-        message: `This route requires one of: ${allowed.join(", ")}`,
-        current: context ?? "NONE",
+        surface: (req as any).surface,
       });
     }
   };
