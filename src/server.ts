@@ -505,7 +505,12 @@ app.register(
       // For STAFF on PLATFORM, verify tenant membership (except for marketplace routes)
       if (surface === "PLATFORM" && resolved.context === "STAFF") {
         // Marketplace routes don't require tenant context - they're cross-tenant
-        const isMarketplacePath = pathOnly.includes("/marketplace");
+        // Use exact prefix match to avoid bypassing tenant checks on unrelated routes
+        const isMarketplacePath =
+          pathOnly === "/marketplace" ||
+          pathOnly.startsWith("/marketplace/") ||
+          pathOnly === "/api/v1/marketplace" ||
+          pathOnly.startsWith("/api/v1/marketplace/");
 
         if (!isMarketplacePath) {
           if (!tId) {
