@@ -260,21 +260,51 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tokenHash = sha256(rawToken);
       const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
-      await prisma.portalAccess.create({
-        data: {
-          partyId,
-          status: "INVITED",
-          invitedAt: new Date(),
-          createdByUserId: userId,
-          updatedByUserId: userId,
-          invites: {
-            create: {
-              tokenHash,
-              expiresAt,
-              sentByUserId: userId,
+      await prisma.$transaction(async (tx) => {
+        // Create PortalAccess record
+        await tx.portalAccess.create({
+          data: {
+            partyId,
+            status: "INVITED",
+            invitedAt: new Date(),
+            createdByUserId: userId,
+            updatedByUserId: userId,
+            invites: {
+              create: {
+                tokenHash,
+                expiresAt,
+                sentByUserId: userId,
+              },
             },
           },
-        },
+        });
+
+        // If a user with this email already exists, create INVITED membership
+        const existingUser = await tx.user.findFirst({
+          where: { email: party.email!.toLowerCase().trim() },
+          select: { id: true },
+        });
+
+        if (existingUser) {
+          // Create TenantMembership with CLIENT role and INVITED status
+          // Skip if membership already exists
+          const existingMembership = await (tx as any).tenantMembership.findUnique({
+            where: { userId_tenantId: { userId: existingUser.id, tenantId } },
+          });
+
+          if (!existingMembership) {
+            await (tx as any).tenantMembership.create({
+              data: {
+                userId: existingUser.id,
+                tenantId,
+                role: "VIEWER", // Legacy field
+                membershipRole: "CLIENT",
+                membershipStatus: "INVITED",
+                partyId,
+              },
+            });
+          }
+        }
       });
 
       await sendInviteEmail(tenantId, party.email, party.name, rawToken);

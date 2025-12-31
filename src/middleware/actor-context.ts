@@ -55,6 +55,7 @@ const PORTAL_TENANTLESS_PREFIXES = [
   "/auth/",      // /api/v1/auth/*
   "/session",    // /api/v1/session, /api/v1/session/*
   "/account",    // /api/v1/account, /api/v1/account/*
+  "/portal/",    // /api/v1/portal/* (activation - no auth required)
 ];
 
 /**
@@ -169,25 +170,75 @@ export async function resolvePortalTenant(slug: string): Promise<{ id: number; s
 // ---------- Membership Queries ----------
 
 /**
- * Get all tenant memberships for a user.
- * Returns array of { tenantId, role } or empty array if table doesn't exist.
+ * Membership data returned from queries.
  */
-async function getUserMemberships(userId: string): Promise<Array<{ tenantId: number; role: string }>> {
+interface MembershipRecord {
+  tenantId: number;
+  role: string;
+  membershipRole?: string;
+  membershipStatus?: string;
+}
+
+/**
+ * Get all STAFF memberships for a user (ACTIVE status only).
+ * Used for PLATFORM surface gating.
+ */
+async function getStaffMemberships(userId: string): Promise<MembershipRecord[]> {
   try {
     const memberships = await (prisma as any).tenantMembership.findMany({
-      where: { userId },
-      select: { tenantId: true, role: true },
+      where: {
+        userId,
+        membershipRole: "STAFF",
+        membershipStatus: "ACTIVE",
+      },
+      select: { tenantId: true, role: true, membershipRole: true, membershipStatus: true },
       orderBy: { tenantId: "asc" },
     });
     return memberships || [];
   } catch {
-    // Table might not exist in single-tenant mode
-    return [];
+    // Fallback for schema without new fields - return all memberships
+    try {
+      const memberships = await (prisma as any).tenantMembership.findMany({
+        where: { userId },
+        select: { tenantId: true, role: true },
+        orderBy: { tenantId: "asc" },
+      });
+      return memberships || [];
+    } catch {
+      return [];
+    }
   }
 }
 
 /**
- * Check if user has membership to a specific tenant.
+ * Check if user has ACTIVE CLIENT membership to a specific tenant.
+ * Used for PORTAL surface gating.
+ */
+async function hasClientMembershipToTenant(userId: string, tenantId: number): Promise<boolean> {
+  try {
+    const membership = await (prisma as any).tenantMembership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { membershipRole: true, membershipStatus: true },
+    });
+    // Accept CLIENT role with ACTIVE status
+    return membership?.membershipRole === "CLIENT" && membership?.membershipStatus === "ACTIVE";
+  } catch {
+    // Fallback for schema without new fields - check any membership exists
+    try {
+      const membership = await (prisma as any).tenantMembership.findUnique({
+        where: { userId_tenantId: { userId, tenantId } },
+        select: { tenantId: true },
+      });
+      return !!membership;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Legacy: Check if user has any membership to a specific tenant.
+ * @deprecated Use hasClientMembershipToTenant or getStaffMemberships instead.
  */
 async function hasMembershipToTenant(userId: string, tenantId: number): Promise<boolean> {
   try {
@@ -266,28 +317,28 @@ export async function resolveActorContext(
 
   switch (surface) {
     case "PLATFORM": {
-      // PLATFORM requires STAFF context (any TenantMembership or superAdmin)
+      // PLATFORM requires STAFF context (TenantMembership with membershipRole=STAFF, membershipStatus=ACTIVE)
       if (isSuperAdmin) {
-        const memberships = await getUserMemberships(userId);
+        const memberships = await getStaffMemberships(userId);
         const defaultTenantId = tenantId ?? memberships[0]?.tenantId ?? null;
         return { context: "STAFF", tenantId: defaultTenantId };
       }
 
-      const memberships = await getUserMemberships(userId);
+      const memberships = await getStaffMemberships(userId);
       if (memberships.length > 0) {
-        // Has at least one membership → STAFF
+        // Has at least one STAFF membership → STAFF context
         // Use provided tenantId if valid, otherwise first membership
         const activeTenantId = tenantId ?? memberships[0].tenantId;
         return { context: "STAFF", tenantId: activeTenantId };
       }
 
-      // No membership, not superAdmin → deny
+      // No STAFF membership, not superAdmin → deny
       return null;
     }
 
     case "PORTAL": {
-      // PORTAL requires CLIENT context with tenant from URL slug ONLY
-      // tenantId must already be resolved from slug before calling this
+      // PORTAL requires CLIENT context (TenantMembership with membershipRole=CLIENT, membershipStatus=ACTIVE)
+      // tenantId must already be resolved from URL slug before calling this
 
       if (!tenantId) {
         // No tenant context → cannot resolve CLIENT
@@ -299,13 +350,13 @@ export async function resolveActorContext(
         return { context: "CLIENT", tenantId };
       }
 
-      // Check if user has membership to this tenant
-      const hasMembership = await hasMembershipToTenant(userId, tenantId);
-      if (hasMembership) {
+      // Check if user has ACTIVE CLIENT membership to this tenant
+      const hasClientAccess = await hasClientMembershipToTenant(userId, tenantId);
+      if (hasClientAccess) {
         return { context: "CLIENT", tenantId };
       }
 
-      // No membership to this tenant → deny (will be SURFACE_ACCESS_DENIED)
+      // No CLIENT membership to this tenant → deny (will be SURFACE_ACCESS_DENIED)
       return null;
     }
 

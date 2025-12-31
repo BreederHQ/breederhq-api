@@ -116,6 +116,18 @@ enum TenantRole {
   VIEWER
 }
 
+// New enums for unified tenant membership model (STAFF vs CLIENT)
+enum TenantMembershipRole {
+  STAFF   // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
+  CLIENT  // Portal client (created via invite acceptance)
+}
+
+enum TenantMembershipStatus {
+  INVITED    // Invite sent, not yet accepted
+  ACTIVE     // Full access
+  SUSPENDED  // Access revoked
+}
+
 enum ShareScope {
   VIEW
   BREED_PLAN
@@ -569,12 +581,22 @@ model Tenant {
 model TenantMembership {
   userId   String
   tenantId Int
-  role     TenantRole @default(MEMBER)
-  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role     TenantRole       @default(MEMBER)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // New fields for unified membership model
+  membershipRole   TenantMembershipRole   @default(STAFF)
+  membershipStatus TenantMembershipStatus @default(ACTIVE)
+  partyId          Int?                   // Links CLIENT memberships to their Party record
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@id([userId, tenantId])
   @@index([tenantId])
+  @@index([partyId])
+  @@index([membershipRole, membershipStatus])
 }
 
 model BillingAccount {
