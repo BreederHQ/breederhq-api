@@ -8,10 +8,11 @@
     "node": "20.x"
   },
   "scripts": {
-    "dev": "npx dotenv -e .env.dev -- tsx watch src/server.ts",
+    "preflight": "node scripts/preflight-env.js",
+    "dev": "npx dotenv -e .env.dev -- node scripts/preflight-env.js && npx dotenv -e .env.dev -- tsx watch src/server.ts",
     "build": "tsc -p .",
-    "start": "node dist/server.js",
-    "start:render": "node dist/server.js",
+    "start": "node scripts/preflight-env.js && node dist/server.js",
+    "start:render": "node scripts/preflight-env.js && node dist/server.js",
     "test": "npx dotenv -e .env.dev -- tsx tests/run-tests.ts",
     "test:contracts": "npx dotenv -e .env.dev -- tsx --test tests/party-api-contracts.test.ts",
     "test:regression": "npx dotenv -e .env.dev -- tsx --test tests/party-migration-regression.test.ts",

@@ -1,8 +1,19 @@
 // src/routes/auth.ts
-import type { FastifyInstance, FastifyPluginOptions, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
+import {
+  COOKIE_NAME,
+  SessionPayload,
+  setSessionCookies,
+  clearSessionCookies,
+  parseVerifiedSession,
+  sessionLifetimes,
+  Surface,
+} from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
+import { audit, auditSuccess, auditFailure } from "../services/audit.js";
 
 /**
  * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
@@ -21,18 +32,9 @@ import prisma from "../prisma.js";
  *   POST /password         (authenticated password change)
  *
  * Cookies:
- *   - Session:   COOKIE_NAME (default "bhq_s") => base64url(JSON { userId, tenantId?, iat, exp })
+ *   - Session:   COOKIE_NAME (default "bhq_s") => signed(base64url(JSON { userId, tenantId?, iat, exp }))
  *   - CSRF:      XSRF-TOKEN  (non-HttpOnly)
  */
-
-type SessionPayload = {
-  userId: string;
-  tenantId?: number;
-  iat: number; // ms
-  exp: number; // ms
-};
-
-const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const DEV_LOGIN_ENABLED = String(process.env.DEV_LOGIN_ENABLED || "").trim() === "1";
 const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
@@ -79,63 +81,10 @@ async function detectSessionTable(): Promise<boolean> {
 }
 
 /* ───────────────────────── cookies / session ───────────────────────── */
-
-function sessionLifetimes() {
-  const ms = ALLOW_CROSS_SITE
-    ? 24 * 60 * 60 * 1000
-    : (NODE_ENV === "development" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000);
-  const rotateAt = Math.floor(ms * 0.2);
-  return { ms, rotateAt };
-}
-
-function cookieBase() {
-  const { ms } = sessionLifetimes();
-  const sameSite: "lax" | "none" = ALLOW_CROSS_SITE ? "none" : "lax";
-  const secure = ALLOW_CROSS_SITE || NODE_ENV === "production";
-  return {
-    httpOnly: true,
-    sameSite,
-    secure,
-    path: "/",
-    maxAge: Math.floor(ms / 1000),
-  } as const;
-}
-
-function randCsrf() {
-  return randomBytes(32).toString("base64url");
-}
-
-function setSessionCookies(reply: FastifyReply, sess: Omit<SessionPayload, "iat" | "exp">) {
-  const now = Date.now();
-  const { ms } = sessionLifetimes();
-  const payload: SessionPayload = { ...sess, iat: now, exp: now + ms };
-  const buf = Buffer.from(JSON.stringify(payload)).toString("base64url");
-
-  // Session (HttpOnly)
-  reply.setCookie(COOKIE_NAME, buf, cookieBase());
-
-  // CSRF (not HttpOnly)
-  reply.setCookie("XSRF-TOKEN", randCsrf(), { ...cookieBase(), httpOnly: false });
-}
-
-function clearAuthCookies(reply: FastifyReply) {
-  const base = cookieBase();
-  reply.setCookie(COOKIE_NAME, "", { ...base, maxAge: 0 });
-  reply.clearCookie(COOKIE_NAME, { path: "/" });
-  reply.setCookie("XSRF-TOKEN", "", { ...base, httpOnly: false, maxAge: 0 });
-  reply.clearCookie("XSRF-TOKEN", { path: "/" });
-}
-
-function parseSession(raw?: string | null): SessionPayload | null {
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8"));
-    if (!obj?.userId || !obj?.iat || !obj?.exp) return null;
-    return obj as SessionPayload;
-  } catch {
-    return null;
-  }
-}
+// Session cookie functions are now imported from utils/session.js
+// - setSessionCookies: creates signed session cookie + CSRF token
+// - clearSessionCookies: clears all auth cookies
+// - parseVerifiedSession: verifies signature and parses session
 
 /* ───────────────────────── tenant helpers ───────────────────────── */
 
@@ -329,8 +278,14 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     const e = String(email).trim().toLowerCase();
     const p = String(password);
 
-    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
-    if (p.length < 8) return reply.code(400).send({ error: "password_too_short" });
+    if (!e || !p) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "email_and_password_required", emailNorm: e || null });
+      return reply.code(400).send({ error: "email_and_password_required" });
+    }
+    if (p.length < 8) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "password_too_short", emailNorm: e });
+      return reply.code(400).send({ error: "password_too_short" });
+    }
 
     const existing = await prisma.user.findUnique({
       where: { email: e },
@@ -374,6 +329,41 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       purpose: "VERIFY_EMAIL",
       userId,
       ttlMinutes: 60,
+    });
+
+    // Grant MARKETPLACE_ACCESS entitlement when registered from marketplace surface
+    const surface = deriveSurface(req);
+    let entitlementGranted = false;
+    if (surface === "MARKETPLACE") {
+      try {
+        await (prisma as any).userEntitlement.upsert({
+          where: { userId_key: { userId, key: "MARKETPLACE_ACCESS" } },
+          create: {
+            userId,
+            key: "MARKETPLACE_ACCESS",
+            status: "ACTIVE",
+            grantedAt: new Date(),
+          },
+          update: {
+            status: "ACTIVE",
+            revokedAt: null,
+          },
+        });
+        entitlementGranted = true;
+        // Audit marketplace entitlement grant
+        await auditSuccess(req, "MARKETPLACE_ENTITLEMENT_GRANTED", {
+          userId,
+          detail: { trigger: "registration" },
+        });
+      } catch {
+        // Ignore if UserEntitlement table not yet migrated
+      }
+    }
+
+    // Audit successful registration
+    await auditSuccess(req, "AUTH_REGISTER_SUCCESS", {
+      userId,
+      detail: { emailNorm: e, isNewUser: !existing, entitlementGranted },
     });
 
     return reply.code(201).send({
@@ -561,16 +551,25 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     const e = String(email).trim().toLowerCase();
     const p = String(password);
 
-    if (!e || !p) return reply.code(400).send({ error: "email_and_password_required" });
+    if (!e || !p) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "email_and_password_required", emailNorm: e || null });
+      return reply.code(400).send({ error: "email_and_password_required" });
+    }
 
     const user = await findUserByEmail(e);
-    if (!user || !user.passwordHash) return reply.code(401).send({ error: "invalid_credentials" });
+    if (!user || !user.passwordHash) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "invalid_credentials", emailNorm: e });
+      return reply.code(401).send({ error: "invalid_credentials" });
+    }
 
     // If you want to require verified email, uncomment:
     // if (!user.emailVerifiedAt) return reply.code(403).send({ error: "email_not_verified" });
 
     const ok = await bcrypt.compare(p, user.passwordHash).catch(() => false);
-    if (!ok) return reply.code(401).send({ error: "invalid_credentials" });
+    if (!ok) {
+      await auditFailure(req, "AUTH_LOGIN_FAILURE", { reason: "password_mismatch", emailNorm: e, userId: user.id });
+      return reply.code(401).send({ error: "invalid_credentials" });
+    }
 
     // lastLoginAt is optional
     try {
@@ -585,7 +584,15 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
     await ensureDefaultTenant(user.id);
     const tenantId = await pickTenantIdForUser(user.id);
-    setSessionCookies(reply, { userId: String(user.id), tenantId });
+    const surface = deriveSurface(req) as Surface;
+    setSessionCookies(reply, { userId: String(user.id), tenantId }, surface);
+
+    // Audit successful login
+    await auditSuccess(req, "AUTH_LOGIN_SUCCESS", {
+      userId: user.id,
+      tenantId,
+      detail: { emailNorm: e },
+    });
 
     return reply.send({
       ok: true,
@@ -602,8 +609,16 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
   // GET/POST /logout
   const handleLogout = async (req: any, reply: FastifyReply) => {
+    // Get user ID before clearing session for audit
+    const sess = parseVerifiedSession(req);
+    const userId = sess?.userId ?? null;
+
     const bag = (req.body || req.query || {}) as { redirect?: string };
-    clearAuthCookies(reply);
+    clearSessionCookies(reply);
+
+    // Audit logout
+    await auditSuccess(req, "AUTH_LOGOUT", { userId });
+
     if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(String(bag.redirect)));
     return reply.send({ ok: true });
   };
@@ -646,7 +661,8 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       }
     }
 
-    setSessionCookies(reply, { userId: String(user.id), tenantId });
+    const devSurface = deriveSurface(req) as Surface;
+    setSessionCookies(reply, { userId: String(user.id), tenantId }, devSurface);
     if (bag.redirect && isSafeRedirect(bag.redirect)) return reply.redirect(encodeURI(bag.redirect));
     return reply.send({
       ok: true,
@@ -660,17 +676,18 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   // GET /me
   app.get("/me", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const raw = req.cookies?.[COOKIE_NAME];
-    const sess = parseSession(raw);
+    // Use signature-verified session parsing
+    const sess = parseVerifiedSession(req);
 
-    if (!sess || Date.now() >= sess.exp) {
+    if (!sess) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
     }
 
     // Optional rotation if close to expiry
     const { rotateAt } = sessionLifetimes();
     if (sess.exp - Date.now() < rotateAt) {
-      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId });
+      const meSurface = deriveSurface(req) as Surface;
+      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId }, meSurface);
     }
 
     const userRec = await prisma.user.findUnique({
@@ -714,10 +731,10 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   app.post("/password", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const raw = req.cookies?.[COOKIE_NAME];
-    const sess = parseSession(raw);
+    // Use signature-verified session parsing
+    const sess = parseVerifiedSession(req);
 
-    if (!sess || Date.now() >= sess.exp) {
+    if (!sess) {
       return reply.code(401).send({ error: "unauthorized", message: "Not authenticated" });
     }
 
@@ -782,7 +799,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     });
 
     // Clear current session cookie (user will need to re-login)
-    clearAuthCookies(reply);
+    clearSessionCookies(reply);
 
     return reply.send({ ok: true, message: "Password changed successfully" });
   });

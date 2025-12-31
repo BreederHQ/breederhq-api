@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
 import { sendEmail } from "../services/email-service.js";
+import { auditSuccess } from "../services/audit.js";
 
 /**
  * Portal Access Management Routes
@@ -195,7 +196,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // POST /api/v1/portal-access/:partyId/enable
   // Enables portal access for a party (creates record if none exists, sends invite if email exists)
-  app.post("/portal-access/:partyId/enable", async (req, reply) => {
+  app.post("/portal-access/:partyId/enable", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
@@ -251,6 +254,14 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         await sendInviteEmail(tenantId, party.email, party.name, rawToken);
 
+        // Audit invite resent (re-enabling from SUSPENDED/NO_ACCESS)
+        await auditSuccess(req, "PORTAL_INVITE_RESENT", {
+          userId,
+          tenantId,
+          surface: "PLATFORM",
+          detail: { partyId, toEmail: party.email },
+        });
+
         const updated = await getPartyWithAccess(tenantId, partyId);
         return reply.send({ portalAccess: toDTO(updated!), inviteSent: true });
       }
@@ -260,24 +271,62 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tokenHash = sha256(rawToken);
       const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
-      await prisma.portalAccess.create({
-        data: {
-          partyId,
-          status: "INVITED",
-          invitedAt: new Date(),
-          createdByUserId: userId,
-          updatedByUserId: userId,
-          invites: {
-            create: {
-              tokenHash,
-              expiresAt,
-              sentByUserId: userId,
+      await prisma.$transaction(async (tx) => {
+        // Create PortalAccess record
+        await tx.portalAccess.create({
+          data: {
+            partyId,
+            status: "INVITED",
+            invitedAt: new Date(),
+            createdByUserId: userId,
+            updatedByUserId: userId,
+            invites: {
+              create: {
+                tokenHash,
+                expiresAt,
+                sentByUserId: userId,
+              },
             },
           },
-        },
+        });
+
+        // If a user with this email already exists, create INVITED membership
+        const existingUser = await tx.user.findFirst({
+          where: { email: party.email!.toLowerCase().trim() },
+          select: { id: true },
+        });
+
+        if (existingUser) {
+          // Create TenantMembership with CLIENT role and INVITED status
+          // Skip if membership already exists
+          const existingMembership = await (tx as any).tenantMembership.findUnique({
+            where: { userId_tenantId: { userId: existingUser.id, tenantId } },
+          });
+
+          if (!existingMembership) {
+            await (tx as any).tenantMembership.create({
+              data: {
+                userId: existingUser.id,
+                tenantId,
+                role: "VIEWER", // Legacy field
+                membershipRole: "CLIENT",
+                membershipStatus: "INVITED",
+                partyId,
+              },
+            });
+          }
+        }
       });
 
       await sendInviteEmail(tenantId, party.email, party.name, rawToken);
+
+      // Audit new portal invite created
+      await auditSuccess(req, "PORTAL_INVITE_CREATED", {
+        userId,
+        tenantId,
+        surface: "PLATFORM",
+        detail: { partyId, toEmail: party.email },
+      });
 
       const updated = await getPartyWithAccess(tenantId, partyId);
       return reply.send({ portalAccess: toDTO(updated!), inviteSent: true });
@@ -289,7 +338,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // POST /api/v1/portal-access/:partyId/invite
   // Sends or resends an invite email
-  app.post("/portal-access/:partyId/invite", async (req, reply) => {
+  app.post("/portal-access/:partyId/invite", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
@@ -346,6 +397,14 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ]);
 
       await sendInviteEmail(tenantId, party.email, party.name, rawToken);
+
+      // Audit resent invite
+      await auditSuccess(req, "PORTAL_INVITE_RESENT", {
+        userId,
+        tenantId,
+        surface: "PLATFORM",
+        detail: { partyId, toEmail: party.email },
+      });
 
       const updated = await getPartyWithAccess(tenantId, partyId);
       return reply.send({ portalAccess: toDTO(updated!), inviteSent: true });
@@ -474,6 +533,14 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ]);
 
         await sendInviteEmail(tenantId, party.email, party.name, rawToken);
+
+        // Audit invite resent on re-enable
+        await auditSuccess(req, "PORTAL_INVITE_RESENT", {
+          userId,
+          tenantId,
+          surface: "PLATFORM",
+          detail: { partyId, toEmail: party.email, context: "reenable" },
+        });
       }
 
       const updated = await getPartyWithAccess(tenantId, partyId);

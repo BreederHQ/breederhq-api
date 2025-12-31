@@ -1,9 +1,10 @@
 // src/routes/tenant.ts
-import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { getActorId } from "../utils/session.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -60,28 +61,7 @@ function errorReply(err: unknown) {
   return { status: 500, payload: { error: "internal_error", detail: any?.message || "Unexpected error" } };
 }
 
-function getCookieName() {
-  return process.env.COOKIE_NAME || "bhq_s";
-}
-function decodeSessionCookie(raw?: string) {
-  if (!raw) return null;
-  try {
-    const json = Buffer.from(String(raw), "base64url").toString("utf8");
-    const obj = JSON.parse(json);
-    const exp = Number(obj?.exp);
-    const nowMs = Date.now();
-    const expMs = exp > 2_000_000_000 ? exp : exp * 1000;
-    if (!obj?.userId || !expMs || nowMs > expMs) return null;
-    return obj as { userId: string; exp: number; orgId?: number; iat?: number };
-  } catch {
-    return null;
-  }
-}
-function getActorId(req: any): string | null {
-  const raw = req.cookies?.[getCookieName()];
-  const sess = decodeSessionCookie(raw);
-  return (sess && String(sess.userId)) || null;
-}
+// Session verification is now imported from utils/session.js
 async function requireSuperAdmin(req: any, reply: any) {
   const actorId = getActorId(req);
   if (!actorId) {
