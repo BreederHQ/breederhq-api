@@ -42,10 +42,18 @@ await app.register(rateLimit, {
 });
 
 // ---------- CORS ----------
+// Dev-only: allow local Caddy HTTPS subdomains
+const DEV_TEST_ORIGINS = [
+  "https://app.breederhq.test",
+  "https://portal.breederhq.test",
+  "https://marketplace.breederhq.test",
+];
+
 await app.register(cors, {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true); // server-to-server/curl
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return cb(null, true);
+    if (IS_DEV && DEV_TEST_ORIGINS.includes(origin)) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin) || /\.vercel\.app$/i.test(origin)) return cb(null, true);
     app.log.warn({ origin }, "CORS: origin not allowed");
     return cb(new Error("CORS: origin not allowed"), false);
