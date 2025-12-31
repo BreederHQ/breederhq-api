@@ -84,28 +84,22 @@ COOKIE_SECRET: too short (need ≥32 chars, got 16)
 
 **Diagnosis**:
 ```bash
-# Hit the diagnostics endpoint
-curl -b cookies.txt https://api.example.com/__diag
+# Hit the diagnostics endpoint (dev only, or requires superadmin in production)
+curl https://localhost:6001/__diag
 ```
 
-Response shows session info if cookie is valid:
+Response shows surface derivation:
 ```json
 {
   "ok": true,
-  "hostname": "api.example.com",
+  "hostname": "localhost",
   "surface": "PLATFORM",
-  "session": {
-    "userId": "abc123",
-    "tenantId": 1,
-    "iat": 1735600000000,
-    "exp": 1735686400000
-  },
-  "actorContext": "STAFF",
-  "resolvedTenantId": 1
+  "resolvedTenantId": null,
+  "env": { "NODE_ENV": "development", "IS_DEV": true }
 }
 ```
 
-If session is null, the cookie is missing, expired, or signature verification failed.
+Note: `/__diag` returns 404 in production for non-superadmin users.
 
 ## Secret Rotation
 
@@ -118,8 +112,14 @@ If you must rotate:
 
 ## Security Notes
 
-- Never commit `COOKIE_SECRET` to git
-- `.env.dev` is gitignored (safe for local secrets)
-- `.env.example` has placeholder only (safe to commit)
+**Never commit `.env*` files except `.env.example`**
+
+- All `.env*` files are gitignored except explicit templates
+- `.env.dev` contains real secrets - never commit
+- `.env.example` has placeholders only - safe to commit
 - Use different secrets for dev vs production
 - Secrets should be cryptographically random (use the generation command)
+
+For Render/Vercel:
+- Set `COOKIE_SECRET` in dashboard environment variables
+- Never put secrets in build args or Dockerfile

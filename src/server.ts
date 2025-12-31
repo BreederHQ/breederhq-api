@@ -97,45 +97,43 @@ await app.register(cors, {
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/", async () => ({ ok: true }));
-app.get("/__diag", async (req) => {
+app.get("/__diag", async (req, reply) => {
+  // In production, only superadmins can access diagnostics
+  // Non-production allows unauthenticated access for debugging
+  if (!IS_DEV) {
+    const sess = parseVerifiedSession(req);
+    if (!sess) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    // Check if user is superadmin
+    const actor = await prisma.user.findUnique({
+      where: { id: sess.userId },
+      select: { isSuperAdmin: true } as any,
+    }) as any;
+    if (!actor?.isSuperAdmin) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+  }
+
   const hostname = req.hostname || "unknown";
   const surface = deriveSurface(req);
 
-  // Try to parse session for diagnostic info (no auth required, just show what would resolve)
-  const sess = parseVerifiedSession(req);
-  const userId = sess?.userId ?? null;
-  const sessionTenantId = sess?.tenantId ?? null;
-
-  // Try to resolve actor context if we have a session
-  let actorContext: ActorContext | null = null;
+  // Derive tenant context from URL/headers only (no session details exposed)
   let resolvedTenantId: number | null = null;
 
-  if (sess) {
-    // Attempt context resolution (won't fail, just may return null)
-    let tenantIdForResolution = sessionTenantId;
-
-    if (surface === "PORTAL") {
-      // For portal, try to extract slug from URL
-      const slug = extractPortalTenantSlug(req);
-      if (slug) {
-        const tenant = await resolvePortalTenant(slug);
-        tenantIdForResolution = tenant?.id ?? null;
-      }
-    } else if (surface === "PLATFORM") {
-      // For platform, check header first
-      const headerTenantId = req.headers["x-tenant-id"];
-      if (headerTenantId) {
-        const parsed = Number(headerTenantId);
-        if (Number.isInteger(parsed) && parsed > 0) {
-          tenantIdForResolution = parsed;
-        }
-      }
+  if (surface === "PORTAL") {
+    const slug = extractPortalTenantSlug(req);
+    if (slug) {
+      const tenant = await resolvePortalTenant(slug);
+      resolvedTenantId = tenant?.id ?? null;
     }
-
-    const resolved = await resolveActorContext(surface, sess.userId, tenantIdForResolution);
-    if (resolved) {
-      actorContext = resolved.context;
-      resolvedTenantId = resolved.tenantId;
+  } else if (surface === "PLATFORM") {
+    const headerTenantId = req.headers["x-tenant-id"];
+    if (headerTenantId) {
+      const parsed = Number(headerTenantId);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        resolvedTenantId = parsed;
+      }
     }
   }
 
@@ -144,18 +142,10 @@ app.get("/__diag", async (req) => {
     time: new Date().toISOString(),
     hostname,
     surface,
-    session: sess ? {
-      userId,
-      tenantId: sessionTenantId,
-      iat: sess.iat,
-      exp: sess.exp,
-    } : null,
-    actorContext,
     resolvedTenantId,
     env: {
       BHQ_ENV: process.env.BHQ_ENV || "unknown",
       NODE_ENV: process.env.NODE_ENV || "unknown",
-      ALLOWED_ORIGINS,
       IS_DEV,
     },
   };
