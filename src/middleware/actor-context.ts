@@ -3,6 +3,10 @@
 //
 // Surface is derived ONLY from req.hostname (trusted via Fastify trustProxy).
 // ActorContext is resolved ONLY from TenantMembership and User.isSuperAdmin.
+//
+// PORTAL TENANT CONTEXT:
+// Portal tenant is derived ONLY from URL path slug (/:tenantSlug/...).
+// No headers, no session, no client-provided numeric IDs accepted.
 
 import type { FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
@@ -34,11 +38,44 @@ export interface ActorContextRequest extends FastifyRequest {
   actorContext: ActorContext;
   session: SessionPayload;
   tenantId: number | null;
+  tenantSlug?: string;
 }
 
 // ---------- Error Codes ----------
 export const SURFACE_ACCESS_DENIED = "SURFACE_ACCESS_DENIED";
 export const ACTOR_CONTEXT_UNRESOLVABLE = "ACTOR_CONTEXT_UNRESOLVABLE";
+
+// ---------- Portal Tenant-less Route Allowlist ----------
+/**
+ * Routes on portal.* that do NOT require tenant context.
+ * These are auth bootstrap routes that work before tenant is known.
+ * Pattern: starts with prefix (after stripping /api/v1 if present)
+ */
+const PORTAL_TENANTLESS_PREFIXES = [
+  "/auth/",      // /api/v1/auth/*
+  "/session",    // /api/v1/session, /api/v1/session/*
+  "/account",    // /api/v1/account, /api/v1/account/*
+];
+
+/**
+ * Check if a portal route is allowed without tenant context.
+ */
+function isPortalTenantlessRoute(pathname: string): boolean {
+  // Normalize: strip /api/v1 prefix if present
+  let path = pathname;
+  if (path.startsWith("/api/v1")) {
+    path = path.slice(7); // Remove "/api/v1"
+  }
+
+  // Check against allowlist
+  for (const prefix of PORTAL_TENANTLESS_PREFIXES) {
+    if (path === prefix.replace(/\/$/, "") || path.startsWith(prefix)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 // ---------- Surface Derivation ----------
 
@@ -64,6 +101,69 @@ export function deriveSurface(req: FastifyRequest): Surface {
 
   // Default: PLATFORM (includes app.*, localhost, 127.0.0.1, etc.)
   return "PLATFORM";
+}
+
+// ---------- Portal Tenant Slug Resolver ----------
+
+/**
+ * Extract tenant slug from portal URL path ONLY.
+ *
+ * Expected patterns:
+ *   /t/:tenantSlug/...           → tenantSlug
+ *   /:tenantSlug/...             → tenantSlug (if first segment is valid slug)
+ *   /api/v1/t/:tenantSlug/...    → tenantSlug
+ *
+ * Returns null if no slug found or route is tenantless.
+ */
+export function extractPortalTenantSlug(req: FastifyRequest): string | null {
+  const url = req.url || "";
+  const pathname = url.split("?")[0] || "";
+
+  // Check if this is a tenantless route
+  if (isPortalTenantlessRoute(pathname)) {
+    return null; // Explicitly no tenant needed
+  }
+
+  // Pattern 1: /t/:tenantSlug/... or /api/v1/t/:tenantSlug/...
+  const tPrefixMatch = pathname.match(/(?:^|\/api\/v1)\/t\/([a-z0-9][a-z0-9-]*)/i);
+  if (tPrefixMatch) {
+    return tPrefixMatch[1].toLowerCase();
+  }
+
+  // Pattern 2: /:tenantSlug/... (first path segment after optional /api/v1)
+  // Only if it looks like a valid slug (lowercase alphanumeric with hyphens)
+  let pathWithoutApi = pathname;
+  if (pathWithoutApi.startsWith("/api/v1")) {
+    pathWithoutApi = pathWithoutApi.slice(7);
+  }
+
+  const firstSegmentMatch = pathWithoutApi.match(/^\/([a-z0-9][a-z0-9-]*)/i);
+  if (firstSegmentMatch) {
+    const segment = firstSegmentMatch[1].toLowerCase();
+    // Exclude known non-slug routes
+    const reservedPrefixes = ["auth", "session", "account", "healthz", "health", "__diag"];
+    if (!reservedPrefixes.includes(segment)) {
+      return segment;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve tenant from slug via database lookup.
+ * Returns tenant { id, slug } or null if not found.
+ */
+export async function resolvePortalTenant(slug: string): Promise<{ id: number; slug: string } | null> {
+  try {
+    const tenant = await (prisma as any).tenant.findUnique({
+      where: { slug },
+      select: { id: true, slug: true },
+    });
+    return tenant || null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- Membership Queries ----------
@@ -116,41 +216,51 @@ async function checkSuperAdmin(userId: string): Promise<boolean> {
   }
 }
 
-/**
- * Get tenant by slug.
- */
-async function getTenantBySlug(slug: string): Promise<{ id: number } | null> {
-  try {
-    const tenant = await (prisma as any).tenant.findUnique({
-      where: { slug },
-      select: { id: true },
-    });
-    return tenant || null;
-  } catch {
-    return null;
-  }
-}
-
 // ---------- Context Resolution ----------
+
+/**
+ * Tenant context for PLATFORM surface.
+ * Accepts: X-Tenant-Id header, session tenantId.
+ */
+export function extractPlatformTenantContext(req: FastifyRequest, session: SessionPayload): { tenantId?: number } {
+  const result: { tenantId?: number } = {};
+
+  // Check X-Tenant-Id header (PLATFORM only)
+  const headerTenantId = req.headers["x-tenant-id"];
+  if (headerTenantId) {
+    const parsed = Number(headerTenantId);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      result.tenantId = parsed;
+    }
+  }
+
+  // Fallback to session tenantId (PLATFORM only)
+  if (!result.tenantId && session.tenantId && Number.isInteger(session.tenantId) && session.tenantId > 0) {
+    result.tenantId = session.tenantId;
+  }
+
+  return result;
+}
 
 /**
  * Resolve ActorContext based on surface and user grants.
  *
  * Rules:
- * - PLATFORM: require authenticated session AND (TenantMembership OR superAdmin) → STAFF
- * - PORTAL: require authenticated session AND membership to accessed tenant → CLIENT
- *   - Tenant must be derivable from tenantSlug in path or X-Tenant-Id header
- *   - If tenant context cannot be derived, return ACTOR_CONTEXT_UNRESOLVABLE
- * - MARKETPLACE: require authenticated session → PUBLIC (no tenant context)
+ * - PLATFORM: require (TenantMembership OR superAdmin) → STAFF
+ *   - Tenant from X-Tenant-Id header or session
+ * - PORTAL: require membership to accessed tenant → CLIENT
+ *   - Tenant ONLY from URL slug (resolved via resolvePortalTenant)
+ *   - No headers, no session accepted
+ * - MARKETPLACE: any valid session → PUBLIC (no tenant context)
  *
  * @param surface - The derived surface
  * @param userId - The authenticated user ID
- * @param tenantContext - Optional tenant context (from header or path)
+ * @param tenantId - Pre-resolved tenant ID (from slug for PORTAL, from header/session for PLATFORM)
  */
 export async function resolveActorContext(
   surface: Surface,
   userId: string,
-  tenantContext?: { tenantId?: number; tenantSlug?: string }
+  tenantId: number | null
 ): Promise<{ context: ActorContext; tenantId: number | null } | null> {
   const isSuperAdmin = await checkSuperAdmin(userId);
 
@@ -159,14 +269,16 @@ export async function resolveActorContext(
       // PLATFORM requires STAFF context (any TenantMembership or superAdmin)
       if (isSuperAdmin) {
         const memberships = await getUserMemberships(userId);
-        const defaultTenantId = memberships[0]?.tenantId ?? null;
+        const defaultTenantId = tenantId ?? memberships[0]?.tenantId ?? null;
         return { context: "STAFF", tenantId: defaultTenantId };
       }
 
       const memberships = await getUserMemberships(userId);
       if (memberships.length > 0) {
         // Has at least one membership → STAFF
-        return { context: "STAFF", tenantId: memberships[0].tenantId };
+        // Use provided tenantId if valid, otherwise first membership
+        const activeTenantId = tenantId ?? memberships[0].tenantId;
+        return { context: "STAFF", tenantId: activeTenantId };
       }
 
       // No membership, not superAdmin → deny
@@ -174,36 +286,26 @@ export async function resolveActorContext(
     }
 
     case "PORTAL": {
-      // PORTAL requires CLIENT context with valid tenant context
-      // SuperAdmins can access any tenant's portal for support
+      // PORTAL requires CLIENT context with tenant from URL slug ONLY
+      // tenantId must already be resolved from slug before calling this
 
-      // First, resolve tenant ID from context
-      let resolvedTenantId: number | null = null;
-
-      if (tenantContext?.tenantId && Number.isInteger(tenantContext.tenantId) && tenantContext.tenantId > 0) {
-        resolvedTenantId = tenantContext.tenantId;
-      } else if (tenantContext?.tenantSlug) {
-        const tenant = await getTenantBySlug(tenantContext.tenantSlug);
-        resolvedTenantId = tenant?.id ?? null;
-      }
-
-      // If no tenant context, cannot resolve CLIENT
-      if (!resolvedTenantId) {
-        return null; // Will result in ACTOR_CONTEXT_UNRESOLVABLE
+      if (!tenantId) {
+        // No tenant context → cannot resolve CLIENT
+        return null;
       }
 
       // SuperAdmin can access any tenant's portal
       if (isSuperAdmin) {
-        return { context: "CLIENT", tenantId: resolvedTenantId };
+        return { context: "CLIENT", tenantId };
       }
 
       // Check if user has membership to this tenant
-      const hasMembership = await hasMembershipToTenant(userId, resolvedTenantId);
+      const hasMembership = await hasMembershipToTenant(userId, tenantId);
       if (hasMembership) {
-        return { context: "CLIENT", tenantId: resolvedTenantId };
+        return { context: "CLIENT", tenantId };
       }
 
-      // No membership to this tenant → deny
+      // No membership to this tenant → deny (will be SURFACE_ACCESS_DENIED)
       return null;
     }
 
@@ -218,132 +320,12 @@ export async function resolveActorContext(
   }
 }
 
-// ---------- Tenant Context Extraction ----------
-
-/**
- * Extract tenant context from request (header or path).
- */
-export function extractTenantContext(req: FastifyRequest): { tenantId?: number; tenantSlug?: string } {
-  const result: { tenantId?: number; tenantSlug?: string } = {};
-
-  // Check X-Tenant-Id header
-  const headerTenantId = req.headers["x-tenant-id"];
-  if (headerTenantId) {
-    const parsed = Number(headerTenantId);
-    if (Number.isInteger(parsed) && parsed > 0) {
-      result.tenantId = parsed;
-    }
-  }
-
-  // Check for tenant slug in path (e.g., /t/:tenantSlug/...)
-  const url = req.url || "";
-  const slugMatch = url.match(/^\/t\/([a-z0-9-]+)/i);
-  if (slugMatch) {
-    result.tenantSlug = slugMatch[1].toLowerCase();
-  }
-
-  return result;
-}
-
-// ---------- Middleware ----------
-
-/**
- * Surface gate middleware factory.
- *
- * Creates a preHandler hook that:
- * 1. Derives surface from hostname (no header override)
- * 2. Verifies session exists
- * 3. Extracts tenant context from header/path
- * 4. Resolves ActorContext based on surface + membership
- * 5. Attaches surface, actorContext, tenantId to request
- * 6. Returns 403 if access is denied
- *
- * @param options.requireAuth - If false, allows unauthenticated requests
- */
-export function createSurfaceGateMiddleware(options?: { requireAuth?: boolean }) {
-  const requireAuth = options?.requireAuth ?? true;
-
-  return async function surfaceGateMiddleware(
-    req: FastifyRequest,
-    reply: FastifyReply
-  ): Promise<void> {
-    // 1. Derive surface from hostname only
-    const surface = deriveSurface(req);
-    (req as any).surface = surface;
-
-    // 2. Verify session
-    const session = parseVerifiedSession(req);
-
-    if (!session) {
-      if (requireAuth) {
-        reply.code(401).send({ error: "unauthorized" });
-        return;
-      }
-      // Allow unauthenticated access for public routes
-      (req as any).actorContext = "PUBLIC";
-      (req as any).session = null;
-      (req as any).tenantId = null;
-      return;
-    }
-
-    (req as any).session = session;
-    (req as any).userId = session.userId;
-
-    // 3. Extract tenant context
-    const tenantContext = extractTenantContext(req);
-
-    // Also check session for tenant context
-    if (!tenantContext.tenantId && session.tenantId && Number.isInteger(session.tenantId) && session.tenantId > 0) {
-      tenantContext.tenantId = session.tenantId;
-    }
-
-    // 4. Resolve ActorContext
-    const resolved = await resolveActorContext(surface, session.userId, tenantContext);
-
-    if (!resolved) {
-      // Could not resolve context → fail closed
-      // PORTAL without tenant context → ACTOR_CONTEXT_UNRESOLVABLE
-      // PLATFORM without membership → SURFACE_ACCESS_DENIED
-      const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
-
-      reply.code(403).send({
-        error: errorCode,
-        surface,
-      });
-      return;
-    }
-
-    // 5. Attach context to request
-    (req as any).actorContext = resolved.context;
-    (req as any).tenantId = resolved.tenantId;
-  };
-}
-
-/**
- * Route-level guard to require specific ActorContext.
- * Use after the surface gate middleware has run.
- */
-export function requireActorContext(...allowed: ActorContext[]) {
-  return async function actorContextGuard(
-    req: FastifyRequest,
-    reply: FastifyReply
-  ): Promise<void> {
-    const context = (req as any).actorContext as ActorContext | undefined;
-
-    if (!context || !allowed.includes(context)) {
-      reply.code(403).send({
-        error: SURFACE_ACCESS_DENIED,
-        surface: (req as any).surface,
-      });
-    }
-  };
-}
-
 // ---------- TypeScript Declaration Merge ----------
 declare module "fastify" {
   interface FastifyRequest {
     surface?: Surface;
     actorContext?: ActorContext;
     session?: SessionPayload | null;
+    tenantSlug?: string;
   }
 }

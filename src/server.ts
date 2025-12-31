@@ -13,7 +13,9 @@ import {
 import {
   deriveSurface,
   resolveActorContext,
-  extractTenantContext,
+  extractPortalTenantSlug,
+  resolvePortalTenant,
+  extractPlatformTenantContext,
   Surface,
   ActorContext,
   SURFACE_ACCESS_DENIED,
@@ -264,7 +266,7 @@ import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Man
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
 
-// ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext ----------
+// ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
 declare module "fastify" {
   interface FastifyInstance {
     prisma: typeof prisma;
@@ -274,6 +276,7 @@ declare module "fastify" {
     userId?: string;
     surface?: Surface;
     actorContext?: ActorContext;
+    tenantSlug?: string; // PORTAL only: slug from URL path
   }
 }
 
@@ -371,19 +374,42 @@ app.register(
       }
       (req as any).userId = sess.userId;
 
-      // ---------- Extract tenant context from header/path/session ----------
-      const tenantContext = extractTenantContext(req);
-      if (!tenantContext.tenantId && sess.tenantId && Number.isInteger(sess.tenantId) && sess.tenantId > 0) {
-        tenantContext.tenantId = sess.tenantId;
+      // ---------- Surface-specific tenant context resolution ----------
+      let tenantId: number | null = null;
+
+      if (surface === "PORTAL") {
+        // PORTAL: tenant ONLY from URL slug - no headers, no session
+        const tenantSlug = extractPortalTenantSlug(req);
+
+        if (tenantSlug) {
+          // Resolve slug to tenant ID via database
+          const tenant = await resolvePortalTenant(tenantSlug);
+          if (!tenant) {
+            // Slug provided but tenant not found
+            return reply.code(403).send({
+              error: ACTOR_CONTEXT_UNRESOLVABLE,
+              surface,
+            });
+          }
+          tenantId = tenant.id;
+          (req as any).tenantSlug = tenant.slug;
+        }
+        // If no slug, tenantId stays null (tenantless route or missing slug)
+
+      } else if (surface === "PLATFORM") {
+        // PLATFORM: tenant from X-Tenant-Id header or session
+        const platformContext = extractPlatformTenantContext(req, sess);
+        tenantId = platformContext.tenantId ?? null;
+
       }
+      // MARKETPLACE: no tenant context needed, tenantId stays null
 
       // ---------- Surface-based ActorContext resolution ----------
-      // Pass tenant context for PORTAL surface resolution
-      const resolved = await resolveActorContext(surface, sess.userId, tenantContext);
+      const resolved = await resolveActorContext(surface, sess.userId, tenantId);
 
       if (!resolved) {
-        // PORTAL without tenant context → ACTOR_CONTEXT_UNRESOLVABLE (403)
-        // PLATFORM without membership → SURFACE_ACCESS_DENIED (403)
+        // PORTAL without tenant context or no membership → ACTOR_CONTEXT_UNRESOLVABLE
+        // PLATFORM without membership → SURFACE_ACCESS_DENIED
         // MARKETPLACE should always resolve (PUBLIC)
         const errorCode = surface === "PORTAL" ? ACTOR_CONTEXT_UNRESOLVABLE : SURFACE_ACCESS_DENIED;
         return reply.code(403).send({
@@ -419,11 +445,11 @@ app.register(
         });
       }
 
-      // ---------- Tenant context from resolution ----------
+      // ---------- Final tenant context ----------
       let tId: number | null = resolved.tenantId;
 
-      // For STAFF, allow header override
-      if (resolved.context === "STAFF") {
+      // For STAFF on PLATFORM, allow header override after initial resolution
+      if (surface === "PLATFORM" && resolved.context === "STAFF") {
         const headerVal = req.headers["x-tenant-id"];
         if (headerVal && Number(headerVal) > 0) {
           tId = Number(headerVal);
@@ -438,7 +464,7 @@ app.register(
       // For STAFF on PLATFORM, verify tenant membership
       if (surface === "PLATFORM" && resolved.context === "STAFF") {
         if (!tId) {
-          // No tenant context → 403 (not 400)
+          // No tenant context → 403
           return reply.code(403).send({
             error: ACTOR_CONTEXT_UNRESOLVABLE,
             surface,
