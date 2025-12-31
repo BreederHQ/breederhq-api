@@ -24,6 +24,27 @@ const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
 
 /**
+ * Cookie domain for SSO across subdomains.
+ * In production: ".breederhq.com" (with leading dot) allows sharing across app/portal/marketplace subdomains.
+ * In development: undefined (browser defaults to current host).
+ *
+ * Set via COOKIE_DOMAIN env var, or auto-detect in production.
+ */
+function getCookieDomain(): string | undefined {
+  // Explicit override
+  const explicit = process.env.COOKIE_DOMAIN?.trim();
+  if (explicit) return explicit;
+
+  // In production, default to .breederhq.com for SSO
+  if (NODE_ENV === "production") {
+    return ".breederhq.com";
+  }
+
+  // Dev/test: no domain (browser uses current host)
+  return undefined;
+}
+
+/**
  * COOKIE_SECRET is required in ALL environments (including dev).
  * Server refuses to start without it.
  */
@@ -55,14 +76,32 @@ export function cookieOptions() {
   const { ms } = sessionLifetimes();
   const sameSite: "lax" | "none" = ALLOW_CROSS_SITE ? "none" : "lax";
   const secure = ALLOW_CROSS_SITE || NODE_ENV === "production";
-  return {
+  const domain = getCookieDomain();
+
+  // Build options object conditionally to avoid sending domain: undefined
+  const opts: {
+    httpOnly: boolean;
+    sameSite: "lax" | "none";
+    secure: boolean;
+    path: string;
+    maxAge: number;
+    signed: boolean;
+    domain?: string;
+  } = {
     httpOnly: true,
     sameSite,
     secure,
     path: "/",
     maxAge: Math.floor(ms / 1000),
     signed: true, // <-- CRITICAL: sign the cookie
-  } as const;
+  };
+
+  // Only add domain if defined (production SSO)
+  if (domain) {
+    opts.domain = domain;
+  }
+
+  return opts;
 }
 
 // ---------- Surface-Bound CSRF Token ----------
@@ -193,13 +232,25 @@ export function setSessionCookies(
 
 /**
  * Clear all auth cookies.
+ * Must use same domain attribute as set cookies for cross-subdomain clearing.
  */
 export function clearSessionCookies(reply: FastifyReply): void {
   const opts = cookieOptions();
+  const domain = getCookieDomain();
+
+  // Build clear options with domain if applicable
+  const clearOpts: { path: string; domain?: string } = { path: "/" };
+  if (domain) {
+    clearOpts.domain = domain;
+  }
+
+  // Clear session cookie
   reply.setCookie(COOKIE_NAME, "", { ...opts, maxAge: 0 });
-  reply.clearCookie(COOKIE_NAME, { path: "/" });
+  reply.clearCookie(COOKIE_NAME, clearOpts);
+
+  // Clear CSRF cookie
   reply.setCookie("XSRF-TOKEN", "", { ...opts, httpOnly: false, signed: false, maxAge: 0 });
-  reply.clearCookie("XSRF-TOKEN", { path: "/" });
+  reply.clearCookie("XSRF-TOKEN", clearOpts);
 }
 
 /**
