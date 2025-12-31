@@ -7,7 +7,7 @@
  * Redacts sensitive database URLs from all output.
  *
  * Usage: node scripts/run-with-env.js <env-file> <command> [args...]
- * Example: node scripts/run-with-env.js .env.v2.dev prisma migrate status --schema=prisma/schema.prisma
+ * Example: node scripts/run-with-env.js .env.dev.migrate prisma migrate status --schema=prisma/schema.prisma
  */
 
 import { spawn } from 'child_process';
@@ -18,7 +18,7 @@ const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.error('Usage: node scripts/run-with-env.js <env-file> <command> [args...]');
-  console.error('Example: node scripts/run-with-env.js .env.v2.dev prisma migrate status');
+  console.error('Example: node scripts/run-with-env.js .env.dev.migrate prisma migrate status');
   process.exit(1);
 }
 

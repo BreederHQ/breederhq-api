@@ -7,10 +7,10 @@
  * v1 databases are now snapshot-only and read-only.
  *
  * ALLOWED:
- *   - db:v2:* scripts (all v2 migration workflows)
+ *   - db:dev:*, db:prod:* scripts (v2 migration workflows)
  *   - db:studio (read-only inspection)
  *   - db:gen (local Prisma client generation)
- *   - db:v2:dump:v1:* (read-only snapshot dumps)
+ *   - db:move:* (data migration scripts)
  *
  * BLOCKED:
  *   - Any prisma migrate outside db:v2:* context
@@ -44,14 +44,14 @@ const npmScript = process.env.npm_lifecycle_event || '';
 // Script Classification
 // ═══════════════════════════════════════════════════════════════════════════
 
-// v2 scripts (ALLOWED)
-const isV2Script = npmScript.startsWith('db:v2:');
-const isV2DevScript = npmScript === 'db:v2:dev:status' || npmScript === 'db:v2:dev:migrate';
-const isV2ProdScript = npmScript === 'db:v2:prod:deploy' || npmScript === 'db:v2:prod:status';
-const isV2DumpScript = npmScript.startsWith('db:v2:dump:');
-const isV2ImportScript = npmScript.startsWith('db:v2:import:');
-const isV2PostImportScript = npmScript.startsWith('db:v2:postimport:');
-const isV2ValidateScript = npmScript.startsWith('db:v2:validate:');
+// v2 scripts (ALLOWED) - now using db:dev:* and db:prod:* naming
+const isV2Script = npmScript.startsWith('db:dev:') || npmScript.startsWith('db:prod:') || npmScript.startsWith('db:move:');
+const isV2DevScript = npmScript === 'db:dev:status' || npmScript === 'db:dev:migrate';
+const isV2ProdScript = npmScript === 'db:prod:deploy' || npmScript === 'db:prod:status';
+const isV2DumpScript = npmScript.startsWith('db:move:') && npmScript.includes(':dump');
+const isV2ImportScript = npmScript.startsWith('db:move:') && npmScript.includes(':import');
+const isV2PostImportScript = npmScript.startsWith('db:move:') && npmScript.includes(':postimport');
+const isV2ValidateScript = npmScript.includes(':validate');
 
 // Safe utility scripts (ALLOWED)
 const isStudioScript = npmScript === 'db:studio';
@@ -255,8 +255,8 @@ if (isV2DevScript || isV2ProdScript) {
       'v2 scripts require DATABASE_URL to be configured.',
       [
         'Ensure the correct .env file is loaded:',
-        '  .env.v2.dev  for development',
-        '  .env.v2.prod for production',
+        '  .env.dev.migrate  for development',
+        '  .env.prod.migrate for production',
         '',
         'See: docs/runbooks/NEON_V2_MIGRATE_SAFE_CUTOVER.md'
       ]
@@ -271,8 +271,8 @@ if (isV2DevScript || isV2ProdScript) {
         'v2 scripts must target v2 databases only.',
         '',
         'Check your environment file:',
-        '  .env.v2.dev should have v2 development credentials',
-        '  .env.v2.prod should have v2 production credentials',
+        '  .env.dev.migrate should have v2 development credentials',
+        '  .env.prod.migrate should have v2 production credentials',
         '',
         'See: docs/runbooks/NEON_V2_MIGRATE_SAFE_CUTOVER.md'
       ]
@@ -296,7 +296,7 @@ if (fullCommand.startsWith('migrate dev')) {
       'migrate dev must NEVER run against production databases.',
       [
         'For production, use:',
-        '  npm run db:v2:prod:deploy',
+        '  npm run db:prod:deploy',
         '',
         'This applies migrations without interactive prompts.'
       ]

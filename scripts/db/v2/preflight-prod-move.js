@@ -7,7 +7,7 @@
  * - Working tree is clean
  * - .env.v1.prod.snapshot file exists
  * - V1_PROD_SNAPSHOT_DIRECT_URL is set
- * - .env.v2.prod file exists
+ * - .env.prod.migrate file exists
  * - DATABASE_DIRECT_URL (v2 prod) is set
  *
  * Usage: node scripts/db/v2/preflight-prod-move.js
@@ -208,7 +208,7 @@ if (v1UrlSet) {
 // Check 5: v2 prod env file exists
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\nv2 Prod configuration:");
-const v2EnvFile = ".env.v2.prod";
+const v2EnvFile = ".env.prod.migrate";
 const v2EnvPath = resolve(rootDir, v2EnvFile);
 const v2EnvExists = existsSync(v2EnvPath);
 
@@ -291,10 +291,10 @@ console.log("\n━━━━━━━━━━━━━━━━━━━━━�
 if (allPassed) {
   console.log("✓ All preflight checks PASSED");
   console.log("\nReady to run:");
-  console.log("  npm run db:v2:dump:v1:prod:snapshot");
-  console.log("  npm run db:v2:import:prod:data");
-  console.log("  npm run db:v2:postimport:prod");
-  console.log("  npm run db:v2:validate:prod");
+  console.log("  npm run db:move:prod:dump");
+  console.log("  npm run db:move:prod:import");
+  console.log("  npm run db:move:prod:postimport");
+  console.log("  npm run db:prod:validate");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   process.exit(0);
 } else {
