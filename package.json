@@ -44,6 +44,8 @@
     "db:move:prod:dump": "node scripts/db/v2/run-dump.js prod",
     "db:move:prod:import": "node scripts/db/v2/run-import.js prod",
     "db:move:prod:postimport": "node scripts/db/v2/run-postimport.js prod",
+    "bootstrap:admin:dev": "npx dotenv -e .env.dev -- node scripts/bootstrap-global-admin-access.mjs",
+    "bootstrap:admin:prod": "npx dotenv -e .env.prod -- node scripts/bootstrap-global-admin-access.mjs",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {
