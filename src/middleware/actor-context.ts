@@ -94,6 +94,25 @@ const PROD_HOSTNAME_MAP: Record<string, Surface> = {
   "marketplace.breederhq.com": "MARKETPLACE",
 };
 
+
+/**
+ * Origin → Surface mapping for proxied requests.
+ * When hostname is the Render API host, we use Origin header to determine surface.
+ */
+const ORIGIN_TO_SURFACE: Record<string, Surface> = {
+  "https://app.breederhq.com": "PLATFORM",
+  "https://portal.breederhq.com": "PORTAL",
+  "https://marketplace.breederhq.com": "MARKETPLACE",
+};
+
+/**
+ * Hostnames that indicate a proxied request (Vercel → Render).
+ * For these, we derive surface from Origin header instead of hostname.
+ */
+const PROXY_API_HOSTNAMES = new Set([
+  "breederhq-api.onrender.com",
+]);
+
 // ---------- Surface Derivation ----------
 
 /**
@@ -118,7 +137,29 @@ export function deriveSurface(req: FastifyRequest): Surface {
 
   // Production: strict allowlist only
   if (IS_PROD) {
-    return PROD_HOSTNAME_MAP[hostname] || "UNKNOWN";
+    // First check direct hostname match
+    const directMatch = PROD_HOSTNAME_MAP[hostname];
+    if (directMatch) return directMatch;
+
+    // If hostname is a known proxy API host, derive from Origin header
+    if (PROXY_API_HOSTNAMES.has(hostname)) {
+      const origin = (req.headers.origin || "").toLowerCase();
+      const originMatch = ORIGIN_TO_SURFACE[origin];
+      if (originMatch) return originMatch;
+
+      // Allow Vercel preview deployments via Origin
+      if (/^https:\/\/[a-z0-9-]+-breederhq\.vercel\.app$/i.test(origin)) {
+        if (origin.includes("app-") || origin.includes("platform-")) return "PLATFORM";
+        if (origin.includes("portal-")) return "PORTAL";
+        if (origin.includes("marketplace-")) return "MARKETPLACE";
+        return "PLATFORM";
+      }
+
+      // No Origin on proxy host - allow as PLATFORM for server-to-server/curl
+      if (!origin) return "PLATFORM";
+    }
+
+    return "UNKNOWN";
   }
 
   // Development: flexible prefix matching
