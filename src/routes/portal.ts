@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import prisma from "../prisma.js";
-import { setSessionCookies } from "../utils/session.js";
+import { setSessionCookies, Surface } from "../utils/session.js";
 
 function sha256(input: string | Buffer): string {
   return createHash("sha256").update(input).digest("hex");
@@ -79,8 +79,8 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           if (existingAccess?.userId && existingAccess.status === "ACTIVE") {
             const tenant = existingAccess.party?.tenant;
             if (tenant?.slug) {
-              // Set session and return success
-              setSessionCookies(reply, { userId: existingAccess.userId });
+              // Set session and return success (PORTAL surface for portal activation)
+              setSessionCookies(reply, { userId: existingAccess.userId }, "PORTAL");
               return reply.send({ ok: true, tenantSlug: tenant.slug });
             }
           }
@@ -226,7 +226,8 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
 
         // Set session cookie (no tenantId - portal derives from URL slug)
-        setSessionCookies(reply, { userId: result.userId });
+        // Use PORTAL surface for portal activation
+        setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 
         return reply.send({ ok: true, tenantSlug });
       } catch (err: any) {

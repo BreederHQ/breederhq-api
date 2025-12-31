@@ -1,7 +1,11 @@
 // src/utils/session.ts
 // Centralized session cookie utilities with signature verification
+// Includes surface-bound CSRF token generation
 
 import type { FastifyRequest, FastifyReply } from "fastify";
+
+// ---------- Surface Type ----------
+export type Surface = "PLATFORM" | "PORTAL" | "MARKETPLACE";
 
 /**
  * Session payload stored in the cookie.
@@ -61,6 +65,69 @@ export function cookieOptions() {
   } as const;
 }
 
+// ---------- Surface-Bound CSRF Token ----------
+/**
+ * Generate a surface-bound CSRF token.
+ * Format: "<SURFACE>.<randomBase64url>"
+ * The surface prefix ensures tokens from one surface are rejected on another.
+ */
+export function generateCsrfToken(surface: Surface): string {
+  const random = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  return `${surface}.${random}`;
+}
+
+/**
+ * Parse a surface-bound CSRF token.
+ * Returns the surface prefix and random part, or null if invalid format.
+ */
+export function parseCsrfToken(token: string): { surface: Surface; random: string } | null {
+  if (!token || typeof token !== "string") return null;
+  const dotIndex = token.indexOf(".");
+  if (dotIndex === -1) return null;
+
+  const surfacePart = token.slice(0, dotIndex);
+  const randomPart = token.slice(dotIndex + 1);
+
+  if (!randomPart) return null;
+  if (surfacePart !== "PLATFORM" && surfacePart !== "PORTAL" && surfacePart !== "MARKETPLACE") {
+    return null;
+  }
+
+  return { surface: surfacePart as Surface, random: randomPart };
+}
+
+/**
+ * Validate CSRF token against the request surface.
+ * Returns { valid: true } or { valid: false, detail: string }.
+ */
+export function validateCsrfToken(
+  csrfHeader: string | undefined,
+  csrfCookie: string | undefined,
+  requestSurface: Surface
+): { valid: true } | { valid: false; detail: string } {
+  // Check header and cookie are present and match
+  if (!csrfHeader || !csrfCookie) {
+    return { valid: false, detail: "missing_token" };
+  }
+  if (String(csrfHeader) !== String(csrfCookie)) {
+    return { valid: false, detail: "token_mismatch" };
+  }
+
+  // Parse the token to extract surface
+  const parsed = parseCsrfToken(csrfCookie);
+  if (!parsed) {
+    // Legacy token without surface prefix - reject
+    return { valid: false, detail: "invalid_token_format" };
+  }
+
+  // Verify surface matches
+  if (parsed.surface !== requestSurface) {
+    return { valid: false, detail: "surface_mismatch" };
+  }
+
+  return { valid: true };
+}
+
 // ---------- Parse and Verify Session ----------
 /**
  * Parse and verify a signed session cookie.
@@ -95,11 +162,16 @@ export function parseVerifiedSession(req: FastifyRequest): SessionPayload | null
 
 /**
  * Set session cookies (signed).
- * Creates both the session cookie (HttpOnly, signed) and CSRF token (not HttpOnly).
+ * Creates both the session cookie (HttpOnly, signed) and surface-bound CSRF token (not HttpOnly).
+ *
+ * @param reply - Fastify reply object
+ * @param sess - Session payload without iat/exp
+ * @param surface - The surface to bind the CSRF token to (defaults to PLATFORM for backward compat)
  */
 export function setSessionCookies(
   reply: FastifyReply,
-  sess: Omit<SessionPayload, "iat" | "exp">
+  sess: Omit<SessionPayload, "iat" | "exp">,
+  surface: Surface = "PLATFORM"
 ): void {
   const now = Date.now();
   const { ms } = sessionLifetimes();
@@ -109,12 +181,13 @@ export function setSessionCookies(
   // Session cookie (HttpOnly, signed)
   reply.setCookie(COOKIE_NAME, encoded, cookieOptions());
 
-  // CSRF token (not HttpOnly, also signed for consistency)
-  const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  // Surface-bound CSRF token (not HttpOnly)
+  // Format: "<SURFACE>.<randomBase64url>" - ensures token is rejected on different surfaces
+  const csrfToken = generateCsrfToken(surface);
   reply.setCookie("XSRF-TOKEN", csrfToken, {
     ...cookieOptions(),
     httpOnly: false,
-    signed: false, // CSRF token doesn't need signing - it's just a random value
+    signed: false, // CSRF token doesn't need signing - it's validated by double-submit pattern
   });
 }
 
@@ -132,11 +205,17 @@ export function clearSessionCookies(reply: FastifyReply): void {
 /**
  * Maybe rotate session if close to expiry.
  * Returns false if session is expired.
+ *
+ * @param req - Fastify request
+ * @param reply - Fastify reply
+ * @param sess - Current session payload
+ * @param surface - Surface to bind new CSRF token to (if rotating)
  */
 export function maybeRotateSession(
   req: FastifyRequest,
   reply: FastifyReply,
-  sess: SessionPayload
+  sess: SessionPayload,
+  surface: Surface = "PLATFORM"
 ): boolean {
   const { rotateAt, ms } = sessionLifetimes();
   const now = Date.now();
@@ -148,6 +227,14 @@ export function maybeRotateSession(
     const refreshed: SessionPayload = { ...sess, iat: now, exp: now + ms };
     const encoded = Buffer.from(JSON.stringify(refreshed)).toString("base64url");
     reply.setCookie(COOKIE_NAME, encoded, cookieOptions());
+
+    // Also refresh the surface-bound CSRF token
+    const csrfToken = generateCsrfToken(surface);
+    reply.setCookie("XSRF-TOKEN", csrfToken, {
+      ...cookieOptions(),
+      httpOnly: false,
+      signed: false,
+    });
   }
 
   return true;
