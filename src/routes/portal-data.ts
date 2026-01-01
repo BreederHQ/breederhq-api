@@ -60,6 +60,104 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /**
+   * GET /api/v1/portal/agreements/:id
+   * Returns agreement detail if the authenticated client party is a participant
+   * Read-only: detailed view with timeline, parties, status
+   */
+  app.get<{ Params: { id: string } }>("/portal/agreements/:id", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const agreementId = parseInt(req.params.id, 10);
+
+      if (isNaN(agreementId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Find the contract party link to verify access
+      const contractParty = await prisma.contractParty.findFirst({
+        where: {
+          tenantId,
+          partyId,
+          contractId: agreementId,
+        },
+        include: {
+          contract: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              issuedAt: true,
+              signedAt: true,
+              voidedAt: true,
+              expiresAt: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          },
+          party: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!contractParty) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Find all other parties on this contract (counterparties)
+      const allParties = await prisma.contractParty.findMany({
+        where: {
+          tenantId,
+          contractId: agreementId,
+        },
+        include: {
+          party: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        orderBy: {
+          order: "asc",
+        },
+      });
+
+      // Separate client party from counterparties
+      const counterparties = allParties
+        .filter((cp) => cp.partyId !== partyId)
+        .map((cp) => ({
+          role: cp.role || "Other Party",
+          name: cp.name || cp.party?.name || "Unknown",
+          signedAt: cp.signedAt ? new Date(cp.signedAt).toISOString() : null,
+        }));
+
+      const agreement = {
+        id: contractParty.contract.id,
+        title: contractParty.contract.title,
+        status: contractParty.contract.status,
+        issuedAt: contractParty.contract.issuedAt ? new Date(contractParty.contract.issuedAt).toISOString() : null,
+        signedAt: contractParty.contract.signedAt ? new Date(contractParty.contract.signedAt).toISOString() : null,
+        voidedAt: contractParty.contract.voidedAt ? new Date(contractParty.contract.voidedAt).toISOString() : null,
+        expiresAt: contractParty.contract.expiresAt ? new Date(contractParty.contract.expiresAt).toISOString() : null,
+        createdAt: new Date(contractParty.contract.createdAt).toISOString(),
+        clientParty: {
+          role: contractParty.role || "Party",
+          name: contractParty.name || contractParty.party?.name || "You",
+          signedAt: contractParty.signedAt ? new Date(contractParty.signedAt).toISOString() : null,
+        },
+        counterparties,
+      };
+
+      return reply.send({ agreement });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal agreement detail");
+      return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
+
+  /**
    * GET /api/v1/portal/documents
    * Returns documents scoped to the client party
    * Includes offspring documents linked to offspring where party is buyer
