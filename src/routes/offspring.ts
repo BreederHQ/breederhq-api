@@ -276,6 +276,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
 // src/routes/offspring.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { requireClientPartyScope } from "../middleware/actor-context.js";
 
 /* ========= helpers ========= */
 
@@ -934,6 +935,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   /* ===== LIST: GET /api/v1/offspring ===== */
   app.get("/offspring", async (req, reply) => {
+    const actorContext = (req as any).actorContext;
     const tenantId = (req as any).tenantId as number;
     const q = String((req as any).query?.q ?? "").trim();
     const limit = Math.min(250, Math.max(1, Number((req as any).query?.limit ?? 25)));
@@ -945,6 +947,14 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ...(published !== undefined ? { published } : null),
       ...(cursorId ? { id: { lt: cursorId } } : null),
     };
+
+    // PORTAL CLIENT: Enforce party scope - only show groups where they are buyer
+    if (actorContext === "CLIENT") {
+      const { partyId } = await requireClientPartyScope(req);
+      where.buyers = {
+        some: { buyerPartyId: partyId },
+      };
+    }
 
     const groups = await prisma.offspringGroup.findMany({
       where,
@@ -1003,6 +1013,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /* ===== DETAIL: GET /api/v1/offspring/:id ===== */
   app.get("/offspring/:id", async (req, reply) => {
     try {
+      const actorContext = (req as any).actorContext;
       const tenantId = (req as any).tenantId as number;
       const idRaw = (req.params as any).id;
       const id = Number(idRaw);
@@ -1011,8 +1022,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "invalid id" });
       }
 
+      const where: any = { id, tenantId };
+
+      // PORTAL CLIENT: Enforce party scope - only show group if they are buyer
+      if (actorContext === "CLIENT") {
+        const { partyId } = await requireClientPartyScope(req);
+        where.buyers = {
+          some: { buyerPartyId: partyId },
+        };
+      }
+
       const G = await prisma.offspringGroup.findFirst({
-        where: { id, tenantId },
+        where,
         include: {
           plan: {
             select: {
