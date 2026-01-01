@@ -9,12 +9,25 @@ Write-Host ""
 
 # Test 1: GET /programs (no filters)
 Write-Host "Test 1: GET /programs (no filters)" -ForegroundColor Yellow
+$exitCode = 0
 try {
     $response = Invoke-WebRequest -Uri "$API_URL/programs" -Method GET -SkipHttpErrorCheck
     Write-Host "Status: $($response.StatusCode)" -ForegroundColor $(if ($response.StatusCode -eq 200) { "Green" } else { "Red" })
+
+    if ($response.StatusCode -ne 200) {
+        $exitCode = 1
+    }
+
     $json = $response.Content | ConvertFrom-Json
     Write-Host "Total programs: $($json.total)"
     Write-Host "Items returned: $($json.items.Count)"
+
+    if ($json.total -eq 0) {
+        Write-Host "WARNING: No public programs found" -ForegroundColor Yellow
+        Write-Host "Run: npm run script:enable-public-program to enable at least one" -ForegroundColor Yellow
+        $exitCode = 1
+    }
+
     if ($json.items.Count -gt 0) {
         Write-Host "First program:" -ForegroundColor Gray
         Write-Host "  Slug: $($json.items[0].slug)" -ForegroundColor Gray
@@ -23,6 +36,7 @@ try {
     }
 } catch {
     Write-Host "Error: $_" -ForegroundColor Red
+    $exitCode = 1
 }
 Write-Host ""
 
@@ -64,4 +78,9 @@ try {
 Write-Host ""
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Verification complete" -ForegroundColor Cyan
+if ($exitCode -eq 0) {
+    Write-Host "Verification complete - all tests passed" -ForegroundColor Green
+} else {
+    Write-Host "Verification complete - some tests failed" -ForegroundColor Red
+}
+exit $exitCode
