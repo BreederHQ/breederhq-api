@@ -311,10 +311,21 @@ During the marketplace offspring listing feature, an empty migration was acciden
 
 **Root Cause:** Running `prisma migrate dev` twice in succession. The first run applied the schema changes, the second run detected no further changes and created an empty migration.
 
-**Resolution:** Applied the empty migration to the database using `prisma migrate deploy` to keep the migration table in sync with the git repository. This prevents future confusion about unapplied migrations.
+**Initial Response (INCORRECT):** Applied the empty migration to the database using `prisma migrate deploy`. This kept noise in both git and database.
+
+**Correct Resolution (Applied):**
+1. Deleted the empty migration directory from git repository
+2. Removed the migration record from `_prisma_migrations` table using direct SQL DELETE
+3. Verified `prisma migrate status` shows database up to date with 11 migrations
+
+**Correct Policy:**
+- Empty migrations MUST be removed from the repository immediately
+- Never deploy empty migrations to "keep things in sync"
+- Use direct database cleanup (DELETE from `_prisma_migrations`) when empty migrations were mistakenly applied
+- The canonical migration chain is in git - the database should match it
 
 **Prevention:** Before committing, always:
 1. Run `prisma migrate status` to verify all migrations are applied
-2. Check migration directories for empty `migration.sql` files
-3. Delete empty migrations before committing
+2. Check migration directories for empty `migration.sql` files (only comments, no DDL)
+3. Delete empty migrations immediately - do not commit them
 4. Only commit migrations with actual SQL DDL statements
