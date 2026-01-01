@@ -43,6 +43,118 @@ function parsePaging(q: any) {
 
 const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
+  // GET /me - Current user's marketplace access info
+  // --------------------------------------------------------------------------
+  // Returns:
+  // - userId: the authenticated user's ID
+  // - actorContext: the resolved actor context (PUBLIC for marketplace surface)
+  // - entitlements: list of user's explicit entitlements
+  // - marketplaceEntitled: true if user can access marketplace (either by entitlement or policy)
+  // - entitlementSource: "ENTITLEMENT" | "STAFF_POLICY" | "SUPER_ADMIN"
+  //
+  // This endpoint is for UI gating and debugging - it lets the frontend know
+  // whether the user is entitled and why.
+  // --------------------------------------------------------------------------
+  app.get("/me", async (req, reply) => {
+    const userId = (req as any).userId;
+    const actorContext = (req as any).actorContext;
+    const surface = (req as any).surface;
+
+    if (!userId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    // Fetch user info and entitlements
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        isSuperAdmin: true,
+      } as any,
+    }) as any;
+
+    if (!user) {
+      return reply.code(401).send({ error: "user_not_found" });
+    }
+
+    // Fetch explicit entitlements
+    let entitlements: Array<{ key: string; status: string; grantedAt: Date }> = [];
+    try {
+      const rows = await (prisma as any).userEntitlement.findMany({
+        where: { userId },
+        select: { key: true, status: true, grantedAt: true },
+      });
+      entitlements = rows || [];
+    } catch {
+      // UserEntitlement table may not exist yet
+    }
+
+    // Check explicit MARKETPLACE_ACCESS entitlement
+    const hasExplicitEntitlement = entitlements.some(
+      (e) => e.key === "MARKETPLACE_ACCESS" && e.status === "ACTIVE"
+    );
+
+    // Check STAFF memberships (for policy-based entitlement)
+    let hasStaffMembership = false;
+    try {
+      const memberships = await (prisma as any).tenantMembership.findMany({
+        where: {
+          userId,
+          membershipRole: "STAFF",
+          membershipStatus: "ACTIVE",
+        },
+        select: { tenantId: true },
+        take: 1,
+      });
+      hasStaffMembership = (memberships?.length ?? 0) > 0;
+    } catch {
+      // Fallback for schema without new fields
+      try {
+        const memberships = await (prisma as any).tenantMembership.findMany({
+          where: { userId },
+          select: { tenantId: true },
+          take: 1,
+        });
+        hasStaffMembership = (memberships?.length ?? 0) > 0;
+      } catch {
+        // No memberships table
+      }
+    }
+
+    // Determine entitlement source
+    let entitlementSource: "SUPER_ADMIN" | "ENTITLEMENT" | "STAFF_POLICY" | null = null;
+    let marketplaceEntitled = false;
+
+    if (user.isSuperAdmin) {
+      marketplaceEntitled = true;
+      entitlementSource = "SUPER_ADMIN";
+    } else if (hasExplicitEntitlement) {
+      marketplaceEntitled = true;
+      entitlementSource = "ENTITLEMENT";
+    } else if (hasStaffMembership) {
+      marketplaceEntitled = true;
+      entitlementSource = "STAFF_POLICY";
+    }
+
+    return reply.send({
+      userId: user.id,
+      email: user.email,
+      name: user.name || null,
+      actorContext,
+      surface,
+      entitlements: entitlements.map((e) => ({
+        key: e.key,
+        status: e.status,
+        grantedAt: e.grantedAt,
+      })),
+      marketplaceEntitled,
+      entitlementSource,
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // GET /programs/:programSlug - Public program profile
   // --------------------------------------------------------------------------
   app.get<{ Params: { programSlug: string } }>(
