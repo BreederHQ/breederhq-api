@@ -53,32 +53,38 @@ interface PortalAccessDTO {
   updatedAt: string;
 }
 
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
 async function getPartyWithAccess(tenantId: number, partyId: number) {
-  return prisma.party.findFirst({
+  const party = await prisma.party.findFirst({
     where: { id: partyId, tenantId },
     include: {
       portalAccess: {
         include: {
           createdBy: { select: { id: true, email: true } },
           updatedBy: { select: { id: true, email: true } },
-          invites: {
-            orderBy: { sentAt: "desc" },
-            take: 1,
-            select: { sentAt: true, expiresAt: true },
-          },
         },
+      },
+      portalInvites: {
+        orderBy: { sentAt: "desc" },
+        take: 1,
+        select: { sentAt: true, expiresAt: true },
       },
     },
   });
+  return party;
 }
 
 function toDTO(party: NonNullable<Awaited<ReturnType<typeof getPartyWithAccess>>>): PortalAccessDTO {
   const access = party.portalAccess;
+  const latestInvite = party.portalInvites?.[0];
   return {
     partyId: party.id,
     status: access?.status ?? "NO_ACCESS",
     email: party.email,
-    invitedAt: access?.invitedAt?.toISOString() ?? null,
+    invitedAt: latestInvite?.sentAt?.toISOString() ?? access?.invitedAt?.toISOString() ?? null,
     activatedAt: access?.activatedAt?.toISOString() ?? null,
     suspendedAt: access?.suspendedAt?.toISOString() ?? null,
     lastLoginAt: access?.lastLoginAt?.toISOString() ?? null,
@@ -219,6 +225,8 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "party_has_no_email" });
       }
 
+      const emailNorm = normalizeEmail(party.email);
+
       // If already has access record
       if (party.portalAccess) {
         if (party.portalAccess.status === "ACTIVE") {
@@ -232,6 +240,12 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const tokenHash = sha256(rawToken);
         const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
+        // Lookup User by emailNorm (may or may not exist)
+        const existingUser = await prisma.user.findFirst({
+          where: { email: emailNorm },
+          select: { id: true },
+        });
+
         await prisma.$transaction([
           prisma.portalAccess.update({
             where: { id: party.portalAccess.id },
@@ -242,9 +256,13 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               updatedByUserId: userId,
             },
           }),
+          // Create key-based PortalInvite
           prisma.portalInvite.create({
             data: {
-              portalAccessId: party.portalAccess.id,
+              tenantId,
+              partyId,
+              emailNorm,
+              userId: existingUser?.id ?? null,
               tokenHash,
               expiresAt,
               sentByUserId: userId,
@@ -271,31 +289,39 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tokenHash = sha256(rawToken);
       const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
+      // Lookup User by emailNorm (may or may not exist)
+      const existingUser = await prisma.user.findFirst({
+        where: { email: emailNorm },
+        select: { id: true },
+      });
+
       await prisma.$transaction(async (tx) => {
-        // Create PortalAccess record
+        // Create PortalAccess record with tenantId
         await tx.portalAccess.create({
           data: {
+            tenantId,
             partyId,
             status: "INVITED",
             invitedAt: new Date(),
             createdByUserId: userId,
             updatedByUserId: userId,
-            invites: {
-              create: {
-                tokenHash,
-                expiresAt,
-                sentByUserId: userId,
-              },
-            },
+          },
+        });
+
+        // Create key-based PortalInvite
+        await tx.portalInvite.create({
+          data: {
+            tenantId,
+            partyId,
+            emailNorm,
+            userId: existingUser?.id ?? null,
+            tokenHash,
+            expiresAt,
+            sentByUserId: userId,
           },
         });
 
         // If a user with this email already exists, create INVITED membership
-        const existingUser = await tx.user.findFirst({
-          where: { email: party.email!.toLowerCase().trim() },
-          select: { id: true },
-        });
-
         if (existingUser) {
           // Create TenantMembership with CLIENT role and INVITED status
           // Skip if membership already exists
@@ -377,6 +403,13 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const rawToken = newRawToken();
       const tokenHash = sha256(rawToken);
       const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
+      const emailNorm = normalizeEmail(party.email);
+
+      // Lookup User by emailNorm (may or may not exist)
+      const existingUser = await prisma.user.findFirst({
+        where: { email: emailNorm },
+        select: { id: true },
+      });
 
       await prisma.$transaction([
         prisma.portalAccess.update({
@@ -386,9 +419,13 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             updatedByUserId: userId,
           },
         }),
+        // Create key-based PortalInvite
         prisma.portalInvite.create({
           data: {
-            portalAccessId: party.portalAccess.id,
+            tenantId,
+            partyId,
+            emailNorm,
+            userId: existingUser?.id ?? null,
             tokenHash,
             expiresAt,
             sentByUserId: userId,
@@ -516,15 +553,26 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const rawToken = newRawToken();
         const tokenHash = sha256(rawToken);
         const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
+        const emailNorm = normalizeEmail(party.email);
+
+        // Lookup User by emailNorm (may or may not exist)
+        const existingUser = await prisma.user.findFirst({
+          where: { email: emailNorm },
+          select: { id: true },
+        });
 
         await prisma.$transaction([
           prisma.portalAccess.update({
             where: { id: party.portalAccess.id },
             data: { invitedAt: new Date() },
           }),
+          // Create key-based PortalInvite
           prisma.portalInvite.create({
             data: {
-              portalAccessId: party.portalAccess.id,
+              tenantId,
+              partyId,
+              emailNorm,
+              userId: existingUser?.id ?? null,
               tokenHash,
               expiresAt,
               sentByUserId: userId,
