@@ -209,9 +209,6 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           id: o.id,
           name: o.name || "Unnamed",
           sex: o.sex,
-          color: null, // Offspring model doesn't have color field
-          microchipId: null, // Offspring model doesn't have microchipId
-          registrationNumber: null, // Offspring model doesn't have registrationNumber
         },
         placementStatus: mapOffspringStateToPlacementStatus(o),
         depositPaidAt: null, // Would need to query related invoices/payments
