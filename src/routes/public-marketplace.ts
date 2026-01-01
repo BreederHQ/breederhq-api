@@ -310,6 +310,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           expectedBirthOn: true,
           actualBirthOn: true,
           coverImageUrl: true,
+          marketplaceDefaultPriceCents: true,
           dam: {
             select: { name: true, photoUrl: true, breed: true },
           },
@@ -317,7 +318,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: { name: true, photoUrl: true, breed: true },
           },
           Offspring: {
-            select: { priceCents: true, keeperIntent: true, placementState: true },
+            select: {
+              priceCents: true,
+              keeperIntent: true,
+              placementState: true,
+              marketplaceListed: true,
+              marketplacePriceCents: true,
+            },
           },
         },
       }),
@@ -377,6 +384,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           expectedBirthOn: true,
           actualBirthOn: true,
           coverImageUrl: true,
+          marketplaceDefaultPriceCents: true,
           dam: {
             select: { name: true, photoUrl: true, breed: true },
           },
@@ -385,7 +393,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
           Offspring: {
             where: {
-              // Only include offspring that could be shown publicly
+              // Only include listed offspring that are alive
+              marketplaceListed: true,
               lifeState: "ALIVE",
             },
             select: {
@@ -397,6 +406,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
               priceCents: true,
               keeperIntent: true,
               placementState: true,
+              marketplaceListed: true,
+              marketplacePriceCents: true,
             },
             orderBy: { name: "asc" },
           },
@@ -412,7 +423,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         org.programSlug || "",
         org.name
       );
-      const offspring = (group.Offspring || []).map(toPublicOffspringDTO);
+      const offspring = (group.Offspring || []).map((o) =>
+        toPublicOffspringDTO(o, group.marketplaceDefaultPriceCents)
+      );
 
       return reply.send({ ...listing, offspring });
     }

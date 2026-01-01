@@ -1559,9 +1559,10 @@ model OffspringGroup {
   themeName     String?
 
   // Marketplace MVP: public listing fields
-  listingSlug        String?
-  listingTitle       String?
-  listingDescription String? @db.Text
+  listingSlug                  String?
+  listingTitle                 String?
+  listingDescription           String? @db.Text
+  marketplaceDefaultPriceCents Int?
 
   notes String?
   data  Json?
@@ -1675,6 +1676,10 @@ model Offspring {
   paidInFullAt     DateTime?
   pickupAt         DateTime?
   placedAt         DateTime?
+
+  // marketplace listing control
+  marketplaceListed    Boolean @default(false)
+  marketplacePriceCents Int?
 
   // promotion link
   promotedAnimalId Int?
