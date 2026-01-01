@@ -19,12 +19,14 @@ import {
 } from "../utils/public-tenant-resolver.js";
 import {
   toPublicProgramDTO,
+  toPublicProgramSummaryDTO,
   toPublicOffspringGroupListingDTO,
   toPublicOffspringDTO,
   toPublicAnimalListingDTO,
   toOffspringGroupSummaryDTO,
   toAnimalListingSummaryDTO,
   type PublicListingSummaryDTO,
+  type PublicProgramSummaryDTO,
 } from "../utils/public-dto.js";
 
 // ============================================================================
@@ -152,6 +154,69 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       marketplaceEntitled,
       entitlementSource,
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /programs - Public programs index (search/browse)
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      location?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/programs", async (req, reply) => {
+    const { search, species, breed, location } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause
+    const where: any = {
+      isPublicProgram: true,
+      programSlug: { not: null },
+    };
+
+    // Search filter - case insensitive name match
+    if (search && search.trim()) {
+      where.name = { contains: search.trim(), mode: "insensitive" };
+    }
+
+    // Location filter - match city, state, or country
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.OR = [
+        { city: { contains: locationTerm, mode: "insensitive" } },
+        { state: { contains: locationTerm, mode: "insensitive" } },
+        { country: { contains: locationTerm, mode: "insensitive" } },
+      ];
+    }
+
+    // Species and breed filters not implemented yet (would require animal aggregation)
+    // Accept params without error but ignore for now
+
+    const [programs, total] = await Promise.all([
+      prisma.organization.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        orderBy: { name: "asc" },
+        select: {
+          programSlug: true,
+          name: true,
+          city: true,
+          state: true,
+          country: true,
+        },
+      }),
+      prisma.organization.count({ where }),
+    ]);
+
+    const items: PublicProgramSummaryDTO[] = programs.map(toPublicProgramSummaryDTO);
+
+    return reply.send({ items, total });
   });
 
   // --------------------------------------------------------------------------
