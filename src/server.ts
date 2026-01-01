@@ -59,6 +59,9 @@ await app.register(cookie, {
 });
 
 // ---------- Rate limit (opt-in per route) ----------
+// IMPORTANT: Uses in-memory store by default. For production with multiple API instances,
+// configure a shared store (Redis) to enforce rate limits across all instances.
+// See: https://github.com/fastify/fastify-rate-limit#custom-store
 await app.register(rateLimit, {
   global: false,
   ban: 2,
