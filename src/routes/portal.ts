@@ -91,8 +91,6 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           maskedEmail: maskEmail(invite.emailNorm),
           partyName: invite.party.name,
           expiresAt: invite.expiresAt.toISOString(),
-          contextType: invite.contextType || null,
-          contextId: invite.contextId || null,
         });
       } catch (err) {
         req.log?.error?.({ err }, "Failed to validate portal invite");
@@ -218,10 +216,15 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             } else {
               // Create new user
               isNewUser = true;
+              const nameParts = invite.party.name?.split(' ') || [];
+              const firstName = nameParts[0] || 'Portal';
+              const lastName = nameParts.slice(1).join(' ') || 'User';
               const newUser = await tx.user.create({
                 data: {
                   email: invite.emailNorm,
                   name: invite.party.name,
+                  firstName,
+                  lastName,
                   emailVerifiedAt: now, // Email is verified since they have the invite token
                 },
               });
@@ -443,10 +446,15 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               userId = existingUser.id;
             } else {
               isNewUser = true;
+              const nameParts = invite.party.name?.split(' ') || [];
+              const firstName = nameParts[0] || 'Portal';
+              const lastName = nameParts.slice(1).join(' ') || 'User';
               const newUser = await tx.user.create({
                 data: {
                   email: invite.emailNorm,
                   name: invite.party.name,
+                  firstName,
+                  lastName,
                   emailVerifiedAt: now,
                 },
               });
