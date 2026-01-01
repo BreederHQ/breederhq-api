@@ -349,8 +349,8 @@ model User {
   id        String  @id @default(cuid())
   email     String  @unique @db.Citext
   name      String?
-  firstName String?
-  lastName  String?
+  firstName String
+  lastName  String
   nickname  String?
   image     String?
 
@@ -409,9 +409,10 @@ model User {
   ContractParty       ContractParty[]
 
   // Portal access management
-  portalAccess            PortalAccess?  @relation("PortalAccessUser")
+  portalAccesses          PortalAccess[] @relation("PortalAccessUser")
   portalAccessesCreatedBy PortalAccess[] @relation("PortalAccessCreatedBy")
   portalAccessesUpdatedBy PortalAccess[] @relation("PortalAccessUpdatedBy")
+  portalInvites           PortalInvite[] @relation("PortalInviteUser")
   portalInvitesSentBy     PortalInvite[] @relation("PortalInviteSentBy")
 
   @@index([partyId])
@@ -606,6 +607,8 @@ model Tenant {
   Template               Template[]
   AutoReplyRule          AutoReplyRule[]
   AutoReplyLog           AutoReplyLog[]
+  portalAccesses         PortalAccess[]  @relation("PortalAccessTenant")
+  portalInvites          PortalInvite[]  @relation("PortalInviteTenant")
 
   @@index([name])
 }
@@ -752,6 +755,7 @@ model Party {
   createdTemplates     Template[]                 @relation("TemplateCreatedBy")
   autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
   portalAccess         PortalAccess?              @relation("PortalAccessParty")
+  portalInvites        PortalInvite[]             @relation("PortalInviteParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -888,6 +892,10 @@ model Animal {
   reproductiveCycles  ReproductiveCycle[]
   breedingPlansAsDam  BreedingPlan[]      @relation("PlanDam")
   breedingPlansAsSire BreedingPlan[]      @relation("PlanSire")
+
+  // Cycle Length Override v1: Animal-level override for female cycle length calculation
+  // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
+  femaleCycleLenOverrideDays Int?
 
   // legacy links
   litterId         Int?
@@ -3158,15 +3166,22 @@ model AccountingIntegration {
  */
 
 model PortalAccess {
-  id      Int   @id @default(autoincrement())
-  partyId Int   @unique
-  party   Party @relation("PortalAccessParty", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("PortalAccessTenant", fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int    @unique
+  party    Party  @relation("PortalAccessParty", fields: [partyId], references: [id], onDelete: Cascade)
 
+  // UX state only - NOT used for authorization
   status PortalAccessStatus @default(NO_ACCESS)
 
-  // Linked user (created when invite is accepted)
-  userId String? @unique
+  // Linked user (set when invite is accepted)
+  userId String?
   user   User?   @relation("PortalAccessUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  // Denormalized pointer to TenantMembership (informational only, set after acceptance)
+  // Note: Cannot add FK to composite PK, so this is just userId reference for traceability
+  membershipUserId String?
 
   // Timestamps
   invitedAt   DateTime?
@@ -3183,30 +3198,49 @@ model PortalAccess {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invites PortalInvite[]
-
+  @@unique([tenantId, partyId])
+  @@index([tenantId])
   @@index([partyId])
   @@index([userId])
   @@index([status])
 }
 
 model PortalInvite {
-  id             Int          @id @default(autoincrement())
-  portalAccessId Int
-  portalAccess   PortalAccess @relation(fields: [portalAccessId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("PortalInviteTenant", fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PortalInviteParty", fields: [partyId], references: [id], onDelete: Cascade)
 
+  // Normalized email for lookup (lowercase, trimmed)
+  emailNorm String @db.Citext
+
+  // User reference (set if user exists at invite time, or after acceptance)
+  userId String?
+  user   User?   @relation("PortalInviteUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  // Role and status to grant upon acceptance (defaults to CLIENT/ACTIVE)
+  roleToGrant   TenantMembershipRole   @default(CLIENT)
+  statusToGrant TenantMembershipStatus @default(ACTIVE)
+
+  // Token for activation link
   tokenHash String    @unique
   expiresAt DateTime
   sentAt    DateTime  @default(now())
   usedAt    DateTime?
+
+  // Backfilled after acceptance for traceability
+  membershipUserId String?
 
   // Audit
   sentByUserId String?
   sentBy       User?   @relation("PortalInviteSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([portalAccessId])
+  @@index([tenantId, partyId])
+  @@index([tenantId, emailNorm])
   @@index([expiresAt])
 }
 

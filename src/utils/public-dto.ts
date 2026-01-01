@@ -43,6 +43,44 @@ export function toPublicProgramDTO(org: OrganizationWithFields): PublicProgramDT
 }
 
 // ============================================================================
+// Public Program Summary DTO (for index/search)
+// ============================================================================
+
+export interface PublicProgramSummaryDTO {
+  slug: string;
+  name: string;
+  location: string | null;
+  species: string[];
+  breed: string | null;
+  photoUrl: string | null;
+}
+
+type OrganizationSummaryFields = Pick<
+  Organization,
+  "programSlug" | "name" | "city" | "state" | "country"
+>;
+
+export function toPublicProgramSummaryDTO(
+  org: OrganizationSummaryFields
+): PublicProgramSummaryDTO {
+  // Compose location from city, state, country
+  const locationParts: string[] = [];
+  if (org.city) locationParts.push(org.city);
+  if (org.state) locationParts.push(org.state);
+  if (org.country) locationParts.push(org.country);
+  const location = locationParts.length > 0 ? locationParts.join(", ") : null;
+
+  return {
+    slug: org.programSlug || "",
+    name: org.name,
+    location,
+    species: [], // Not available yet - would require aggregating from animals
+    breed: null, // Not available yet - would require aggregating from animals
+    photoUrl: null, // Not available yet - organization cover photo not in schema
+  };
+}
+
+// ============================================================================
 // Public Offspring Group Listing DTO
 // ============================================================================
 

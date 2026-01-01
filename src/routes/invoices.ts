@@ -15,6 +15,7 @@ import {
 } from "../services/finance/anchor-validator.js";
 import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
+import { requireClientPartyScope } from "../middleware/actor-context.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -77,6 +78,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /finance/summary - Finance home summary tiles
   app.get("/finance/summary", async (req, reply) => {
     try {
+      const actorContext = (req as any).actorContext;
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
@@ -85,10 +87,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
+      // Base where clause for party scope
+      const partyWhere: any = { tenantId };
+      if (actorContext === "CLIENT") {
+        const { partyId } = await requireClientPartyScope(req);
+        partyWhere.clientPartyId = partyId;
+      }
+
       // Outstanding total (all non-void invoices with balance > 0)
       const outstandingResult = await prisma.invoice.aggregate({
         where: {
-          tenantId,
+          ...partyWhere,
           status: { not: "void" },
           balanceCents: { gt: 0 },
         },
@@ -98,36 +107,56 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Invoiced MTD (total of invoices issued this month, not void)
       const invoicedMtdResult = await prisma.invoice.aggregate({
         where: {
-          tenantId,
+          ...partyWhere,
           status: { not: "void" },
           issuedAt: { gte: startOfMonth, lte: endOfMonth },
         },
         _sum: { amountCents: true },
       });
 
-      // Collected MTD (payments received this month)
-      const collectedMtdResult = await prisma.payment.aggregate({
-        where: {
-          tenantId,
-          receivedAt: { gte: startOfMonth, lte: endOfMonth },
-          status: "succeeded",
-        },
-        _sum: { amountCents: true },
-      });
+      // Collected MTD (payments received this month) - needs invoice join for CLIENT scope
+      let collectedMtdCents = 0;
+      if (actorContext === "CLIENT") {
+        const { partyId } = await requireClientPartyScope(req);
+        const payments = await prisma.payment.findMany({
+          where: {
+            tenantId,
+            receivedAt: { gte: startOfMonth, lte: endOfMonth },
+            status: "succeeded",
+            invoice: { clientPartyId: partyId },
+          },
+          select: { amountCents: true },
+        });
+        collectedMtdCents = payments.reduce((sum, p) => sum + (p.amountCents || 0), 0);
+      } else {
+        const collectedMtdResult = await prisma.payment.aggregate({
+          where: {
+            tenantId,
+            receivedAt: { gte: startOfMonth, lte: endOfMonth },
+            status: "succeeded",
+          },
+          _sum: { amountCents: true },
+        });
+        collectedMtdCents = collectedMtdResult._sum.amountCents || 0;
+      }
 
-      // Expenses MTD (expenses incurred this month)
-      const expensesMtdResult = await prisma.expense.aggregate({
-        where: {
-          tenantId,
-          incurredAt: { gte: startOfMonth, lte: endOfMonth },
-        },
-        _sum: { amountCents: true },
-      });
+      // Expenses MTD - CLIENTs should not see expenses (staff-only data)
+      let expensesMtdCents = 0;
+      if (actorContext !== "CLIENT") {
+        const expensesMtdResult = await prisma.expense.aggregate({
+          where: {
+            tenantId,
+            incurredAt: { gte: startOfMonth, lte: endOfMonth },
+          },
+          _sum: { amountCents: true },
+        });
+        expensesMtdCents = expensesMtdResult._sum.amountCents || 0;
+      }
 
       // Deposits outstanding (invoices with category DEPOSIT or MIXED, not void, with balance > 0)
       const depositsResult = await prisma.invoice.aggregate({
         where: {
-          tenantId,
+          ...partyWhere,
           category: { in: ["DEPOSIT", "MIXED"] },
           status: { not: "void" },
           balanceCents: { gt: 0 },
@@ -139,8 +168,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(200).send({
         outstandingTotalCents: outstandingResult._sum.balanceCents || 0,
         invoicedMtdCents: invoicedMtdResult._sum.amountCents || 0,
-        collectedMtdCents: collectedMtdResult._sum.amountCents || 0,
-        expensesMtdCents: expensesMtdResult._sum.amountCents || 0,
+        collectedMtdCents,
+        expensesMtdCents,
         depositsOutstandingCents,
       });
     } catch (err) {
@@ -299,6 +328,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /invoices - List invoices with filters
   app.get("/invoices", async (req, reply) => {
     try {
+      const actorContext = (req as any).actorContext;
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
@@ -306,6 +336,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { page, limit, skip } = parsePaging(query);
 
       const where: any = { tenantId };
+
+      // PORTAL CLIENT: Enforce party scope - only show invoices for their party
+      if (actorContext === "CLIENT") {
+        const { partyId } = await requireClientPartyScope(req);
+        where.clientPartyId = partyId;
+      }
 
       // Status filter (single or multiple comma-separated)
       if (query.status) {
@@ -328,8 +364,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where.invoiceNumber = { contains: String(query.q), mode: "insensitive" };
       }
 
-      // Party and anchor filters
-      if (query.clientPartyId) where.clientPartyId = parseIntOrNull(query.clientPartyId);
+      // Party and anchor filters (only for STAFF, CLIENT already has partyId locked)
+      if (actorContext !== "CLIENT") {
+        if (query.clientPartyId) where.clientPartyId = parseIntOrNull(query.clientPartyId);
+      }
       if (query.offspringId) where.offspringId = parseIntOrNull(query.offspringId);
       if (query.offspringGroupId) where.groupId = parseIntOrNull(query.offspringGroupId);
       if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
@@ -406,12 +444,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /invoices/:id - Get single invoice
   app.get("/invoices/:id", async (req, reply) => {
     try {
+      const actorContext = (req as any).actorContext;
       const tenantId = Number((req as any).tenantId);
       const id = parseIntOrNull((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "invalid_id" });
 
+      const where: any = { id, tenantId };
+
+      // PORTAL CLIENT: Enforce party scope - only show their invoices
+      if (actorContext === "CLIENT") {
+        const { partyId } = await requireClientPartyScope(req);
+        where.clientPartyId = partyId;
+      }
+
       const invoice = await prisma.invoice.findFirst({
-        where: { id, tenantId },
+        where,
       });
 
       if (!invoice) return reply.code(404).send({ error: "not_found" });
