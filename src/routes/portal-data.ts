@@ -132,71 +132,17 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  /**
-   * GET /api/v1/portal/documents/:id/download
-   * Download a document that is scoped to the client party
-   * Verifies party access before streaming file
-   */
-  app.get("/portal/documents/:id/download", async (req, reply) => {
-    try {
-      const { tenantId, partyId } = await requireClientPartyScope(req);
-      const documentId = Number((req.params as any).id);
-
-      if (!documentId || isNaN(documentId)) {
-        return reply.code(400).send({ error: "invalid_document_id" });
-      }
-
-      // Find the attachment and verify it's linked to an offspring where party is buyer
-      const attachment = await prisma.attachment.findFirst({
-        where: {
-          id: documentId,
-          tenantId,
-        },
-        include: {
-          OffspringDocument: {
-            where: {
-              offspring: {
-                group: {
-                  groupBuyerLinks: {
-                    some: {
-                      buyerPartyId: partyId,
-                    },
-                  },
-                },
-              },
-            },
-            take: 1,
-          },
-        },
-      });
-
-      // Return 404 if document doesn't exist or party doesn't have access
-      if (!attachment || attachment.OffspringDocument.length === 0) {
-        return reply.code(404).send({ error: "not_found" });
-      }
-
-      // TODO: Implement actual file streaming when storage is configured
-      // For now, return 501 Not Implemented
-      // When implementing:
-      // 1. Use attachment.storageProvider to determine storage backend
-      // 2. Use attachment.storageKey to fetch file
-      // 3. Stream file with proper Content-Disposition header
-      // 4. Log download for audit trail
-
-      return reply.code(501).send({
-        error: "not_implemented",
-        message: "File storage not yet configured",
-        debug: {
-          filename: attachment.filename,
-          mime: attachment.mime,
-          bytes: attachment.bytes,
-        },
-      });
-    } catch (err: any) {
-      req.log?.error?.({ err }, "Failed to download portal document");
-      return reply.code(500).send({ error: "failed_to_download" });
-    }
-  });
+  // TODO: Implement document download endpoint when storage is configured
+  // Route: GET /api/v1/portal/documents/:id/download
+  // Implementation requirements:
+  // 1. Verify party access via Attachment -> OffspringDocument -> Offspring -> Group -> GroupBuyerLinks
+  // 2. Return 404 for out-of-scope access (party doesn't own document)
+  // 3. Determine storage backend from attachment.storageProvider (S3, local, etc.)
+  // 4. Fetch file using attachment.storageKey
+  // 5. Stream file with Content-Disposition: attachment; filename="<attachment.filename>"
+  // 6. Set Content-Type from attachment.mime
+  // 7. Log download for audit trail
+  // See RUNTIME_VERIFICATION.md for reference implementation
 
   /**
    * GET /api/v1/portal/offspring

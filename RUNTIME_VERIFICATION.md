@@ -260,3 +260,54 @@ Expected:
 - [ ] Error code is `invalid_cycle_len_override`
 - [ ] Error detail explains valid range
 - [ ] Updated value persists across GET requests
+
+---
+
+# Portal Document Downloads (Disabled)
+
+## Status: NOT IMPLEMENTED
+
+Portal document downloads are **disabled** until file storage is configured. The endpoint `/api/v1/portal/documents/:id/download` does not exist and will return 404.
+
+## Why Disabled
+
+File storage infrastructure (S3, local filesystem, etc.) is not yet configured. Without storage, the endpoint cannot serve actual files. Rather than expose a 501 Not Implemented endpoint in production, the route has been removed entirely.
+
+## What Works
+
+Portal documents **list** endpoint is fully functional:
+- `GET /api/v1/portal/documents` - Lists offspring documents where authenticated party is buyer
+- Returns document metadata (filename, mime type, size, upload date)
+- Enforces party-scoped access via OffspringDocument -> Offspring -> Group -> GroupBuyerLinks
+
+## Implementation Requirements
+
+When file storage is configured, implement `GET /api/v1/portal/documents/:id/download` with:
+
+1. **Party Access Verification**:
+   - Query Attachment by ID and tenantId
+   - Include OffspringDocument where offspring.group.groupBuyerLinks contains partyId
+   - Return 404 if no match (document doesn't exist OR party doesn't own it)
+
+2. **File Retrieval**:
+   - Read attachment.storageProvider to determine backend (s3, local, etc.)
+   - Use attachment.storageKey to fetch file
+   - Handle missing files gracefully (404)
+
+3. **HTTP Response**:
+   - Set `Content-Disposition: attachment; filename="<attachment.filename>"`
+   - Set `Content-Type: <attachment.mime>`
+   - Stream file content (do not buffer entire file in memory)
+
+4. **Audit Logging**:
+   - Log download event with: partyId, documentId, filename, timestamp
+   - Include in tenant audit trail
+
+5. **Security**:
+   - Never expose raw storageKey or storage URLs to client
+   - All downloads must go through this authenticated endpoint
+   - Verify party scope on every request (do not cache access decisions)
+
+## Reference Implementation
+
+See `src/routes/portal-data.ts` TODO comment for party access verification logic.
