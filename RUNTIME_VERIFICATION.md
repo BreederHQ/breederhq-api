@@ -3,7 +3,7 @@
 ## Backend Setup
 
 ### Prerequisites
-- Node.js 20.x
+- Node.js 20.19.0+
 - PostgreSQL database running
 - npm 10.8.0+
 
@@ -14,77 +14,126 @@ npm install
 ```
 
 ### 2. Configure Environment
-Environment files use `.env.dev` for development.
-
-Required in `.env.dev`:
+Create `.env` file:
 ```bash
-DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
-COOKIE_SECRET="your-secret-here"
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/breederhq?schema=public"
 ```
-
-See `.env.example` for all available options.
 
 ### 3. Run Migration
 ```bash
-npm run db:dev:migrate
+npm run migrate
 ```
 
 Expected output:
 ```
-Applying migration `20260101121151_add_female_cycle_len_override`
+Applying migration `20260101113710_add_cycle_len_override`
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260101113710_add_cycle_len_override/
+      └─ migration.sql
+
 ✔ Generated Prisma Client
 ```
 
-### 4. Start Development Server
+### 4. Seed Test Data
+```sql
+-- Connect to your PostgreSQL database and run:
+
+-- Female with 0 cycle history
+INSERT INTO animals (name, species, breed, sex, status, created_at, updated_at)
+VALUES ('Zero-Cycles', 'DOG', 'Golden Retriever', 'FEMALE', 'ACTIVE', NOW(), NOW())
+RETURNING id; -- Note this ID (e.g., 1)
+
+-- Female with 2 cycles (60 days apart)
+INSERT INTO animals (name, species, breed, sex, status, created_at, updated_at)
+VALUES ('Two-Cycles', 'DOG', 'Labrador', 'FEMALE', 'ACTIVE', NOW(), NOW())
+RETURNING id; -- Note this ID (e.g., 2)
+
+-- Female with 5 cycles (average 180 days apart)
+INSERT INTO animals (name, species, breed, sex, status, created_at, updated_at)
+VALUES ('Five-Cycles', 'DOG', 'Poodle', 'FEMALE', 'ACTIVE', NOW(), NOW())
+RETURNING id; -- Note this ID (e.g., 3)
+
+-- Female with override that conflicts >20% with 180-day history
+INSERT INTO animals (name, species, breed, sex, status, "femaleCycleLenOverrideDays", created_at, updated_at)
+VALUES ('Conflict-Override', 'DOG', 'Beagle', 'FEMALE', 'ACTIVE', 130, NOW(), NOW())
+RETURNING id; -- Note this ID (e.g., 4)
+```
+
+### 5. Create Server Entry Point (REQUIRED - Currently Missing)
+
+**BLOCKER**: The routes exist but no server to run them. Create `src/index.ts`:
+
+```typescript
+import express from 'express';
+import { updateAnimal, getAnimal } from './routes/animals';
+
+const app = express();
+app.use(express.json());
+
+app.get('/api/v1/animals/:id', getAnimal);
+app.patch('/api/v1/animals/:id', updateAnimal);
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`BreederHQ API listening on port ${PORT}`);
+});
+```
+
+Add to `package.json`:
+```json
+"scripts": {
+  "dev": "ts-node src/index.ts",
+  "migrate": "prisma migrate dev",
+  "migrate:deploy": "prisma migrate deploy",
+  "generate": "prisma generate"
+}
+```
+
+Install ts-node:
+```bash
+npm install --save-dev ts-node
+```
+
+### 6. Start Server
 ```bash
 npm run dev
 ```
 
 Expected output:
 ```
-API listening on :3000
+BreederHQ API listening on port 3001
 ```
-
-**Server Details**:
-- Framework: Fastify 5.x
-- Entry point: `src/server.ts`
-- Default port: 3000 (configurable via PORT env var)
-- Routes prefix: `/api/v1`
 
 ## API Verification Tests
 
-All routes require authentication and tenant context. For testing, you'll need:
-- Valid session cookie (XSRF-TOKEN)
-- x-tenant-id header
+Replace `{id}` with the actual IDs from your seed data.
 
 ### Test 1: GET animal (baseline)
 ```bash
-curl -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  http://localhost:3000/api/v1/animals/1
+curl http://localhost:3001/api/v1/animals/1
 ```
 
 **Expected Response** (200 OK):
 ```json
 {
   "id": 1,
-  "name": "Test Female",
+  "name": "Zero-Cycles",
   "species": "DOG",
+  "breed": "Golden Retriever",
   "sex": "FEMALE",
   "status": "ACTIVE",
   "femaleCycleLenOverrideDays": null,
-  "cycleStartDates": [],
-  ...
+  "created_at": "2026-01-01T...",
+  "updated_at": "2026-01-01T..."
 }
 ```
 
 ### Test 2: PATCH valid override (150 days)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": 150}'
 ```
 
@@ -92,18 +141,21 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 ```json
 {
   "id": 1,
+  "name": "Zero-Cycles",
+  "species": "DOG",
+  "breed": "Golden Retriever",
+  "sex": "FEMALE",
+  "status": "ACTIVE",
   "femaleCycleLenOverrideDays": 150,
-  ...
+  "created_at": "2026-01-01T...",
+  "updated_at": "2026-01-01T..."
 }
 ```
 
 ### Test 3: PATCH override to null (clear)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": null}'
 ```
 
@@ -118,11 +170,8 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 
 ### Test 4: PATCH invalid - below minimum (29)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": 29}'
 ```
 
@@ -136,11 +185,8 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 
 ### Test 5: PATCH invalid - above maximum (731)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": 731}'
 ```
 
@@ -154,11 +200,8 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 
 ### Test 6: PATCH invalid - non-integer (150.5)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": 150.5}'
 ```
 
@@ -170,13 +213,25 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 }
 ```
 
-### Test 7: PATCH edge case - minimum valid (30)
+### Test 7: PATCH invalid - string
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
+  -d '{"femaleCycleLenOverrideDays": "150"}'
+```
+
+**Expected Response** (400 Bad Request):
+```json
+{
+  "error": "invalid_cycle_len_override",
+  "detail": "must be an integer between 30 and 730 days"
+}
+```
+
+### Test 8: PATCH edge case - minimum valid (30)
+```bash
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
+  -H "Content-Type: application/json" \
   -d '{"femaleCycleLenOverrideDays": 30}'
 ```
 
@@ -189,13 +244,10 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 }
 ```
 
-### Test 8: PATCH edge case - maximum valid (730)
+### Test 9: PATCH edge case - maximum valid (730)
 ```bash
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
+curl -X PATCH http://localhost:3001/api/v1/animals/1 \
   -H "Content-Type: application/json" \
-  -H "x-tenant-id: 1" \
-  -H "Cookie: XSRF-TOKEN=..." \
-  -H "x-csrf-token: ..." \
   -d '{"femaleCycleLenOverrideDays": 730}'
 ```
 
@@ -208,47 +260,6 @@ curl -X PATCH http://localhost:3000/api/v1/animals/1 \
 }
 ```
 
-## Simplified Testing (Without Auth)
-
-For quick verification during development, you can temporarily bypass auth by:
-
-1. Comment out CSRF/auth middleware in `src/server.ts` (dev only!)
-2. Use simpler curl commands:
-
-```bash
-# GET
-curl http://localhost:3000/api/v1/animals/1
-
-# PATCH
-curl -X PATCH http://localhost:3000/api/v1/animals/1 \
-  -H "Content-Type: application/json" \
-  -d '{"femaleCycleLenOverrideDays": 150}'
-```
-
-**WARNING**: Never deploy with auth disabled!
-
-## Database Verification
-
-Check migration was applied:
-
-```bash
-npm run db:dev:status
-```
-
-Check column exists:
-
-```sql
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'Animal'
-  AND column_name = 'femaleCycleLenOverrideDays';
-```
-
-Expected:
-```
- femaleCycleLenOverrideDays | integer | YES
-```
-
 ## Verification Checklist
 
 - [ ] Migration creates `femaleCycleLenOverrideDays` column
@@ -256,58 +267,7 @@ Expected:
 - [ ] GET returns field in response
 - [ ] PATCH accepts integers 30-730
 - [ ] PATCH accepts null
-- [ ] PATCH rejects <30, >730, floats
+- [ ] PATCH rejects <30, >730, floats, strings
 - [ ] Error code is `invalid_cycle_len_override`
 - [ ] Error detail explains valid range
 - [ ] Updated value persists across GET requests
-
----
-
-# Portal Document Downloads (Disabled)
-
-## Status: NOT IMPLEMENTED
-
-Portal document downloads are **disabled** until file storage is configured. The endpoint `/api/v1/portal/documents/:id/download` does not exist and will return 404.
-
-## Why Disabled
-
-File storage infrastructure (S3, local filesystem, etc.) is not yet configured. Without storage, the endpoint cannot serve actual files. Rather than expose a 501 Not Implemented endpoint in production, the route has been removed entirely.
-
-## What Works
-
-Portal documents **list** endpoint is fully functional:
-- `GET /api/v1/portal/documents` - Lists offspring documents where authenticated party is buyer
-- Returns document metadata (filename, mime type, size, upload date)
-- Enforces party-scoped access via OffspringDocument -> Offspring -> Group -> GroupBuyerLinks
-
-## Implementation Requirements
-
-When file storage is configured, implement `GET /api/v1/portal/documents/:id/download` with:
-
-1. **Party Access Verification**:
-   - Query Attachment by ID and tenantId
-   - Include OffspringDocument where offspring.group.groupBuyerLinks contains partyId
-   - Return 404 if no match (document doesn't exist OR party doesn't own it)
-
-2. **File Retrieval**:
-   - Read attachment.storageProvider to determine backend (s3, local, etc.)
-   - Use attachment.storageKey to fetch file
-   - Handle missing files gracefully (404)
-
-3. **HTTP Response**:
-   - Set `Content-Disposition: attachment; filename="<attachment.filename>"`
-   - Set `Content-Type: <attachment.mime>`
-   - Stream file content (do not buffer entire file in memory)
-
-4. **Audit Logging**:
-   - Log download event with: partyId, documentId, filename, timestamp
-   - Include in tenant audit trail
-
-5. **Security**:
-   - Never expose raw storageKey or storage URLs to client
-   - All downloads must go through this authenticated endpoint
-   - Verify party scope on every request (do not cache access decisions)
-
-## Reference Implementation
-
-See `src/routes/portal-data.ts` TODO comment for party access verification logic.
