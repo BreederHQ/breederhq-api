@@ -893,6 +893,10 @@ model Animal {
   breedingPlansAsDam  BreedingPlan[]      @relation("PlanDam")
   breedingPlansAsSire BreedingPlan[]      @relation("PlanSire")
 
+  // Cycle Length Override v1: Animal-level override for female cycle length calculation
+  // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
+  femaleCycleLenOverrideDays Int?
+
   // legacy links
   litterId         Int?
   litter           Litter?         @relation(fields: [litterId], references: [id], onDelete: SetNull)
