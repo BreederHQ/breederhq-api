@@ -26,10 +26,10 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           contract: {
             select: {
               id: true,
-              name: true,
+              title: true,
               status: true,
-              effectiveDate: true,
-              expirationDate: true,
+              issuedAt: true,
+              expiresAt: true,
               createdAt: true,
               updatedAt: true,
             },
@@ -42,14 +42,14 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const agreements = contractParties.map((cp) => ({
         id: cp.contract.id,
-        name: cp.contract.name,
+        name: cp.contract.title,
         status: cp.contract.status,
-        effectiveDate: cp.contract.effectiveDate,
-        expirationDate: cp.contract.expirationDate,
-        role: cp.role,
-        signedAt: cp.signedAt,
-        createdAt: cp.contract.createdAt,
-        updatedAt: cp.contract.updatedAt,
+        effectiveDate: cp.contract.issuedAt ? new Date(cp.contract.issuedAt).toISOString() : null,
+        expirationDate: cp.contract.expiresAt ? new Date(cp.contract.expiresAt).toISOString() : null,
+        role: cp.role || "UNKNOWN",
+        signedAt: cp.signedAt ? new Date(cp.signedAt).toISOString() : null,
+        createdAt: new Date(cp.contract.createdAt).toISOString(),
+        updatedAt: new Date(cp.contract.updatedAt).toISOString(),
       }));
 
       return reply.send({ agreements });
@@ -69,54 +69,32 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const { tenantId, partyId } = await requireClientPartyScope(req);
 
-      // Find documents directly linked to this party
-      const partyDocuments = await prisma.document.findMany({
-        where: {
-          tenantId,
-          scope: "PARTY",
-          partyId,
-        },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          category: true,
-          uploadedAt: true,
-          uploadedByUserId: true,
-          fileUrl: true,
-          mimeType: true,
-          fileSizeBytes: true,
-        },
-        orderBy: {
-          uploadedAt: "desc",
-        },
-      });
-
       // Find offspring documents for offspring where this party is a buyer
+      // OffspringDocument links to Attachment (not Document) via fileId
       const offspringDocuments = await prisma.offspringDocument.findMany({
         where: {
           tenantId,
           offspring: {
             group: {
-              buyers: {
+              groupBuyerLinks: {
                 some: {
                   buyerPartyId: partyId,
                 },
               },
             },
           },
+          fileId: {
+            not: null,
+          },
         },
         include: {
-          document: {
+          file: {
             select: {
               id: true,
-              name: true,
-              description: true,
-              category: true,
-              uploadedAt: true,
-              fileUrl: true,
-              mimeType: true,
-              fileSizeBytes: true,
+              filename: true,
+              mime: true,
+              bytes: true,
+              createdAt: true,
             },
           },
           offspring: {
@@ -131,44 +109,92 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      const documents = [
-        ...partyDocuments.map((doc) => ({
-          id: doc.id,
-          name: doc.name,
-          description: doc.description,
-          category: doc.category,
-          uploadedAt: doc.uploadedAt,
-          fileUrl: doc.fileUrl,
-          mimeType: doc.mimeType,
-          fileSizeBytes: doc.fileSizeBytes,
-          source: "party" as const,
-        })),
-        ...offspringDocuments.map((od) => ({
-          id: od.document.id,
-          name: od.document.name,
-          description: od.document.description,
-          category: od.document.category,
-          uploadedAt: od.document.uploadedAt,
-          fileUrl: od.document.fileUrl,
-          mimeType: od.document.mimeType,
-          fileSizeBytes: od.document.fileSizeBytes,
+      const documents = offspringDocuments
+        .filter((od) => od.file !== null)
+        .map((od) => ({
+          id: od.file!.id,
+          name: od.file!.filename,
+          description: null,
+          category: null,
+          uploadedAt: od.file!.createdAt.toISOString(),
+          fileUrl: null, // Will be provided via download endpoint
+          mimeType: od.file!.mime,
+          fileSizeBytes: od.file!.bytes,
           source: "offspring" as const,
           offspringId: od.offspring.id,
           offspringName: od.offspring.name,
-        })),
-      ];
-
-      // Sort by uploadedAt desc
-      documents.sort((a, b) => {
-        const aDate = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-        const bDate = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
-        return bDate - aDate;
-      });
+        }));
 
       return reply.send({ documents });
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to list portal documents");
       return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
+
+  /**
+   * GET /api/v1/portal/documents/:id/download
+   * Download a document that is scoped to the client party
+   * Verifies party access before streaming file
+   */
+  app.get("/portal/documents/:id/download", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const documentId = Number((req.params as any).id);
+
+      if (!documentId || isNaN(documentId)) {
+        return reply.code(400).send({ error: "invalid_document_id" });
+      }
+
+      // Find the attachment and verify it's linked to an offspring where party is buyer
+      const attachment = await prisma.attachment.findFirst({
+        where: {
+          id: documentId,
+          tenantId,
+        },
+        include: {
+          OffspringDocument: {
+            where: {
+              offspring: {
+                group: {
+                  groupBuyerLinks: {
+                    some: {
+                      buyerPartyId: partyId,
+                    },
+                  },
+                },
+              },
+            },
+            take: 1,
+          },
+        },
+      });
+
+      // Return 404 if document doesn't exist or party doesn't have access
+      if (!attachment || attachment.OffspringDocument.length === 0) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // TODO: Implement actual file streaming when storage is configured
+      // For now, return 501 Not Implemented
+      // When implementing:
+      // 1. Use attachment.storageProvider to determine storage backend
+      // 2. Use attachment.storageKey to fetch file
+      // 3. Stream file with proper Content-Disposition header
+      // 4. Log download for audit trail
+
+      return reply.code(501).send({
+        error: "not_implemented",
+        message: "File storage not yet configured",
+        debug: {
+          filename: attachment.filename,
+          mime: attachment.mime,
+          bytes: attachment.bytes,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to download portal document");
+      return reply.code(500).send({ error: "failed_to_download" });
     }
   });
 
@@ -181,8 +207,8 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const { tenantId, partyId } = await requireClientPartyScope(req);
 
-      // Find offspring groups where this party is a buyer
-      const buyers = await prisma.offspringGroupBuyer.findMany({
+      // Find offspring where this party is the buyer
+      const offspring = await prisma.offspring.findMany({
         where: {
           tenantId,
           buyerPartyId: partyId,
@@ -191,11 +217,9 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           group: {
             select: {
               id: true,
-              code: true,
-              label: true,
-              birthDate: true,
+              name: true,
+              actualBirthOn: true,
               species: true,
-              breed: true,
               dam: {
                 select: {
                   id: true,
@@ -210,38 +234,44 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               },
             },
           },
-          offspring: {
-            select: {
-              id: true,
-              name: true,
-              sex: true,
-              color: true,
-              microchipId: true,
-              registrationNumber: true,
-            },
-          },
         },
         orderBy: {
           createdAt: "desc",
         },
       });
 
-      const placements = buyers.map((buyer) => ({
-        id: buyer.id,
-        offspringGroupId: buyer.group.id,
-        offspringGroupCode: buyer.group.code,
-        offspringGroupLabel: buyer.group.label,
-        birthDate: buyer.group.birthDate,
-        species: buyer.group.species,
-        breed: buyer.group.breed,
-        dam: buyer.group.dam,
-        sire: buyer.group.sire,
-        offspring: buyer.offspring,
-        placementStatus: buyer.placementStatus,
-        depositPaidAt: buyer.depositPaidAt,
-        fullPricePaidAt: buyer.fullPricePaidAt,
-        pickedUpAt: buyer.pickedUpAt,
-        createdAt: buyer.createdAt,
+      function mapOffspringStateToPlacementStatus(o: any): string {
+        if (o.placedAt) return "PLACED";
+        if (o.pickupAt && !o.placedAt) return "READY_FOR_PICKUP";
+        if (o.paidInFullAt) return "FULLY_PAID";
+        if (o.contractSignedAt || o.financialState === "DEPOSIT_PAID") return "DEPOSIT_PAID";
+        if (o.buyerPartyId) return "RESERVED";
+        return "WAITLISTED";
+      }
+
+      const placements = offspring.map((o) => ({
+        id: o.id,
+        offspringGroupId: o.group.id,
+        offspringGroupCode: o.group.name || `Group-${o.group.id}`,
+        offspringGroupLabel: o.group.name,
+        birthDate: o.group.actualBirthOn ? o.group.actualBirthOn.toISOString() : o.bornAt?.toISOString() || null,
+        species: o.group.species,
+        breed: o.breed,
+        dam: o.group.dam,
+        sire: o.group.sire,
+        offspring: {
+          id: o.id,
+          name: o.name || "Unnamed",
+          sex: o.sex,
+          color: null, // Offspring model doesn't have color field
+          microchipId: null, // Offspring model doesn't have microchipId
+          registrationNumber: null, // Offspring model doesn't have registrationNumber
+        },
+        placementStatus: mapOffspringStateToPlacementStatus(o),
+        depositPaidAt: null, // Would need to query related invoices/payments
+        fullPricePaidAt: o.paidInFullAt?.toISOString() || null,
+        pickedUpAt: o.pickupAt?.toISOString() || null,
+        createdAt: o.createdAt.toISOString(),
       }));
 
       return reply.send({ placements });
