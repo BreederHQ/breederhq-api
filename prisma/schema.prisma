@@ -349,8 +349,8 @@ model User {
   id        String  @id @default(cuid())
   email     String  @unique @db.Citext
   name      String?
-  firstName String?
-  lastName  String?
+  firstName String
+  lastName  String
   nickname  String?
   image     String?
 
@@ -3165,7 +3165,7 @@ model PortalAccess {
   id       Int    @id @default(autoincrement())
   tenantId Int
   tenant   Tenant @relation("PortalAccessTenant", fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId  Int
+  partyId  Int    @unique
   party    Party  @relation("PortalAccessParty", fields: [partyId], references: [id], onDelete: Cascade)
 
   // UX state only - NOT used for authorization

@@ -268,19 +268,29 @@ function isSafeRedirect(u?: string) {
 
 export default async function authRoutes(app: FastifyInstance, _opts: FastifyPluginOptions) {
   /* ───── Register ───── */
-  // POST /register  { email, password, name? }
+  // POST /register  { email, password, firstName, lastName }
   app.post("/register", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const { email = "", password = "", name = null } = (req.body || {}) as {
-      email?: string; password?: string; name?: string | null;
+    const { email = "", password = "", firstName = "", lastName = "" } = (req.body || {}) as {
+      email?: string; password?: string; firstName?: string; lastName?: string;
     };
     const e = String(email).trim().toLowerCase();
     const p = String(password);
+    const fn = String(firstName).trim();
+    const ln = String(lastName).trim();
 
     if (!e || !p) {
       await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "email_and_password_required", emailNorm: e || null });
       return reply.code(400).send({ error: "email_and_password_required" });
+    }
+    if (!fn) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "first_name_required", emailNorm: e });
+      return reply.code(400).send({ error: "first_name_required" });
+    }
+    if (!ln) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "last_name_required", emailNorm: e });
+      return reply.code(400).send({ error: "last_name_required" });
     }
     if (p.length < 8) {
       await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "password_too_short", emailNorm: e });
@@ -295,9 +305,11 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
 
     let userId: string;
     if (!existing) {
-      // optional fields guarded with try
-      const data: any = { email: e };
-      if (name != null) data.name = name; // ignored if column missing
+      const data: any = {
+        email: e,
+        firstName: fn,
+        lastName: ln,
+      };
       try {
         data.passwordHash = await bcrypt.hash(p, 12);
       } catch {
