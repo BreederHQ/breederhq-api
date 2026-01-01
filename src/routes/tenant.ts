@@ -815,12 +815,18 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         dataUser.passwordUpdatedAt = new Date();
       }
 
+      const nameParts = (dataUser.name || '').split(' ').filter(Boolean);
+      const firstName = nameParts[0] || 'Team';
+      const lastName = nameParts.slice(1).join(' ') || 'Member';
+
       const user = await prisma.user.upsert({
         where: { email: emailLower },
         update: dataUser,
         create: {
           email: emailLower,
           name: dataUser.name ?? null,
+          firstName,
+          lastName,
           emailVerifiedAt: new Date(),
           passwordHash: dataUser.passwordHash ?? undefined,
           passwordUpdatedAt: dataUser.passwordUpdatedAt ?? undefined,
@@ -905,10 +911,19 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
       const normalizedEmail = normEmail(email);
 
+      const nameParts = (name || '').split(' ').filter(Boolean);
+      const firstName = nameParts[0] || 'Team';
+      const lastName = nameParts.slice(1).join(' ') || 'Member';
+
       const user = await prisma.user.upsert({
         where: { email: normalizedEmail },
         update: { name: name ?? undefined },
-        create: { email: normalizedEmail, name: name ?? undefined },
+        create: {
+          email: normalizedEmail,
+          name: name ?? undefined,
+          firstName,
+          lastName,
+        },
         select: {
           id: true,
           email: true,
