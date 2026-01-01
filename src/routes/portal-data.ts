@@ -321,6 +321,91 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "failed_to_load" });
     }
   });
+
+  /**
+   * GET /api/v1/portal/offspring/:id
+   * Returns offspring detail if the authenticated client party is the buyer
+   * Read-only: detailed view with timeline, parents, placement info
+   */
+  app.get<{ Params: { id: string } }>("/portal/offspring/:id", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const offspringId = parseInt(req.params.id, 10);
+
+      if (isNaN(offspringId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      const offspring = await prisma.offspring.findFirst({
+        where: {
+          id: offspringId,
+          tenantId,
+          buyerPartyId: partyId,
+        },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              actualBirthOn: true,
+              species: true,
+              dam: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              sire: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      function mapOffspringStateToPlacementStatus(o: any): string {
+        if (o.placedAt) return "PLACED";
+        if (o.pickupAt && !o.placedAt) return "READY_FOR_PICKUP";
+        if (o.paidInFullAt) return "FULLY_PAID";
+        if (o.contractSignedAt || o.financialState === "DEPOSIT_PAID") return "DEPOSIT_PAID";
+        if (o.buyerPartyId) return "RESERVED";
+        return "WAITLISTED";
+      }
+
+      const detail = {
+        id: offspring.id,
+        name: offspring.name || "Unnamed",
+        sex: offspring.sex,
+        breed: offspring.breed,
+        species: offspring.group.species,
+        birthDate: offspring.group.actualBirthOn
+          ? offspring.group.actualBirthOn.toISOString()
+          : offspring.bornAt?.toISOString() || null,
+        placementStatus: mapOffspringStateToPlacementStatus(offspring),
+        dam: offspring.group.dam,
+        sire: offspring.group.sire,
+        groupId: offspring.group.id,
+        groupName: offspring.group.name,
+        contractSignedAt: offspring.contractSignedAt?.toISOString() || null,
+        paidInFullAt: offspring.paidInFullAt?.toISOString() || null,
+        pickupAt: offspring.pickupAt?.toISOString() || null,
+        placedAt: offspring.placedAt?.toISOString() || null,
+        createdAt: offspring.createdAt.toISOString(),
+      };
+
+      return reply.send({ offspring: detail });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal offspring detail");
+      return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
 };
 
 export default portalDataRoutes;
