@@ -202,6 +202,7 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // POST /api/v1/portal-access/:partyId/enable
   // Enables portal access for a party (creates record if none exists, sends invite if email exists)
+  // Body: { contextType?: "INQUIRY" | "WAITLIST" | "INVOICE", contextId?: number }
   app.post("/portal-access/:partyId/enable", {
     config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
   }, async (req, reply) => {
@@ -214,6 +215,10 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const partyId = idNum((req.params as any).partyId);
       if (!partyId) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as any;
+      const contextType = body.contextType || null;
+      const contextId = body.contextId ? Number(body.contextId) : null;
 
       const party = await prisma.party.findFirst({
         where: { id: partyId, tenantId },
@@ -266,6 +271,8 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               tokenHash,
               expiresAt,
               sentByUserId: userId,
+              contextType,
+              contextId,
             },
           }),
         ]);
@@ -576,6 +583,8 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               tokenHash,
               expiresAt,
               sentByUserId: userId,
+              contextType,
+              contextId,
             },
           }),
         ]);

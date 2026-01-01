@@ -91,6 +91,8 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           maskedEmail: maskEmail(invite.emailNorm),
           partyName: invite.party.name,
           expiresAt: invite.expiresAt.toISOString(),
+          contextType: invite.contextType || null,
+          contextId: invite.contextId || null,
         });
       } catch (err) {
         req.log?.error?.({ err }, "Failed to validate portal invite");
