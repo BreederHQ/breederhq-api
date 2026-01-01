@@ -48,6 +48,7 @@
     "bootstrap:admin:prod": "npx dotenv -e .env.prod -- node scripts/bootstrap-global-admin-access.mjs",
     "script:enable-public-program": "node scripts/enable-public-program.mjs",
     "script:verify-public-programs": "powershell -File scripts/verify-public-programs.ps1",
+    "script:verify-routes": "powershell -File scripts/verify-public-marketplace-routes.ps1",
     "postinstall": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {

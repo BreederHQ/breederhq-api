@@ -736,6 +736,16 @@ app.register(
   },
   { prefix: "/api/v1" }
 );
+// ---------- API v1/public: public marketplace subtree ----------
+// Authoritative prefix for public marketplace routes
+app.register(
+  async (api) => {
+    if (MARKETPLACE_PUBLIC_ENABLED) {
+      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
+    }
+  },
+  { prefix: "/api/v1/public" }
+);
 
 // ---------- Not Found ----------
 app.setNotFoundHandler((req, reply) => {
