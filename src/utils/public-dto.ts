@@ -118,10 +118,11 @@ type OffspringGroupWithRelations = Pick<
   | "expectedBirthOn"
   | "actualBirthOn"
   | "coverImageUrl"
+  | "marketplaceDefaultPriceCents"
 > & {
   dam?: Pick<Animal, "name" | "photoUrl" | "breed"> | null;
   sire?: Pick<Animal, "name" | "photoUrl" | "breed"> | null;
-  Offspring?: Array<Pick<Offspring, "priceCents" | "keeperIntent" | "placementState">>;
+  Offspring?: Array<Pick<Offspring, "priceCents" | "keeperIntent" | "placementState" | "marketplaceListed" | "marketplacePriceCents">>;
   tenant?: { organizations?: Array<Pick<Organization, "programSlug" | "name">> };
 };
 
@@ -130,15 +131,18 @@ export function toPublicOffspringGroupListingDTO(
   programSlug: string,
   programName: string
 ): PublicOffspringGroupListingDTO {
-  // Count available offspring
-  const available = (group.Offspring || []).filter(
+  // Filter to only listed offspring
+  const listedOffspring = (group.Offspring || []).filter((o) => o.marketplaceListed === true);
+
+  // Count available offspring (listed + available + unassigned)
+  const available = listedOffspring.filter(
     (o) => o.keeperIntent === "AVAILABLE" && o.placementState === "UNASSIGNED"
   );
   const countAvailable = available.length;
 
-  // Calculate price range from available offspring
+  // Calculate price range from available offspring with derived prices
   const prices = available
-    .map((o) => o.priceCents)
+    .map((o) => o.marketplacePriceCents ?? group.marketplaceDefaultPriceCents ?? o.priceCents)
     .filter((p): p is number => p != null && p > 0);
   const priceRange =
     prices.length > 0
@@ -202,9 +206,13 @@ type OffspringWithFields = Pick<
   | "priceCents"
   | "keeperIntent"
   | "placementState"
+  | "marketplacePriceCents"
 >;
 
-export function toPublicOffspringDTO(offspring: OffspringWithFields): PublicOffspringDTO {
+export function toPublicOffspringDTO(
+  offspring: OffspringWithFields,
+  groupDefaultPriceCents?: number | null
+): PublicOffspringDTO {
   // Derive status from state fields
   let status: "available" | "reserved" | "placed";
   if (offspring.placementState === "PLACED") {
@@ -218,13 +226,16 @@ export function toPublicOffspringDTO(offspring: OffspringWithFields): PublicOffs
     status = "available";
   }
 
+  // Derive price: offspring override > group default > offspring base price
+  const derivedPrice = offspring.marketplacePriceCents ?? groupDefaultPriceCents ?? offspring.priceCents ?? null;
+
   return {
     id: offspring.id,
     name: offspring.name || null,
     sex: offspring.sex || null,
     collarColorName: offspring.collarColorName || null,
     collarColorHex: offspring.collarColorHex || null,
-    priceCents: offspring.priceCents || null,
+    priceCents: derivedPrice,
     status,
   };
 }
@@ -342,11 +353,13 @@ export interface PublicListingSummaryDTO {
 export function toOffspringGroupSummaryDTO(
   group: OffspringGroupWithRelations
 ): PublicListingSummaryDTO {
-  const available = (group.Offspring || []).filter(
+  // Filter to only listed offspring
+  const listedOffspring = (group.Offspring || []).filter((o) => o.marketplaceListed === true);
+  const available = listedOffspring.filter(
     (o) => o.keeperIntent === "AVAILABLE" && o.placementState === "UNASSIGNED"
   );
   const prices = available
-    .map((o) => o.priceCents)
+    .map((o) => o.marketplacePriceCents ?? group.marketplaceDefaultPriceCents ?? o.priceCents)
     .filter((p): p is number => p != null && p > 0);
   const priceRange =
     prices.length > 0
