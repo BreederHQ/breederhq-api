@@ -271,8 +271,6 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               tokenHash,
               expiresAt,
               sentByUserId: userId,
-              contextType,
-              contextId,
             },
           }),
         ]);
@@ -583,8 +581,6 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               tokenHash,
               expiresAt,
               sentByUserId: userId,
-              contextType,
-              contextId,
             },
           }),
         ]);
