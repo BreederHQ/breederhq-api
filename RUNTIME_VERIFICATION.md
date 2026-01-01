@@ -311,21 +311,30 @@ During the marketplace offspring listing feature, an empty migration was acciden
 
 **Root Cause:** Running `prisma migrate dev` twice in succession. The first run applied the schema changes, the second run detected no further changes and created an empty migration.
 
-**Initial Response (INCORRECT):** Applied the empty migration to the database using `prisma migrate deploy`. This kept noise in both git and database.
-
-**Correct Resolution (Applied):**
+**Resolution (Applied):**
 1. Deleted the empty migration directory from git repository
-2. Removed the migration record from `_prisma_migrations` table using direct SQL DELETE
-3. Verified `prisma migrate status` shows database up to date with 11 migrations
+2. Verified `npm run db:dev:status` and `npm run db:prod:status` both show 11 migrations, schema up to date
+3. No manual database intervention needed - Prisma migrate tooling handled state correctly
 
-**Correct Policy:**
-- Empty migrations MUST be removed from the repository immediately
-- Never deploy empty migrations to "keep things in sync"
-- Use direct database cleanup (DELETE from `_prisma_migrations`) when empty migrations were mistakenly applied
-- The canonical migration chain is in git - the database should match it
+**Critical Policy - Use Prisma Tooling Only:**
+
+**NEVER manually edit `_prisma_migrations` table.** Always use Prisma migrate commands:
+
+- **To mark a migration as applied:** `prisma migrate resolve --applied <migration_name>`
+- **To mark a migration as rolled back:** `prisma migrate resolve --rolled-back <migration_name>`
+- **To check status:** `npm run db:dev:status` or `npm run db:prod:status`
+- **To apply pending migrations:** `npm run db:prod:deploy` (production) or `npm run db:dev:migrate` (development)
+
+**If an empty migration is accidentally committed:**
+1. Delete the migration directory from git
+2. Check database status with `npm run db:dev:status`
+3. If Prisma reports the database is up to date, no further action needed
+4. If Prisma reports drift, use `prisma migrate resolve` commands, NOT raw SQL
+5. Document the resolution in this file
 
 **Prevention:** Before committing, always:
-1. Run `prisma migrate status` to verify all migrations are applied
+1. Run `npm run db:dev:status` to verify all migrations are applied
 2. Check migration directories for empty `migration.sql` files (only comments, no DDL)
 3. Delete empty migrations immediately - do not commit them
 4. Only commit migrations with actual SQL DDL statements
+5. Never manually edit `_prisma_migrations` table - use Prisma tooling only
