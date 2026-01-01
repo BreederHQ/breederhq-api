@@ -3,6 +3,7 @@
 // Includes surface-bound CSRF token generation
 
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { randomBytes } from "node:crypto";
 
 // ---------- Surface Type ----------
 export type Surface = "PLATFORM" | "PORTAL" | "MARKETPLACE";
@@ -111,7 +112,7 @@ export function cookieOptions() {
  * The surface prefix ensures tokens from one surface are rejected on another.
  */
 export function generateCsrfToken(surface: Surface): string {
-  const random = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  const random = randomBytes(32).toString("base64url");
   return `${surface}.${random}`;
 }
 

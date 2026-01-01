@@ -2,12 +2,13 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
+import { requireClientPartyScope } from "../middleware/actor-context.js";
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
   app.post("/messages/threads", async (req, reply) => {
-    const tenantId = Number((req as any).tenantId);
-    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+    // Enforce CLIENT party scope
+    const { tenantId, partyId: senderPartyId } = await requireClientPartyScope(req);
 
     const { recipientPartyId, subject, initialMessage } = req.body as any;
 
@@ -15,20 +16,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: "missing_required_fields", required: ["recipientPartyId", "initialMessage"] });
     }
 
-    // Get sender party from current user
-    const userId = (req as any).userId;
-    if (!userId) return reply.code(401).send({ error: "unauthorized" });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.code(400).send({ error: "user_has_no_party" });
-    }
-
-    const senderPartyId = user.partyId;
     const now = new Date();
 
     try {
@@ -98,22 +85,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // GET /messages/threads - List threads for current user's party
   app.get("/messages/threads", async (req, reply) => {
-    const tenantId = Number((req as any).tenantId);
-    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
-    const userId = (req as any).userId;
-    if (!userId) return reply.code(401).send({ error: "unauthorized" });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.send({ threads: [] });
-    }
-
-    const currentUserPartyId = user.partyId;
+    // Enforce CLIENT party scope
+    const { tenantId, partyId: currentUserPartyId } = await requireClientPartyScope(req);
 
     try {
       // Get threads where user is a participant
@@ -178,22 +151,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // GET /messages/threads/:id - Get thread details with all messages
   app.get("/messages/threads/:id", async (req, reply) => {
-    const tenantId = Number((req as any).tenantId);
-    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
-    const userId = (req as any).userId;
-    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+    // Enforce CLIENT party scope
+    const { tenantId, partyId: userPartyId } = await requireClientPartyScope(req);
 
     const threadId = Number((req.params as any).id);
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.code(403).send({ error: "forbidden" });
-    }
 
     try {
       const thread = await prisma.messageThread.findFirst({
@@ -214,14 +175,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Enforce: user's party must be participant
-      const isParticipant = thread.participants.some((p) => p.partyId === user.partyId);
+      const isParticipant = thread.participants.some((p) => p.partyId === userPartyId);
       if (!isParticipant) {
         return reply.code(403).send({ error: "forbidden" });
       }
 
       // Mark as read: update lastReadAt to now
       await prisma.messageParticipant.updateMany({
-        where: { threadId, partyId: user.partyId },
+        where: { threadId, partyId: userPartyId },
         data: { lastReadAt: new Date() },
       });
 
@@ -233,26 +194,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // POST /messages/threads/:id/messages - Send message in thread
   app.post("/messages/threads/:id/messages", async (req, reply) => {
-    const tenantId = Number((req as any).tenantId);
-    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
-
-    const userId = (req as any).userId;
-    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+    // Enforce CLIENT party scope
+    const { tenantId, partyId: userPartyId } = await requireClientPartyScope(req);
 
     const threadId = Number((req.params as any).id);
     const { body: messageBody } = req.body as any;
 
     if (!messageBody) {
       return reply.code(400).send({ error: "missing_required_fields", required: ["body"] });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.code(403).send({ error: "forbidden" });
     }
 
     try {
@@ -265,7 +214,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(404).send({ error: "not_found" });
       }
 
-      const isParticipant = thread.participants.some((p) => p.partyId === user.partyId);
+      const isParticipant = thread.participants.some((p) => p.partyId === userPartyId);
       if (!isParticipant) {
         return reply.code(403).send({ error: "forbidden" });
       }
@@ -275,7 +224,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const message = await prisma.message.create({
         data: {
           threadId,
-          senderPartyId: user.partyId,
+          senderPartyId: userPartyId,
           body: messageBody,
         },
         include: {
@@ -291,7 +240,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update sender's lastReadAt (they've seen their own message)
       await prisma.messageParticipant.updateMany({
-        where: { threadId, partyId: user.partyId },
+        where: { threadId, partyId: userPartyId },
         data: { lastReadAt: now },
       });
 
@@ -300,20 +249,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { tenantId, type: "ORGANIZATION" },
       });
 
-      if (tenantParty && user.partyId !== tenantParty.id) {
+      if (tenantParty && userPartyId !== tenantParty.id) {
         try {
           await evaluateAndSendAutoReply({
             prisma,
             tenantId,
             threadId,
-            inboundSenderPartyId: user.partyId,
+            inboundSenderPartyId: userPartyId,
           });
         } catch (autoReplyErr: any) {
           await prisma.autoReplyLog.create({
             data: {
               tenantId,
               channel: "dm",
-              partyId: user.partyId,
+              partyId: userPartyId,
               threadId,
               status: "failed",
               reason: `Auto-reply evaluation error: ${autoReplyErr.message || "unknown"}`,

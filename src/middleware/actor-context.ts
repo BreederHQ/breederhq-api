@@ -450,7 +450,9 @@ export async function resolveActorContext(
     }
 
     case "MARKETPLACE": {
-      // MARKETPLACE requires valid session AND MARKETPLACE_ACCESS entitlement
+      // MARKETPLACE requires valid session AND one of:
+      // 1. MARKETPLACE_ACCESS entitlement (standalone marketplace users)
+      // 2. Any STAFF membership (platform subscribers get marketplace by policy)
       // No tenant context required
 
       // SuperAdmin bypasses entitlement check
@@ -458,18 +460,106 @@ export async function resolveActorContext(
         return { context: "PUBLIC", tenantId: null };
       }
 
-      // Check for MARKETPLACE_ACCESS entitlement
+      // Check for MARKETPLACE_ACCESS entitlement (explicit grant)
       const hasMarketplaceAccess = await hasActiveEntitlement(userId, "MARKETPLACE_ACCESS");
       if (hasMarketplaceAccess) {
         return { context: "PUBLIC", tenantId: null };
       }
 
-      // No entitlement → deny access to marketplace surface
+      // Platform subscribers (users with any STAFF membership) get marketplace access by policy
+      const staffMemberships = await getStaffMemberships(userId);
+      if (staffMemberships.length > 0) {
+        return { context: "PUBLIC", tenantId: null };
+      }
+
+      // No entitlement and no staff membership → deny access to marketplace surface
       return null;
     }
 
     default:
       return null;
+  }
+}
+
+// ---------- Portal Party Scope Helper ----------
+
+/**
+ * Portal party scope context returned by requireClientPartyScope.
+ * Guarantees that the request is from an authenticated CLIENT with a valid partyId.
+ */
+export interface ClientPartyScope {
+  tenantId: number;
+  userId: string;
+  partyId: number;
+}
+
+/**
+ * Require CLIENT party scope for portal endpoints.
+ * Enforces that:
+ * - User is authenticated
+ * - ActorContext is CLIENT
+ * - User has ACTIVE CLIENT membership to the tenant
+ * - Membership has a valid partyId
+ *
+ * Throws 401/403 if requirements not met.
+ * Returns { tenantId, userId, partyId } for use in data queries.
+ *
+ * Usage in routes:
+ *   const { tenantId, partyId, userId } = await requireClientPartyScope(req);
+ *   // Use partyId to filter queries
+ */
+export async function requireClientPartyScope(req: FastifyRequest): Promise<ClientPartyScope> {
+  // Check userId from session
+  const userId = (req as any).userId;
+  if (!userId) {
+    throw { statusCode: 401, error: "unauthorized", detail: "no_session" };
+  }
+
+  // Check tenantId from context
+  const tenantId = Number((req as any).tenantId);
+  if (!tenantId || isNaN(tenantId)) {
+    throw { statusCode: 403, error: "forbidden", detail: "no_tenant_context" };
+  }
+
+  // Check actorContext is CLIENT
+  const actorContext = (req as any).actorContext;
+  if (actorContext !== "CLIENT") {
+    throw { statusCode: 403, error: "forbidden", detail: "not_client_context" };
+  }
+
+  // Fetch CLIENT membership with partyId
+  try {
+    const membership = await (prisma as any).tenantMembership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: {
+        membershipRole: true,
+        membershipStatus: true,
+        partyId: true,
+      },
+    });
+
+    // Verify CLIENT role and ACTIVE status
+    if (!membership || membership.membershipRole !== "CLIENT" || membership.membershipStatus !== "ACTIVE") {
+      throw { statusCode: 403, error: "forbidden", detail: "invalid_client_membership" };
+    }
+
+    // Verify partyId exists
+    if (!membership.partyId) {
+      throw { statusCode: 403, error: "forbidden", detail: "no_party_id" };
+    }
+
+    return {
+      tenantId,
+      userId,
+      partyId: membership.partyId,
+    };
+  } catch (err: any) {
+    // Re-throw our custom errors
+    if (err.statusCode) {
+      throw err;
+    }
+    // Database error
+    throw { statusCode: 500, error: "internal_error", detail: "membership_lookup_failed" };
   }
 }
 

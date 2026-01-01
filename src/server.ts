@@ -59,6 +59,9 @@ await app.register(cookie, {
 });
 
 // ---------- Rate limit (opt-in per route) ----------
+// IMPORTANT: Uses in-memory store by default. For production with multiple API instances,
+// configure a shared store (Redis) to enforce rate limits across all instances.
+// See: https://github.com/fastify/fastify-rate-limit#custom-store
 await app.register(rateLimit, {
   global: false,
   ban: 2,
@@ -442,6 +445,7 @@ import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
+import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
 
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
@@ -723,6 +727,7 @@ app.register(
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
+    api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     if (MARKETPLACE_PUBLIC_ENABLED) {
@@ -730,6 +735,16 @@ app.register(
     }
   },
   { prefix: "/api/v1" }
+);
+// ---------- API v1/public: public marketplace subtree ----------
+// Authoritative prefix for public marketplace routes
+app.register(
+  async (api) => {
+    if (MARKETPLACE_PUBLIC_ENABLED) {
+      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
+    }
+  },
+  { prefix: "/api/v1/public" }
 );
 
 // ---------- Not Found ----------

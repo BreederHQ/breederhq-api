@@ -445,6 +445,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archived: true,
         createdAt: true,
         updatedAt: true,
+        femaleCycleLenOverrideDays: true,
       },
     });
     if (!rec) return reply.code(404).send({ error: "not_found" });
@@ -632,6 +633,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       archived: boolean;
       photoUrl: string | null;
+      femaleCycleLenOverrideDays: number | null;
     }>;
 
 
@@ -687,6 +689,29 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // Cycle Length Override v1: Validate femaleCycleLenOverrideDays
+    if (b.femaleCycleLenOverrideDays !== undefined) {
+      const value = b.femaleCycleLenOverrideDays;
+      // Allow null to clear override
+      if (value !== null) {
+        // Must be an integer
+        if (!Number.isInteger(value)) {
+          return reply.code(400).send({
+            error: "invalid_cycle_len_override",
+            detail: "must be an integer between 30 and 730 days"
+          });
+        }
+        // Range validation: 30-730 days
+        if (value < 30 || value > 730) {
+          return reply.code(400).send({
+            error: "invalid_cycle_len_override",
+            detail: "must be an integer between 30 and 730 days"
+          });
+        }
+      }
+      data.femaleCycleLenOverrideDays = value;
+    }
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -710,6 +735,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          femaleCycleLenOverrideDays: true,
         },
       });
       reply.send(updated);

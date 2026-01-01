@@ -19,12 +19,14 @@ import {
 } from "../utils/public-tenant-resolver.js";
 import {
   toPublicProgramDTO,
+  toPublicProgramSummaryDTO,
   toPublicOffspringGroupListingDTO,
   toPublicOffspringDTO,
   toPublicAnimalListingDTO,
   toOffspringGroupSummaryDTO,
   toAnimalListingSummaryDTO,
   type PublicListingSummaryDTO,
+  type PublicProgramSummaryDTO,
 } from "../utils/public-dto.js";
 
 // ============================================================================
@@ -42,6 +44,181 @@ function parsePaging(q: any) {
 // ============================================================================
 
 const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // --------------------------------------------------------------------------
+  // GET /me - Current user's marketplace access info
+  // --------------------------------------------------------------------------
+  // Returns:
+  // - userId: the authenticated user's ID
+  // - actorContext: the resolved actor context (PUBLIC for marketplace surface)
+  // - entitlements: list of user's explicit entitlements
+  // - marketplaceEntitled: true if user can access marketplace (either by entitlement or policy)
+  // - entitlementSource: "ENTITLEMENT" | "STAFF_POLICY" | "SUPER_ADMIN"
+  //
+  // This endpoint is for UI gating and debugging - it lets the frontend know
+  // whether the user is entitled and why.
+  // --------------------------------------------------------------------------
+  app.get("/me", async (req, reply) => {
+    const userId = (req as any).userId;
+    const actorContext = (req as any).actorContext;
+    const surface = (req as any).surface;
+
+    if (!userId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    // Fetch user info and entitlements
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        isSuperAdmin: true,
+      } as any,
+    }) as any;
+
+    if (!user) {
+      return reply.code(401).send({ error: "user_not_found" });
+    }
+
+    // Fetch explicit entitlements
+    let entitlements: Array<{ key: string; status: string; grantedAt: Date }> = [];
+    try {
+      const rows = await (prisma as any).userEntitlement.findMany({
+        where: { userId },
+        select: { key: true, status: true, grantedAt: true },
+      });
+      entitlements = rows || [];
+    } catch {
+      // UserEntitlement table may not exist yet
+    }
+
+    // Check explicit MARKETPLACE_ACCESS entitlement
+    const hasExplicitEntitlement = entitlements.some(
+      (e) => e.key === "MARKETPLACE_ACCESS" && e.status === "ACTIVE"
+    );
+
+    // Check STAFF memberships (for policy-based entitlement)
+    let hasStaffMembership = false;
+    try {
+      const memberships = await (prisma as any).tenantMembership.findMany({
+        where: {
+          userId,
+          membershipRole: "STAFF",
+          membershipStatus: "ACTIVE",
+        },
+        select: { tenantId: true },
+        take: 1,
+      });
+      hasStaffMembership = (memberships?.length ?? 0) > 0;
+    } catch {
+      // Fallback for schema without new fields
+      try {
+        const memberships = await (prisma as any).tenantMembership.findMany({
+          where: { userId },
+          select: { tenantId: true },
+          take: 1,
+        });
+        hasStaffMembership = (memberships?.length ?? 0) > 0;
+      } catch {
+        // No memberships table
+      }
+    }
+
+    // Determine entitlement source
+    let entitlementSource: "SUPER_ADMIN" | "ENTITLEMENT" | "STAFF_POLICY" | null = null;
+    let marketplaceEntitled = false;
+
+    if (user.isSuperAdmin) {
+      marketplaceEntitled = true;
+      entitlementSource = "SUPER_ADMIN";
+    } else if (hasExplicitEntitlement) {
+      marketplaceEntitled = true;
+      entitlementSource = "ENTITLEMENT";
+    } else if (hasStaffMembership) {
+      marketplaceEntitled = true;
+      entitlementSource = "STAFF_POLICY";
+    }
+
+    return reply.send({
+      userId: user.id,
+      email: user.email,
+      name: user.name || null,
+      actorContext,
+      surface,
+      entitlements: entitlements.map((e) => ({
+        key: e.key,
+        status: e.status,
+        grantedAt: e.grantedAt,
+      })),
+      marketplaceEntitled,
+      entitlementSource,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /programs - Public programs index (search/browse)
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      location?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/programs", async (req, reply) => {
+    const { search, species, breed, location } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause
+    const where: any = {
+      isPublicProgram: true,
+      programSlug: { not: null },
+    };
+
+    // Search filter - case insensitive name match
+    if (search && search.trim()) {
+      where.name = { contains: search.trim(), mode: "insensitive" };
+    }
+
+    // Location filter - match city, state, or country
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.OR = [
+        { city: { contains: locationTerm, mode: "insensitive" } },
+        { state: { contains: locationTerm, mode: "insensitive" } },
+        { country: { contains: locationTerm, mode: "insensitive" } },
+      ];
+    }
+
+    // Species and breed filters not implemented yet (would require animal aggregation)
+    // Accept params without error but ignore for now
+
+    const [programs, total] = await Promise.all([
+      prisma.organization.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        orderBy: { name: "asc" },
+        select: {
+          programSlug: true,
+          name: true,
+          city: true,
+          state: true,
+          country: true,
+        },
+      }),
+      prisma.organization.count({ where }),
+    ]);
+
+    const items: PublicProgramSummaryDTO[] = programs.map(toPublicProgramSummaryDTO);
+
+    return reply.send({ items, total });
+  });
+
   // --------------------------------------------------------------------------
   // GET /programs/:programSlug - Public program profile
   // --------------------------------------------------------------------------

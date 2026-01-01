@@ -3,6 +3,7 @@ import type { FastifyPluginCallback } from "fastify";
 import prisma from "../prisma.js";
 import { WaitlistStatus } from "@prisma/client";
 import { Species } from "@prisma/client";
+import { requireClientPartyScope } from "../middleware/actor-context.js";
 
 /* ───────── helpers ───────── */
 
@@ -76,6 +77,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
    * (Global parking-lot by default; you can pass other filters, but FE uses parking lot.)
    */
   app.get("/waitlist", async (req, reply) => {
+    const actorContext = (req as any).actorContext;
     const tenantId = (req as any).tenantId as number;
     const q = String((req.query as any)["q"] ?? "").trim();
     const status = String((req.query as any)["status"] ?? "").trim();
@@ -100,6 +102,12 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         : null),
     };
 
+    // PORTAL CLIENT: Enforce party scope - only show their waitlist entries
+    if (actorContext === "CLIENT") {
+      const { partyId } = await requireClientPartyScope(req);
+      where.clientPartyId = partyId;
+    }
+
     const rows = await prisma.waitlistEntry.findMany({
       where,
       orderBy: [{ depositPaidAt: "desc" }, { createdAt: "asc" }, { id: "asc" }],
@@ -123,11 +131,20 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
    * GET /api/v1/waitlist/:id
    */
   app.get("/waitlist/:id", async (req, reply) => {
+    const actorContext = (req as any).actorContext;
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
 
+    const where: any = { id, tenantId };
+
+    // PORTAL CLIENT: Enforce party scope - only show their waitlist entry
+    if (actorContext === "CLIENT") {
+      const { partyId } = await requireClientPartyScope(req);
+      where.clientPartyId = partyId;
+    }
+
     const w = await prisma.waitlistEntry.findFirst({
-      where: { id, tenantId },
+      where,
       include: {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
