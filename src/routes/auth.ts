@@ -506,7 +506,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   });
 
   // POST /reset-password  { token, password }
-  app.post("/reset-password", async (req, reply) => {
+  app.post("/reset-password", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
     const { token = "", password = "" } = (req.body || {}) as { token?: string; password?: string };
     const pw = String(password);
     if (!token || !pw) return reply.code(400).send({ error: "token_and_password_required" });

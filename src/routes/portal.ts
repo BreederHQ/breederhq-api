@@ -323,7 +323,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           userId: result.userId,
           tenantId,
           surface: "PORTAL",
-          detail: { tenantSlug, isNewUser: result.isNewUser, inviteId: invite.id },
+          detail: { tenantSlug, isNewUser: result.isNewUser, inviteId: invite.id, partyId },
         });
 
         return reply.send({ ok: true, tenantSlug });
