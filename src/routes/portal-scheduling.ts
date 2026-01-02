@@ -3,6 +3,7 @@
 // All endpoints enforce requireClientPartyScope for party-based data isolation
 //
 // Endpoints:
+// GET  /api/v1/portal/scheduling/offspring-groups/:offspringGroupId/events - Discovery: list bookable events
 // GET  /api/v1/portal/scheduling/events/:eventId         - Get event context, rules, and status
 // GET  /api/v1/portal/scheduling/events/:eventId/slots   - List available slots
 // POST /api/v1/portal/scheduling/events/:eventId/book    - Book a slot (atomic)
@@ -64,6 +65,23 @@ interface SchedulingEventResponse {
   context: SchedulingEventContext;
   rules: BookingRules;
   eventStatus: SchedulingEventStatus;
+}
+
+// Discovery endpoint response
+interface DiscoveryEventItem {
+  eventId: string;
+  eventType: string;
+  label: string;
+  mode: "in_person" | "virtual" | "mixed" | null;
+  locationSummary: string | null;
+  bookingRules: BookingRules;
+  existingBooking: ConfirmedBooking | null;
+}
+
+interface DiscoveryResponse {
+  offspringGroupId: number;
+  offspringGroupName: string | null;
+  events: DiscoveryEventItem[];
 }
 
 // ---------- Helpers ----------
@@ -143,9 +161,141 @@ function formatConfirmedBooking(booking: any): ConfirmedBooking {
   };
 }
 
+/**
+ * Check if a party is eligible to book scheduling for an offspring group.
+ * Eligibility is based on OffspringGroupBuyer linkage.
+ */
+async function isPartyEligibleForGroup(tenantId: number, partyId: number, offspringGroupId: number): Promise<boolean> {
+  const buyerLink = await prisma.offspringGroupBuyer.findFirst({
+    where: {
+      tenantId,
+      groupId: offspringGroupId,
+      buyerPartyId: partyId,
+    },
+  });
+  return !!buyerLink;
+}
+
+/**
+ * Check if a party is eligible for a specific block (via offspringGroupId).
+ * If block has no offspringGroupId, it's open to all portal parties.
+ */
+async function isPartyEligibleForBlock(tenantId: number, partyId: number, block: any): Promise<boolean> {
+  if (!block.offspringGroupId) {
+    // No offspring group restriction - open to all
+    return true;
+  }
+  return isPartyEligibleForGroup(tenantId, partyId, block.offspringGroupId);
+}
+
 // ---------- Routes ----------
 
 const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  /**
+   * GET /api/v1/portal/scheduling/offspring-groups/:offspringGroupId/events
+   * Discovery endpoint: lists bookable scheduling events for an offspring group.
+   * Party must be linked as a buyer (OffspringGroupBuyer) to access.
+   */
+  app.get<{ Params: { offspringGroupId: string } }>(
+    "/portal/scheduling/offspring-groups/:offspringGroupId/events",
+    async (req, reply) => {
+      try {
+        const { tenantId, partyId } = await requireClientPartyScope(req);
+        const offspringGroupId = parseInt(req.params.offspringGroupId, 10);
+
+        if (isNaN(offspringGroupId)) {
+          return reply.code(400).send({ error: "invalid_offspring_group_id" });
+        }
+
+        // 1. Verify offspring group exists and belongs to tenant
+        const group = await prisma.offspringGroup.findFirst({
+          where: { id: offspringGroupId, tenantId },
+          select: { id: true, name: true },
+        });
+
+        if (!group) {
+          return reply.code(404).send({ error: "offspring_group_not_found" });
+        }
+
+        // 2. Verify party is eligible (linked as buyer)
+        const isEligible = await isPartyEligibleForGroup(tenantId, partyId, offspringGroupId);
+        if (!isEligible) {
+          return reply.code(403).send({ error: "not_eligible", message: "You are not authorized to view scheduling for this group." });
+        }
+
+        // 3. Find all OPEN blocks linked to this offspring group
+        const blocks = await prisma.schedulingAvailabilityBlock.findMany({
+          where: {
+            tenantId,
+            offspringGroupId,
+            status: "OPEN",
+          },
+          include: {
+            template: { select: { id: true, name: true, eventType: true, canCancel: true, canReschedule: true, cancellationDeadlineHours: true, rescheduleDeadlineHours: true } },
+            slots: { where: { status: "AVAILABLE", startsAt: { gt: new Date() } }, take: 1, select: { mode: true, location: true } },
+          },
+        });
+
+        // 4. For each block, check for existing booking and build response
+        const events: DiscoveryEventItem[] = [];
+
+        for (const block of blocks) {
+          const eventId = `block:${block.id}`;
+
+          // Check for existing booking
+          const existingBooking = await prisma.schedulingBooking.findFirst({
+            where: {
+              tenantId,
+              partyId,
+              eventId,
+              status: "CONFIRMED",
+            },
+            include: { slot: true },
+          });
+
+          // Determine mode from slots or block
+          let mode: "in_person" | "virtual" | "mixed" | null = null;
+          const sampleSlot = block.slots[0];
+          if (sampleSlot) {
+            mode = mapSlotMode(sampleSlot.mode);
+          }
+
+          // Build rules (block overrides template)
+          const rules: BookingRules = {
+            canCancel: block.canCancel ?? block.template?.canCancel ?? true,
+            canReschedule: block.canReschedule ?? block.template?.canReschedule ?? true,
+            cancellationDeadlineHours: block.cancellationDeadlineHours ?? block.template?.cancellationDeadlineHours ?? null,
+            rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? block.template?.rescheduleDeadlineHours ?? null,
+          };
+
+          events.push({
+            eventId,
+            eventType: block.template?.eventType ?? "Appointment",
+            label: block.template?.name ?? "Availability",
+            mode,
+            locationSummary: block.location ?? sampleSlot?.location ?? null,
+            bookingRules: rules,
+            existingBooking: existingBooking ? formatConfirmedBooking(existingBooking) : null,
+          });
+        }
+
+        const response: DiscoveryResponse = {
+          offspringGroupId,
+          offspringGroupName: group.name,
+          events,
+        };
+
+        return reply.send(response);
+      } catch (err: any) {
+        if (err.statusCode) {
+          return reply.code(err.statusCode).send({ error: err.error });
+        }
+        req.log?.error?.({ err }, "Failed to discover scheduling events");
+        return reply.code(500).send({ error: "discovery_failed" });
+      }
+    }
+  );
+
   /**
    * GET /api/v1/portal/scheduling/events/:eventId
    * Returns event context, rules, and current booking status for the client
@@ -230,6 +380,16 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const eventStatus = block?.status ?? template?.status ?? "OPEN";
       const isOpen = eventStatus === "OPEN";
 
+      // Check eligibility based on offspringGroupId linkage
+      let isEligible = true;
+      let eligibilityReason: string | null = null;
+      if (block?.offspringGroupId) {
+        isEligible = await isPartyEligibleForBlock(tenantId, partyId, block);
+        if (!isEligible) {
+          eligibilityReason = "You are not authorized to book this appointment.";
+        }
+      }
+
       // Build response
       const response: SchedulingEventResponse = {
         context: {
@@ -244,8 +404,8 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         rules: effectiveRules,
         eventStatus: {
           isOpen,
-          isEligible: true, // For MVP, all portal clients are eligible
-          eligibilityReason: null,
+          isEligible,
+          eligibilityReason,
           hasExistingBooking: !!existingBooking,
           existingBooking: existingBooking ? formatConfirmedBooking(existingBooking) : null,
         },
@@ -374,6 +534,23 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         const parsed = parseEventId(eventId);
         if (!parsed) {
           return reply.code(400).send({ error: "invalid_event_id" });
+        }
+
+        // For block events, verify eligibility before booking
+        if (parsed.type === "block") {
+          const block = await prisma.schedulingAvailabilityBlock.findFirst({
+            where: { id: parsed.id, tenantId },
+            select: { id: true, offspringGroupId: true },
+          });
+          if (!block) {
+            return reply.code(404).send({ error: "event_not_found" });
+          }
+          if (block.offspringGroupId) {
+            const isEligible = await isPartyEligibleForBlock(tenantId, partyId, block);
+            if (!isEligible) {
+              return reply.code(403).send({ error: "not_eligible", message: "You are not authorized to book this appointment." });
+            }
+          }
         }
 
         // Atomic booking transaction
