@@ -114,7 +114,18 @@ async function main() {
     console.log(`  Using template: ${template.name}`);
   }
 
-  // Delete any existing blocks for this group (cleanup)
+  // Delete any existing test data for this group (cleanup)
+  // First delete bookings, then slots, then blocks (foreign key order)
+  await prisma.schedulingBooking.deleteMany({
+    where: {
+      tenantId: TENANT_ID,
+      slot: {
+        block: {
+          offspringGroupId: offspringGroup.id,
+        },
+      },
+    },
+  });
   await prisma.schedulingSlot.deleteMany({
     where: {
       block: {
@@ -305,25 +316,31 @@ async function main() {
   // 7. Simulate reschedule
   console.log("\nStep 7: Testing reschedule...\n");
 
-  const newSlot = await prisma.schedulingSlot.findFirst({
+  // Find two fresh slots for reschedule test (slots without any bookings from this party)
+  const freshSlots = await prisma.schedulingSlot.findMany({
     where: {
       tenantId: TENANT_ID,
       blockId: block.id,
       status: "AVAILABLE",
       startsAt: { gt: new Date() },
-      id: { not: booking.slotId },
+      // Exclude slots that already have bookings from this party
+      bookings: { none: { partyId } },
     },
     orderBy: { startsAt: "asc" },
+    take: 2,
   });
 
-  if (!newSlot) {
-    console.log("  No other slot available for reschedule test (skipping)");
+  if (freshSlots.length < 2) {
+    console.log("  Not enough fresh slots for reschedule test (skipping)");
   } else {
-    // Rebook and then reschedule
+    const rescheduleFromSlot = freshSlots[0];
+    const rescheduleToSlot = freshSlots[1];
+
+    // Book the first fresh slot
     const booking2 = await prisma.schedulingBooking.create({
       data: {
         tenantId: TENANT_ID,
-        slotId: availableSlot.id,
+        slotId: rescheduleFromSlot.id,
         partyId,
         eventId,
         status: "CONFIRMED",
@@ -333,7 +350,7 @@ async function main() {
     });
 
     await prisma.schedulingSlot.update({
-      where: { id: availableSlot.id },
+      where: { id: rescheduleFromSlot.id },
       data: { bookedCount: 1, status: "FULL" },
     });
 
@@ -347,7 +364,7 @@ async function main() {
 
       // Restore old slot
       await tx.schedulingSlot.update({
-        where: { id: availableSlot.id },
+        where: { id: rescheduleFromSlot.id },
         data: { bookedCount: 0, status: "AVAILABLE" },
       });
 
@@ -355,7 +372,7 @@ async function main() {
       const rescheduledBooking = await tx.schedulingBooking.create({
         data: {
           tenantId: TENANT_ID,
-          slotId: newSlot.id,
+          slotId: rescheduleToSlot.id,
           partyId,
           eventId,
           status: "CONFIRMED",
@@ -367,14 +384,14 @@ async function main() {
 
       // Update new slot
       await tx.schedulingSlot.update({
-        where: { id: newSlot.id },
+        where: { id: rescheduleToSlot.id },
         data: { bookedCount: 1, status: "FULL" },
       });
 
       return rescheduledBooking;
     });
 
-    console.log(`  Rescheduled from slot ${availableSlot.id} to ${newSlot.id}`);
+    console.log(`  Rescheduled from slot ${rescheduleFromSlot.id} to ${rescheduleToSlot.id}`);
   }
 
   // Summary
