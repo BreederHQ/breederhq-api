@@ -447,6 +447,7 @@ import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Man
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
+import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 
 // ---------- Feature Flags ----------
 const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
@@ -730,6 +731,7 @@ app.register(
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
+    api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     if (MARKETPLACE_PUBLIC_ENABLED) {
