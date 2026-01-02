@@ -449,8 +449,6 @@ import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 
-// ---------- Feature Flags ----------
-const MARKETPLACE_PUBLIC_ENABLED = process.env.MARKETPLACE_PUBLIC_ENABLED === "true";
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
 declare module "fastify" {
@@ -734,9 +732,7 @@ app.register(
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
-    if (MARKETPLACE_PUBLIC_ENABLED) {
-      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
-    }
+    api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
   },
   { prefix: "/api/v1" }
 );
@@ -744,9 +740,7 @@ app.register(
 // Authoritative prefix for public marketplace routes
 app.register(
   async (api) => {
-    if (MARKETPLACE_PUBLIC_ENABLED) {
-      api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
-    }
+    api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
   },
   { prefix: "/api/v1/public" }
 );
