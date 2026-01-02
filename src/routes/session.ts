@@ -64,7 +64,7 @@ async function fetchUserBasic(userId: string) {
       // @ts-ignore
       defaultTenantId: true,
       // @ts-ignore
-      tenantMemberships: { select: { tenantId: true, role: true }, orderBy: { tenantId: "asc" } },
+      tenantMemberships: { select: { tenantId: true, role: true, membershipRole: true, membershipStatus: true }, orderBy: { tenantId: "asc" } },
     } as any,
   }) as any as (ResolvedUser & { id: string }) | null;
 }
@@ -167,7 +167,12 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
     return reply.send({
       user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
       tenant,
-      memberships: (user.tenantMemberships ?? []).map((m) => ({ tenantId: m.tenantId, role: m.role ?? null })),
+      memberships: (user.tenantMemberships ?? []).map((m) => ({
+        tenantId: m.tenantId,
+        role: m.role ?? null,
+        membershipRole: (m as any).membershipRole ?? null,
+        membershipStatus: (m as any).membershipStatus ?? null,
+      })),
     });
   });
 
