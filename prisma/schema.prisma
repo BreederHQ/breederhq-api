@@ -610,6 +610,12 @@ model Tenant {
   portalAccesses         PortalAccess[]  @relation("PortalAccessTenant")
   portalInvites          PortalInvite[]  @relation("PortalInviteTenant")
 
+  // Scheduling
+  schedulingEventTemplates      SchedulingEventTemplate[]
+  schedulingAvailabilityBlocks  SchedulingAvailabilityBlock[]
+  schedulingSlots               SchedulingSlot[]
+  schedulingBookings            SchedulingBooking[]
+
   @@index([name])
 }
 
@@ -756,6 +762,7 @@ model Party {
   autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
   portalAccess         PortalAccess?              @relation("PortalAccessParty")
   portalInvites        PortalInvite[]             @relation("PortalInviteParty")
+  schedulingBookings   SchedulingBooking[]        @relation("SchedulingBookingParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -1706,6 +1713,7 @@ model Offspring {
   CampaignAttribution CampaignAttribution[]
   OffspringDocument   OffspringDocument[]
   OffspringContract   OffspringContract[]
+  schedulingEventTemplates SchedulingEventTemplate[]
 
   @@index([tenantId])
   @@index([groupId])
@@ -3297,4 +3305,226 @@ model AuditEvent {
   @@index([userId, createdAt])
   @@index([tenantId, createdAt])
   @@index([action, createdAt])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Scheduling System
+ * Client-facing appointment booking (e.g., pickup, meet & greet, vet visits)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum SchedulingEventStatus {
+  DRAFT      // Not yet published
+  OPEN       // Accepting bookings
+  CLOSED     // No longer accepting bookings
+  CANCELLED  // Event cancelled
+}
+
+enum SchedulingSlotStatus {
+  AVAILABLE  // Open for booking
+  FULL       // Capacity reached
+  CANCELLED  // Slot cancelled
+}
+
+enum SchedulingSlotMode {
+  IN_PERSON
+  VIRTUAL
+}
+
+enum SchedulingBookingStatus {
+  CONFIRMED
+  CANCELLED
+  RESCHEDULED
+  NO_SHOW
+}
+
+/**
+ * SchedulingEventTemplate - Reusable event configuration
+ * Optional for MVP but provides future flexibility for recurring events
+ */
+model SchedulingEventTemplate {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String             // e.g., "Pickup Appointment", "Meet and Greet"
+  eventType   String             // e.g., "pickup", "meet_greet", "vet_visit"
+  description String?            @db.Text
+  status      SchedulingEventStatus @default(DRAFT)
+
+  // Booking rules (can be overridden per slot block)
+  defaultDurationMinutes  Int     @default(60)
+  defaultCapacity         Int     @default(1)
+  canCancel               Boolean @default(true)
+  canReschedule           Boolean @default(true)
+  cancellationDeadlineHours Int?
+  rescheduleDeadlineHours   Int?
+
+  // Optional next steps text shown after booking
+  nextStepsText String? @db.Text
+
+  // Subject context (what this event is about)
+  // Links to offspring, placement, agreement, or transaction
+  subjectType String?  // "offspring" | "placement" | "agreement" | "transaction"
+  offspringId Int?
+  offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
+
+  // Audit
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  availabilityBlocks SchedulingAvailabilityBlock[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, eventType])
+  @@index([offspringId])
+}
+
+/**
+ * SchedulingAvailabilityBlock - A time block containing multiple slots
+ * Represents a period during which the breeder is available for appointments
+ */
+model SchedulingAvailabilityBlock {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Optional template reference (can create ad-hoc blocks without template)
+  templateId Int?
+  template   SchedulingEventTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  // Time range
+  startAt  DateTime
+  endAt    DateTime
+  timezone String   @default("America/New_York") @db.VarChar(64)
+
+  // Status
+  status SchedulingEventStatus @default(OPEN)
+
+  // Override rules from template
+  canCancel               Boolean?
+  canReschedule           Boolean?
+  cancellationDeadlineHours Int?
+  rescheduleDeadlineHours   Int?
+  nextStepsText           String? @db.Text
+
+  // Location for in-person slots in this block
+  location String? @db.Text
+
+  // Audit
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  slots SchedulingSlot[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, startAt])
+  @@index([templateId])
+}
+
+/**
+ * SchedulingSlot - Individual bookable time slot
+ */
+model SchedulingSlot {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Parent block
+  blockId Int
+  block   SchedulingAvailabilityBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  // Time range (UTC)
+  startsAt DateTime
+  endsAt   DateTime
+
+  // Capacity
+  capacity    Int @default(1)
+  bookedCount Int @default(0)
+
+  // Status (computed from bookedCount vs capacity)
+  status SchedulingSlotStatus @default(AVAILABLE)
+
+  // Mode and location
+  mode     SchedulingSlotMode?
+  location String?             @db.Text
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  bookings SchedulingBooking[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, startsAt])
+  @@index([blockId])
+  @@index([blockId, startsAt])
+}
+
+/**
+ * SchedulingBooking - A confirmed booking for a slot
+ * Links a party (client) to a slot
+ */
+model SchedulingBooking {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Slot reference
+  slotId Int
+  slot   SchedulingSlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
+  // Party (the client making the booking)
+  partyId Int
+  party   Party @relation("SchedulingBookingParty", fields: [partyId], references: [id], onDelete: Cascade)
+
+  // Event context (denormalized for query convenience)
+  // eventId is the templateId or blockId (or synthetic ID for ad-hoc)
+  eventId String @db.VarChar(64)
+
+  // Status
+  status SchedulingBookingStatus @default(CONFIRMED)
+
+  // Timestamps
+  bookedAt     DateTime  @default(now())
+  cancelledAt  DateTime?
+  rescheduledAt DateTime?
+
+  // Notes from client or breeder
+  clientNotes  String? @db.Text
+  breederNotes String? @db.Text
+
+  // Next steps text (copied from template/block at booking time)
+  nextSteps String? @db.Text
+
+  // Rescheduling linkage
+  rescheduledFromId Int?
+  rescheduledFrom   SchedulingBooking?  @relation("RescheduledBooking", fields: [rescheduledFromId], references: [id], onDelete: SetNull)
+  rescheduledTo     SchedulingBooking[] @relation("RescheduledBooking")
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Unique constraint: one booking per slot per party
+  @@unique([slotId, partyId])
+  // Unique constraint: one active booking per event per party
+  // (enforced in application layer - can't have @@unique with status filter)
+
+  @@index([tenantId])
+  @@index([tenantId, partyId])
+  @@index([tenantId, eventId])
+  @@index([slotId])
+  @@index([partyId])
+  @@index([eventId, partyId])
+  @@index([status])
 }
