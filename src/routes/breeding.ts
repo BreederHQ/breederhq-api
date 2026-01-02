@@ -947,6 +947,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             if (!b.hasOwnProperty("expectedBirthDate")) data.expectedBirthDate = lockNorm.lockedDueDate;
             if (!b.hasOwnProperty("expectedPlacementStart"))
               data.expectedPlacementStart = lockNorm.lockedPlacementStartDate;
+            // Safeguard: preserve expectedWeaned and expectedPlacementCompleted unless explicitly provided
+            if (!b.hasOwnProperty("expectedWeaned") && !b.hasOwnProperty("expectedPlacementCompleted")) {
+              // Don't modify these fields if not explicitly provided in update payload
+              delete (data as any).expectedWeaned;
+              delete (data as any).expectedPlacementCompleted;
+            }
           }
         }
       } catch (e) {

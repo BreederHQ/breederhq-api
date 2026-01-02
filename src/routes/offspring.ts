@@ -2702,6 +2702,138 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.send(out);
     }
   );
+
+  // --------------------------------------------------------------------------
+  // Marketplace Listing Control Endpoints
+  // --------------------------------------------------------------------------
+
+  // POST /offspring/groups/:groupId/marketplace/publish
+  // Publish entire group with default price, marking all eligible offspring as listed
+  app.post<{
+    Params: { groupId: string };
+    Body: { marketplaceDefaultPriceCents?: number | null }
+  }>(
+    "/offspring/groups/:groupId/marketplace/publish",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const groupId = Number(req.params.groupId);
+      const { marketplaceDefaultPriceCents } = req.body;
+
+      // Verify group exists and belongs to tenant
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        include: { Offspring: { where: { lifeState: "ALIVE" } } },
+      });
+
+      if (!group) {
+        return reply.code(404).send({ error: "group_not_found" });
+      }
+
+      // Update group with default price
+      await prisma.offspringGroup.update({
+        where: { id: groupId },
+        data: { marketplaceDefaultPriceCents: marketplaceDefaultPriceCents ?? null },
+      });
+
+      // Mark all eligible offspring as listed (alive offspring only)
+      const eligibleOffspringIds = group.Offspring.map((o) => o.id);
+      if (eligibleOffspringIds.length > 0) {
+        await prisma.offspring.updateMany({
+          where: { id: { in: eligibleOffspringIds } },
+          data: { marketplaceListed: true },
+        });
+      }
+
+      reply.send({
+        ok: true,
+        groupId,
+        defaultPriceCents: marketplaceDefaultPriceCents ?? null,
+        listedCount: eligibleOffspringIds.length
+      });
+    }
+  );
+
+  // POST /offspring/groups/:groupId/marketplace/unpublish
+  // Unpublish entire group, marking all offspring as not listed
+  app.post<{ Params: { groupId: string } }>(
+    "/offspring/groups/:groupId/marketplace/unpublish",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const groupId = Number(req.params.groupId);
+
+      // Verify group exists and belongs to tenant
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+      });
+
+      if (!group) {
+        return reply.code(404).send({ error: "group_not_found" });
+      }
+
+      // Remove default price from group
+      await prisma.offspringGroup.update({
+        where: { id: groupId },
+        data: { marketplaceDefaultPriceCents: null },
+      });
+
+      // Mark all offspring as not listed
+      await prisma.offspring.updateMany({
+        where: { groupId },
+        data: { marketplaceListed: false },
+      });
+
+      reply.send({ ok: true, groupId });
+    }
+  );
+
+  // PATCH /offspring/:offspringId/marketplace
+  // Update individual offspring listing status and price
+  app.patch<{
+    Params: { offspringId: string };
+    Body: { marketplaceListed?: boolean; marketplacePriceCents?: number | null }
+  }>(
+    "/offspring/:offspringId/marketplace",
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId as number;
+      const offspringId = Number(req.params.offspringId);
+      const { marketplaceListed, marketplacePriceCents } = req.body;
+
+      // Verify offspring exists and belongs to tenant
+      const offspring = await prisma.offspring.findFirst({
+        where: { id: offspringId, tenantId },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "offspring_not_found" });
+      }
+
+      // Build update data
+      const updateData: any = {};
+      if (typeof marketplaceListed === "boolean") {
+        updateData.marketplaceListed = marketplaceListed;
+      }
+      if (marketplacePriceCents !== undefined) {
+        updateData.marketplacePriceCents = marketplacePriceCents;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return reply.code(400).send({ error: "no_fields_to_update" });
+      }
+
+      // Update offspring
+      const updated = await prisma.offspring.update({
+        where: { id: offspringId },
+        data: updateData,
+      });
+
+      reply.send({
+        ok: true,
+        offspringId,
+        marketplaceListed: updated.marketplaceListed,
+        marketplacePriceCents: updated.marketplacePriceCents
+      });
+    }
+  );
 };
 
 export default offspringRoutes;
