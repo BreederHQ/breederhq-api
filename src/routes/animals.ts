@@ -322,6 +322,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          femaleCycleLenOverrideDays: true,
 
           reproductiveCycles: {
             select: { cycleStart: true },

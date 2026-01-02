@@ -271,3 +271,70 @@ curl -X PATCH http://localhost:3001/api/v1/animals/1 \
 - [ ] Error code is `invalid_cycle_len_override`
 - [ ] Error detail explains valid range
 - [ ] Updated value persists across GET requests
+
+---
+
+## Portal Document Downloads (Disabled)
+
+Document downloads are currently disabled in the client portal until file storage is properly configured.
+
+**Current Status:**
+- Portal documents list endpoint (`GET /api/v1/portal/documents`) works correctly
+- Download endpoint has been removed - returns "download affordance" when file storage not yet configured
+- Backend download endpoint exists at `/api/v1/portal/documents/:id/download` but returns 501 until storage implementation complete
+
+**Implementation Requirements (when storage is configured):**
+1. Verify party access via `Attachment -> OffspringDocument -> Offspring -> Group -> GroupBuyerLinks`
+2. Return 404 for out-of-scope access (party doesn't own document)
+3. Determine storage backend from `attachment.storageProvider` (S3, local, etc.)
+4. Fetch file using `attachment.storageKey`
+5. Stream file with `Content-Disposition: attachment; filename="<attachment.filename>"`
+6. Set `Content-Type` from `attachment.mime`
+7. Log download for audit trail
+
+---
+
+## Prisma Migration Discipline (v2)
+
+**Core Rules:**
+1. Never delete existing migrations that have been committed to git
+2. Always commit real migrations (those with actual SQL changes)
+3. Delete empty migrations before committing
+4. Keep database migration table in sync with git repository
+
+**Empty Migration Incident (2026-01-01):**
+
+During the marketplace offspring listing feature, an empty migration was accidentally created and committed:
+
+- `20260101185756_marketplace_offspring_listing` - Real migration (applied to database)
+- `20260101185814_marketplace_offspring_listing` - Empty migration (created 18 seconds later)
+
+**Root Cause:** Running `prisma migrate dev` twice in succession. The first run applied the schema changes, the second run detected no further changes and created an empty migration.
+
+**Resolution (Applied):**
+1. Deleted the empty migration directory from git repository
+2. Verified `npm run db:dev:status` and `npm run db:prod:status` both show 11 migrations, schema up to date
+3. No manual database intervention needed - Prisma migrate tooling handled state correctly
+
+**Critical Policy - Use Prisma Tooling Only:**
+
+**NEVER manually edit `_prisma_migrations` table.** Always use Prisma migrate commands:
+
+- **To mark a migration as applied:** `prisma migrate resolve --applied <migration_name>`
+- **To mark a migration as rolled back:** `prisma migrate resolve --rolled-back <migration_name>`
+- **To check status:** `npm run db:dev:status` or `npm run db:prod:status`
+- **To apply pending migrations:** `npm run db:prod:deploy` (production) or `npm run db:dev:migrate` (development)
+
+**If an empty migration is accidentally committed:**
+1. Delete the migration directory from git
+2. Check database status with `npm run db:dev:status`
+3. If Prisma reports the database is up to date, no further action needed
+4. If Prisma reports drift, use `prisma migrate resolve` commands, NOT raw SQL
+5. Document the resolution in this file
+
+**Prevention:** Before committing, always:
+1. Run `npm run db:dev:status` to verify all migrations are applied
+2. Check migration directories for empty `migration.sql` files (only comments, no DDL)
+3. Delete empty migrations immediately - do not commit them
+4. Only commit migrations with actual SQL DDL statements
+5. Never manually edit `_prisma_migrations` table - use Prisma tooling only
