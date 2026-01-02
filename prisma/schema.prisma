@@ -1585,6 +1585,7 @@ model OffspringGroup {
   Events          OffspringGroupEvent[]
   Attachment      Attachment[]
   groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerGroup")
+  schedulingBlocks SchedulingAvailabilityBlock[] @relation("GroupSchedulingBlocks")
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -3397,6 +3398,10 @@ model SchedulingAvailabilityBlock {
   templateId Int?
   template   SchedulingEventTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
+  // Optional offspring group link for buyer-specific scheduling
+  offspringGroupId Int?
+  offspringGroup   OffspringGroup? @relation("GroupSchedulingBlocks", fields: [offspringGroupId], references: [id], onDelete: SetNull)
+
   // Time range
   startAt  DateTime
   endAt    DateTime
@@ -3427,6 +3432,7 @@ model SchedulingAvailabilityBlock {
   @@index([tenantId, status])
   @@index([tenantId, startAt])
   @@index([templateId])
+  @@index([offspringGroupId])
 }
 
 /**
