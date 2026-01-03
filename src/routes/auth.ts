@@ -308,7 +308,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       tosPayload = validateTosAcceptancePayload(tosAcceptance);
     } catch (tosErr: any) {
       await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: tosErr.message, emailNorm: e });
-      return reply.code(400).send({ error: tosErr.message });
+      return reply.code(400).send({ code: tosErr.message });
     }
 
     const existing = await prisma.user.findUnique({

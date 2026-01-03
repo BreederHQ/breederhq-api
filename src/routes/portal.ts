@@ -155,7 +155,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tosPayload = validateTosAcceptancePayload(tosAcceptance);
         } catch (tosErr: any) {
           await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: tosErr.message }, { surface: "PORTAL" });
-          return reply.code(400).send({ error: tosErr.message });
+          return reply.code(400).send({ code: tosErr.message });
         }
         const tokenHash = sha256(token);
         const now = new Date();
@@ -398,7 +398,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         tosPayload = validateTosAcceptancePayload(tosAcceptance);
       } catch (tosErr: any) {
         await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: tosErr.message }, { surface: "PORTAL" });
-        return reply.code(400).send({ error: tosErr.message });
+        return reply.code(400).send({ code: tosErr.message });
       }
       // Inject into the new endpoint
       (req.params as any).token = token;
