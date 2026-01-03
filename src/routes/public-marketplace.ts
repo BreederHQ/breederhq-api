@@ -1,5 +1,9 @@
 // src/routes/public-marketplace.ts
-// Marketplace endpoints - authentication required via surface gate
+// Marketplace endpoints - authentication AND entitlement required
+//
+// SECURITY: All data endpoints in this file require:
+//   1. Valid session cookie (bhq_s) - enforced by middleware
+//   2. Marketplace entitlement - enforced by requireMarketplaceEntitlement() in each handler
 //
 // Access control:
 // - MARKETPLACE surface: requires session + MARKETPLACE_ACCESS entitlement → PUBLIC context
@@ -8,7 +12,7 @@
 //
 // All endpoints resolve tenant from program slug, not headers/session
 
-import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
 import { getTosStatus } from "../services/tos-service.js";
 import {
@@ -29,6 +33,93 @@ import {
   type PublicListingSummaryDTO,
   type PublicProgramSummaryDTO,
 } from "../utils/public-dto.js";
+
+// ============================================================================
+// Security: Entitlement enforcement helper
+// ============================================================================
+
+/**
+ * SECURITY: Require marketplace entitlement before returning any data.
+ *
+ * This is defense-in-depth - the surface gate middleware already checks entitlement,
+ * but we explicitly verify here to ensure no data leaks if middleware is bypassed.
+ *
+ * Returns true if entitled, sends 401/403 response and returns false otherwise.
+ * Callers MUST check return value and return early if false.
+ */
+async function requireMarketplaceEntitlement(
+  req: FastifyRequest,
+  reply: FastifyReply
+): Promise<boolean> {
+  const userId = (req as any).userId;
+
+  // No session = 401
+  if (!userId) {
+    reply.code(401).send({ error: "unauthorized", message: "Authentication required" });
+    return false;
+  }
+
+  // Check if user is entitled to marketplace
+  // Priority: superAdmin > explicit entitlement > staff membership
+
+  // 1. Check superAdmin
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isSuperAdmin: true } as any,
+  }) as any;
+
+  if (user?.isSuperAdmin) {
+    return true;
+  }
+
+  // 2. Check explicit MARKETPLACE_ACCESS entitlement
+  try {
+    const entitlement = await (prisma as any).userEntitlement.findUnique({
+      where: { userId_key: { userId, key: "MARKETPLACE_ACCESS" } },
+      select: { status: true },
+    });
+    if (entitlement?.status === "ACTIVE") {
+      return true;
+    }
+  } catch {
+    // Table may not exist - continue to staff check
+  }
+
+  // 3. Check STAFF membership (platform subscribers get marketplace by policy)
+  try {
+    const staffMembership = await (prisma as any).tenantMembership.findFirst({
+      where: {
+        userId,
+        membershipRole: "STAFF",
+        membershipStatus: "ACTIVE",
+      },
+      select: { tenantId: true },
+    });
+    if (staffMembership) {
+      return true;
+    }
+  } catch {
+    // Fallback for old schema
+    try {
+      const anyMembership = await (prisma as any).tenantMembership.findFirst({
+        where: { userId },
+        select: { tenantId: true },
+      });
+      if (anyMembership) {
+        return true;
+      }
+    } catch {
+      // No memberships table
+    }
+  }
+
+  // Not entitled = 403
+  reply.code(403).send({
+    error: "not_entitled",
+    message: "Marketplace access requires subscription or invitation"
+  });
+  return false;
+}
 
 // ============================================================================
 // Helper: parse pagination
@@ -162,7 +253,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /programs - Public programs index (search/browse)
+  // GET /programs - Programs index (search/browse) - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{
     Querystring: {
@@ -174,6 +265,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       offset?: string;
     };
   }>("/programs", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
     const { search, species, breed, location } = req.query;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
@@ -225,11 +319,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug - Public program profile
+  // GET /programs/:programSlug - Program profile - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{ Params: { programSlug: string } }>(
     "/programs/:programSlug",
     async (req, reply) => {
+      // SECURITY: Require entitlement before returning any data
+      if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
       const { programSlug } = req.params;
 
       if (!isValidSlug(programSlug)) {
@@ -261,12 +358,15 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   );
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/offspring-groups - List published offspring groups
+  // GET /programs/:programSlug/offspring-groups - List offspring groups - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{
     Params: { programSlug: string };
     Querystring: { species?: string; page?: string; limit?: string };
   }>("/programs/:programSlug/offspring-groups", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
     const { programSlug } = req.params;
     const { species } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
@@ -344,11 +444,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/offspring-groups/:listingSlug - Single listing detail
+  // GET /programs/:programSlug/offspring-groups/:listingSlug - Listing detail - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{ Params: { programSlug: string; listingSlug: string } }>(
     "/programs/:programSlug/offspring-groups/:listingSlug",
     async (req, reply) => {
+      // SECURITY: Require entitlement before returning any data
+      if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
       const { programSlug, listingSlug } = req.params;
 
       if (!isValidSlug(programSlug) || !isValidSlug(listingSlug)) {
@@ -437,12 +540,15 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   );
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/animals - List animal listings
+  // GET /programs/:programSlug/animals - List animal listings - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{
     Params: { programSlug: string };
     Querystring: { species?: string; page?: string; limit?: string };
   }>("/programs/:programSlug/animals", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
     const { programSlug } = req.params;
     const { species } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
@@ -505,11 +611,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/animals/:urlSlug - Single animal listing detail
+  // GET /programs/:programSlug/animals/:urlSlug - Single animal listing detail - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{ Params: { programSlug: string; urlSlug: string } }>(
     "/programs/:programSlug/animals/:urlSlug",
     async (req, reply) => {
+      // SECURITY: Require entitlement before returning any data
+      if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
       const { programSlug, urlSlug } = req.params;
 
       if (!isValidSlug(programSlug) || !isValidSlug(urlSlug)) {
@@ -594,7 +703,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   );
 
   // --------------------------------------------------------------------------
-  // POST /inquiries - Create marketplace inquiry
+  // POST /inquiries - Create marketplace inquiry - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.post<{
     Body: {
@@ -608,6 +717,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       guestEmail?: string;
     };
   }>("/inquiries", async (req, reply) => {
+    // SECURITY: Require entitlement before creating any inquiry
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
     const { programSlug, listingSlug, listingType, message, offspringId } = req.body;
 
     // Validate required fields
@@ -628,14 +740,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       return reply.code(404).send({ error: "program_not_found" });
     }
 
-    // For MVP: require authentication (no guest inquiries without rate limiting)
+    // userId is guaranteed to exist after requireMarketplaceEntitlement() check
     const userId = (req as any).userId;
-    if (!userId) {
-      return reply.code(401).send({
-        error: "authentication_required",
-        detail: "Guest inquiries are not supported in this version",
-      });
-    }
 
     // Get sender's party
     const user = await prisma.user.findUnique({
