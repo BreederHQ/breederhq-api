@@ -423,6 +423,28 @@ model User {
 
   // User entitlements (marketplace access, etc.)
   entitlements UserEntitlement[]
+
+  // Legal - Terms of Service acceptances
+  tosAcceptances TosAcceptance[]
+}
+
+/**
+ * TosAcceptance - Terms of Service acceptance records
+ * Stores a history of ToS acceptances for audit/compliance.
+ */
+model TosAcceptance {
+  id         Int      @id @default(autoincrement())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version    String   @db.VarChar(16)
+  acceptedAt DateTime @default(now())
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.Text
+  surface    String?  @db.VarChar(32) // marketplace, platform, portal
+  flow       String?  @db.VarChar(32) // register, invite_signup, portal_activate
+
+  @@index([userId])
+  @@index([version])
 }
 
 /**
@@ -1145,12 +1167,15 @@ model Tag {
   name        String
   module      TagModule
   color       String?
+  isArchived  Boolean         @default(false)
+  archivedAt  DateTime?
   assignments TagAssignment[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   @@unique([tenantId, module, name])
   @@index([tenantId, module])
+  @@index([tenantId, isArchived, module])
 }
 
 model TagAssignment {
@@ -1286,8 +1311,8 @@ model BreedingPlan {
   species   Species
   breedText String?
 
-  damId  Int
-  dam    Animal  @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
+  damId  Int?
+  dam    Animal?  @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
   sireId Int?
   sire   Animal? @relation("PlanSire", fields: [sireId], references: [id], onDelete: SetNull)
 
@@ -1540,8 +1565,8 @@ model OffspringGroup {
   linkReason OffspringLinkReason?
 
   species Species
-  damId   Int
-  dam     Animal  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
+  damId   Int?
+  dam     Animal?  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
   sireId  Int?
   sire    Animal? @relation("OffspringSire", fields: [sireId], references: [id], onDelete: SetNull)
   name    String?
@@ -1574,6 +1599,9 @@ model OffspringGroup {
   notes String?
   data  Json?
 
+  // Phase 6: Placement scheduling policy for scheduling fairness
+  placementSchedulingPolicy Json?
+
   // children as Offspring, not Animals
   Offspring Offspring[] @relation("GroupOffspring")
 
@@ -1589,6 +1617,7 @@ model OffspringGroup {
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  archivedAt DateTime?
   Invoice   Invoice[]
   Campaign  Campaign[]
   Task      Task[]
@@ -1622,6 +1651,9 @@ model OffspringGroupBuyer {
 
   waitlistEntryId Int?
   waitlistEntry   WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
+
+  // Phase 6: Placement rank for scheduling fairness (lower rank = earlier pick)
+  placementRank Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

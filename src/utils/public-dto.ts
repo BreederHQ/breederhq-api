@@ -1,6 +1,9 @@
 // src/utils/public-dto.ts
 // DTO projection functions for public marketplace endpoints
 // These functions strip PII and expose only safe fields
+//
+// SECURITY: All image URLs are transformed to auth-gated proxy URLs.
+// Direct CDN/storage URLs are NEVER exposed to marketplace clients.
 
 import type {
   Organization,
@@ -14,6 +17,7 @@ import type {
   AnimalTraitValue,
   TraitDefinition,
 } from "@prisma/client";
+import { toAssetUrl } from "../services/marketplace-assets.js";
 
 // ============================================================================
 // Public Program DTO
@@ -164,18 +168,21 @@ export function toPublicOffspringGroupListingDTO(
     dam: group.dam
       ? {
           name: group.dam.name,
-          photoUrl: group.dam.photoUrl || null,
+          // SECURITY: Transform to auth-gated asset URL
+          photoUrl: toAssetUrl(group.dam.photoUrl, "dam_photo"),
           breed: group.dam.breed || null,
         }
       : null,
     sire: group.sire
       ? {
           name: group.sire.name,
-          photoUrl: group.sire.photoUrl || null,
+          // SECURITY: Transform to auth-gated asset URL
+          photoUrl: toAssetUrl(group.sire.photoUrl, "sire_photo"),
           breed: group.sire.breed || null,
         }
       : null,
-    coverImageUrl: group.coverImageUrl || null,
+    // SECURITY: Transform to auth-gated asset URL
+    coverImageUrl: toAssetUrl(group.coverImageUrl, "offspring_group_cover"),
     priceRange,
     programSlug,
     programName,
@@ -326,7 +333,8 @@ export function toPublicAnimalListingDTO(
       sex: animal.sex,
       breed: animal.breed || null,
       birthDate: animal.birthDate?.toISOString().slice(0, 10) || null,
-      photoUrl: animal.photoUrl || null,
+      // SECURITY: Transform to auth-gated asset URL
+      photoUrl: toAssetUrl(animal.photoUrl, "animal_photo"),
       priceCents: animal.priceCents || null,
       registrations,
       traits: visibleTraits,
@@ -372,7 +380,8 @@ export function toOffspringGroupSummaryDTO(
     title: group.listingTitle || null,
     species: group.species,
     breed: group.dam?.breed || null,
-    photoUrl: group.coverImageUrl || null,
+    // SECURITY: Transform to auth-gated asset URL
+    photoUrl: toAssetUrl(group.coverImageUrl, "offspring_group_cover"),
     priceRange,
   };
 }
@@ -388,7 +397,8 @@ export function toAnimalListingSummaryDTO(
     title: listing.title || null,
     species: listing.animal.species,
     breed: listing.animal.breed || null,
-    photoUrl: listing.animal.photoUrl || null,
+    // SECURITY: Transform to auth-gated asset URL
+    photoUrl: toAssetUrl(listing.animal.photoUrl, "animal_photo"),
     priceRange: listing.animal.priceCents
       ? { min: listing.animal.priceCents, max: listing.animal.priceCents }
       : null,

@@ -11,6 +11,10 @@ import bcrypt from "bcryptjs";
 import prisma from "../prisma.js";
 import { setSessionCookies, Surface } from "../utils/session.js";
 import { auditSuccess, auditFailure } from "../services/audit.js";
+import {
+  validateTosAcceptancePayload,
+  writeTosAcceptance,
+} from "../services/tos-service.js";
 
 function sha256(input: string | Buffer): string {
   return createHash("sha256").update(input).digest("hex");
@@ -133,18 +137,26 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    *
    * Response: { ok: true, tenantSlug: string }
    */
-  app.post<{ Params: { token: string }; Body: { password?: string } }>(
+  app.post<{ Params: { token: string }; Body: { password?: string; tosAcceptance?: unknown } }>(
     "/portal/invites/:token/accept",
     { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
     async (req, reply) => {
       try {
         const { token } = req.params;
-        const { password } = req.body || {};
+        const { password, tosAcceptance } = req.body || {};
 
         if (!token || typeof token !== "string") {
           return reply.code(400).send({ error: "token_required" });
         }
 
+        // Validate ToS acceptance payload
+        let tosPayload;
+        try {
+          tosPayload = validateTosAcceptancePayload(tosAcceptance);
+        } catch (tosErr: any) {
+          await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: tosErr.message }, { surface: "PORTAL" });
+          return reply.code(400).send({ code: tosErr.message });
+        }
         const tokenHash = sha256(token);
         const now = new Date();
 
@@ -320,6 +332,9 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           return { userId, isNewUser };
         });
 
+        // Record ToS acceptance (server-side timestamp)
+        await writeTosAcceptance(result.userId, tosPayload, req);
+
         // Set session cookie (no tenantId - portal derives from URL slug)
         setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 
@@ -367,16 +382,24 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    * Legacy endpoint that accepts { token, password } in body.
    * Redirects to the new /portal/invites/:token/accept flow.
    */
-  app.post<{ Body: { token?: string; password?: string } }>(
+  app.post<{ Body: { token?: string; password?: string; tosAcceptance?: unknown } }>(
     "/portal/activate",
     { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
     async (req, reply) => {
-      const { token, password } = req.body || {};
+      const { token, password, tosAcceptance } = req.body || {};
 
       if (!token || typeof token !== "string") {
         return reply.code(400).send({ error: "token_required" });
       }
 
+      // Validate ToS acceptance payload
+      let tosPayload;
+      try {
+        tosPayload = validateTosAcceptancePayload(tosAcceptance);
+      } catch (tosErr: any) {
+        await auditFailure(req, "PORTAL_ACTIVATE_FAILURE", { reason: tosErr.message }, { surface: "PORTAL" });
+        return reply.code(400).send({ code: tosErr.message });
+      }
       // Inject into the new endpoint
       (req.params as any).token = token;
       (req.body as any).password = password;
@@ -531,6 +554,9 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           return { userId, isNewUser };
         });
+
+        // Record ToS acceptance (server-side timestamp)
+        await writeTosAcceptance(result.userId, tosPayload, req);
 
         setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 

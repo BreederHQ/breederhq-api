@@ -26,11 +26,15 @@
     "db:dev:validate": "node scripts/run-with-env.js .env.dev.migrate tsx scripts/db/v2/validate-post-import.ts",
     "db:dev:validate:schema": "node scripts/run-with-env.js .env.dev.migrate node scripts/db/v2/validate-schema-drift.js",
     "db:dev:baseline": "node scripts/run-with-env.js .env.dev.migrate prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
+    "db:dev:deploy": "node scripts/run-with-env.js .env.dev.migrate prisma migrate deploy --schema=prisma/schema.prisma",
+    "db:dev:integrity": "node scripts/run-with-env.js .env.dev.migrate node scripts/db/check-migration-integrity.mjs",
+    "db:dev:seed:users": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-test-users.ts",
     "db:prod:status": "node scripts/run-with-env.js .env.prod.migrate prisma migrate status --schema=prisma/schema.prisma",
     "db:prod:deploy": "node scripts/run-with-env.js .env.prod.migrate prisma migrate deploy --schema=prisma/schema.prisma",
     "db:prod:validate": "node scripts/run-with-env.js .env.prod.migrate tsx scripts/db/v2/validate-post-import.ts",
     "db:prod:validate:schema": "node scripts/run-with-env.js .env.prod.migrate node scripts/db/v2/validate-schema-drift.js",
     "db:prod:baseline": "node scripts/run-with-env.js .env.prod.migrate prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
+    "db:prod:integrity": "node scripts/run-with-env.js .env.prod.migrate node scripts/db/check-migration-integrity.mjs",
     "db:dev:grant": "node scripts/db/v2/run-grant-permissions.js dev",
     "db:prod:grant": "node scripts/db/v2/run-grant-permissions.js prod",
     "db:print-target": "node scripts/print-db-target.js",
@@ -49,7 +53,10 @@
     "script:enable-public-program": "node scripts/enable-public-program.mjs",
     "script:verify-public-programs": "powershell -File scripts/verify-public-programs.ps1",
     "script:verify-routes": "powershell -File scripts/verify-public-marketplace-routes.ps1",
-    "postinstall": "prisma generate --schema=prisma/schema.prisma"
+    "postinstall": "prisma generate --schema=prisma/schema.prisma",
+    "db:push": "echo \"🚫 db push is FORBIDDEN - Use: npm run db:dev:migrate\" && exit 1",
+    "db:dev:push": "echo \"🚫 db push is FORBIDDEN - Use: npm run db:dev:migrate\" && exit 1",
+    "db:prod:push": "echo \"🚫 db push is FORBIDDEN - Use: npm run db:prod:deploy\" && exit 1"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

@@ -1,9 +1,11 @@
 // src/routes/tags.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { TagModule } from "@prisma/client";
 import prisma from "../prisma.js";
 import { createTagAssignment, getTagsForContact, getTagsForOrganization } from "../services/tag-service.js";
 
-type Module = "CONTACT" | "ORGANIZATION" | "ANIMAL";
+// All valid TagModule values from Prisma schema
+const VALID_MODULES = Object.values(TagModule);
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -35,8 +37,10 @@ function tagDTO(t: any) {
   return {
     id: t.id,
     name: t.name,
-    module: t.module as Module,
+    module: t.module as TagModule,
     color: t.color ?? null,
+    isArchived: t.isArchived ?? false,
+    archivedAt: t.archivedAt ?? null,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   };
@@ -45,23 +49,36 @@ function tagDTO(t: any) {
 /* ───────────────────────── routes ───────────────────────── */
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  // GET /tags?module=CONTACT&q=&page=&limit=
+  // GET /tags?module=CONTACT&q=&page=&limit=&includeArchived=
   app.get("/tags", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const { module = "", q = "" } = (req.query || {}) as {
-        module?: Module | "";
+      const { module = "", q = "", includeArchived = "" } = (req.query || {}) as {
+        module?: string;
         q?: string;
         page?: string;
         limit?: string;
+        includeArchived?: string;
       };
       const { page, limit, skip } = parsePaging(req.query);
+
+      // Validate module if provided
+      if (module && !VALID_MODULES.includes(module as TagModule)) {
+        return reply.code(400).send({
+          error: "invalid_module",
+          detail: `Module must be one of: ${VALID_MODULES.join(", ")}`,
+        });
+      }
 
       const where: any = { tenantId };
       if (module) where.module = module;
       if (q) where.name = { contains: q, mode: "insensitive" };
+      // Filter out archived tags by default unless includeArchived=true
+      if (includeArchived !== "true") {
+        where.isArchived = false;
+      }
 
       const [itemsRaw, total] = await prisma.$transaction([
         prisma.tag.findMany({
@@ -69,13 +86,60 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           orderBy: [{ name: "asc" }],
           skip,
           take: limit,
-          select: { id: true, name: true, module: true, color: true, createdAt: true, updatedAt: true },
+          select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
         }),
         prisma.tag.count({ where }),
       ]);
 
       const items = itemsRaw.map(tagDTO);
       reply.send({ items, total, page, limit });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /tags/stats → usage counts for all tags (read-only)
+  // Accepts includeArchived=true to include archived tags
+  app.get("/tags/stats", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { includeArchived = "" } = (req.query || {}) as { includeArchived?: string };
+
+      // Build where clause - exclude archived by default
+      const where: any = { tenantId };
+      if (includeArchived !== "true") {
+        where.isArchived = false;
+      }
+
+      // Get tags for tenant (filtered by archive status)
+      const tags = await prisma.tag.findMany({
+        where,
+        select: { id: true },
+      });
+
+      // Get assignment counts grouped by tagId
+      const counts = await prisma.tagAssignment.groupBy({
+        by: ["tagId"],
+        where: { tag: where },
+        _count: { id: true },
+      });
+
+      // Build lookup map
+      const countMap = new Map<number, number>();
+      for (const row of counts) {
+        countMap.set(row.tagId, row._count.id);
+      }
+
+      // Build response with 0 counts for tags with no assignments
+      const stats = tags.map((tag) => ({
+        tagId: tag.id,
+        usageCount: countMap.get(tag.id) ?? 0,
+      }));
+
+      reply.send({ items: stats });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
@@ -153,18 +217,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const body = (req.body || {}) as { name?: string; module?: Module; color?: string | null };
+      const body = (req.body || {}) as { name?: string; module?: string; color?: string | null };
       const name = String(body.name || "").trim();
       const module = body.module;
 
       if (!name) return reply.code(400).send({ error: "name_required" });
-      if (!module || !["CONTACT", "ORGANIZATION", "ANIMAL"].includes(module)) {
-        return reply.code(400).send({ error: "module_invalid" });
+      if (!module || !VALID_MODULES.includes(module as TagModule)) {
+        return reply.code(400).send({
+          error: "module_invalid",
+          detail: `Module must be one of: ${VALID_MODULES.join(", ")}`,
+        });
       }
 
       const created = await prisma.tag.create({
-        data: { tenantId, name, module, color: body.color ?? null },
-        select: { id: true, name: true, module: true, color: true, createdAt: true, updatedAt: true },
+        data: { tenantId, name, module: module as TagModule, color: body.color ?? null },
+        select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
       });
       return reply.code(201).send(tagDTO(created));
     } catch (e: any) {
@@ -187,7 +254,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const tag = await prisma.tag.findFirst({
         where: { id: Number(id), tenantId },
-        select: { id: true, name: true, module: true, color: true, createdAt: true, updatedAt: true },
+        select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
       });
       if (!tag) return reply.code(404).send({ error: "not_found" });
       reply.send(tagDTO(tag));
@@ -197,7 +264,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // PATCH /tags/:id   body: { name?, color? }
+  // PATCH /tags/:id   body: { name?, color?, isArchived? }
   // Module is immutable after creation to keep assignment semantics consistent.
   app.patch("/tags/:id", async (req, reply) => {
     try {
@@ -207,11 +274,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const existing = await prisma.tag.findFirst({
         where: { id: Number(id), tenantId },
-        select: { id: true, module: true },
+        select: { id: true, module: true, isArchived: true },
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
-      const body = (req.body || {}) as { name?: string; color?: string | null };
+      const body = (req.body || {}) as { name?: string; color?: string | null; isArchived?: boolean };
       const data: any = {};
       if (body.name !== undefined) {
         const n = String(body.name || "").trim();
@@ -220,10 +287,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       if (body.color !== undefined) data.color = body.color;
 
+      // Handle archive state toggle
+      if (body.isArchived !== undefined) {
+        data.isArchived = Boolean(body.isArchived);
+        if (data.isArchived && !existing.isArchived) {
+          // Archiving: set archivedAt timestamp
+          data.archivedAt = new Date();
+        } else if (!data.isArchived && existing.isArchived) {
+          // Unarchiving: clear archivedAt
+          data.archivedAt = null;
+        }
+      }
+
       const updated = await prisma.tag.update({
         where: { id: existing.id },
         data,
-        select: { id: true, name: true, module: true, color: true, createdAt: true, updatedAt: true },
+        select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
       });
       reply.send(tagDTO(updated));
     } catch (e: any) {
@@ -238,6 +317,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // DELETE /tags/:id
+  // Only allows deletion if tag has no assignments (safe delete)
   app.delete("/tags/:id", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
@@ -246,6 +326,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true } });
       if (!tag) return reply.code(404).send({ error: "not_found" });
+
+      // Check for existing assignments - reject if tag is in use
+      const assignmentCount = await prisma.tagAssignment.count({ where: { tagId: tag.id } });
+      if (assignmentCount > 0) {
+        return reply.code(409).send({
+          error: "tag_in_use",
+          detail: `Cannot delete tag: it has ${assignmentCount} assignment${assignmentCount === 1 ? "" : "s"}`,
+          usageCount: assignmentCount,
+        });
+      }
 
       await prisma.tag.delete({ where: { id: tag.id } });
       reply.code(204).send();
@@ -266,9 +356,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const tag = await prisma.tag.findFirst({
         where: { id: Number(id), tenantId },
-        select: { id: true, module: true },
+        select: { id: true, module: true, isArchived: true },
       });
       if (!tag) return reply.code(404).send({ error: "not_found" });
+
+      // Block assignment of archived tags
+      if (tag.isArchived) {
+        return reply.code(409).send({ error: "tag_archived", detail: "Cannot assign archived tag" });
+      }
 
       const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number };
       const targets = ["contactId", "organizationId", "animalId"].filter((k) => (body as any)[k] != null);
