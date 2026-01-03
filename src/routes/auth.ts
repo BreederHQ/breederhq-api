@@ -14,6 +14,11 @@ import {
 } from "../utils/session.js";
 import { deriveSurface } from "../middleware/actor-context.js";
 import { audit, auditSuccess, auditFailure } from "../services/audit.js";
+import {
+  validateTosAcceptancePayload,
+  writeTosAcceptance,
+  getTosStatus,
+} from "../services/tos-service.js";
 
 /**
  * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
@@ -272,8 +277,8 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   app.post("/register", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const { email = "", password = "", firstName = "", lastName = "" } = (req.body || {}) as {
-      email?: string; password?: string; firstName?: string; lastName?: string;
+    const { email = "", password = "", firstName = "", lastName = "", tosAcceptance } = (req.body || {}) as {
+      email?: string; password?: string; firstName?: string; lastName?: string; tosAcceptance?: unknown;
     };
     const e = String(email).trim().toLowerCase();
     const p = String(password);
@@ -295,6 +300,15 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     if (p.length < 8) {
       await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: "password_too_short", emailNorm: e });
       return reply.code(400).send({ error: "password_too_short" });
+    }
+
+    // Validate ToS acceptance payload
+    let tosPayload;
+    try {
+      tosPayload = validateTosAcceptancePayload(tosAcceptance);
+    } catch (tosErr: any) {
+      await auditFailure(req, "AUTH_REGISTER_FAILURE", { reason: tosErr.message, emailNorm: e });
+      return reply.code(400).send({ code: tosErr.message });
     }
 
     const existing = await prisma.user.findUnique({
@@ -342,6 +356,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       userId,
       ttlMinutes: 60,
     });
+
+    // Record ToS acceptance (server-side timestamp)
+    await writeTosAcceptance(userId, tosPayload, req);
 
     // Grant MARKETPLACE_ACCESS entitlement when registered from marketplace surface
     const surface = deriveSurface(req);
@@ -729,6 +746,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       (typeof userRec.defaultTenantId === "number" ? userRec.defaultTenantId : undefined) ??
       (Array.isArray(userRec.tenantMemberships) ? userRec.tenantMemberships[0]?.tenantId : undefined);
 
+    // Get ToS status for this user
+    const tosStatus = await getTosStatus(userRec.id);
+
     return reply.send({
       id: userRec.id,
       email: userRec.email,
@@ -737,6 +757,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       isSuperAdmin: !!userRec.isSuperAdmin,
       tenant: tenantId ? { id: tenantId } : null,
       memberships: (userRec.tenantMemberships || []).map((m: any) => ({ tenantId: m.tenantId, role: m.role ?? null })),
+      tos: tosStatus,
     });
   });
 

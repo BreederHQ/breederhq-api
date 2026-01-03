@@ -13,6 +13,21 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
+import {
+  sendBookingConfirmationNotification,
+  sendBookingCancellationNotification,
+  sendBookingRescheduleNotification,
+  buildNotificationDataFromBooking,
+  type BookingWithRelations,
+  type RescheduleNotificationData,
+} from "../services/scheduling-notifications.js";
+import {
+  parsePlacementSchedulingPolicy,
+  checkPlacementGating,
+  getPlacementBlockedMessage,
+  buildPlacementBlockedContext,
+  type PlacementWindow,
+} from "../services/placement-scheduling.js";
 
 // ---------- Types matching frontend contract ----------
 
@@ -31,6 +46,34 @@ interface BookingRules {
   canReschedule: boolean;
   cancellationDeadlineHours: number | null;
   rescheduleDeadlineHours: number | null;
+  // Computed deadline timestamps (null if no deadline or no existing booking)
+  cancelDeadlineAt: string | null;
+  rescheduleDeadlineAt: string | null;
+}
+
+/**
+ * Blocked reason codes for deterministic UI messaging.
+ */
+type BlockedReasonCode =
+  | "NOT_ELIGIBLE"
+  | "WINDOW_NOT_OPEN"
+  | "FULLY_BOOKED"
+  | "DEADLINE_PASSED"
+  | "EVENT_CANCELLED"
+  | "ALREADY_BOOKED";
+
+/**
+ * Blocked response structure with machine-readable code and context.
+ */
+interface BlockedResponse {
+  code: BlockedReasonCode;
+  message: string;
+  context: {
+    eventId?: string;
+    slotId?: string;
+    opensAt?: string;
+    deadlineAt?: string;
+  };
 }
 
 interface SchedulingEventStatus {
@@ -39,6 +82,8 @@ interface SchedulingEventStatus {
   eligibilityReason: string | null;
   hasExistingBooking: boolean;
   existingBooking: ConfirmedBooking | null;
+  // Blocked response when booking is not possible
+  blocked: BlockedResponse | null;
 }
 
 interface SchedulingSlot {
@@ -162,6 +207,57 @@ function formatConfirmedBooking(booking: any): ConfirmedBooking {
 }
 
 /**
+ * Compute deadline timestamps from slot start time and deadline hours.
+ * Returns null if no deadline is configured.
+ */
+function computeDeadlineTimestamps(
+  slotStartsAt: Date | string | null,
+  cancellationDeadlineHours: number | null,
+  rescheduleDeadlineHours: number | null
+): { cancelDeadlineAt: string | null; rescheduleDeadlineAt: string | null } {
+  const result = { cancelDeadlineAt: null as string | null, rescheduleDeadlineAt: null as string | null };
+
+  if (!slotStartsAt) return result;
+
+  const startTime = typeof slotStartsAt === "string" ? new Date(slotStartsAt) : slotStartsAt;
+
+  if (cancellationDeadlineHours != null && cancellationDeadlineHours > 0) {
+    const deadline = new Date(startTime.getTime() - cancellationDeadlineHours * 60 * 60 * 1000);
+    result.cancelDeadlineAt = deadline.toISOString();
+  }
+
+  if (rescheduleDeadlineHours != null && rescheduleDeadlineHours > 0) {
+    const deadline = new Date(startTime.getTime() - rescheduleDeadlineHours * 60 * 60 * 1000);
+    result.rescheduleDeadlineAt = deadline.toISOString();
+  }
+
+  return result;
+}
+
+/**
+ * Build a BlockedResponse with user-friendly message based on reason code.
+ */
+function buildBlockedResponse(
+  code: BlockedReasonCode,
+  context: BlockedResponse["context"] = {}
+): BlockedResponse {
+  const messages: Record<BlockedReasonCode, string> = {
+    NOT_ELIGIBLE: "You are not eligible for this appointment.",
+    WINDOW_NOT_OPEN: "Booking is not yet open for this appointment.",
+    FULLY_BOOKED: "All available time slots have been booked.",
+    DEADLINE_PASSED: "The deadline for this action has passed.",
+    EVENT_CANCELLED: "This appointment has been cancelled.",
+    ALREADY_BOOKED: "You already have a booking for this event.",
+  };
+
+  return {
+    code,
+    message: messages[code],
+    context,
+  };
+}
+
+/**
  * Check if a party is eligible to book scheduling for an offspring group.
  * Eligibility is based on OffspringGroupBuyer linkage.
  */
@@ -186,6 +282,21 @@ async function isPartyEligibleForBlock(tenantId: number, partyId: number, block:
     return true;
   }
   return isPartyEligibleForGroup(tenantId, partyId, block.offspringGroupId);
+}
+
+/**
+ * Get buyer link with placement rank for gating checks.
+ */
+async function getBuyerLinkWithRank(
+  tenantId: number,
+  partyId: number,
+  offspringGroupId: number
+): Promise<{ placementRank: number | null } | null> {
+  const link = await prisma.offspringGroupBuyer.findFirst({
+    where: { tenantId, groupId: offspringGroupId, buyerPartyId: partyId },
+    select: { placementRank: true },
+  });
+  return link;
 }
 
 // ---------- Routes ----------
@@ -261,11 +372,21 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           }
 
           // Build rules (block overrides template)
+          const cancellationDeadlineHours = block.cancellationDeadlineHours ?? block.template?.cancellationDeadlineHours ?? null;
+          const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? block.template?.rescheduleDeadlineHours ?? null;
+
+          // Compute deadline timestamps if there's an existing booking
+          const deadlines = existingBooking?.slot?.startsAt
+            ? computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours)
+            : { cancelDeadlineAt: null, rescheduleDeadlineAt: null };
+
           const rules: BookingRules = {
             canCancel: block.canCancel ?? block.template?.canCancel ?? true,
             canReschedule: block.canReschedule ?? block.template?.canReschedule ?? true,
-            cancellationDeadlineHours: block.cancellationDeadlineHours ?? block.template?.cancellationDeadlineHours ?? null,
-            rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? block.template?.rescheduleDeadlineHours ?? null,
+            cancellationDeadlineHours,
+            rescheduleDeadlineHours,
+            cancelDeadlineAt: deadlines.cancelDeadlineAt,
+            rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
           };
 
           events.push({
@@ -343,12 +464,8 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       // Get the effective rules (block overrides template)
-      const effectiveRules: BookingRules = {
-        canCancel: block?.canCancel ?? template?.canCancel ?? true,
-        canReschedule: block?.canReschedule ?? template?.canReschedule ?? true,
-        cancellationDeadlineHours: block?.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-        rescheduleDeadlineHours: block?.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
-      };
+      const cancellationDeadlineHours = block?.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+      const rescheduleDeadlineHours = block?.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
 
       // Check for existing booking
       const existingBooking = await prisma.schedulingBooking.findFirst({
@@ -362,6 +479,20 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           slot: true,
         },
       });
+
+      // Compute deadline timestamps from existing booking slot
+      const deadlines = existingBooking?.slot?.startsAt
+        ? computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours)
+        : { cancelDeadlineAt: null, rescheduleDeadlineAt: null };
+
+      const effectiveRules: BookingRules = {
+        canCancel: block?.canCancel ?? template?.canCancel ?? true,
+        canReschedule: block?.canReschedule ?? template?.canReschedule ?? true,
+        cancellationDeadlineHours,
+        rescheduleDeadlineHours,
+        cancelDeadlineAt: deadlines.cancelDeadlineAt,
+        rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
+      };
 
       // Determine subject context
       let subjectName: string | null = null;
@@ -390,6 +521,23 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
       }
 
+      // Determine blocked state
+      let blocked: BlockedResponse | null = null;
+      if (!isOpen) {
+        blocked = buildBlockedResponse("EVENT_CANCELLED", { eventId });
+      } else if (!isEligible) {
+        blocked = buildBlockedResponse("NOT_ELIGIBLE", { eventId });
+      } else if (existingBooking) {
+        // Check if deadlines have passed for cancel/reschedule
+        const now = new Date();
+        if (deadlines.cancelDeadlineAt && new Date(deadlines.cancelDeadlineAt) < now) {
+          blocked = buildBlockedResponse("DEADLINE_PASSED", {
+            eventId,
+            deadlineAt: deadlines.cancelDeadlineAt,
+          });
+        }
+      }
+
       // Build response
       const response: SchedulingEventResponse = {
         context: {
@@ -408,6 +556,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           eligibilityReason,
           hasExistingBooking: !!existingBooking,
           existingBooking: existingBooking ? formatConfirmedBooking(existingBooking) : null,
+          blocked,
         },
       };
 
@@ -437,6 +586,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
 
       // Build slot query based on event type
       let blockIds: number[] = [];
+      let offspringGroupId: number | null = null;
 
       if (parsed.type === "template") {
         // Get all open blocks for this template
@@ -446,22 +596,46 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
             templateId: parsed.id,
             status: "OPEN",
           },
-          select: { id: true },
+          select: { id: true, offspringGroupId: true },
         });
         blockIds = blocks.map((b) => b.id);
+        offspringGroupId = blocks[0]?.offspringGroupId ?? null;
       } else {
         // Single block
         const block = await prisma.schedulingAvailabilityBlock.findFirst({
           where: { id: parsed.id, tenantId, status: "OPEN" },
-          select: { id: true },
+          select: { id: true, offspringGroupId: true },
         });
         if (block) {
           blockIds = [block.id];
+          offspringGroupId = block.offspringGroupId;
         }
       }
 
       if (blockIds.length === 0) {
         return reply.send({ slots: [] });
+      }
+
+      // Check placement gating if there's an offspring group
+      if (offspringGroupId) {
+        const group = await prisma.offspringGroup.findFirst({
+          where: { id: offspringGroupId, tenantId },
+          select: { placementSchedulingPolicy: true },
+        });
+        if (group?.placementSchedulingPolicy) {
+          const policy = parsePlacementSchedulingPolicy(group.placementSchedulingPolicy);
+          if (policy?.enabled) {
+            const buyerLink = await getBuyerLinkWithRank(tenantId, partyId, offspringGroupId);
+            const gatingResult = checkPlacementGating(policy, buyerLink?.placementRank ?? null);
+            if (!gatingResult.allowed) {
+              return reply.code(403).send({
+                code: gatingResult.code,
+                message: getPlacementBlockedMessage(gatingResult.code!),
+                context: buildPlacementBlockedContext(offspringGroupId, gatingResult.window, gatingResult.serverNow, eventId),
+              });
+            }
+          }
+        }
       }
 
       // Get available slots (future, not full)
@@ -634,6 +808,36 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           return booking;
         });
 
+        // Send confirmation notification (fire and forget - do not block response)
+        try {
+          const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+            where: { id: result.id },
+            include: {
+              slot: {
+                include: {
+                  block: {
+                    include: { template: true },
+                  },
+                },
+              },
+              party: true,
+              tenant: true,
+            },
+          });
+
+          if (bookingWithRelations) {
+            const notificationData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+            if (notificationData) {
+              // Non-blocking: do not await
+              sendBookingConfirmationNotification(notificationData).catch((err) => {
+                req.log?.warn?.({ err, bookingId: result.id }, "Failed to send booking confirmation notification");
+              });
+            }
+          }
+        } catch (notifyErr) {
+          req.log?.warn?.({ err: notifyErr, bookingId: result.id }, "Error preparing booking notification");
+        }
+
         return reply.send({ booking: formatConfirmedBooking(result) });
       } catch (err: any) {
         if (err.code === "SLOT_NOT_FOUND") {
@@ -697,11 +901,16 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       // Get rules
       const block = booking.slot.block;
       const template = block.template;
+      const cancellationDeadlineHours = block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+      const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
+      const deadlines = computeDeadlineTimestamps(booking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours);
       const rules: BookingRules = {
         canCancel: block.canCancel ?? template?.canCancel ?? true,
         canReschedule: block.canReschedule ?? template?.canReschedule ?? true,
-        cancellationDeadlineHours: block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-        rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
+        cancellationDeadlineHours,
+        rescheduleDeadlineHours,
+        cancelDeadlineAt: deadlines.cancelDeadlineAt,
+        rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
       };
 
       // Check if cancellation is allowed
@@ -738,6 +947,36 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
       });
 
+      // Send cancellation notification (fire and forget - do not block response)
+      try {
+        const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+          where: { id: booking.id },
+          include: {
+            slot: {
+              include: {
+                block: {
+                  include: { template: true },
+                },
+              },
+            },
+            party: true,
+            tenant: true,
+          },
+        });
+
+        if (bookingWithRelations) {
+          const notificationData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+          if (notificationData) {
+            // Non-blocking: do not await
+            sendBookingCancellationNotification(notificationData).catch((err) => {
+              req.log?.warn?.({ err, bookingId: booking.id }, "Failed to send booking cancellation notification");
+            });
+          }
+        }
+      } catch (notifyErr) {
+        req.log?.warn?.({ err: notifyErr, bookingId: booking.id }, "Error preparing cancellation notification");
+      }
+
       return reply.send({ cancelled: true });
     } catch (err: any) {
       if (err.statusCode) {
@@ -756,23 +995,38 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
   app.post<{ Params: { eventId: string }; Body: { slotId?: string } }>(
     "/portal/scheduling/events/:eventId/reschedule",
     async (req, reply) => {
+      // Declare outside try for catch block access
+      const { eventId } = req.params;
+      const { slotId: newSlotIdStr } = req.body || {};
+      let newSlotId: number = NaN;
+
       try {
         const { tenantId, partyId } = await requireClientPartyScope(req);
-        const { eventId } = req.params;
-        const { slotId: newSlotIdStr } = req.body || {};
 
         if (!newSlotIdStr) {
-          return reply.code(400).send({ error: "slot_id_required" });
+          return reply.code(400).send({
+            code: "SLOT_ID_REQUIRED",
+            message: "A new slot ID is required for rescheduling.",
+            context: { eventId },
+          });
         }
 
-        const newSlotId = parseInt(newSlotIdStr, 10);
+        newSlotId = parseInt(newSlotIdStr, 10);
         if (isNaN(newSlotId)) {
-          return reply.code(400).send({ error: "invalid_slot_id" });
+          return reply.code(400).send({
+            code: "INVALID_SLOT_ID",
+            message: "The provided slot ID is invalid.",
+            context: { eventId, slotId: newSlotIdStr },
+          });
         }
 
         const parsed = parseEventId(eventId);
         if (!parsed) {
-          return reply.code(400).send({ error: "invalid_event_id" });
+          return reply.code(400).send({
+            code: "INVALID_EVENT_ID",
+            message: "The provided event ID is invalid.",
+            context: { eventId },
+          });
         }
 
         // Find existing booking
@@ -795,23 +1049,41 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         });
 
         if (!existingBooking) {
-          return reply.code(404).send({ error: "booking_not_found" });
+          return reply.code(404).send({
+            code: "BOOKING_NOT_FOUND",
+            message: "No active booking found for this event.",
+            context: { eventId },
+          });
         }
+
+        // Store original slot info for response
+        const originalSlotStartsAt = existingBooking.slot.startsAt.toISOString();
+        const originalSlotEndsAt = existingBooking.slot.endsAt.toISOString();
 
         // Get rules
         const block = existingBooking.slot.block;
         const template = block.template;
+        const cancellationDeadlineHours = block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+        const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
+        const deadlines = computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours);
+
         const rules: BookingRules = {
           canCancel: block.canCancel ?? template?.canCancel ?? true,
           canReschedule: block.canReschedule ?? template?.canReschedule ?? true,
-          cancellationDeadlineHours: block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-          rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
+          cancellationDeadlineHours,
+          rescheduleDeadlineHours,
+          cancelDeadlineAt: deadlines.cancelDeadlineAt,
+          rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
         };
 
         // Check if rescheduling is allowed
         const rescheduleCheck = canRescheduleBooking(existingBooking, rules);
         if (!rescheduleCheck.allowed) {
-          return reply.code(403).send({ error: "not_allowed", message: rescheduleCheck.reason });
+          return reply.code(403).send({
+            code: "DEADLINE_PASSED",
+            message: rescheduleCheck.reason || "The deadline for rescheduling has passed.",
+            context: { eventId, deadlineAt: deadlines.rescheduleDeadlineAt },
+          });
         }
 
         // Atomic reschedule transaction
@@ -903,22 +1175,80 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           return newBooking;
         });
 
-        return reply.send({ booking: formatConfirmedBooking(result) });
+        // Send reschedule notification (fire and forget - do not block response)
+        try {
+          const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+            where: { id: result.id },
+            include: {
+              slot: {
+                include: {
+                  block: {
+                    include: { template: true },
+                  },
+                },
+              },
+              party: true,
+              tenant: true,
+            },
+          });
+
+          if (bookingWithRelations) {
+            const baseData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+            if (baseData) {
+              const rescheduleData: RescheduleNotificationData = {
+                ...baseData,
+                originalStartsAt: new Date(originalSlotStartsAt),
+                originalEndsAt: new Date(originalSlotEndsAt),
+              };
+              // Non-blocking: do not await
+              sendBookingRescheduleNotification(rescheduleData).catch((err) => {
+                req.log?.warn?.({ err, bookingId: result.id }, "Failed to send booking reschedule notification");
+              });
+            }
+          }
+        } catch (notifyErr) {
+          req.log?.warn?.({ err: notifyErr, bookingId: result.id }, "Error preparing reschedule notification");
+        }
+
+        return reply.send({
+          booking: formatConfirmedBooking(result),
+          rescheduledFrom: {
+            slotStartsAt: originalSlotStartsAt,
+            slotEndsAt: originalSlotEndsAt,
+          },
+          rescheduledTo: {
+            slotStartsAt: result.slot.startsAt.toISOString(),
+            slotEndsAt: result.slot.endsAt.toISOString(),
+          },
+        });
       } catch (err: any) {
         if (err.code === "SLOT_NOT_FOUND") {
-          return reply.code(404).send({ error: "slot_not_found", message: "Slot not found" });
+          return reply.code(404).send({
+            code: "SLOT_NOT_FOUND",
+            message: "The requested time slot was not found.",
+            context: { eventId, slotId: String(newSlotId) },
+          });
         }
-        if (err.code === "SLOT_NOT_AVAILABLE") {
-          return reply.code(409).send({ error: "slot_taken", message: "This time slot is no longer available." });
-        }
-        if (err.code === "SLOT_FULL") {
-          return reply.code(409).send({ error: "slot_taken", message: "This time slot is no longer available." });
+        if (err.code === "SLOT_NOT_AVAILABLE" || err.code === "SLOT_FULL") {
+          return reply.code(409).send({
+            code: "SLOT_TAKEN",
+            message: "This time slot is no longer available.",
+            context: { eventId, slotId: String(newSlotId) },
+          });
         }
         if (err.statusCode) {
-          return reply.code(err.statusCode).send({ error: err.error });
+          return reply.code(err.statusCode).send({
+            code: err.code || "RESCHEDULE_ERROR",
+            message: err.message || "Failed to reschedule booking.",
+            context: { eventId },
+          });
         }
         req.log?.error?.({ err }, "Failed to reschedule booking");
-        return reply.code(500).send({ error: "reschedule_failed" });
+        return reply.code(500).send({
+          code: "RESCHEDULE_FAILED",
+          message: "An unexpected error occurred while rescheduling.",
+          context: { eventId },
+        });
       }
     }
   );

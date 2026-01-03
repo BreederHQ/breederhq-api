@@ -443,6 +443,7 @@ import expensesRoutes from "./routes/expenses.js"; // Finance MVP
 import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
+import marketplaceAssetsRoutes from "./routes/marketplace-assets.js"; // Marketplace assets (auth-gated)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -733,17 +734,40 @@ app.register(
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
+    api.register(marketplaceAssetsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/assets/*
   },
   { prefix: "/api/v1" }
 );
 // ---------- API v1/public: public marketplace subtree ----------
-// Authoritative prefix for public marketplace routes
+// SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
+// All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
+//   1. Valid session cookie (bhq_s)
+//   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
+// Requests to /api/v1/public/marketplace/* now return 410 Gone.
 app.register(
   async (api) => {
-    api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
+    // Return 410 Gone for all requests to removed public marketplace routes
+    // SECURITY: No data, no DB reads, no DTO building - just a static error response
+    const goneResponse = {
+      error: "gone",
+      message: "Marketplace endpoints require authentication. Use /api/v1/marketplace/*.",
+    };
+    api.all("/marketplace/*", async (_req, reply) => {
+      return reply.code(410).send(goneResponse);
+    });
+    api.all("/marketplace", async (_req, reply) => {
+      return reply.code(410).send(goneResponse);
+    });
   },
   { prefix: "/api/v1/public" }
 );
+
+// DEV: Log disabled public marketplace endpoint status at startup
+if (process.env.NODE_ENV !== "production") {
+  console.log("[DEV] Public marketplace endpoints disabled:");
+  console.log("  - /api/v1/public/marketplace/* → 410 Gone");
+  console.log("  - Authenticated access: /api/v1/marketplace/*");
+}
 
 // ---------- Not Found ----------
 app.setNotFoundHandler((req, reply) => {
