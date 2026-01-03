@@ -1599,6 +1599,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /* ===== DELETE: DELETE /api/v1/offspring/:id ===== */
+  /* Safe delete with blocker checks - prevents deletion of linked or in-use groups */
   app.delete("/offspring/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
@@ -1606,8 +1607,138 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const existing = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
     if (!existing) return reply.code(404).send({ error: "not found" });
 
-    await prisma.offspringGroup.delete({ where: { id } });
+    // Block deletion of auto-linked groups (linked to breeding plan)
+    if (existing.linkState === "linked") {
+      return reply.code(409).send({
+        error: "OFFSPRING_GROUP_DELETE_BLOCKED_LINKED_PLAN",
+        offspringGroupId: id,
+        message: "Cannot delete an offspring group that is linked to a breeding plan. Unlink or archive instead.",
+      });
+    }
+
+    // Compute blockers by counting all related entities
+    const [
+      offspringCount,
+      buyerCount,
+      invoiceCount,
+      documentCount,
+      contractCount,
+      expenseCount,
+      waitlistCount,
+      eventCount,
+      attachmentCount,
+      campaignCount,
+      taskCount,
+      schedulingBlockCount,
+      tagCount,
+    ] = await Promise.all([
+      prisma.offspring.count({ where: { groupId: id } }),
+      prisma.offspringGroupBuyer.count({ where: { groupId: id } }),
+      prisma.invoice.count({ where: { offspringGroupId: id } }),
+      prisma.document.count({ where: { offspringGroupId: id } }),
+      prisma.contract.count({ where: { offspringGroupId: id } }),
+      prisma.expense.count({ where: { offspringGroupId: id } }),
+      prisma.waitlistEntry.count({ where: { offspringGroupId: id } }),
+      prisma.offspringGroupEvent.count({ where: { offspringGroupId: id } }),
+      prisma.attachment.count({ where: { offspringGroupId: id } }),
+      prisma.campaign.count({ where: { offspringGroupId: id } }),
+      prisma.task.count({ where: { offspringGroupId: id } }),
+      prisma.schedulingAvailabilityBlock.count({ where: { offspringGroupId: id } }),
+      prisma.tagAssignment.count({ where: { offspringGroupId: id } }),
+    ]);
+
+    const blockers = {
+      hasOffspring: offspringCount > 0,
+      hasBuyers: buyerCount > 0,
+      hasInvoices: invoiceCount > 0,
+      hasDocuments: documentCount > 0,
+      hasContracts: contractCount > 0,
+      hasExpenses: expenseCount > 0,
+      hasWaitlist: waitlistCount > 0,
+      hasEvents: eventCount > 0,
+      hasAttachments: attachmentCount > 0,
+      hasCampaigns: campaignCount > 0,
+      hasTasks: taskCount > 0,
+      hasSchedulingBlocks: schedulingBlockCount > 0,
+      hasTags: tagCount > 0,
+    };
+
+    const other: string[] = [];
+    if (blockers.hasEvents) other.push("events");
+    if (blockers.hasAttachments) other.push("attachments");
+    if (blockers.hasCampaigns) other.push("campaigns");
+    if (blockers.hasTasks) other.push("tasks");
+    if (blockers.hasSchedulingBlocks) other.push("schedulingBlocks");
+    if (blockers.hasTags) other.push("tags");
+
+    const hasBlockers =
+      blockers.hasOffspring ||
+      blockers.hasBuyers ||
+      blockers.hasInvoices ||
+      blockers.hasDocuments ||
+      blockers.hasContracts ||
+      blockers.hasExpenses ||
+      blockers.hasWaitlist ||
+      other.length > 0;
+
+    if (hasBlockers) {
+      return reply.code(409).send({
+        error: "OFFSPRING_GROUP_DELETE_BLOCKED_IN_USE",
+        offspringGroupId: id,
+        blockers,
+        other,
+        message: "Cannot delete offspring group with existing related data. Archive instead.",
+      });
+    }
+
+    // Safe to delete - use transaction for consistency
+    await prisma.$transaction(async (tx) => {
+      await tx.offspringGroup.delete({ where: { id } });
+    });
+
     reply.send({ ok: true, id });
+  });
+
+  /* ===== ARCHIVE: POST /api/v1/offspring/:id/archive ===== */
+  app.post("/offspring/:id/archive", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+
+    const existing = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!existing) return reply.code(404).send({ error: "not found" });
+
+    // Idempotent - if already archived, just return current state
+    if (existing.archivedAt) {
+      return reply.send({ ok: true, id, archivedAt: existing.archivedAt });
+    }
+
+    const updated = await prisma.offspringGroup.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+    });
+
+    reply.send({ ok: true, id, archivedAt: updated.archivedAt });
+  });
+
+  /* ===== RESTORE: POST /api/v1/offspring/:id/restore ===== */
+  app.post("/offspring/:id/restore", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+
+    const existing = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!existing) return reply.code(404).send({ error: "not found" });
+
+    // Idempotent - if not archived, just return current state
+    if (!existing.archivedAt) {
+      return reply.send({ ok: true, id, archivedAt: null });
+    }
+
+    await prisma.offspringGroup.update({
+      where: { id },
+      data: { archivedAt: null },
+    });
+
+    reply.send({ ok: true, id, archivedAt: null });
   });
 
   /* ===== MOVE WAITLIST INTO GROUP: POST /offspring/:id/move-waitlist ===== */
