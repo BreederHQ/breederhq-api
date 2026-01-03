@@ -277,6 +277,11 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
+import {
+  parsePlacementSchedulingPolicy,
+  validatePlacementSchedulingPolicy,
+  type PlacementSchedulingPolicy,
+} from "../services/placement-scheduling.js";
 
 /* ========= helpers ========= */
 
@@ -2831,6 +2836,215 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         offspringId,
         marketplaceListed: updated.marketplaceListed,
         marketplacePriceCents: updated.marketplacePriceCents
+      });
+    }
+  );
+
+  // ========== Phase 6: Placement Scheduling Policy ==========
+
+  /**
+   * GET /offspring/:id/placement-scheduling-policy
+   * Get placement scheduling policy for an offspring group.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/offspring/:id/placement-scheduling-policy",
+    async (req, reply) => {
+      const tenantId = getTenantId(req);
+      if (!tenantId) return reply.code(401).send({ error: "missing_tenant" });
+
+      const groupId = parseInt(req.params.id, 10);
+      if (isNaN(groupId)) return reply.code(400).send({ error: "invalid_group_id" });
+
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        select: { id: true, placementSchedulingPolicy: true },
+      });
+
+      if (!group) {
+        return reply.code(404).send({ error: "offspring_group_not_found" });
+      }
+
+      const policy = parsePlacementSchedulingPolicy(group.placementSchedulingPolicy);
+
+      reply.send({
+        groupId,
+        policy: policy ?? { enabled: false },
+      });
+    }
+  );
+
+  /**
+   * PUT /offspring/:id/placement-scheduling-policy
+   * Update placement scheduling policy for an offspring group.
+   */
+  app.put<{ Params: { id: string }; Body: PlacementSchedulingPolicy }>(
+    "/offspring/:id/placement-scheduling-policy",
+    async (req, reply) => {
+      const tenantId = getTenantId(req);
+      if (!tenantId) return reply.code(401).send({ error: "missing_tenant" });
+
+      const groupId = parseInt(req.params.id, 10);
+      if (isNaN(groupId)) return reply.code(400).send({ error: "invalid_group_id" });
+
+      // Verify group exists
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        select: { id: true },
+      });
+
+      if (!group) {
+        return reply.code(404).send({ error: "offspring_group_not_found" });
+      }
+
+      const inputPolicy = req.body as PlacementSchedulingPolicy;
+
+      // Validate policy
+      const errors = validatePlacementSchedulingPolicy(inputPolicy);
+      if (errors.length > 0) {
+        return reply.code(400).send({ error: "validation_failed", details: errors });
+      }
+
+      // If disabled, store minimal object
+      const policyToStore = inputPolicy.enabled
+        ? inputPolicy
+        : { enabled: false };
+
+      await prisma.offspringGroup.update({
+        where: { id: groupId },
+        data: { placementSchedulingPolicy: policyToStore as any },
+      });
+
+      reply.send({
+        ok: true,
+        groupId,
+        policy: policyToStore,
+      });
+    }
+  );
+
+  /**
+   * GET /offspring/:id/placement-status
+   * Get placement status for all buyers in an offspring group, including their windows.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/offspring/:id/placement-status",
+    async (req, reply) => {
+      const tenantId = getTenantId(req);
+      if (!tenantId) return reply.code(401).send({ error: "missing_tenant" });
+
+      const groupId = parseInt(req.params.id, 10);
+      if (isNaN(groupId)) return reply.code(400).send({ error: "invalid_group_id" });
+
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        select: { id: true, placementSchedulingPolicy: true },
+      });
+
+      if (!group) {
+        return reply.code(404).send({ error: "offspring_group_not_found" });
+      }
+
+      const policy = parsePlacementSchedulingPolicy(group.placementSchedulingPolicy);
+
+      // Get all buyers with their placement ranks
+      const buyers = await prisma.offspringGroupBuyer.findMany({
+        where: { groupId, tenantId },
+        include: {
+          buyerParty: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+        orderBy: { placementRank: { sort: "asc", nulls: "last" } },
+      });
+
+      const now = new Date();
+
+      // Import computePlacementWindow dynamically to avoid circular deps
+      const { computePlacementWindow, checkPlacementGating } = await import("../services/placement-scheduling.js");
+
+      const buyerStatus = buyers.map((b) => {
+        const window = policy?.enabled && b.placementRank
+          ? computePlacementWindow(policy, b.placementRank)
+          : null;
+
+        const gating = policy?.enabled
+          ? checkPlacementGating(policy, b.placementRank, now)
+          : { allowed: true, code: null };
+
+        return {
+          buyerId: b.id,
+          partyId: b.buyerPartyId,
+          partyName: b.buyerParty?.name ?? null,
+          partyEmail: b.buyerParty?.email ?? null,
+          placementRank: b.placementRank,
+          window: window
+            ? {
+                windowStartAt: window.windowStartAt.toISOString(),
+                windowEndAt: window.windowEndAt.toISOString(),
+                graceEndAt: window.graceEndAt.toISOString(),
+                timezone: window.timezone,
+              }
+            : null,
+          status: gating.allowed
+            ? "eligible"
+            : gating.code === "PLACEMENT_WINDOW_NOT_OPEN"
+            ? "pending"
+            : gating.code === "PLACEMENT_WINDOW_CLOSED"
+            ? "expired"
+            : "no_rank",
+        };
+      });
+
+      reply.send({
+        groupId,
+        policyEnabled: policy?.enabled ?? false,
+        serverNow: now.toISOString(),
+        buyers: buyerStatus,
+      });
+    }
+  );
+
+  /**
+   * PATCH /offspring/:id/buyers/:buyerId/placement-rank
+   * Update placement rank for a specific buyer in an offspring group.
+   */
+  app.patch<{ Params: { id: string; buyerId: string }; Body: { placementRank: number | null } }>(
+    "/offspring/:id/buyers/:buyerId/placement-rank",
+    async (req, reply) => {
+      const tenantId = getTenantId(req);
+      if (!tenantId) return reply.code(401).send({ error: "missing_tenant" });
+
+      const groupId = parseInt(req.params.id, 10);
+      const buyerId = parseInt(req.params.buyerId, 10);
+
+      if (isNaN(groupId)) return reply.code(400).send({ error: "invalid_group_id" });
+      if (isNaN(buyerId)) return reply.code(400).send({ error: "invalid_buyer_id" });
+
+      const { placementRank } = req.body;
+
+      if (placementRank !== null && (typeof placementRank !== "number" || placementRank < 1)) {
+        return reply.code(400).send({ error: "invalid_placement_rank", message: "Rank must be a positive integer or null" });
+      }
+
+      // Verify buyer exists in this group
+      const buyer = await prisma.offspringGroupBuyer.findFirst({
+        where: { id: buyerId, groupId, tenantId },
+      });
+
+      if (!buyer) {
+        return reply.code(404).send({ error: "buyer_not_found" });
+      }
+
+      // Update placement rank
+      await prisma.offspringGroupBuyer.update({
+        where: { id: buyerId },
+        data: { placementRank },
+      });
+
+      reply.send({
+        ok: true,
+        buyerId,
+        placementRank,
       });
     }
   );
