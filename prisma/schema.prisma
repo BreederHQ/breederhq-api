@@ -1565,8 +1565,8 @@ model OffspringGroup {
   linkReason OffspringLinkReason?
 
   species Species
-  damId   Int
-  dam     Animal  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
+  damId   Int?
+  dam     Animal?  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
   sireId  Int?
   sire    Animal? @relation("OffspringSire", fields: [sireId], references: [id], onDelete: SetNull)
   name    String?

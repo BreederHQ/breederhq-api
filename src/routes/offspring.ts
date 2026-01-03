@@ -1197,18 +1197,33 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /* ===== CREATE: POST /api/v1/offspring ===== */
   app.post("/offspring", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
-    const { planId, identifier, notes, published, dates, counts, publishedMeta, statusOverride, statusOverrideReason, data } = (req.body as any) ?? {};
-    if (!planId) return reply.code(400).send({ error: "planId required" });
+    const { planId, identifier, notes, published, dates, counts, publishedMeta, statusOverride, statusOverrideReason, data, species } = (req.body as any) ?? {};
 
-    const plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
-    if (!plan) return reply.code(404).send({ error: "plan not found" });
-    if ((plan as any).status && (plan as any).status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
+    // planId is now optional - groups can be created without a linked breeding plan
+    let plan: any = null;
+    let existing: any = null;
 
-    const existing = await prisma.offspringGroup.findFirst({ where: { planId: plan.id, tenantId } });
+    if (planId) {
+      plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
+      if (!plan) return reply.code(404).send({ error: "plan not found" });
+      if ((plan as any).status && (plan as any).status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
+
+      existing = await prisma.offspringGroup.findFirst({ where: { planId: plan.id, tenantId } });
+    }
+
+    // species is required - get from plan if linked, otherwise require in body
+    const resolvedSpecies = plan?.species ?? species;
+    if (!resolvedSpecies) return reply.code(400).send({ error: "species required" });
+
+    // identifier (group name) is required when creating without a plan
+    if (!planId && !identifier?.trim()) {
+      return reply.code(400).send({ error: "identifier required" });
+    }
 
     const payload: Prisma.OffspringGroupUncheckedCreateInput | Prisma.OffspringGroupUncheckedUpdateInput = {
       tenantId,
-      planId: plan.id,
+      planId: plan?.id ?? null,
+      species: resolvedSpecies,
       name: identifier ?? null,
       notes: notes ?? null,
       published: Boolean(published ?? false),
@@ -1222,11 +1237,14 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     if (dates) {
       (payload as any).weanedAt = parseISO(dates.weanedAt);
-      (payload as any).placementStartAt = parseISO(dates.placementStartAt) ?? ((plan as any).lockedPlacementStartDate ?? null);
+      (payload as any).placementStartAt = parseISO(dates.placementStartAt) ?? (plan?.lockedPlacementStartDate ?? null);
       (payload as any).placementCompletedAt = parseISO(dates.placementCompletedAt);
-    } else {
-      (payload as any).placementStartAt = (plan as any).lockedPlacementStartDate ?? null;
+    } else if (plan) {
+      (payload as any).placementStartAt = plan.lockedPlacementStartDate ?? null;
     }
+
+    // Note: statusOverride and statusOverrideReason are not fields on OffspringGroup (only on Litter model)
+    // These fields are accepted in the API but not persisted
 
     if (counts) {
       if ("countBorn" in counts) (payload as any).countBorn = counts.countBorn ?? null;
