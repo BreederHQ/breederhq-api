@@ -434,12 +434,8 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       // Get the effective rules (block overrides template)
-      const effectiveRules: BookingRules = {
-        canCancel: block?.canCancel ?? template?.canCancel ?? true,
-        canReschedule: block?.canReschedule ?? template?.canReschedule ?? true,
-        cancellationDeadlineHours: block?.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-        rescheduleDeadlineHours: block?.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
-      };
+      const cancellationDeadlineHours = block?.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+      const rescheduleDeadlineHours = block?.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
 
       // Check for existing booking
       const existingBooking = await prisma.schedulingBooking.findFirst({
@@ -453,6 +449,20 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           slot: true,
         },
       });
+
+      // Compute deadline timestamps from existing booking slot
+      const deadlines = existingBooking?.slot?.startsAt
+        ? computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours)
+        : { cancelDeadlineAt: null, rescheduleDeadlineAt: null };
+
+      const effectiveRules: BookingRules = {
+        canCancel: block?.canCancel ?? template?.canCancel ?? true,
+        canReschedule: block?.canReschedule ?? template?.canReschedule ?? true,
+        cancellationDeadlineHours,
+        rescheduleDeadlineHours,
+        cancelDeadlineAt: deadlines.cancelDeadlineAt,
+        rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
+      };
 
       // Determine subject context
       let subjectName: string | null = null;
@@ -481,6 +491,23 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
       }
 
+      // Determine blocked state
+      let blocked: BlockedResponse | null = null;
+      if (!isOpen) {
+        blocked = buildBlockedResponse("EVENT_CANCELLED", { eventId });
+      } else if (!isEligible) {
+        blocked = buildBlockedResponse("NOT_ELIGIBLE", { eventId });
+      } else if (existingBooking) {
+        // Check if deadlines have passed for cancel/reschedule
+        const now = new Date();
+        if (deadlines.cancelDeadlineAt && new Date(deadlines.cancelDeadlineAt) < now) {
+          blocked = buildBlockedResponse("DEADLINE_PASSED", {
+            eventId,
+            deadlineAt: deadlines.cancelDeadlineAt,
+          });
+        }
+      }
+
       // Build response
       const response: SchedulingEventResponse = {
         context: {
@@ -499,6 +526,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           eligibilityReason,
           hasExistingBooking: !!existingBooking,
           existingBooking: existingBooking ? formatConfirmedBooking(existingBooking) : null,
+          blocked,
         },
       };
 
