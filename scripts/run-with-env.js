@@ -81,6 +81,40 @@ const SENSITIVE_KEYS = ['DATABASE_URL', 'DATABASE_DIRECT_URL'];
 // GUARDRAILS: Prevent common misconfigurations
 // ═══════════════════════════════════════════════════════════════════════
 
+// BLOCK: prisma db push - NEVER allowed, use migrations instead
+const fullCommand = [command, ...commandArgs].join(' ').toLowerCase();
+if (fullCommand.includes('db push')) {
+  console.error(`
+═══════════════════════════════════════════════════════════════════════
+🚫 BLOCKED: prisma db push is FORBIDDEN
+═══════════════════════════════════════════════════════════════════════
+
+"db push" applies schema changes directly to the database WITHOUT creating
+migration files. This causes:
+
+  ❌ Dev/prod schema drift (prod won't have the changes)
+  ❌ Lost migration history (no way to track what changed)
+  ❌ Shadow database conflicts on next migrate dev
+  ❌ Team sync issues (others won't get your changes)
+
+INSTEAD, use the proper migration workflow:
+
+  npm run db:dev:migrate     # Creates migration + applies it
+  npm run db:prod:deploy     # Applies existing migrations to prod
+
+If you're prototyping and want to iterate quickly:
+  1. Make changes to schema.prisma
+  2. Run: npm run db:dev:migrate
+  3. If unhappy, edit migration SQL before committing
+
+DOCUMENTATION:
+  See: docs/runbooks/PRISMA_MIGRATION_WORKFLOW.md
+
+═══════════════════════════════════════════════════════════════════════
+`);
+  process.exit(1);
+}
+
 // Check for forbidden SHADOW_DATABASE_URL (we use Prisma's auto-shadow)
 if (mergedEnv.SHADOW_DATABASE_URL) {
   console.error(`
