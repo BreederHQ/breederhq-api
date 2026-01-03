@@ -176,7 +176,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const created = await prisma.tag.create({
-        data: { tenantId, name, module, color: body.color ?? null },
+        data: { tenantId, name, module: module as TagModule, color: body.color ?? null },
         select: { id: true, name: true, module: true, color: true, createdAt: true, updatedAt: true },
       });
       return reply.code(201).send(tagDTO(created));
