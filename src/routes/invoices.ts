@@ -17,6 +17,20 @@ import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
 
+/* ───────────────────────── errors ───────────────────────── */
+
+class InvoicePartyNotGroupBuyerError extends Error {
+  offspringGroupId: number;
+  billToPartyId: number;
+
+  constructor(offspringGroupId: number, billToPartyId: number) {
+    super("Bill-to party is not assigned as a buyer for this offspring group");
+    this.name = "InvoicePartyNotGroupBuyerError";
+    this.offspringGroupId = offspringGroupId;
+    this.billToPartyId = billToPartyId;
+  }
+}
+
 /* ───────────────────────── helpers ───────────────────────── */
 
 function parseIntOrNull(v: unknown): number | null {
@@ -35,6 +49,17 @@ function errorReply(err: unknown) {
   const any = err as any;
   if (err instanceof IdempotencyConflictError) {
     return { status: 409, payload: { error: "idempotency_conflict", detail: any?.message } };
+  }
+  if (err instanceof InvoicePartyNotGroupBuyerError) {
+    return {
+      status: 422,
+      payload: {
+        error: "INVOICE_PARTY_NOT_GROUP_BUYER",
+        offspringGroupId: any.offspringGroupId,
+        billToPartyId: any.billToPartyId,
+        message: "Bill-to party is not assigned as a buyer for this offspring group",
+      },
+    };
   }
   const code = any?.code;
   if (code === "P2002") {
@@ -257,6 +282,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (!Number.isInteger(amountCents) || amountCents <= 0) {
         return reply.code(400).send({ error: "invalid_amountCents" });
+      }
+
+      // Offspring Group context: enforce buyer-only billing
+      // When offspringGroupId is present, clientPartyId must be an assigned buyer for that group
+      if (anchors.offspringGroupId) {
+        const buyerAssignment = await prisma.offspringGroupBuyer.findFirst({
+          where: {
+            groupId: anchors.offspringGroupId,
+            buyerPartyId: clientPartyId,
+            // Note: buyer status (Missed/Inactive) is currently allowed per spec
+            // Add status check here if business decides to block inactive buyers
+          },
+        });
+        if (!buyerAssignment) {
+          throw new InvoicePartyNotGroupBuyerError(anchors.offspringGroupId, clientPartyId);
+        }
       }
 
       // Generate invoice number and create in transaction
