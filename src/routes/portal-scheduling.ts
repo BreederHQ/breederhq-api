@@ -31,6 +31,34 @@ interface BookingRules {
   canReschedule: boolean;
   cancellationDeadlineHours: number | null;
   rescheduleDeadlineHours: number | null;
+  // Computed deadline timestamps (null if no deadline or no existing booking)
+  cancelDeadlineAt: string | null;
+  rescheduleDeadlineAt: string | null;
+}
+
+/**
+ * Blocked reason codes for deterministic UI messaging.
+ */
+type BlockedReasonCode =
+  | "NOT_ELIGIBLE"
+  | "WINDOW_NOT_OPEN"
+  | "FULLY_BOOKED"
+  | "DEADLINE_PASSED"
+  | "EVENT_CANCELLED"
+  | "ALREADY_BOOKED";
+
+/**
+ * Blocked response structure with machine-readable code and context.
+ */
+interface BlockedResponse {
+  code: BlockedReasonCode;
+  message: string;
+  context: {
+    eventId?: string;
+    slotId?: string;
+    opensAt?: string;
+    deadlineAt?: string;
+  };
 }
 
 interface SchedulingEventStatus {
@@ -39,6 +67,8 @@ interface SchedulingEventStatus {
   eligibilityReason: string | null;
   hasExistingBooking: boolean;
   existingBooking: ConfirmedBooking | null;
+  // Blocked response when booking is not possible
+  blocked: BlockedResponse | null;
 }
 
 interface SchedulingSlot {
@@ -162,6 +192,57 @@ function formatConfirmedBooking(booking: any): ConfirmedBooking {
 }
 
 /**
+ * Compute deadline timestamps from slot start time and deadline hours.
+ * Returns null if no deadline is configured.
+ */
+function computeDeadlineTimestamps(
+  slotStartsAt: Date | string | null,
+  cancellationDeadlineHours: number | null,
+  rescheduleDeadlineHours: number | null
+): { cancelDeadlineAt: string | null; rescheduleDeadlineAt: string | null } {
+  const result = { cancelDeadlineAt: null as string | null, rescheduleDeadlineAt: null as string | null };
+
+  if (!slotStartsAt) return result;
+
+  const startTime = typeof slotStartsAt === "string" ? new Date(slotStartsAt) : slotStartsAt;
+
+  if (cancellationDeadlineHours != null && cancellationDeadlineHours > 0) {
+    const deadline = new Date(startTime.getTime() - cancellationDeadlineHours * 60 * 60 * 1000);
+    result.cancelDeadlineAt = deadline.toISOString();
+  }
+
+  if (rescheduleDeadlineHours != null && rescheduleDeadlineHours > 0) {
+    const deadline = new Date(startTime.getTime() - rescheduleDeadlineHours * 60 * 60 * 1000);
+    result.rescheduleDeadlineAt = deadline.toISOString();
+  }
+
+  return result;
+}
+
+/**
+ * Build a BlockedResponse with user-friendly message based on reason code.
+ */
+function buildBlockedResponse(
+  code: BlockedReasonCode,
+  context: BlockedResponse["context"] = {}
+): BlockedResponse {
+  const messages: Record<BlockedReasonCode, string> = {
+    NOT_ELIGIBLE: "You are not eligible for this appointment.",
+    WINDOW_NOT_OPEN: "Booking is not yet open for this appointment.",
+    FULLY_BOOKED: "All available time slots have been booked.",
+    DEADLINE_PASSED: "The deadline for this action has passed.",
+    EVENT_CANCELLED: "This appointment has been cancelled.",
+    ALREADY_BOOKED: "You already have a booking for this event.",
+  };
+
+  return {
+    code,
+    message: messages[code],
+    context,
+  };
+}
+
+/**
  * Check if a party is eligible to book scheduling for an offspring group.
  * Eligibility is based on OffspringGroupBuyer linkage.
  */
@@ -261,11 +342,21 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           }
 
           // Build rules (block overrides template)
+          const cancellationDeadlineHours = block.cancellationDeadlineHours ?? block.template?.cancellationDeadlineHours ?? null;
+          const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? block.template?.rescheduleDeadlineHours ?? null;
+
+          // Compute deadline timestamps if there's an existing booking
+          const deadlines = existingBooking?.slot?.startsAt
+            ? computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours)
+            : { cancelDeadlineAt: null, rescheduleDeadlineAt: null };
+
           const rules: BookingRules = {
             canCancel: block.canCancel ?? block.template?.canCancel ?? true,
             canReschedule: block.canReschedule ?? block.template?.canReschedule ?? true,
-            cancellationDeadlineHours: block.cancellationDeadlineHours ?? block.template?.cancellationDeadlineHours ?? null,
-            rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? block.template?.rescheduleDeadlineHours ?? null,
+            cancellationDeadlineHours,
+            rescheduleDeadlineHours,
+            cancelDeadlineAt: deadlines.cancelDeadlineAt,
+            rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
           };
 
           events.push({
