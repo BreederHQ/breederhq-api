@@ -423,6 +423,28 @@ model User {
 
   // User entitlements (marketplace access, etc.)
   entitlements UserEntitlement[]
+
+  // Legal - Terms of Service acceptances
+  tosAcceptances TosAcceptance[]
+}
+
+/**
+ * TosAcceptance - Terms of Service acceptance records
+ * Stores a history of ToS acceptances for audit/compliance.
+ */
+model TosAcceptance {
+  id         Int      @id @default(autoincrement())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version    String   @db.VarChar(16)
+  acceptedAt DateTime @default(now())
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.Text
+  surface    String?  @db.VarChar(32) // marketplace, platform, portal
+  flow       String?  @db.VarChar(32) // register, invite_signup, portal_activate
+
+  @@index([userId])
+  @@index([version])
 }
 
 /**
