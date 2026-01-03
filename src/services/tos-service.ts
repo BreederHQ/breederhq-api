@@ -43,40 +43,40 @@ export interface TosAcceptancePayload {
  */
 export function validateTosAcceptancePayload(payload: unknown): TosAcceptancePayload {
   if (!payload || typeof payload !== "object") {
-    throw new Error("tos_acceptance_required");
+    throw new Error("TOS_ACCEPTANCE_REQUIRED");
   }
 
   const p = payload as Record<string, unknown>;
 
   // Validate version
   if (typeof p.version !== "string" || !p.version) {
-    throw new Error("tos_version_required");
+    throw new Error("TOS_ACCEPTANCE_REQUIRED");
   }
 
   // Version must match current
   if (p.version !== CURRENT_TOS_VERSION) {
-    throw new Error("tos_version_mismatch");
+    throw new Error("TOS_VERSION_MISMATCH");
   }
 
   // Validate effectiveDate (should match our current effective date)
   if (typeof p.effectiveDate !== "string" || !p.effectiveDate) {
-    throw new Error("tos_effective_date_required");
+    throw new Error("TOS_ACCEPTANCE_INVALID");
   }
 
   if (p.effectiveDate !== TOS_EFFECTIVE_DATE) {
-    throw new Error("tos_effective_date_mismatch");
+    throw new Error("TOS_VERSION_MISMATCH");
   }
 
   // Validate surface
   const validSurfaces: TosAcceptanceSurface[] = ["marketplace", "platform", "portal"];
   if (!validSurfaces.includes(p.surface as TosAcceptanceSurface)) {
-    throw new Error("tos_surface_invalid");
+    throw new Error("TOS_ACCEPTANCE_INVALID");
   }
 
   // Validate flow
   const validFlows: TosAcceptanceFlow[] = ["register", "invite_signup", "portal_activate"];
   if (!validFlows.includes(p.flow as TosAcceptanceFlow)) {
-    throw new Error("tos_flow_invalid");
+    throw new Error("TOS_ACCEPTANCE_INVALID");
   }
 
   return {

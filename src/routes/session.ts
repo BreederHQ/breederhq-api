@@ -8,6 +8,7 @@ import {
   SessionPayload,
 } from "../utils/session.js";
 import { auditFailure } from "../services/audit.js";
+import { getTosStatus } from "../services/tos-service.js";
 
 /**
  * Endpoints
@@ -123,6 +124,9 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
 
     const { hasTenants, user, activeTenantId, isMember } = await resolveActiveTenant(sess.userId, requestedTenantId);
     if (!user) return reply.code(401).send({ user: null, tenant: null, memberships: [] });
+    
+    // Fetch ToS status for all responses
+    const tos = await getTosStatus(sess.userId);
 
     if (!hasTenants) {
       // Single-tenant response
@@ -130,6 +134,7 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
         user: { id: sess.userId },
         tenant: null,
         memberships: [],
+        tos,
       });
     }
 
@@ -139,6 +144,7 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
         error: "no_tenant_context",
         user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
         memberships: (user.tenantMemberships ?? []).map((m) => ({ tenantId: m.tenantId, role: m.role ?? null })),
+        tos,
       });
     }
     if (!isMember) {
@@ -173,6 +179,7 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
         membershipRole: (m as any).membershipRole ?? null,
         membershipStatus: (m as any).membershipStatus ?? null,
       })),
+      tos,
     });
   });
 
