@@ -1,9 +1,11 @@
 // src/routes/tags.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { TagModule } from "@prisma/client";
 import prisma from "../prisma.js";
 import { createTagAssignment, getTagsForContact, getTagsForOrganization } from "../services/tag-service.js";
 
-type Module = "CONTACT" | "ORGANIZATION" | "ANIMAL";
+// All valid TagModule values from Prisma schema
+const VALID_MODULES = Object.values(TagModule);
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -35,7 +37,7 @@ function tagDTO(t: any) {
   return {
     id: t.id,
     name: t.name,
-    module: t.module as Module,
+    module: t.module as TagModule,
     color: t.color ?? null,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
@@ -52,12 +54,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const { module = "", q = "" } = (req.query || {}) as {
-        module?: Module | "";
+        module?: string;
         q?: string;
         page?: string;
         limit?: string;
       };
       const { page, limit, skip } = parsePaging(req.query);
+
+      // Validate module if provided
+      if (module && !VALID_MODULES.includes(module as TagModule)) {
+        return reply.code(400).send({
+          error: "invalid_module",
+          detail: `Module must be one of: ${VALID_MODULES.join(", ")}`,
+        });
+      }
 
       const where: any = { tenantId };
       if (module) where.module = module;
@@ -153,13 +163,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const body = (req.body || {}) as { name?: string; module?: Module; color?: string | null };
+      const body = (req.body || {}) as { name?: string; module?: string; color?: string | null };
       const name = String(body.name || "").trim();
       const module = body.module;
 
       if (!name) return reply.code(400).send({ error: "name_required" });
-      if (!module || !["CONTACT", "ORGANIZATION", "ANIMAL"].includes(module)) {
-        return reply.code(400).send({ error: "module_invalid" });
+      if (!module || !VALID_MODULES.includes(module as TagModule)) {
+        return reply.code(400).send({
+          error: "module_invalid",
+          detail: `Module must be one of: ${VALID_MODULES.join(", ")}`,
+        });
       }
 
       const created = await prisma.tag.create({
