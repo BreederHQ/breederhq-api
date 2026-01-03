@@ -1,0 +1,48 @@
+name: Migration Integrity Check
+
+on:
+  pull_request:
+    paths:
+      - 'prisma/**'
+      - 'package.json'
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'prisma/**'
+
+jobs:
+  check-migration-integrity:
+    name: Check Migration Integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate --schema=prisma/schema.prisma
+
+      - name: Check Migration Integrity (Dev)
+        if: github.ref == 'refs/heads/dev' || github.base_ref == 'dev'
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          DATABASE_DIRECT_URL: ${{ secrets.DEV_DATABASE_DIRECT_URL }}
+        run: node scripts/db/check-migration-integrity.mjs
+
+      - name: Check Migration Integrity (Prod)
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_DIRECT_URL: ${{ secrets.PROD_DATABASE_DIRECT_URL }}
+        run: node scripts/db/check-migration-integrity.mjs
