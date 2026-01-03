@@ -1199,7 +1199,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const tenantId = (req as any).tenantId as number;
     const { planId, identifier, notes, published, dates, counts, publishedMeta, statusOverride, statusOverrideReason, data, species } = (req.body as any) ?? {};
 
-    // planId is now optional - groups can be created without a linked breeding plan
+    // planId is optional - if not provided, we auto-create a BreedingPlan for the group
     let plan: any = null;
     let existing: any = null;
 
@@ -1218,6 +1218,37 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // identifier (group name) is required when creating without a plan
     if (!planId && !identifier?.trim()) {
       return reply.code(400).send({ error: "identifier required" });
+    }
+
+    // Auto-create a BreedingPlan for manually created groups (no planId provided)
+    if (!planId) {
+      const now = new Date();
+      const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+
+      // Create plan first to get the ID
+      plan = await prisma.breedingPlan.create({
+        data: {
+          tenantId,
+          name: identifier.trim(),
+          species: resolvedSpecies,
+          status: "COMMITTED",
+          committedAt: now,
+        },
+      });
+
+      // Generate a unique code: PLN-MANUAL-YYYYMMDD-ID
+      const baseCode = `PLN-MANUAL-${ymd}`;
+      let code = `${baseCode}-${plan.id}`;
+      let suffix = 2;
+      while (await prisma.breedingPlan.findFirst({ where: { tenantId, code }, select: { id: true } })) {
+        code = `${baseCode}-${plan.id}-${suffix++}`;
+      }
+
+      // Update with the generated code
+      plan = await prisma.breedingPlan.update({
+        where: { id: plan.id },
+        data: { code },
+      });
     }
 
     const payload: Prisma.OffspringGroupUncheckedCreateInput | Prisma.OffspringGroupUncheckedUpdateInput = {
