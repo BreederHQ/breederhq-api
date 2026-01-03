@@ -737,10 +737,26 @@ app.register(
   { prefix: "/api/v1" }
 );
 // ---------- API v1/public: public marketplace subtree ----------
-// Authoritative prefix for public marketplace routes
+// SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
+// All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
+//   1. Valid session cookie (bhq_s)
+//   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
+// Requests to /api/v1/public/marketplace/* now return 410 Gone.
 app.register(
   async (api) => {
-    api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/public/marketplace/*
+    // Return 410 Gone for all requests to removed public marketplace routes
+    api.all("/marketplace/*", async (_req, reply) => {
+      return reply.code(410).send({
+        error: "endpoint_removed",
+        message: "Public marketplace endpoints have been removed. Use /api/v1/marketplace/* with authentication.",
+      });
+    });
+    api.all("/marketplace", async (_req, reply) => {
+      return reply.code(410).send({
+        error: "endpoint_removed",
+        message: "Public marketplace endpoints have been removed. Use /api/v1/marketplace/* with authentication.",
+      });
+    });
   },
   { prefix: "/api/v1/public" }
 );
