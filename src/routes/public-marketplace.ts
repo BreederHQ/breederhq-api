@@ -35,6 +35,24 @@ import {
 } from "../utils/public-dto.js";
 
 // ============================================================================
+// Security: Environment flags
+// ============================================================================
+
+/**
+ * SECURITY: STAFF bypass is disabled by default in production.
+ * Set MARKETPLACE_STAFF_BYPASS=true to allow STAFF members marketplace access.
+ */
+const MARKETPLACE_STAFF_BYPASS = process.env.MARKETPLACE_STAFF_BYPASS === "true";
+
+// Log warning at module load if bypass is enabled
+if (MARKETPLACE_STAFF_BYPASS) {
+  console.warn(
+    "[SECURITY WARNING] MARKETPLACE_STAFF_BYPASS is enabled. " +
+    "STAFF members will have marketplace access without explicit entitlement."
+  );
+}
+
+// ============================================================================
 // Security: Entitlement enforcement helper
 // ============================================================================
 
@@ -43,6 +61,11 @@ import {
  *
  * This is defense-in-depth - the surface gate middleware already checks entitlement,
  * but we explicitly verify here to ensure no data leaks if middleware is bypassed.
+ *
+ * Entitlement is granted via:
+ * 1. superAdmin flag on user
+ * 2. MARKETPLACE_ACCESS entitlement with ACTIVE status
+ * 3. STAFF membership (ONLY if MARKETPLACE_STAFF_BYPASS=true env flag is set)
  *
  * Returns true if entitled, sends 401/403 response and returns false otherwise.
  * Callers MUST check return value and return early if false.
@@ -60,7 +83,7 @@ async function requireMarketplaceEntitlement(
   }
 
   // Check if user is entitled to marketplace
-  // Priority: superAdmin > explicit entitlement > staff membership
+  // Priority: superAdmin > explicit entitlement > staff membership (if bypass enabled)
 
   // 1. Check superAdmin
   const user = await prisma.user.findUnique({
@@ -82,34 +105,37 @@ async function requireMarketplaceEntitlement(
       return true;
     }
   } catch {
-    // Table may not exist - continue to staff check
+    // Table may not exist - continue to staff check if bypass enabled
   }
 
-  // 3. Check STAFF membership (platform subscribers get marketplace by policy)
-  try {
-    const staffMembership = await (prisma as any).tenantMembership.findFirst({
-      where: {
-        userId,
-        membershipRole: "STAFF",
-        membershipStatus: "ACTIVE",
-      },
-      select: { tenantId: true },
-    });
-    if (staffMembership) {
-      return true;
-    }
-  } catch {
-    // Fallback for old schema
+  // 3. Check STAFF membership ONLY if bypass is explicitly enabled
+  // SECURITY: This bypass is OFF by default in production
+  if (MARKETPLACE_STAFF_BYPASS) {
     try {
-      const anyMembership = await (prisma as any).tenantMembership.findFirst({
-        where: { userId },
+      const staffMembership = await (prisma as any).tenantMembership.findFirst({
+        where: {
+          userId,
+          membershipRole: "STAFF",
+          membershipStatus: "ACTIVE",
+        },
         select: { tenantId: true },
       });
-      if (anyMembership) {
+      if (staffMembership) {
         return true;
       }
     } catch {
-      // No memberships table
+      // Fallback for old schema
+      try {
+        const anyMembership = await (prisma as any).tenantMembership.findFirst({
+          where: { userId },
+          select: { tenantId: true },
+        });
+        if (anyMembership) {
+          return true;
+        }
+      } catch {
+        // No memberships table
+      }
     }
   }
 

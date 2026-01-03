@@ -27,12 +27,27 @@ const FETCH_TIMEOUT_MS = 15000;
 const MAX_SOURCE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB max source image
 
 // ============================================================================
+// Security: Environment flags
+// ============================================================================
+
+/**
+ * SECURITY: STAFF bypass is disabled by default in production.
+ * Set MARKETPLACE_STAFF_BYPASS=true to allow STAFF members marketplace access.
+ */
+const MARKETPLACE_STAFF_BYPASS = process.env.MARKETPLACE_STAFF_BYPASS === "true";
+
+// ============================================================================
 // Security: Entitlement Check
 // ============================================================================
 
 /**
  * Check if user has marketplace entitlement.
  * Same logic as public-marketplace.ts but returns boolean + sends response.
+ *
+ * Entitlement is granted via:
+ * 1. superAdmin flag on user
+ * 2. MARKETPLACE_ACCESS entitlement with ACTIVE status
+ * 3. STAFF membership (ONLY if MARKETPLACE_STAFF_BYPASS=true env flag is set)
  */
 async function requireMarketplaceEntitlement(
   req: FastifyRequest,
@@ -66,34 +81,37 @@ async function requireMarketplaceEntitlement(
       return true;
     }
   } catch {
-    // Table may not exist - continue to staff check
+    // Table may not exist - continue to staff check if bypass enabled
   }
 
-  // 3. Check STAFF membership (platform subscribers get marketplace by policy)
-  try {
-    const staffMembership = await (prisma as any).tenantMembership.findFirst({
-      where: {
-        userId,
-        membershipRole: "STAFF",
-        membershipStatus: "ACTIVE",
-      },
-      select: { tenantId: true },
-    });
-    if (staffMembership) {
-      return true;
-    }
-  } catch {
-    // Fallback for old schema
+  // 3. Check STAFF membership ONLY if bypass is explicitly enabled
+  // SECURITY: This bypass is OFF by default in production
+  if (MARKETPLACE_STAFF_BYPASS) {
     try {
-      const anyMembership = await (prisma as any).tenantMembership.findFirst({
-        where: { userId },
+      const staffMembership = await (prisma as any).tenantMembership.findFirst({
+        where: {
+          userId,
+          membershipRole: "STAFF",
+          membershipStatus: "ACTIVE",
+        },
         select: { tenantId: true },
       });
-      if (anyMembership) {
+      if (staffMembership) {
         return true;
       }
     } catch {
-      // No memberships table
+      // Fallback for old schema
+      try {
+        const anyMembership = await (prisma as any).tenantMembership.findFirst({
+          where: { userId },
+          select: { tenantId: true },
+        });
+        if (anyMembership) {
+          return true;
+        }
+      } catch {
+        // No memberships table
+      }
     }
   }
 
