@@ -92,6 +92,44 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // GET /tags/stats → usage counts for all tags (read-only)
+  app.get("/tags/stats", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      // Get all tags for tenant
+      const tags = await prisma.tag.findMany({
+        where: { tenantId },
+        select: { id: true },
+      });
+
+      // Get assignment counts grouped by tagId
+      const counts = await prisma.tagAssignment.groupBy({
+        by: ["tagId"],
+        where: { tag: { tenantId } },
+        _count: { id: true },
+      });
+
+      // Build lookup map
+      const countMap = new Map<number, number>();
+      for (const row of counts) {
+        countMap.set(row.tagId, row._count.id);
+      }
+
+      // Build response with 0 counts for tags with no assignments
+      const stats = tags.map((tag) => ({
+        tagId: tag.id,
+        usageCount: countMap.get(tag.id) ?? 0,
+      }));
+
+      reply.send({ items: stats });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
   // GET /contacts/:id/tags  → list tags assigned to a contact
   // Step 6B: Party-only reads via taggedPartyId
   app.get("/contacts/:id/tags", async (req, reply) => {
