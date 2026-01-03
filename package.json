@@ -28,6 +28,7 @@
     "db:dev:baseline": "node scripts/run-with-env.js .env.dev.migrate prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
     "db:dev:deploy": "node scripts/run-with-env.js .env.dev.migrate prisma migrate deploy --schema=prisma/schema.prisma",
     "db:dev:integrity": "node scripts/run-with-env.js .env.dev.migrate node scripts/db/check-migration-integrity.mjs",
+    "db:dev:seed:users": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-test-users.ts",
     "db:prod:status": "node scripts/run-with-env.js .env.prod.migrate prisma migrate status --schema=prisma/schema.prisma",
     "db:prod:deploy": "node scripts/run-with-env.js .env.prod.migrate prisma migrate deploy --schema=prisma/schema.prisma",
     "db:prod:validate": "node scripts/run-with-env.js .env.prod.migrate tsx scripts/db/v2/validate-post-import.ts",
