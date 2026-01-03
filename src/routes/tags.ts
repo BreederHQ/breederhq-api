@@ -317,23 +317,15 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // DELETE /tags/:id
-  // Only allows deletion if tag is archived AND has no assignments (safe delete)
+  // Only allows deletion if tag has no assignments (safe delete)
   app.delete("/tags/:id", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       const { id } = req.params as { id: string };
-      const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true, isArchived: true } });
+      const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true } });
       if (!tag) return reply.code(404).send({ error: "not_found" });
-
-      // Require tag to be archived before deletion
-      if (!tag.isArchived) {
-        return reply.code(409).send({
-          error: "tag_not_archived",
-          detail: "Tag must be archived before it can be deleted",
-        });
-      }
 
       // Check for existing assignments - reject if tag is in use
       const assignmentCount = await prisma.tagAssignment.count({ where: { tagId: tag.id } });
