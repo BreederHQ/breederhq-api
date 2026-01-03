@@ -10,6 +10,7 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { getTosStatus } from "../services/tos-service.js";
 import {
   resolveTenantFromProgramSlug,
   resolveOffspringGroupListing,
@@ -140,6 +141,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       entitlementSource = "STAFF_POLICY";
     }
 
+
+    // Get ToS status for this user
+    const tosStatus = await getTosStatus(user.id);
     return reply.send({
       userId: user.id,
       email: user.email,
@@ -153,6 +157,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       })),
       marketplaceEntitled,
       entitlementSource,
+      tos: tosStatus,
     });
   });
 
