@@ -747,17 +747,16 @@ app.register(
 app.register(
   async (api) => {
     // Return 410 Gone for all requests to removed public marketplace routes
+    // SECURITY: No data, no DB reads, no DTO building - just a static error response
+    const goneResponse = {
+      error: "gone",
+      message: "Marketplace endpoints require authentication. Use /api/v1/marketplace/*.",
+    };
     api.all("/marketplace/*", async (_req, reply) => {
-      return reply.code(410).send({
-        error: "endpoint_removed",
-        message: "Public marketplace endpoints have been removed. Use /api/v1/marketplace/* with authentication.",
-      });
+      return reply.code(410).send(goneResponse);
     });
     api.all("/marketplace", async (_req, reply) => {
-      return reply.code(410).send({
-        error: "endpoint_removed",
-        message: "Public marketplace endpoints have been removed. Use /api/v1/marketplace/* with authentication.",
-      });
+      return reply.code(410).send(goneResponse);
     });
   },
   { prefix: "/api/v1/public" }
