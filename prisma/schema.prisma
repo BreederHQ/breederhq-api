@@ -1617,6 +1617,7 @@ model OffspringGroup {
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  archivedAt DateTime?
   Invoice   Invoice[]
   Campaign  Campaign[]
   Task      Task[]
