@@ -1167,12 +1167,15 @@ model Tag {
   name        String
   module      TagModule
   color       String?
+  isArchived  Boolean         @default(false)
+  archivedAt  DateTime?
   assignments TagAssignment[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   @@unique([tenantId, module, name])
   @@index([tenantId, module])
+  @@index([tenantId, isArchived, module])
 }
 
 model TagAssignment {
