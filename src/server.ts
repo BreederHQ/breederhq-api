@@ -762,6 +762,13 @@ app.register(
   { prefix: "/api/v1/public" }
 );
 
+// DEV: Log disabled public marketplace endpoint status at startup
+if (process.env.NODE_ENV !== "production") {
+  console.log("[DEV] Public marketplace endpoints disabled:");
+  console.log("  - /api/v1/public/marketplace/* → 410 Gone");
+  console.log("  - Authenticated access: /api/v1/marketplace/*");
+}
+
 // ---------- Not Found ----------
 app.setNotFoundHandler((req, reply) => {
   req.log.warn({ m: req.method, url: req.url }, "NOT FOUND");
