@@ -881,17 +881,29 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         const { slotId: newSlotIdStr } = req.body || {};
 
         if (!newSlotIdStr) {
-          return reply.code(400).send({ error: "slot_id_required" });
+          return reply.code(400).send({
+            code: "SLOT_ID_REQUIRED",
+            message: "A new slot ID is required for rescheduling.",
+            context: { eventId },
+          });
         }
 
         const newSlotId = parseInt(newSlotIdStr, 10);
         if (isNaN(newSlotId)) {
-          return reply.code(400).send({ error: "invalid_slot_id" });
+          return reply.code(400).send({
+            code: "INVALID_SLOT_ID",
+            message: "The provided slot ID is invalid.",
+            context: { eventId, slotId: newSlotIdStr },
+          });
         }
 
         const parsed = parseEventId(eventId);
         if (!parsed) {
-          return reply.code(400).send({ error: "invalid_event_id" });
+          return reply.code(400).send({
+            code: "INVALID_EVENT_ID",
+            message: "The provided event ID is invalid.",
+            context: { eventId },
+          });
         }
 
         // Find existing booking
@@ -914,23 +926,41 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         });
 
         if (!existingBooking) {
-          return reply.code(404).send({ error: "booking_not_found" });
+          return reply.code(404).send({
+            code: "BOOKING_NOT_FOUND",
+            message: "No active booking found for this event.",
+            context: { eventId },
+          });
         }
+
+        // Store original slot info for response
+        const originalSlotStartsAt = existingBooking.slot.startsAt.toISOString();
+        const originalSlotEndsAt = existingBooking.slot.endsAt.toISOString();
 
         // Get rules
         const block = existingBooking.slot.block;
         const template = block.template;
+        const cancellationDeadlineHours = block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+        const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
+        const deadlines = computeDeadlineTimestamps(existingBooking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours);
+
         const rules: BookingRules = {
           canCancel: block.canCancel ?? template?.canCancel ?? true,
           canReschedule: block.canReschedule ?? template?.canReschedule ?? true,
-          cancellationDeadlineHours: block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-          rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
+          cancellationDeadlineHours,
+          rescheduleDeadlineHours,
+          cancelDeadlineAt: deadlines.cancelDeadlineAt,
+          rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
         };
 
         // Check if rescheduling is allowed
         const rescheduleCheck = canRescheduleBooking(existingBooking, rules);
         if (!rescheduleCheck.allowed) {
-          return reply.code(403).send({ error: "not_allowed", message: rescheduleCheck.reason });
+          return reply.code(403).send({
+            code: "DEADLINE_PASSED",
+            message: rescheduleCheck.reason || "The deadline for rescheduling has passed.",
+            context: { eventId, deadlineAt: deadlines.rescheduleDeadlineAt },
+          });
         }
 
         // Atomic reschedule transaction
@@ -1022,22 +1052,45 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           return newBooking;
         });
 
-        return reply.send({ booking: formatConfirmedBooking(result) });
+        return reply.send({
+          booking: formatConfirmedBooking(result),
+          rescheduledFrom: {
+            slotStartsAt: originalSlotStartsAt,
+            slotEndsAt: originalSlotEndsAt,
+          },
+          rescheduledTo: {
+            slotStartsAt: result.slot.startsAt.toISOString(),
+            slotEndsAt: result.slot.endsAt.toISOString(),
+          },
+        });
       } catch (err: any) {
         if (err.code === "SLOT_NOT_FOUND") {
-          return reply.code(404).send({ error: "slot_not_found", message: "Slot not found" });
+          return reply.code(404).send({
+            code: "SLOT_NOT_FOUND",
+            message: "The requested time slot was not found.",
+            context: { eventId, slotId: String(newSlotId) },
+          });
         }
-        if (err.code === "SLOT_NOT_AVAILABLE") {
-          return reply.code(409).send({ error: "slot_taken", message: "This time slot is no longer available." });
-        }
-        if (err.code === "SLOT_FULL") {
-          return reply.code(409).send({ error: "slot_taken", message: "This time slot is no longer available." });
+        if (err.code === "SLOT_NOT_AVAILABLE" || err.code === "SLOT_FULL") {
+          return reply.code(409).send({
+            code: "SLOT_TAKEN",
+            message: "This time slot is no longer available.",
+            context: { eventId, slotId: String(newSlotId) },
+          });
         }
         if (err.statusCode) {
-          return reply.code(err.statusCode).send({ error: err.error });
+          return reply.code(err.statusCode).send({
+            code: err.code || "RESCHEDULE_ERROR",
+            message: err.message || "Failed to reschedule booking.",
+            context: { eventId },
+          });
         }
         req.log?.error?.({ err }, "Failed to reschedule booking");
-        return reply.code(500).send({ error: "reschedule_failed" });
+        return reply.code(500).send({
+          code: "RESCHEDULE_FAILED",
+          message: "An unexpected error occurred while rescheduling.",
+          context: { eventId },
+        });
       }
     }
   );
