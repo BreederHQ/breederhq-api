@@ -21,6 +21,13 @@ import {
   type BookingWithRelations,
   type RescheduleNotificationData,
 } from "../services/scheduling-notifications.js";
+import {
+  parsePlacementSchedulingPolicy,
+  checkPlacementGating,
+  getPlacementBlockedMessage,
+  buildPlacementBlockedContext,
+  type PlacementWindow,
+} from "../services/placement-scheduling.js";
 
 // ---------- Types matching frontend contract ----------
 
@@ -275,6 +282,21 @@ async function isPartyEligibleForBlock(tenantId: number, partyId: number, block:
     return true;
   }
   return isPartyEligibleForGroup(tenantId, partyId, block.offspringGroupId);
+}
+
+/**
+ * Get buyer link with placement rank for gating checks.
+ */
+async function getBuyerLinkWithRank(
+  tenantId: number,
+  partyId: number,
+  offspringGroupId: number
+): Promise<{ placementRank: number | null } | null> {
+  const link = await prisma.offspringGroupBuyer.findFirst({
+    where: { tenantId, groupId: offspringGroupId, buyerPartyId: partyId },
+    select: { placementRank: true },
+  });
+  return link;
 }
 
 // ---------- Routes ----------
@@ -564,6 +586,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
 
       // Build slot query based on event type
       let blockIds: number[] = [];
+      let offspringGroupId: number | null = null;
 
       if (parsed.type === "template") {
         // Get all open blocks for this template
@@ -573,22 +596,46 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
             templateId: parsed.id,
             status: "OPEN",
           },
-          select: { id: true },
+          select: { id: true, offspringGroupId: true },
         });
         blockIds = blocks.map((b) => b.id);
+        offspringGroupId = blocks[0]?.offspringGroupId ?? null;
       } else {
         // Single block
         const block = await prisma.schedulingAvailabilityBlock.findFirst({
           where: { id: parsed.id, tenantId, status: "OPEN" },
-          select: { id: true },
+          select: { id: true, offspringGroupId: true },
         });
         if (block) {
           blockIds = [block.id];
+          offspringGroupId = block.offspringGroupId;
         }
       }
 
       if (blockIds.length === 0) {
         return reply.send({ slots: [] });
+      }
+
+      // Check placement gating if there's an offspring group
+      if (offspringGroupId) {
+        const group = await prisma.offspringGroup.findFirst({
+          where: { id: offspringGroupId, tenantId },
+          select: { placementSchedulingPolicy: true },
+        });
+        if (group?.placementSchedulingPolicy) {
+          const policy = parsePlacementSchedulingPolicy(group.placementSchedulingPolicy);
+          if (policy?.enabled) {
+            const buyerLink = await getBuyerLinkWithRank(tenantId, partyId, offspringGroupId);
+            const gatingResult = checkPlacementGating(policy, buyerLink?.placementRank ?? null);
+            if (!gatingResult.allowed) {
+              return reply.code(403).send({
+                code: gatingResult.code,
+                message: getPlacementBlockedMessage(gatingResult.code!),
+                context: buildPlacementBlockedContext(offspringGroupId, gatingResult.window, gatingResult.serverNow, eventId),
+              });
+            }
+          }
+        }
       }
 
       // Get available slots (future, not full)

@@ -1596,6 +1596,9 @@ model OffspringGroup {
   notes String?
   data  Json?
 
+  // Phase 6: Placement scheduling policy for scheduling fairness
+  placementSchedulingPolicy Json?
+
   // children as Offspring, not Animals
   Offspring Offspring[] @relation("GroupOffspring")
 
@@ -1644,6 +1647,9 @@ model OffspringGroupBuyer {
 
   waitlistEntryId Int?
   waitlistEntry   WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
+
+  // Phase 6: Placement rank for scheduling fairness (lower rank = earlier pick)
+  placementRank Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
