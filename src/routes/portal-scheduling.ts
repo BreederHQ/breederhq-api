@@ -13,6 +13,14 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
+import {
+  sendBookingConfirmationNotification,
+  sendBookingCancellationNotification,
+  sendBookingRescheduleNotification,
+  buildNotificationDataFromBooking,
+  type BookingWithRelations,
+  type RescheduleNotificationData,
+} from "../services/scheduling-notifications.js";
 
 // ---------- Types matching frontend contract ----------
 
@@ -753,6 +761,36 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           return booking;
         });
 
+        // Send confirmation notification (fire and forget - do not block response)
+        try {
+          const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+            where: { id: result.id },
+            include: {
+              slot: {
+                include: {
+                  block: {
+                    include: { template: true },
+                  },
+                },
+              },
+              party: true,
+              tenant: true,
+            },
+          });
+
+          if (bookingWithRelations) {
+            const notificationData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+            if (notificationData) {
+              // Non-blocking: do not await
+              sendBookingConfirmationNotification(notificationData).catch((err) => {
+                req.log?.warn?.({ err, bookingId: result.id }, "Failed to send booking confirmation notification");
+              });
+            }
+          }
+        } catch (notifyErr) {
+          req.log?.warn?.({ err: notifyErr, bookingId: result.id }, "Error preparing booking notification");
+        }
+
         return reply.send({ booking: formatConfirmedBooking(result) });
       } catch (err: any) {
         if (err.code === "SLOT_NOT_FOUND") {
@@ -816,11 +854,16 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       // Get rules
       const block = booking.slot.block;
       const template = block.template;
+      const cancellationDeadlineHours = block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null;
+      const rescheduleDeadlineHours = block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null;
+      const deadlines = computeDeadlineTimestamps(booking.slot.startsAt, cancellationDeadlineHours, rescheduleDeadlineHours);
       const rules: BookingRules = {
         canCancel: block.canCancel ?? template?.canCancel ?? true,
         canReschedule: block.canReschedule ?? template?.canReschedule ?? true,
-        cancellationDeadlineHours: block.cancellationDeadlineHours ?? template?.cancellationDeadlineHours ?? null,
-        rescheduleDeadlineHours: block.rescheduleDeadlineHours ?? template?.rescheduleDeadlineHours ?? null,
+        cancellationDeadlineHours,
+        rescheduleDeadlineHours,
+        cancelDeadlineAt: deadlines.cancelDeadlineAt,
+        rescheduleDeadlineAt: deadlines.rescheduleDeadlineAt,
       };
 
       // Check if cancellation is allowed
@@ -857,6 +900,36 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
       });
 
+      // Send cancellation notification (fire and forget - do not block response)
+      try {
+        const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+          where: { id: booking.id },
+          include: {
+            slot: {
+              include: {
+                block: {
+                  include: { template: true },
+                },
+              },
+            },
+            party: true,
+            tenant: true,
+          },
+        });
+
+        if (bookingWithRelations) {
+          const notificationData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+          if (notificationData) {
+            // Non-blocking: do not await
+            sendBookingCancellationNotification(notificationData).catch((err) => {
+              req.log?.warn?.({ err, bookingId: booking.id }, "Failed to send booking cancellation notification");
+            });
+          }
+        }
+      } catch (notifyErr) {
+        req.log?.warn?.({ err: notifyErr, bookingId: booking.id }, "Error preparing cancellation notification");
+      }
+
       return reply.send({ cancelled: true });
     } catch (err: any) {
       if (err.statusCode) {
@@ -875,10 +948,13 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
   app.post<{ Params: { eventId: string }; Body: { slotId?: string } }>(
     "/portal/scheduling/events/:eventId/reschedule",
     async (req, reply) => {
+      // Declare outside try for catch block access
+      const { eventId } = req.params;
+      const { slotId: newSlotIdStr } = req.body || {};
+      let newSlotId: number = NaN;
+
       try {
         const { tenantId, partyId } = await requireClientPartyScope(req);
-        const { eventId } = req.params;
-        const { slotId: newSlotIdStr } = req.body || {};
 
         if (!newSlotIdStr) {
           return reply.code(400).send({
@@ -888,7 +964,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           });
         }
 
-        const newSlotId = parseInt(newSlotIdStr, 10);
+        newSlotId = parseInt(newSlotIdStr, 10);
         if (isNaN(newSlotId)) {
           return reply.code(400).send({
             code: "INVALID_SLOT_ID",
@@ -1051,6 +1127,41 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
 
           return newBooking;
         });
+
+        // Send reschedule notification (fire and forget - do not block response)
+        try {
+          const bookingWithRelations = await prisma.schedulingBooking.findUnique({
+            where: { id: result.id },
+            include: {
+              slot: {
+                include: {
+                  block: {
+                    include: { template: true },
+                  },
+                },
+              },
+              party: true,
+              tenant: true,
+            },
+          });
+
+          if (bookingWithRelations) {
+            const baseData = buildNotificationDataFromBooking(bookingWithRelations as BookingWithRelations);
+            if (baseData) {
+              const rescheduleData: RescheduleNotificationData = {
+                ...baseData,
+                originalStartsAt: new Date(originalSlotStartsAt),
+                originalEndsAt: new Date(originalSlotEndsAt),
+              };
+              // Non-blocking: do not await
+              sendBookingRescheduleNotification(rescheduleData).catch((err) => {
+                req.log?.warn?.({ err, bookingId: result.id }, "Failed to send booking reschedule notification");
+              });
+            }
+          }
+        } catch (notifyErr) {
+          req.log?.warn?.({ err: notifyErr, bookingId: result.id }, "Error preparing reschedule notification");
+        }
 
         return reply.send({
           booking: formatConfirmedBooking(result),
