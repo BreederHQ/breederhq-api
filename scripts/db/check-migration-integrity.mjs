@@ -16,9 +16,13 @@
  *   node scripts/run-with-env.js .env.dev.migrate node scripts/db/check-migration-integrity.mjs
  *   node scripts/run-with-env.js .env.prod.migrate node scripts/db/check-migration-integrity.mjs
  *
+ * Testing:
+ *   SIMULATE_VIOLATION=1 node scripts/db/check-migration-integrity.mjs
+ *   (Forces a fake violation to verify exit code 1 behavior without touching DB)
+ *
  * Exit codes:
- *   0 - All migrations have integrity
- *   1 - Integrity violations found
+ *   0 - All migrations have integrity (violations.length === 0)
+ *   1 - Integrity violations found (violations.length > 0)
  *   2 - Connection/query error
  */
 
@@ -26,10 +30,24 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Baseline migrations that were intentionally resolved during initial setup
-// These are migrations where the DDL was already applied by a previous system
-// and we used `prisma migrate resolve --applied` to baseline the history.
-// Add new entries here ONLY during initial project setup, never during normal development.
+/**
+ * Baseline Migrations Exclusion
+ *
+ * These migrations are excluded from zero-step checks because they were
+ * intentionally marked as applied during initial project setup using
+ * `prisma migrate resolve --applied`. The DDL was already present from
+ * a previous migration system or manual database setup.
+ *
+ * Criteria for adding a migration here:
+ * - Must be from initial project baselining (not ongoing development)
+ * - DDL was verified to exist in production before marking as applied
+ * - Documented in migration commit why it was baselined
+ *
+ * DO NOT add migrations here to "fix" failed deployments. Instead:
+ * 1. Delete the corrupt _prisma_migrations record
+ * 2. Fix the underlying issue (permissions, schema drift)
+ * 3. Re-run `prisma migrate deploy`
+ */
 const BASELINE_MIGRATIONS = [
   "20251230112400_init",
   "20251231162841_add_audit_event_log",
@@ -42,9 +60,20 @@ async function main() {
 
   const violations = [];
 
+  // Simulation mode for testing exit code behavior
+  const simulateViolation = process.env.SIMULATE_VIOLATION === "1";
+  if (simulateViolation) {
+    console.log("⚠️  SIMULATE_VIOLATION=1 detected - adding fake violation\n");
+    violations.push({
+      type: "SIMULATED_VIOLATION",
+      message: "Simulated violation for testing",
+      detail: "This is not a real violation - triggered by SIMULATE_VIOLATION=1",
+      migrations: [{ name: "fake_migration_for_testing" }],
+    });
+  }
+
   try {
     // 1. Check for migrations with applied_steps_count = 0 but marked as applied
-    // Exclude known baseline migrations
     const zeroStepsMigrations = await prisma.$queryRaw`
       SELECT migration_name, started_at, finished_at, applied_steps_count, rolled_back_at
       FROM "_prisma_migrations"
@@ -54,7 +83,10 @@ async function main() {
       ORDER BY started_at DESC
     `;
 
-    // Filter out baseline migrations
+    // Separate baseline from non-baseline
+    const baselineFound = zeroStepsMigrations.filter(
+      (m) => BASELINE_MIGRATIONS.includes(m.migration_name)
+    );
     const nonBaselineZeroSteps = zeroStepsMigrations.filter(
       (m) => !BASELINE_MIGRATIONS.includes(m.migration_name)
     );
@@ -71,10 +103,7 @@ async function main() {
       });
     }
 
-    // Log baseline migrations for visibility
-    const baselineFound = zeroStepsMigrations.filter(
-      (m) => BASELINE_MIGRATIONS.includes(m.migration_name)
-    );
+    // Log baseline migrations for visibility (informational only)
     if (baselineFound.length > 0) {
       console.log(`Baseline migrations (excluded from checks): ${baselineFound.length}`);
       baselineFound.forEach((m) => console.log(`  - ${m.migration_name}`));
@@ -123,28 +152,28 @@ async function main() {
       });
     }
 
-    // 4. Summary check - count total vs healthy migrations
+    // 4. Get total migration count for summary
     const totalCount = await prisma.$queryRaw`
       SELECT COUNT(*) as total FROM "_prisma_migrations"
     `;
-    const healthyCount = await prisma.$queryRaw`
-      SELECT COUNT(*) as healthy FROM "_prisma_migrations"
-      WHERE finished_at IS NOT NULL
-        AND rolled_back_at IS NULL
-        AND applied_steps_count > 0
-    `;
-
     const total = Number(totalCount[0].total);
-    const healthy = Number(healthyCount[0].healthy);
 
+    // Count affected migrations across all violations (for summary)
+    const affectedMigrationCount = violations.reduce(
+      (sum, v) => sum + v.migrations.length,
+      0
+    );
+
+    // Print summary with accurate violation count
     console.log(`Migration Summary:`);
     console.log(`  Total records:   ${total}`);
-    console.log(`  Healthy records: ${healthy}`);
-    console.log(`  Violations:      ${total - healthy}\n`);
+    console.log(`  Violations:      ${affectedMigrationCount}\n`);
 
-    // Report violations
+    // Report result based on violations array
     if (violations.length > 0) {
-      console.log("❌ INTEGRITY VIOLATIONS DETECTED\n");
+      console.log("═══════════════════════════════════════════════════════════════");
+      console.log("  ❌ INTEGRITY CHECK FAILED");
+      console.log("═══════════════════════════════════════════════════════════════\n");
 
       for (const v of violations) {
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -172,20 +201,30 @@ async function main() {
       console.log("  docs/runbooks/PRISMA_MIGRATION_WORKFLOW.md");
       console.log("");
 
+      await prisma.$disconnect();
       process.exit(1);
     }
 
-    console.log("✓ All migrations have integrity\n");
-    console.log("  - No zero-step migrations");
+    // Success case
+    console.log("═══════════════════════════════════════════════════════════════");
+    console.log("  ✓ INTEGRITY CHECK PASSED");
+    console.log("═══════════════════════════════════════════════════════════════\n");
+    console.log("  - No zero-step migrations (excluding baselines)");
     console.log("  - No stuck migrations");
     console.log("  - No rolled-back records");
     console.log("");
 
-  } catch (err) {
-    console.error("❌ Error checking migration integrity:", err.message);
-    process.exit(2);
-  } finally {
     await prisma.$disconnect();
+    process.exit(0);
+
+  } catch (err) {
+    console.error("═══════════════════════════════════════════════════════════════");
+    console.error("  ❌ INTEGRITY CHECK ERROR");
+    console.error("═══════════════════════════════════════════════════════════════\n");
+    console.error("Error:", err.message);
+    console.error("");
+    await prisma.$disconnect();
+    process.exit(2);
   }
 }
 
