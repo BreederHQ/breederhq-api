@@ -444,6 +444,7 @@ import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
 import marketplaceAssetsRoutes from "./routes/marketplace-assets.js"; // Marketplace assets (auth-gated)
+import marketplaceProfileRoutes from "./routes/marketplace-profile.js"; // Marketplace profile (draft/publish)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -735,6 +736,7 @@ app.register(
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
     api.register(marketplaceAssetsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/assets/*
+    api.register(marketplaceProfileRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/profile/*
   },
   { prefix: "/api/v1" }
 );
