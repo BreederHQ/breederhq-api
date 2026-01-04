@@ -1,9 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Test Runner for Phase 6 Party Migration Tests
+ * Test Runner for Node.js Built-in Test Runner Tests
  *
  * Runs all test files using Node.js built-in test runner.
  * Exits with non-zero code if any test fails.
+ *
+ * Note: Jest-based tests (using @jest/globals) are not included here.
+ * Those tests need to be run with Jest separately if needed.
  */
 
 import { run } from "node:test";
@@ -15,11 +18,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function runTests() {
-  console.log("Running Phase 6 Party Migration Tests...\n");
+  console.log("Running Node.js Test Runner Tests...\n");
 
   const testFiles = [
     path.join(__dirname, "party-api-contracts.test.ts"),
     path.join(__dirname, "party-migration-regression.test.ts"),
+    path.join(__dirname, "animal-public-listing.test.ts"),
   ];
 
   let hasFailures = false;
