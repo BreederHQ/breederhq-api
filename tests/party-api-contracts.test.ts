@@ -4,7 +4,7 @@
  * Verifies that all Party-touched endpoints:
  * 1. Accept only Party-native fields (partyId, clientPartyId, buyerPartyId, studOwnerPartyId)
  * 2. Reject legacy fields (contactId, organizationId, partyType)
- * 3. Return Party-native objects (partyId, kind, displayName)
+ * 3. Return Party-native objects (partyId, type, name)
  * 4. Do not return legacy fields in responses
  *
  * Aligned with Phase 5: All legacy identity compatibility code has been removed.
@@ -12,7 +12,10 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient, PartyKind } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+
+// Use string literal for PartyType enum
+const PartyType = { CONTACT: "CONTACT", ORGANIZATION: "ORGANIZATION" } as const;
 
 const prisma = new PrismaClient();
 
@@ -31,11 +34,11 @@ const ctx: TestContext = {} as TestContext;
 
 describe("Phase 6: Party-Native API Contract Tests", () => {
   before(async () => {
-    // Setup test data
+    // Setup test data - use timestamp slug to avoid collisions
     const tenant = await prisma.tenant.create({
       data: {
         name: "Party API Contract Test Tenant",
-        slug: "party-api-test",
+        slug: `party-api-test-${Date.now()}`,
       },
     });
     ctx.tenantId = tenant.id;
@@ -44,15 +47,15 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
     const contactParty = await prisma.party.create({
       data: {
         tenantId: ctx.tenantId,
-        kind: PartyKind.CONTACT,
-        displayName: "Test Contact",
+        type: PartyType.CONTACT,
+        name: "Test Contact",
         email: "contact@test.com",
       },
     });
     ctx.contactPartyId = contactParty.id;
 
-    // Create Contact backing entity
-    const contact = await prisma.contact.create({
+    // Create Contact backing entity (links to party via partyId)
+    await prisma.contact.create({
       data: {
         tenantId: ctx.tenantId,
         partyId: ctx.contactPartyId,
@@ -61,37 +64,25 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
       },
     });
 
-    // Link party to contact
-    await prisma.party.update({
-      where: { id: ctx.contactPartyId },
-      data: { contactId: contact.id },
-    });
-
     // Create Organization Party
     const orgParty = await prisma.party.create({
       data: {
         tenantId: ctx.tenantId,
-        kind: PartyKind.ORGANIZATION,
-        displayName: "Test Organization",
+        type: PartyType.ORGANIZATION,
+        name: "Test Organization",
         email: "org@test.com",
       },
     });
     ctx.orgPartyId = orgParty.id;
 
-    // Create Organization backing entity
-    const org = await prisma.organization.create({
+    // Create Organization backing entity (links to party via partyId)
+    await prisma.organization.create({
       data: {
         tenantId: ctx.tenantId,
         partyId: ctx.orgPartyId,
         name: "Test Organization",
         email: "org@test.com",
       },
-    });
-
-    // Link party to organization
-    await prisma.party.update({
-      where: { id: ctx.orgPartyId },
-      data: { organizationId: org.id },
     });
 
     // Create test animal
@@ -113,6 +104,7 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
         name: "Test Plan",
         damId: ctx.animalId,
         status: "PLANNING",
+        species: "DOG",
       },
     });
     ctx.planId = plan.id;
@@ -366,33 +358,33 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
   });
 
   describe("Party Model - Direct Access", () => {
-    it("should read Party with kind and displayName", async () => {
+    it("should read Party with type and name", async () => {
       const party = await prisma.party.findUnique({
         where: { id: ctx.contactPartyId },
         select: {
           id: true,
-          kind: true,
-          displayName: true,
+          type: true,
+          name: true,
           email: true,
         },
       });
 
       assert.ok(party, "Party should exist");
-      assert.strictEqual(party.kind, PartyKind.CONTACT, "kind should be CONTACT");
-      assert.strictEqual(party.displayName, "Test Contact", "displayName should match");
+      assert.strictEqual(party.type, PartyType.CONTACT, "type should be CONTACT");
+      assert.strictEqual(party.name, "Test Contact", "name should match");
       assert.strictEqual(party.email, "contact@test.com", "email should match");
     });
 
-    it("Party schema should have kind not type", async () => {
+    it("Party schema should have type not kind", async () => {
       const party = await prisma.party.findFirst({
         where: { id: ctx.contactPartyId },
       });
 
       if (party) {
-        assert.ok(party.kind, "kind should exist");
-        // @ts-expect-error - type should not exist
-        const noType = party.type;
-        assert.strictEqual(noType, undefined, "type field should not exist");
+        assert.ok(party.type, "type should exist");
+        // @ts-expect-error - kind should not exist
+        const noKind = party.kind;
+        assert.strictEqual(noKind, undefined, "kind field should not exist");
       }
     });
   });
@@ -407,8 +399,8 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
           party: {
             select: {
               id: true,
-              kind: true,
-              displayName: true,
+              type: true,
+              name: true,
             },
           },
         },
@@ -416,7 +408,7 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
 
       assert.ok(ownerWithParty, "Owner should exist");
       assert.ok(ownerWithParty.party, "Party relation should be populated");
-      assert.strictEqual(ownerWithParty.party.kind, PartyKind.CONTACT, "Party kind should match");
+      assert.strictEqual(ownerWithParty.party.type, PartyType.CONTACT, "Party type should match");
     });
 
     it("should resolve Party from WaitlistEntry", async () => {
@@ -432,8 +424,8 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
           clientParty: {
             select: {
               id: true,
-              kind: true,
-              displayName: true,
+              type: true,
+              name: true,
             },
           },
         },
@@ -441,7 +433,7 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
 
       assert.ok(entryWithParty, "Entry should exist");
       assert.ok(entryWithParty.clientParty, "clientParty relation should be populated");
-      assert.strictEqual(entryWithParty.clientParty.kind, PartyKind.CONTACT, "Party kind should match");
+      assert.strictEqual(entryWithParty.clientParty.type, PartyType.CONTACT, "Party type should match");
     });
   });
 });
