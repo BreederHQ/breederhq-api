@@ -599,9 +599,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     // Build where clause for animal listings
+    // FILTER: Only LIVE status listings are publicly visible
     const where: any = {
       tenantId: resolved.tenantId,
-      isListed: true,
+      status: "LIVE",
       urlSlug: { not: null },
     };
 
@@ -614,10 +615,17 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: { publishedAt: "desc" },
         select: {
           urlSlug: true,
           title: true,
+          intent: true,
+          headline: true,
+          priceCents: true,
+          priceMinCents: true,
+          priceMaxCents: true,
+          priceText: true,
+          priceModel: true,
           animal: {
             select: {
               species: true,
@@ -676,11 +684,27 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       }
 
       const listing = await prisma.animalPublicListing.findUnique({
-        where: { id: listingResolved.listingId },
+        where: {
+          id: listingResolved.listingId,
+          // FILTER: Only LIVE status listings are publicly visible
+          status: "LIVE",
+        },
         select: {
           urlSlug: true,
           title: true,
           description: true,
+          intent: true,
+          status: true,
+          headline: true,
+          summary: true,
+          priceCents: true,
+          priceMinCents: true,
+          priceMaxCents: true,
+          priceText: true,
+          priceModel: true,
+          locationCity: true,
+          locationRegion: true,
+          locationCountry: true,
           animal: {
             select: {
               name: true,
@@ -779,7 +803,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       return reply.code(400).send({ error: "user_has_no_party" });
     }
 
-    // Validate listing if provided
+    // Validate listing if provided and get listing details for subject
+    let listingTitle: string | null = null;
+    let animalListingIntent: string | null = null;
+
     if (listingSlug) {
       if (!isValidSlug(listingSlug)) {
         return reply.code(404).send({ error: "listing_not_found" });
@@ -794,6 +821,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         if (!listingResolved) {
           return reply.code(404).send({ error: "listing_not_found" });
         }
+        // Get listing title for subject
+        const group = await prisma.offspringGroup.findUnique({
+          where: { id: listingResolved.groupId },
+          select: { listingTitle: true },
+        });
+        listingTitle = group?.listingTitle || null;
       } else if (listingType === "animal") {
         const listingResolved = await resolveAnimalListing(
           prisma,
@@ -803,6 +836,16 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         if (!listingResolved) {
           return reply.code(404).send({ error: "listing_not_found" });
         }
+        // Verify listing is LIVE and get details for subject
+        const animalListing = await prisma.animalPublicListing.findUnique({
+          where: { id: listingResolved.listingId },
+          select: { status: true, title: true, headline: true, intent: true },
+        });
+        if (!animalListing || animalListing.status !== "LIVE") {
+          return reply.code(404).send({ error: "listing_not_found" });
+        }
+        listingTitle = animalListing.headline || animalListing.title || null;
+        animalListingIntent = animalListing.intent;
       }
     }
 
@@ -812,10 +855,19 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       select: { name: true },
     });
 
-    // Build subject
-    const subject = listingSlug
-      ? `Inquiry: Listing ${listingSlug}`
-      : `Inquiry: ${org?.name || "Program"}`;
+    // Build subject with listing context
+    let subject: string;
+    if (listingSlug && listingTitle) {
+      subject = `Inquiry: ${listingTitle}`;
+    } else if (listingSlug) {
+      subject = `Inquiry: Listing ${listingSlug}`;
+    } else {
+      subject = `Inquiry: ${org?.name || "Program"}`;
+    }
+
+    // Determine inquiryType based on listing type
+    // ANIMAL_LISTING for animal listings, MARKETPLACE for offspring groups and general
+    const inquiryType = listingType === "animal" ? "ANIMAL_LISTING" : "MARKETPLACE";
 
     const now = new Date();
 
@@ -824,7 +876,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         data: {
           tenantId: resolved.tenantId,
           subject,
-          inquiryType: "MARKETPLACE",
+          inquiryType,
           sourceListingSlug: listingSlug || null,
           lastMessageAt: now,
           participants: {

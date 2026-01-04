@@ -253,8 +253,21 @@ export function toPublicOffspringDTO(
 
 export interface PublicAnimalListingDTO {
   slug: string;
+  intent: string | null;
+  status: string;
+  headline: string | null;
   title: string | null;
+  summary: string | null;
   description: string | null;
+  // Pricing
+  priceDisplay: string | null;  // Derived display string
+  priceCents: number | null;
+  priceMinCents: number | null;
+  priceMaxCents: number | null;
+  priceText: string | null;
+  // Location
+  location: string | null;
+  // Animal details
   animal: {
     name: string;
     species: string;
@@ -295,9 +308,68 @@ type AnimalWithRelations = Pick<
   >;
 };
 
-type ListingWithAnimal = Pick<AnimalPublicListing, "urlSlug" | "title" | "description"> & {
+type ListingWithAnimal = Pick<
+  AnimalPublicListing,
+  | "urlSlug"
+  | "title"
+  | "description"
+  | "intent"
+  | "status"
+  | "headline"
+  | "summary"
+  | "priceCents"
+  | "priceMinCents"
+  | "priceMaxCents"
+  | "priceText"
+  | "priceModel"
+  | "locationCity"
+  | "locationRegion"
+  | "locationCountry"
+> & {
   animal: AnimalWithRelations;
 };
+
+/**
+ * Derive a display string for price based on priceModel and values
+ */
+function derivePriceDisplay(listing: Pick<
+  AnimalPublicListing,
+  "priceModel" | "priceCents" | "priceMinCents" | "priceMaxCents" | "priceText"
+> & { animal: Pick<Animal, "priceCents"> }): string | null {
+  const model = listing.priceModel;
+
+  if (model === "inquire" || model === "negotiable") {
+    return listing.priceText || (model === "inquire" ? "Inquire" : "Negotiable");
+  }
+
+  if (model === "range" && listing.priceMinCents != null && listing.priceMaxCents != null) {
+    const min = (listing.priceMinCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    const max = (listing.priceMaxCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    return `${min} - ${max}`;
+  }
+
+  // Fixed price: use listing price, fallback to animal price
+  const price = listing.priceCents ?? listing.animal.priceCents;
+  if (price != null) {
+    return (price / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+  }
+
+  return listing.priceText || null;
+}
+
+/**
+ * Derive location string from listing fields
+ */
+function deriveLocation(listing: Pick<
+  AnimalPublicListing,
+  "locationCity" | "locationRegion" | "locationCountry"
+>): string | null {
+  const parts: string[] = [];
+  if (listing.locationCity) parts.push(listing.locationCity);
+  if (listing.locationRegion) parts.push(listing.locationRegion);
+  if (listing.locationCountry) parts.push(listing.locationCountry);
+  return parts.length > 0 ? parts.join(", ") : null;
+}
 
 export function toPublicAnimalListingDTO(
   listing: ListingWithAnimal,
@@ -325,8 +397,21 @@ export function toPublicAnimalListingDTO(
 
   return {
     slug: listing.urlSlug || "",
+    intent: listing.intent || null,
+    status: listing.status,
+    headline: listing.headline || null,
     title: listing.title || null,
+    summary: listing.summary || null,
     description: listing.description || null,
+    // Pricing
+    priceDisplay: derivePriceDisplay(listing),
+    priceCents: listing.priceCents || null,
+    priceMinCents: listing.priceMinCents || null,
+    priceMaxCents: listing.priceMaxCents || null,
+    priceText: listing.priceText || null,
+    // Location
+    location: deriveLocation(listing),
+    // Animal
     animal: {
       name: animal.name,
       species: animal.species,
@@ -351,11 +436,14 @@ export function toPublicAnimalListingDTO(
 export interface PublicListingSummaryDTO {
   type: "offspring_group" | "animal";
   slug: string;
+  intent: string | null;  // For animal listings
+  headline: string | null;  // For animal listings
   title: string | null;
   species: string;
   breed: string | null;
   photoUrl: string | null;
   priceRange: { min: number; max: number } | null;
+  priceDisplay: string | null;  // Derived display string for animal listings
 }
 
 export function toOffspringGroupSummaryDTO(
@@ -374,33 +462,74 @@ export function toOffspringGroupSummaryDTO(
       ? { min: Math.min(...prices), max: Math.max(...prices) }
       : null;
 
+  // Derive price display for offspring groups
+  let priceDisplay: string | null = null;
+  if (priceRange) {
+    if (priceRange.min === priceRange.max) {
+      priceDisplay = (priceRange.min / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    } else {
+      const min = (priceRange.min / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      const max = (priceRange.max / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      priceDisplay = `${min} - ${max}`;
+    }
+  }
+
   return {
     type: "offspring_group",
     slug: group.listingSlug || "",
+    intent: null,  // Not applicable to offspring groups
+    headline: null,  // Not applicable to offspring groups
     title: group.listingTitle || null,
     species: group.species,
     breed: group.dam?.breed || null,
     // SECURITY: Transform to auth-gated asset URL
     photoUrl: toAssetUrl(group.coverImageUrl, "offspring_group_cover"),
     priceRange,
+    priceDisplay,
   };
 }
 
 export function toAnimalListingSummaryDTO(
-  listing: Pick<AnimalPublicListing, "urlSlug" | "title"> & {
+  listing: Pick<
+    AnimalPublicListing,
+    | "urlSlug"
+    | "title"
+    | "intent"
+    | "headline"
+    | "priceCents"
+    | "priceMinCents"
+    | "priceMaxCents"
+    | "priceText"
+    | "priceModel"
+  > & {
     animal: Pick<Animal, "species" | "breed" | "photoUrl" | "priceCents">;
   }
 ): PublicListingSummaryDTO {
+  // Derive price display
+  const priceDisplay = derivePriceDisplay(listing);
+
+  // Derive price range for consistency with offspring group format
+  let priceRange: { min: number; max: number } | null = null;
+  if (listing.priceModel === "range" && listing.priceMinCents != null && listing.priceMaxCents != null) {
+    priceRange = { min: listing.priceMinCents, max: listing.priceMaxCents };
+  } else {
+    const price = listing.priceCents ?? listing.animal.priceCents;
+    if (price != null) {
+      priceRange = { min: price, max: price };
+    }
+  }
+
   return {
     type: "animal",
     slug: listing.urlSlug || "",
+    intent: listing.intent || null,
+    headline: listing.headline || null,
     title: listing.title || null,
     species: listing.animal.species,
     breed: listing.animal.breed || null,
     // SECURITY: Transform to auth-gated asset URL
     photoUrl: toAssetUrl(listing.animal.photoUrl, "animal_photo"),
-    priceRange: listing.animal.priceCents
-      ? { min: listing.animal.priceCents, max: listing.animal.priceCents }
-      : null,
+    priceRange,
+    priceDisplay,
   };
 }
