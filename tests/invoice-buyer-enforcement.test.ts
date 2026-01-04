@@ -8,6 +8,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient, PartyType, FinanceScope } from "@prisma/client";
+import {
+  TENANT_PREFIXES,
+  createTestTenant,
+  teardownTestTenant,
+  cleanupStaleTenants,
+} from "./helpers/tenant-helpers.js";
 
 const prisma = new PrismaClient();
 
@@ -22,13 +28,14 @@ const ctx: TestContext = {} as TestContext;
 
 describe("Invoice Buyer Enforcement for Offspring Groups", () => {
   before(async () => {
-    // Create test tenant
-    const tenant = await prisma.tenant.create({
-      data: {
-        name: "Invoice Buyer Enforcement Test Tenant",
-        slug: `invoice-buyer-test-${Date.now()}`,
-      },
-    });
+    // Cleanup stale test tenants from previous runs (belt-and-suspenders)
+    await cleanupStaleTenants(TENANT_PREFIXES.invoiceBuyerEnforcement, 24, prisma);
+
+    // Create test tenant using centralized helper
+    const tenant = await createTestTenant(
+      "Invoice Buyer Enforcement Test Tenant",
+      TENANT_PREFIXES.invoiceBuyerEnforcement
+    );
     ctx.tenantId = tenant.id;
 
     // Create buyer party (will be assigned to group)
@@ -74,13 +81,10 @@ describe("Invoice Buyer Enforcement for Offspring Groups", () => {
   });
 
   after(async () => {
-    // Clean up test data in reverse order of dependencies
-    await prisma.invoiceLineItem.deleteMany({ where: { tenantId: ctx.tenantId } });
-    await prisma.invoice.deleteMany({ where: { tenantId: ctx.tenantId } });
-    await prisma.offspringGroupBuyer.deleteMany({ where: { tenantId: ctx.tenantId } });
-    await prisma.offspringGroup.deleteMany({ where: { tenantId: ctx.tenantId } });
-    await prisma.party.deleteMany({ where: { tenantId: ctx.tenantId } });
-    await prisma.tenant.delete({ where: { id: ctx.tenantId } });
+    // Use centralized teardown helper (handles all FK constraints)
+    if (ctx.tenantId) {
+      await teardownTestTenant(ctx.tenantId, prisma);
+    }
     await prisma.$disconnect();
   });
 
