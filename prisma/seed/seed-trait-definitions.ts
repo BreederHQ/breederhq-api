@@ -676,9 +676,48 @@ async function seedTraitDefinitions() {
   console.log("");
 }
 
+async function verifyTraitDefinitions() {
+  console.log("\n🔍 Verifying trait definitions...");
+
+  // Verify DOG has categories
+  const dogTraits = await prisma.traitDefinition.findMany({
+    where: { species: Species.DOG, tenantId: null },
+    select: { category: true, key: true },
+  });
+
+  const dogCategories = new Set(dogTraits.map(t => t.category));
+  const expectedCategories = ["Orthopedic", "Eyes", "Cardiac", "Genetic", "Infectious", "Preventative", "Reproductive", "General"];
+  const missingCategories = expectedCategories.filter(c => !dogCategories.has(c));
+
+  if (dogTraits.length === 0) {
+    throw new Error("❌ VERIFICATION FAILED: No DOG trait definitions found!");
+  }
+
+  if (missingCategories.length > 0) {
+    console.warn(`⚠️  Warning: DOG missing categories: ${missingCategories.join(", ")}`);
+  }
+
+  console.log(`✅ DOG has ${dogTraits.length} trait definitions across ${dogCategories.size} categories`);
+  console.log(`   Categories: ${Array.from(dogCategories).sort().join(", ")}`);
+
+  // Quick count for all species
+  const allCounts = await prisma.traitDefinition.groupBy({
+    by: ["species"],
+    where: { tenantId: null },
+    _count: { id: true },
+  });
+
+  console.log("\n📊 Species trait counts:");
+  for (const row of allCounts) {
+    console.log(`   ${row.species}: ${row._count.id} traits`);
+  }
+}
+
 seedTraitDefinitions()
   .then(async () => {
+    await verifyTraitDefinitions();
     await prisma.$disconnect();
+    console.log("\n✅ Trait definitions seeded and verified successfully!");
   })
   .catch(async (e) => {
     console.error(e);

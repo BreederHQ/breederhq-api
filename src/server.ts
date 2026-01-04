@@ -444,6 +444,8 @@ import attachmentsRoutes from "./routes/attachments.js"; // Finance Track C
 import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
 import marketplaceAssetsRoutes from "./routes/marketplace-assets.js"; // Marketplace assets (auth-gated)
+import marketplaceProfileRoutes from "./routes/marketplace-profile.js"; // Marketplace profile (draft/publish)
+import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Public breeder profiles (no auth)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -548,6 +550,23 @@ app.register(
           return;
         }
         // if orgId present → require tenant/membership below
+      }
+
+      // 3) /marketplace/breeders and /marketplace/breeders/:tenantSlug are public (GET only)
+      // These endpoints are accessible without authentication from any surface
+      // Note: pathOnly may or may not include /api/v1 prefix depending on how request is routed
+      const isBreedersListPath =
+        pathOnly === "/marketplace/breeders" ||
+        pathOnly === "/api/v1/marketplace/breeders" ||
+        pathOnly.endsWith("/marketplace/breeders");
+      const isBreedersDetailPath =
+        /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
+      if (m === "GET" && (isBreedersListPath || isBreedersDetailPath)) {
+        // Skip all auth/context checks - these are fully public endpoints
+        (req as any).tenantId = null;
+        (req as any).userId = null;
+        (req as any).actorContext = "PUBLIC";
+        return; // Exit hook early - no session/tenant/context verification needed
       }
 
       // ---------- Session verification ----------
@@ -735,6 +754,8 @@ app.register(
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
     api.register(marketplaceAssetsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/assets/*
+    api.register(marketplaceProfileRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/profile/*
+    api.register(marketplaceBreedersRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeders/* (PUBLIC)
   },
   { prefix: "/api/v1" }
 );

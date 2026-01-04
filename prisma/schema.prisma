@@ -340,6 +340,22 @@ enum OffspringPaperworkState {
 }
 
 /**
+ * Animal marketplace listing enums
+ */
+enum AnimalListingIntent {
+  STUD
+  BROOD_PLACEMENT
+  REHOME
+  SHOWCASE
+}
+
+enum AnimalListingStatus {
+  DRAFT
+  LIVE
+  PAUSED
+}
+
+/**
  * ────────────────────────────────────────────────────────────────────────────
  * Users & Auth
  * ────────────────────────────────────────────────────────────────────────────
@@ -595,6 +611,8 @@ model Tenant {
   availabilityPrefs Json?
 
   settings TenantSetting[]
+
+  programBreeds TenantProgramBreed[]
 
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -1071,15 +1089,48 @@ model AnimalPublicListing {
   animal      Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
   tenantId    Int
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Core listing fields
+  urlSlug     String?  @unique
+  intent      AnimalListingIntent?
+  status      AnimalListingStatus  @default(DRAFT)
+
+  // Display fields
+  headline    String?  @db.VarChar(120)
   title       String?
-  description String?
+  summary     String?  @db.Text
+  description String?  @db.Text
+
+  // Legacy visibility control (retained for compatibility)
   isListed    Boolean  @default(false)
   visibility  String?
-  urlSlug     String?  @unique
+
+  // Publishing timestamps
+  publishedAt DateTime?
+  pausedAt    DateTime?
+
+  // Location override (optional, defaults to org location if null)
+  locationCity    String?  @db.VarChar(100)
+  locationRegion  String?  @db.VarChar(100)
+  locationCountry String?  @db.VarChar(2)
+
+  // Pricing fields for marketplace cards
+  priceModel     String?  @db.VarChar(32)  // "fixed" | "range" | "negotiable" | "inquire"
+  priceCents     Int?
+  priceMinCents  Int?
+  priceMaxCents  Int?
+  priceText      String?  @db.VarChar(100)
+
+  // Intent-specific details (JSON for flexibility)
+  detailsJson    Json?    @db.JsonB
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, intent])
+  @@index([status, intent])
 }
 
 /**
@@ -1231,6 +1282,7 @@ model Breed {
   registries   BreedRegistryLink[]
   Animal       Animal[]
   AnimalBreeds AnimalBreed[]
+  TenantProgramBreed TenantProgramBreed[]
 
   @@index([species])
 }
@@ -1284,11 +1336,39 @@ model CustomBreed {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   Animal    Animal[]
+  TenantProgramBreed TenantProgramBreed[]
 
   @@unique([id, tenantId])
   @@unique([tenantId, species, name])
   @@index([tenantId, species])
   @@index([tenantId, createdByOrganizationId])
+}
+
+/// Breeds selected for a tenant's breeding program (displayed on marketplace listings)
+model TenantProgramBreed {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  species Species
+
+  /// Reference to canonical breed (mutually exclusive with customBreedId)
+  breedId Int?
+  breed   Breed? @relation(fields: [breedId], references: [id], onDelete: Cascade)
+
+  /// Reference to custom breed (mutually exclusive with breedId)
+  customBreedId Int?
+  customBreed   CustomBreed? @relation(fields: [customBreedId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  /// Whether this is the primary breed for the species
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, breedId])
+  @@unique([tenantId, customBreedId])
+  @@index([tenantId, species])
 }
 
 /**
