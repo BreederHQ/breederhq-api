@@ -1091,6 +1091,130 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  app.post("/breeding/plans/:id/uncommit", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as Partial<{ actorId: string }>;
+      const userId = (req as any).user?.id ?? null;
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          status: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Only allow uncommit if status is COMMITTED
+      if (String(plan.status) !== "COMMITTED") {
+        return reply.code(409).send({
+          error: "not_committed",
+          detail: `Plan must be in COMMITTED status to uncommit. Current status: ${plan.status}`
+        });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Check for linked offspring group
+        const group = await tx.offspringGroup.findFirst({
+          where: { tenantId, planId: plan.id },
+          select: { id: true },
+        });
+
+        if (group) {
+          // Check for blockers in the offspring group
+          const blockers: any = {};
+
+          // Check for offspring
+          try {
+            const offspringCount = await tx.animal.count({
+              where: { tenantId, offspringGroupId: group.id },
+            });
+            if (offspringCount > 0) blockers.hasOffspring = true;
+          } catch (e) {
+            // Field may not exist, skip this check
+          }
+
+          // Check for buyers (via waitlist/reservations)
+          // Try both litterId (old) and offspringGroupId (new) for compatibility
+          try {
+            const buyersCount = await tx.waitlistEntry.count({
+              where: {
+                tenantId,
+                OR: [
+                  { offspringGroupId: group.id },
+                  { planId: plan.id },
+                ]
+              },
+            });
+            if (buyersCount > 0) blockers.hasBuyers = true;
+          } catch (e) {
+            // Table or field may not exist, skip this check
+          }
+
+          // If any blockers exist, return 409
+          if (Object.keys(blockers).length > 0) {
+            return { blocked: true, blockers };
+          }
+
+          // No blockers - safe to delete the group
+          try {
+            await tx.offspringGroupEvent.deleteMany({
+              where: { tenantId, offspringGroupId: group.id },
+            });
+          } catch (e) {
+            // Events may not exist, continue
+          }
+
+          await tx.offspringGroup.delete({
+            where: { id: group.id },
+          });
+        }
+
+        // Revert plan to PLANNING status
+        const updated = await tx.breedingPlan.update({
+          where: { id: plan.id },
+          data: {
+            status: BreedingPlanStatus.PLANNING,
+            committedAt: null,
+            committedByUserId: null,
+          },
+        });
+
+        // Create event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId: plan.tenantId,
+            planId: plan.id,
+            type: "PLAN_UNCOMMITTED",
+            occurredAt: new Date(),
+            label: "Plan uncommitted",
+            data: {
+              fromStatus: String(plan.status),
+              deletedGroupId: group?.id ?? null,
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return { blocked: false, plan: updated };
+      });
+
+      if (result.blocked) {
+        return reply.code(409).send({ blockers: result.blockers });
+      }
+
+      reply.send({ ok: true });
+    } catch (err) {
+      req.log.error({ err }, "uncommit failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
 
   app.post("/breeding/plans/:id/archive", async (req, reply) => {
     try {

@@ -31,6 +31,7 @@ export const TENANT_PREFIXES = {
   partyMigrationRegression: "party-migration-test",
   animalPublicListing: "animal-listing-test",
   invoiceBuyerEnforcement: "invoice-buyer-test",
+  traitDefinitions: "trait-def-test",
 } as const;
 
 export type TenantPrefix = (typeof TENANT_PREFIXES)[keyof typeof TENANT_PREFIXES];
@@ -107,6 +108,9 @@ export async function teardownTestTenant(
 
   // 4. Animal public listings
   await prisma.animalPublicListing.deleteMany({ where: { tenantId } });
+
+  // 4b. Animal trait values (FK to Animal, TraitDefinition)
+  await prisma.animalTraitValue.deleteMany({ where: { tenantId } });
 
   // 5. Breeding attempts
   await prisma.breedingAttempt.deleteMany({
