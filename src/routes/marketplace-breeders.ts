@@ -1,11 +1,12 @@
 // src/routes/marketplace-breeders.ts
-// Public breeder profile endpoint - no auth required
+// Public breeder profile endpoints - no auth required
 //
-// Endpoint:
-//   GET /api/v1/marketplace/breeders/:tenantSlug - Read published breeder profile
+// Endpoints:
+//   GET /api/v1/marketplace/breeders              - List published breeders (paginated)
+//   GET /api/v1/marketplace/breeders/:tenantSlug  - Read published breeder profile
 //
 // Security:
-// - No authentication required (public endpoint)
+// - No authentication required (public endpoints)
 // - Returns ONLY published data, never draft
 // - Street-level address fields are never returned
 
@@ -63,6 +64,30 @@ interface PublishedBreederResponse {
     availability: string | null;
   }>;
   publishedAt: string | null;
+}
+
+/**
+ * Summary item for breeder list response.
+ * Lighter weight than full profile - designed for directory cards.
+ * Includes both formatted location and raw fields for filtering/display flexibility.
+ */
+interface BreederSummary {
+  tenantSlug: string;
+  businessName: string;
+  // Formatted location string based on publicLocationMode
+  location: string | null;
+  // Raw location fields for filtering and custom formatting
+  publicLocationMode: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  breeds: Array<{ name: string }>;
+  logoAssetId: string | null;
+}
+
+interface BreedersListResponse {
+  items: BreederSummary[];
+  total: number;
 }
 
 // ============================================================================
@@ -156,11 +181,149 @@ function extractPrograms(
     .filter((p): p is NonNullable<typeof p> => p !== null);
 }
 
+/**
+ * Build a display string for location based on mode.
+ * Returns null if mode is hidden or no location data.
+ */
+function buildLocationDisplay(
+  address: unknown,
+  mode: string | null
+): string | null {
+  if (!mode || mode === "hidden") return null;
+  if (!address || typeof address !== "object") return null;
+
+  const addr = address as Record<string, unknown>;
+  const city = safeString(addr.city);
+  const state = safeString(addr.state);
+  const zip = safeString(addr.zip);
+
+  switch (mode) {
+    case "city_state":
+      if (city && state) return `${city}, ${state}`;
+      return city || state || null;
+    case "zip_only":
+      return zip;
+    case "full":
+      if (city && state && zip) return `${city}, ${state} ${zip}`;
+      if (city && state) return `${city}, ${state}`;
+      return zip || city || state || null;
+    default:
+      return null;
+  }
+}
+
 // ============================================================================
 // Routes
 // ============================================================================
 
 const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // --------------------------------------------------------------------------
+  // GET /breeders - List published breeders (PUBLIC)
+  // --------------------------------------------------------------------------
+  app.get<{ Querystring: { limit?: string; offset?: string } }>("/breeders", async (req, reply) => {
+    // Parse and validate pagination params
+    const limitParam = parseInt(req.query.limit || "24", 10);
+    const offsetParam = parseInt(req.query.offset || "0", 10);
+
+    const limit = Math.min(Math.max(1, isNaN(limitParam) ? 24 : limitParam), 50);
+    const offset = Math.max(0, isNaN(offsetParam) ? 0 : offsetParam);
+
+    // Query all TenantSettings with marketplace-profile namespace
+    // Join to Tenant to get slug, filter to only tenants with slugs
+    const settings = await prisma.tenantSetting.findMany({
+      where: {
+        namespace: NAMESPACE,
+        tenant: {
+          slug: { not: null },
+        },
+      },
+      select: {
+        data: true,
+        updatedAt: true,
+        tenant: {
+          select: {
+            slug: true,
+          },
+        },
+      },
+    });
+
+    // Filter to only published profiles with valid businessName
+    // and transform to summary items
+    const publishedBreeders: Array<{
+      summary: BreederSummary;
+      publishedAt: string | null;
+      updatedAt: Date;
+    }> = [];
+
+    for (const setting of settings) {
+      const profileData = setting.data as MarketplaceProfileData | null;
+      if (!profileData?.published) continue;
+
+      const published = profileData.published;
+      const businessName = safeString(published.businessName);
+      if (!businessName) continue;
+
+      const tenantSlug = setting.tenant.slug;
+      if (!tenantSlug) continue;
+
+      // Extract location mode and raw address fields
+      const publicLocationMode = safeString(published.publicLocationMode);
+      const address = published.address as Record<string, unknown> | null | undefined;
+
+      // Only include raw location fields if mode allows them (not hidden)
+      const includeLocation = publicLocationMode && publicLocationMode !== "hidden";
+      const city = includeLocation && address ? safeString(address.city) : null;
+      const state = includeLocation && address ? safeString(address.state) : null;
+      const zip = includeLocation && address ? safeString(address.zip) : null;
+
+      const summary: BreederSummary = {
+        tenantSlug,
+        businessName,
+        location: buildLocationDisplay(published.address, publicLocationMode),
+        publicLocationMode,
+        city,
+        state,
+        zip,
+        breeds: extractBreeds(published),
+        logoAssetId: safeString(published.logoAssetId),
+      };
+
+      publishedBreeders.push({
+        summary,
+        publishedAt: profileData.publishedAt ?? null,
+        updatedAt: setting.updatedAt,
+      });
+    }
+
+    // Sort by publishedAt desc, fall back to updatedAt desc
+    publishedBreeders.sort((a, b) => {
+      // Compare publishedAt first (most recently published first)
+      if (a.publishedAt && b.publishedAt) {
+        return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+      }
+      // Items with publishedAt come before those without
+      if (a.publishedAt && !b.publishedAt) return -1;
+      if (!a.publishedAt && b.publishedAt) return 1;
+      // Fall back to updatedAt
+      return b.updatedAt.getTime() - a.updatedAt.getTime();
+    });
+
+    const total = publishedBreeders.length;
+
+    // Apply pagination
+    const paginatedItems = publishedBreeders
+      .slice(offset, offset + limit)
+      .map((item) => item.summary);
+
+    const response: BreedersListResponse = {
+      items: paginatedItems,
+      total,
+    };
+
+    return reply.send(response);
+  });
+
   // --------------------------------------------------------------------------
   // GET /breeders/:tenantSlug - Read published breeder profile (PUBLIC)
   // --------------------------------------------------------------------------
