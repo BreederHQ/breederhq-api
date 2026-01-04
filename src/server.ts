@@ -445,6 +445,7 @@ import messagesRoutes from "./routes/messages.js"; // Direct Messages
 import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketplace MVP
 import marketplaceAssetsRoutes from "./routes/marketplace-assets.js"; // Marketplace assets (auth-gated)
 import marketplaceProfileRoutes from "./routes/marketplace-profile.js"; // Marketplace profile (draft/publish)
+import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Public breeder profiles (no auth)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -549,6 +550,14 @@ app.register(
           return;
         }
         // if orgId present → require tenant/membership below
+      }
+
+      // 3) /marketplace/breeders/:tenantSlug is public (GET only)
+      const isBreedersPublicPath = /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
+      if (m === "GET" && isBreedersPublicPath) {
+        (req as any).tenantId = null;
+        (req as any).actorContext = "PUBLIC";
+        return;
       }
 
       // ---------- Session verification ----------
@@ -737,6 +746,7 @@ app.register(
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
     api.register(marketplaceAssetsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/assets/*
     api.register(marketplaceProfileRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/profile/*
+    api.register(marketplaceBreedersRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeders/* (PUBLIC)
   },
   { prefix: "/api/v1" }
 );
