@@ -17,6 +17,78 @@ import { getActorId } from "../utils/session.js";
 
 const NAMESPACE = "marketplace-profile";
 
+// ============================================================================
+// Slug Generation
+// ============================================================================
+
+/**
+ * Generate a URL-safe slug from business name.
+ * Converts to lowercase, replaces spaces/special chars with hyphens.
+ */
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .substring(0, 50);
+}
+
+/**
+ * Ensure tenant has a slug. If missing, generate from business name.
+ * Returns the slug (existing or newly generated).
+ */
+async function ensureTenantSlug(tenantId: number, businessName: string): Promise<string | null> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { slug: true },
+  });
+
+  if (tenant?.slug) {
+    return tenant.slug;
+  }
+
+  // Generate unique slug from business name
+  let baseSlug = generateSlug(businessName);
+  if (!baseSlug) {
+    baseSlug = `breeder-${tenantId}`;
+  }
+
+  let slug = baseSlug;
+  let counter = 0;
+
+  // Try to find unique slug (append counter if needed)
+  while (true) {
+    const existing = await prisma.tenant.findUnique({
+      where: { slug },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      // Slug is available
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { slug },
+      });
+      return slug;
+    }
+
+    // Slug taken, try with counter
+    counter++;
+    slug = `${baseSlug}-${counter}`;
+
+    // Safety limit
+    if (counter > 100) {
+      slug = `${baseSlug}-${Date.now()}`;
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { slug },
+      });
+      return slug;
+    }
+  }
+}
+
 // Fields that must be stripped from published data for privacy
 const ADDRESS_FIELDS_TO_STRIP = [
   "streetAddress",
@@ -257,6 +329,10 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
     // Strip address fields from published data for privacy
     const sanitizedPublished = stripAddressFields(publishPayload);
 
+    // Ensure tenant has a slug for directory visibility
+    const businessName = publishPayload.businessName as string;
+    const tenantSlug = await ensureTenantSlug(tenantId, businessName);
+
     const existing = await readProfileSetting(tenantId);
     const now = new Date().toISOString();
 
@@ -271,6 +347,47 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
     return reply.send({
       ok: true,
       publishedAt: now,
+      tenantSlug,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /profile/unpublish - Remove published marketplace profile
+  // --------------------------------------------------------------------------
+  app.post("/profile/unpublish", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.code(400).send({
+        error: "tenant_required",
+        message: "X-Tenant-Id header required for profile endpoints",
+      });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    if (!isAdminLike(gate.role)) {
+      return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
+    }
+
+    const existing = await readProfileSetting(tenantId);
+
+    // Remove published data but keep draft
+    const updated: MarketplaceProfileData = {
+      ...existing,
+      published: undefined,
+      publishedAt: undefined,
+    };
+
+    await writeProfileSetting(tenantId, updated, getActorId(req));
+
+    return reply.send({
+      ok: true,
     });
   });
 };

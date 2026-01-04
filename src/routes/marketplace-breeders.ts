@@ -40,6 +40,26 @@ interface MarketplaceProfileData {
   publishedAt?: string;
 }
 
+interface StandardsAndCredentials {
+  registrations: string[];
+  healthPractices: string[];
+  breedingPractices: string[];
+  carePractices: string[];
+  registrationsNote: string | null;
+  healthNote: string | null;
+  breedingNote: string | null;
+  careNote: string | null;
+}
+
+interface PlacementPolicies {
+  requireApplication: boolean;
+  requireInterview: boolean;
+  requireContract: boolean;
+  hasReturnPolicy: boolean;
+  offersSupport: boolean;
+  note: string | null;
+}
+
 interface PublishedBreederResponse {
   tenantSlug: string;
   businessName: string;
@@ -63,6 +83,8 @@ interface PublishedBreederResponse {
     description: string | null;
     availability: string | null;
   }>;
+  standardsAndCredentials: StandardsAndCredentials | null;
+  placementPolicies: PlacementPolicies | null;
   publishedAt: string | null;
 }
 
@@ -179,6 +201,105 @@ function extractPrograms(
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
+}
+
+/**
+ * Safely extract string array from unknown value
+ */
+function safeStringArray(val: unknown): string[] {
+  if (!Array.isArray(val)) return [];
+  return val
+    .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+    .map((v) => v.trim());
+}
+
+/**
+ * Normalize note value - return null if empty/whitespace
+ */
+function normalizeNote(val: unknown): string | null {
+  if (typeof val !== "string") return null;
+  const trimmed = val.trim();
+  return trimmed || null;
+}
+
+/**
+ * Check if credentials object is empty (no items in any array, no notes)
+ */
+function isEmptyCredentials(creds: StandardsAndCredentials): boolean {
+  return (
+    creds.registrations.length === 0 &&
+    creds.healthPractices.length === 0 &&
+    creds.breedingPractices.length === 0 &&
+    creds.carePractices.length === 0 &&
+    !creds.registrationsNote &&
+    !creds.healthNote &&
+    !creds.breedingNote &&
+    !creds.careNote
+  );
+}
+
+/**
+ * Check if policies object is empty (all flags false, no note)
+ */
+function isEmptyPolicies(p: PlacementPolicies): boolean {
+  return (
+    !p.requireApplication &&
+    !p.requireInterview &&
+    !p.requireContract &&
+    !p.hasReturnPolicy &&
+    !p.offersSupport &&
+    !p.note
+  );
+}
+
+/**
+ * Extract standards and credentials from published data.
+ * Returns null if all fields are empty.
+ */
+function extractStandardsAndCredentials(
+  published: Record<string, unknown>
+): StandardsAndCredentials | null {
+  const raw = published.standardsAndCredentials;
+  if (!raw || typeof raw !== "object") return null;
+
+  const data = raw as Record<string, unknown>;
+
+  const creds: StandardsAndCredentials = {
+    registrations: safeStringArray(data.registrations),
+    healthPractices: safeStringArray(data.healthPractices),
+    breedingPractices: safeStringArray(data.breedingPractices),
+    carePractices: safeStringArray(data.carePractices),
+    registrationsNote: normalizeNote(data.registrationsNote),
+    healthNote: normalizeNote(data.healthNote),
+    breedingNote: normalizeNote(data.breedingNote),
+    careNote: normalizeNote(data.careNote),
+  };
+
+  return isEmptyCredentials(creds) ? null : creds;
+}
+
+/**
+ * Extract placement policies from published data.
+ * Returns null if all flags false and note empty.
+ */
+function extractPlacementPolicies(
+  published: Record<string, unknown>
+): PlacementPolicies | null {
+  const raw = published.placementPolicies;
+  if (!raw || typeof raw !== "object") return null;
+
+  const data = raw as Record<string, unknown>;
+
+  const policies: PlacementPolicies = {
+    requireApplication: safeBool(data.requireApplication),
+    requireInterview: safeBool(data.requireInterview),
+    requireContract: safeBool(data.requireContract),
+    hasReturnPolicy: safeBool(data.hasReturnPolicy),
+    offersSupport: safeBool(data.offersSupport),
+    note: normalizeNote(data.note),
+  };
+
+  return isEmptyPolicies(policies) ? null : policies;
 }
 
 /**
@@ -385,6 +506,8 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       },
       breeds: extractBreeds(published),
       programs: extractPrograms(published),
+      standardsAndCredentials: extractStandardsAndCredentials(published),
+      placementPolicies: extractPlacementPolicies(published),
       publishedAt: profileData.publishedAt ?? null,
     };
 
