@@ -13,10 +13,15 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
+import {
+  TENANT_PREFIXES,
+  createTestTenant,
+  teardownTestTenant,
+  cleanupStaleTenants,
+} from "./helpers/tenant-helpers.js";
 
 // Use string literals for enums since Prisma client may not be regenerated yet
 const Species = { DOG: "DOG", CAT: "CAT" } as const;
-const PartyType = { ORGANIZATION: "ORGANIZATION", CONTACT: "CONTACT" } as const;
 const AnimalListingStatus = { DRAFT: "DRAFT", LIVE: "LIVE", PAUSED: "PAUSED" } as const;
 const AnimalListingIntent = { STUD: "STUD", BROOD_PLACEMENT: "BROOD_PLACEMENT", REHOME: "REHOME", SHOWCASE: "SHOWCASE" } as const;
 
@@ -37,13 +42,14 @@ const ctx: TestContext = {} as TestContext;
 
 describe("Animal Public Listing API Contract Tests", () => {
   before(async () => {
-    // Setup test data
-    const tenant = await prisma.tenant.create({
-      data: {
-        name: "Animal Listing Test Tenant",
-        slug: `animal-listing-test-${Date.now()}`,
-      },
-    });
+    // Cleanup stale test tenants from previous runs (belt-and-suspenders)
+    await cleanupStaleTenants(TENANT_PREFIXES.animalPublicListing, 24, prisma);
+
+    // Create test tenant using centralized helper
+    const tenant = await createTestTenant(
+      "Animal Listing Test Tenant",
+      TENANT_PREFIXES.animalPublicListing
+    );
     ctx.tenantId = tenant.id;
     ctx.programSlug = `test-program-${Date.now()}`;
     ctx.listingSlug = `test-listing-${Date.now()}`;
@@ -63,9 +69,9 @@ describe("Animal Public Listing API Contract Tests", () => {
   });
 
   after(async () => {
-    // Cleanup: cascade delete via tenant
+    // Use centralized teardown helper (handles all FK constraints)
     if (ctx.tenantId) {
-      await prisma.tenant.delete({ where: { id: ctx.tenantId } });
+      await teardownTestTenant(ctx.tenantId, prisma);
     }
     await prisma.$disconnect();
   });

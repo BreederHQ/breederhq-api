@@ -13,6 +13,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
+import {
+  TENANT_PREFIXES,
+  createTestTenant,
+  teardownTestTenant,
+  cleanupStaleTenants,
+} from "./helpers/tenant-helpers.js";
 
 // Use string literal for PartyType enum
 const PartyType = { CONTACT: "CONTACT", ORGANIZATION: "ORGANIZATION" } as const;
@@ -128,13 +134,14 @@ const ctx: TestContext = {} as TestContext;
 
 describe("Phase 6: Party-Native API Contract Tests", () => {
   before(async () => {
-    // Setup test data - use timestamp slug to avoid collisions
-    const tenant = await prisma.tenant.create({
-      data: {
-        name: "Party API Contract Test Tenant",
-        slug: `party-api-test-${Date.now()}`,
-      },
-    });
+    // Cleanup stale test tenants from previous runs (belt-and-suspenders)
+    await cleanupStaleTenants(TENANT_PREFIXES.partyApiContracts, 24, prisma);
+
+    // Create test tenant using centralized helper
+    const tenant = await createTestTenant(
+      "Party API Contract Test Tenant",
+      TENANT_PREFIXES.partyApiContracts
+    );
     ctx.tenantId = tenant.id;
 
     // Create Contact Party
@@ -183,28 +190,9 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
   });
 
   after(async () => {
-    // Cleanup: delete in dependency order to avoid FK violations
-    // - AnimalOwner has required partyId with SetNull (inconsistency) - delete first
-    // - Contact has nullable partyId with Restrict - unlink first
-    // - Organization has required partyId with Cascade from Party
+    // Use centralized teardown helper (handles all FK constraints)
     if (ctx.tenantId) {
-      // Delete animal owners first (partyId required but onDelete: SetNull)
-      await prisma.animalOwner.deleteMany({
-        where: { animal: { tenantId: ctx.tenantId } },
-      });
-      // Unlink contacts from parties (partyId is nullable with Restrict)
-      await prisma.contact.updateMany({
-        where: { tenantId: ctx.tenantId },
-        data: { partyId: null },
-      });
-      // Delete contacts
-      await prisma.contact.deleteMany({ where: { tenantId: ctx.tenantId } });
-      // Delete organizations (must happen before parties since partyId is required)
-      await prisma.organization.deleteMany({ where: { tenantId: ctx.tenantId } });
-      // Delete parties directly
-      await prisma.party.deleteMany({ where: { tenantId: ctx.tenantId } });
-      // Now delete tenant
-      await prisma.tenant.delete({ where: { id: ctx.tenantId } });
+      await teardownTestTenant(ctx.tenantId, prisma);
     }
     await prisma.$disconnect();
   });
