@@ -1465,6 +1465,243 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await prisma.animalRegistryIdentifier.delete({ where: { id: identifierId } });
     reply.send({ ok: true });
   });
+
+  // ==========================================================================
+  // Animal Public Listing Management
+  // ==========================================================================
+
+  /**
+   * GET /animals/:id/public-listing
+   * Get the public listing for an animal (if exists)
+   */
+  app.get("/animals/:id/public-listing", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const listing = await prisma.animalPublicListing.findUnique({
+      where: { animalId },
+      select: {
+        id: true,
+        urlSlug: true,
+        intent: true,
+        status: true,
+        headline: true,
+        title: true,
+        summary: true,
+        description: true,
+        priceCents: true,
+        priceMinCents: true,
+        priceMaxCents: true,
+        priceText: true,
+        priceModel: true,
+        locationCity: true,
+        locationRegion: true,
+        locationCountry: true,
+        detailsJson: true,
+        publishedAt: true,
+        pausedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!listing) {
+      return reply.code(404).send({ error: "no_listing" });
+    }
+
+    reply.send(listing);
+  });
+
+  /**
+   * PUT /animals/:id/public-listing
+   * Create or update the public listing for an animal
+   */
+  app.put("/animals/:id/public-listing", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as {
+      urlSlug?: string;
+      intent?: "STUD" | "BROOD_PLACEMENT" | "REHOME" | "SHOWCASE";
+      headline?: string;
+      title?: string;
+      summary?: string;
+      description?: string;
+      priceCents?: number;
+      priceMinCents?: number;
+      priceMaxCents?: number;
+      priceText?: string;
+      priceModel?: string;
+      locationCity?: string;
+      locationRegion?: string;
+      locationCountry?: string;
+      detailsJson?: any;
+    };
+
+    // Validate intent if provided
+    const validIntents = ["STUD", "BROOD_PLACEMENT", "REHOME", "SHOWCASE"];
+    if (body.intent && !validIntents.includes(body.intent)) {
+      return reply.code(400).send({ error: "invalid_intent", validIntents });
+    }
+
+    // Validate priceModel if provided
+    const validPriceModels = ["fixed", "range", "negotiable", "inquire"];
+    if (body.priceModel && !validPriceModels.includes(body.priceModel)) {
+      return reply.code(400).send({ error: "invalid_price_model", validPriceModels });
+    }
+
+    const data = {
+      urlSlug: body.urlSlug ?? undefined,
+      intent: body.intent ?? undefined,
+      headline: body.headline ?? undefined,
+      title: body.title ?? undefined,
+      summary: body.summary ?? undefined,
+      description: body.description ?? undefined,
+      priceCents: body.priceCents ?? undefined,
+      priceMinCents: body.priceMinCents ?? undefined,
+      priceMaxCents: body.priceMaxCents ?? undefined,
+      priceText: body.priceText ?? undefined,
+      priceModel: body.priceModel ?? undefined,
+      locationCity: body.locationCity ?? undefined,
+      locationRegion: body.locationRegion ?? undefined,
+      locationCountry: body.locationCountry ?? undefined,
+      detailsJson: body.detailsJson ?? undefined,
+    };
+
+    const listing = await prisma.animalPublicListing.upsert({
+      where: { animalId },
+      create: {
+        animalId,
+        tenantId,
+        status: "DRAFT",
+        ...data,
+      },
+      update: data,
+      select: {
+        id: true,
+        urlSlug: true,
+        intent: true,
+        status: true,
+        headline: true,
+        title: true,
+        summary: true,
+        description: true,
+        priceCents: true,
+        priceMinCents: true,
+        priceMaxCents: true,
+        priceText: true,
+        priceModel: true,
+        locationCity: true,
+        locationRegion: true,
+        locationCountry: true,
+        detailsJson: true,
+        publishedAt: true,
+        pausedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    reply.send(listing);
+  });
+
+  /**
+   * PATCH /animals/:id/public-listing/status
+   * Update listing status (DRAFT -> LIVE, LIVE -> PAUSED, etc.)
+   */
+  app.patch("/animals/:id/public-listing/status", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const { status } = req.body as { status?: string };
+    const validStatuses = ["DRAFT", "LIVE", "PAUSED"];
+    if (!status || !validStatuses.includes(status)) {
+      return reply.code(400).send({ error: "invalid_status", validStatuses });
+    }
+
+    const existing = await prisma.animalPublicListing.findUnique({
+      where: { animalId },
+      select: { id: true, status: true, intent: true, urlSlug: true },
+    });
+
+    if (!existing) {
+      return reply.code(404).send({ error: "no_listing" });
+    }
+
+    // Require intent and urlSlug to publish
+    if (status === "LIVE") {
+      if (!existing.intent) {
+        return reply.code(400).send({ error: "intent_required", message: "Set intent before publishing" });
+      }
+      if (!existing.urlSlug) {
+        return reply.code(400).send({ error: "url_slug_required", message: "Set urlSlug before publishing" });
+      }
+    }
+
+    const now = new Date();
+    const updateData: any = { status };
+
+    if (status === "LIVE" && existing.status !== "LIVE") {
+      updateData.publishedAt = now;
+      updateData.pausedAt = null;
+    } else if (status === "PAUSED" && existing.status === "LIVE") {
+      updateData.pausedAt = now;
+    } else if (status === "DRAFT") {
+      updateData.publishedAt = null;
+      updateData.pausedAt = null;
+    }
+
+    const listing = await prisma.animalPublicListing.update({
+      where: { animalId },
+      data: updateData,
+      select: {
+        id: true,
+        status: true,
+        publishedAt: true,
+        pausedAt: true,
+        updatedAt: true,
+      },
+    });
+
+    reply.send(listing);
+  });
+
+  /**
+   * DELETE /animals/:id/public-listing
+   * Delete the public listing for an animal
+   */
+  app.delete("/animals/:id/public-listing", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const existing = await prisma.animalPublicListing.findUnique({
+      where: { animalId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return reply.code(404).send({ error: "no_listing" });
+    }
+
+    await prisma.animalPublicListing.delete({ where: { animalId } });
+    reply.send({ ok: true });
+  });
 };
 
 export default animalsRoutes;
