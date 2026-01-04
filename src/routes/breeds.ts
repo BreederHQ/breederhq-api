@@ -329,4 +329,165 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
       throw e;
     }
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Program breeds (tenant-scoped)
+  // Base: /breeds/program
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // GET: GET /breeds/program - returns all program breeds for the tenant
+  app.get("/breeds/program", async (req, reply) => {
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    try {
+      const programBreeds = await prisma.tenantProgramBreed.findMany({
+        where: { tenantId },
+        orderBy: [{ species: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          species: true,
+          breedId: true,
+          customBreedId: true,
+          isPrimary: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      // Fetch breed names
+      const breedIds = programBreeds.filter(pb => pb.breedId).map(pb => pb.breedId!);
+      const customBreedIds = programBreeds.filter(pb => pb.customBreedId).map(pb => pb.customBreedId!);
+
+      const [canonicalBreeds, customBreeds] = await Promise.all([
+        breedIds.length > 0
+          ? prisma.breed.findMany({
+              where: { id: { in: breedIds } },
+              select: { id: true, name: true, species: true },
+            })
+          : [],
+        customBreedIds.length > 0
+          ? prisma.customBreed.findMany({
+              where: { id: { in: customBreedIds }, tenantId },
+              select: { id: true, name: true, species: true },
+            })
+          : [],
+      ]);
+
+      const breedMap = new Map(canonicalBreeds.map(b => [b.id, b]));
+      const customBreedMap = new Map(customBreeds.map(b => [b.id, b]));
+
+      const data = programBreeds.map(pb => {
+        const breed = pb.breedId ? breedMap.get(pb.breedId) : null;
+        const customBreed = pb.customBreedId ? customBreedMap.get(pb.customBreedId) : null;
+
+        return {
+          breedId: pb.breedId,
+          customBreedId: pb.customBreedId,
+          species: pb.species,
+          name: breed?.name || customBreed?.name || "Unknown",
+          source: pb.breedId ? "canonical" : "custom",
+        };
+      });
+
+      return reply.send({ data });
+    } catch (err) {
+      req.log.error({ err }, "breeds.program: GET failed");
+      return reply.code(500).send({ error: "server_error" });
+    }
+  });
+
+  // PUT: PUT /breeds/program - replaces all program breeds for the tenant
+  app.put("/breeds/program", async (req, reply) => {
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const body = (req.body || {}) as { breeds?: Array<{ breedId?: number | null; customBreedId?: number | null; species: string }> };
+    const breeds = body.breeds || [];
+
+    try {
+      // Validate breeds
+      for (const breed of breeds) {
+        if (!breed.breedId && !breed.customBreedId) {
+          return reply.code(400).send({ error: "invalid_breed", detail: "Either breedId or customBreedId required" });
+        }
+        assertSpecies(breed.species);
+      }
+
+      // Replace all program breeds in a transaction
+      await prisma.$transaction(async (tx) => {
+        // Delete existing program breeds
+        await tx.tenantProgramBreed.deleteMany({
+          where: { tenantId },
+        });
+
+        // Create new program breeds
+        if (breeds.length > 0) {
+          await tx.tenantProgramBreed.createMany({
+            data: breeds.map(b => ({
+              tenantId,
+              species: assertSpecies(b.species),
+              breedId: b.breedId || null,
+              customBreedId: b.customBreedId || null,
+            })),
+          });
+        }
+      });
+
+      // Fetch and return the updated program breeds
+      const programBreeds = await prisma.tenantProgramBreed.findMany({
+        where: { tenantId },
+        orderBy: [{ species: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          species: true,
+          breedId: true,
+          customBreedId: true,
+          isPrimary: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      // Fetch breed names
+      const breedIds = programBreeds.filter(pb => pb.breedId).map(pb => pb.breedId!);
+      const customBreedIds = programBreeds.filter(pb => pb.customBreedId).map(pb => pb.customBreedId!);
+
+      const [canonicalBreeds, customBreeds] = await Promise.all([
+        breedIds.length > 0
+          ? prisma.breed.findMany({
+              where: { id: { in: breedIds } },
+              select: { id: true, name: true, species: true },
+            })
+          : [],
+        customBreedIds.length > 0
+          ? prisma.customBreed.findMany({
+              where: { id: { in: customBreedIds }, tenantId },
+              select: { id: true, name: true, species: true },
+            })
+          : [],
+      ]);
+
+      const breedMap = new Map(canonicalBreeds.map(b => [b.id, b]));
+      const customBreedMap = new Map(customBreeds.map(b => [b.id, b]));
+
+      const data = programBreeds.map(pb => {
+        const breed = pb.breedId ? breedMap.get(pb.breedId) : null;
+        const customBreed = pb.customBreedId ? customBreedMap.get(pb.customBreedId) : null;
+
+        return {
+          breedId: pb.breedId,
+          customBreedId: pb.customBreedId,
+          species: pb.species,
+          name: breed?.name || customBreed?.name || "Unknown",
+          source: pb.breedId ? "canonical" : "custom",
+        };
+      });
+
+      return reply.send({ data });
+    } catch (err: any) {
+      req.log.error({ err }, "breeds.program: PUT failed");
+      return reply.code(500).send({ error: "server_error" });
+    }
+  });
 }
