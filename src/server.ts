@@ -552,9 +552,10 @@ app.register(
         // if orgId present → require tenant/membership below
       }
 
-      // 3) /marketplace/breeders/:tenantSlug is public (GET only)
-      const isBreedersPublicPath = /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
-      if (m === "GET" && isBreedersPublicPath) {
+      // 3) /marketplace/breeders and /marketplace/breeders/:tenantSlug are public (GET only)
+      const isBreedersListPath = pathOnly === "/marketplace/breeders";
+      const isBreedersDetailPath = /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
+      if (m === "GET" && (isBreedersListPath || isBreedersDetailPath)) {
         (req as any).tenantId = null;
         (req as any).actorContext = "PUBLIC";
         return;
