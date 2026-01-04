@@ -553,12 +553,20 @@ app.register(
       }
 
       // 3) /marketplace/breeders and /marketplace/breeders/:tenantSlug are public (GET only)
-      const isBreedersListPath = pathOnly === "/marketplace/breeders";
-      const isBreedersDetailPath = /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
+      // These endpoints are accessible without authentication from any surface
+      // Note: pathOnly may or may not include /api/v1 prefix depending on how request is routed
+      const isBreedersListPath =
+        pathOnly === "/marketplace/breeders" ||
+        pathOnly === "/api/v1/marketplace/breeders" ||
+        pathOnly.endsWith("/marketplace/breeders");
+      const isBreedersDetailPath =
+        /\/marketplace\/breeders\/[^/]+$/.test(pathOnly);
       if (m === "GET" && (isBreedersListPath || isBreedersDetailPath)) {
+        // Skip all auth/context checks - these are fully public endpoints
         (req as any).tenantId = null;
+        (req as any).userId = null;
         (req as any).actorContext = "PUBLIC";
-        return;
+        return; // Exit hook early - no session/tenant/context verification needed
       }
 
       // ---------- Session verification ----------
