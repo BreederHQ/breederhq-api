@@ -20,9 +20,47 @@ export type SessionPayload = {
 };
 
 // ---------- Environment ----------
+/**
+ * Base cookie name. In production, surface-specific suffixes are added.
+ * @deprecated Use getCookieName(surface) instead for surface isolation.
+ */
 export const COOKIE_NAME = process.env.COOKIE_NAME || "bhq_s";
+
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
+
+/**
+ * Surface-specific cookie names for session isolation.
+ * Each subdomain gets its own session cookie to prevent cross-subdomain conflicts.
+ *
+ * This allows users to be logged into different accounts on:
+ * - app.breederhq.com (PLATFORM)
+ * - portal.breederhq.com (PORTAL)
+ * - marketplace.breederhq.com (MARKETPLACE)
+ *
+ * Without overwriting each other's sessions.
+ */
+const SURFACE_COOKIE_NAMES: Record<Surface, string> = {
+  PLATFORM: "bhq_s_app",
+  PORTAL: "bhq_s_portal",
+  MARKETPLACE: "bhq_s_mkt",
+};
+
+/**
+ * Get the cookie name for a specific surface.
+ * Returns surface-specific name for session isolation across subdomains.
+ */
+export function getCookieName(surface: Surface): string {
+  return SURFACE_COOKIE_NAMES[surface] || COOKIE_NAME;
+}
+
+/**
+ * Get all possible session cookie names.
+ * Used when clearing cookies or checking for any valid session.
+ */
+export function getAllCookieNames(): string[] {
+  return Object.values(SURFACE_COOKIE_NAMES);
+}
 
 /**
  * Cookie domain for SSO across subdomains.
@@ -170,15 +208,39 @@ export function validateCsrfToken(
 
 // ---------- Parse and Verify Session ----------
 /**
- * Parse and verify a signed session cookie.
+ * Parse and verify a signed session cookie for a specific surface.
  * Returns null if:
  * - Cookie is missing
  * - Signature is invalid (tampered)
  * - Payload is malformed
  * - Session is expired
+ *
+ * @param req - Fastify request
+ * @param surface - The surface to read the cookie for. If not provided, tries all surface cookies.
  */
-export function parseVerifiedSession(req: FastifyRequest): SessionPayload | null {
-  const rawCookie = req.cookies?.[COOKIE_NAME];
+export function parseVerifiedSession(req: FastifyRequest, surface?: Surface): SessionPayload | null {
+  // If surface is specified, only check that surface's cookie
+  if (surface) {
+    const cookieName = getCookieName(surface);
+    return parseSessionFromCookie(req, cookieName);
+  }
+
+  // No surface specified - try all surface cookies (for middleware that runs before surface is known)
+  // This maintains backward compatibility
+  for (const cookieName of getAllCookieNames()) {
+    const session = parseSessionFromCookie(req, cookieName);
+    if (session) return session;
+  }
+
+  // Also check legacy cookie name for backward compatibility during migration
+  return parseSessionFromCookie(req, COOKIE_NAME);
+}
+
+/**
+ * Internal helper to parse session from a specific cookie name.
+ */
+function parseSessionFromCookie(req: FastifyRequest, cookieName: string): SessionPayload | null {
+  const rawCookie = req.cookies?.[cookieName];
   if (!rawCookie) return null;
 
   // Verify signature using @fastify/cookie unsignCookie
@@ -204,9 +266,12 @@ export function parseVerifiedSession(req: FastifyRequest): SessionPayload | null
  * Set session cookies (signed).
  * Creates both the session cookie (HttpOnly, signed) and surface-bound CSRF token (not HttpOnly).
  *
+ * IMPORTANT: Each surface gets its own session cookie name to prevent cross-subdomain conflicts.
+ * This allows users to be logged into different accounts on app/portal/marketplace simultaneously.
+ *
  * @param reply - Fastify reply object
  * @param sess - Session payload without iat/exp
- * @param surface - The surface to bind the CSRF token to (defaults to PLATFORM for backward compat)
+ * @param surface - The surface to bind the session and CSRF token to (defaults to PLATFORM for backward compat)
  */
 export function setSessionCookies(
   reply: FastifyReply,
@@ -218,8 +283,9 @@ export function setSessionCookies(
   const payload: SessionPayload = { ...sess, iat: now, exp: now + ms };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
 
-  // Session cookie (HttpOnly, signed)
-  reply.setCookie(COOKIE_NAME, encoded, cookieOptions());
+  // Session cookie (HttpOnly, signed) - surface-specific name for isolation
+  const cookieName = getCookieName(surface);
+  reply.setCookie(cookieName, encoded, cookieOptions());
 
   // Surface-bound CSRF token (not HttpOnly)
   // Format: "<SURFACE>.<randomBase64url>" - ensures token is rejected on different surfaces
@@ -232,10 +298,13 @@ export function setSessionCookies(
 }
 
 /**
- * Clear all auth cookies.
+ * Clear auth cookies for a specific surface.
  * Must use same domain attribute as set cookies for cross-subdomain clearing.
+ *
+ * @param reply - Fastify reply
+ * @param surface - The surface whose cookies to clear. If not provided, clears all surface cookies.
  */
-export function clearSessionCookies(reply: FastifyReply): void {
+export function clearSessionCookies(reply: FastifyReply, surface?: Surface): void {
   const opts = cookieOptions();
   const domain = getCookieDomain();
 
@@ -245,9 +314,20 @@ export function clearSessionCookies(reply: FastifyReply): void {
     clearOpts.domain = domain;
   }
 
-  // Clear session cookie
-  reply.setCookie(COOKIE_NAME, "", { ...opts, maxAge: 0 });
-  reply.clearCookie(COOKIE_NAME, clearOpts);
+  // Determine which cookie(s) to clear
+  const cookieNames = surface ? [getCookieName(surface)] : getAllCookieNames();
+
+  // Clear session cookie(s)
+  for (const cookieName of cookieNames) {
+    reply.setCookie(cookieName, "", { ...opts, maxAge: 0 });
+    reply.clearCookie(cookieName, clearOpts);
+  }
+
+  // Also clear legacy cookie during migration
+  if (!surface) {
+    reply.setCookie(COOKIE_NAME, "", { ...opts, maxAge: 0 });
+    reply.clearCookie(COOKIE_NAME, clearOpts);
+  }
 
   // Clear CSRF cookie
   reply.setCookie("XSRF-TOKEN", "", { ...opts, httpOnly: false, signed: false, maxAge: 0 });
@@ -261,7 +341,7 @@ export function clearSessionCookies(reply: FastifyReply): void {
  * @param req - Fastify request
  * @param reply - Fastify reply
  * @param sess - Current session payload
- * @param surface - Surface to bind new CSRF token to (if rotating)
+ * @param surface - Surface to bind session and CSRF token to (if rotating)
  */
 export function maybeRotateSession(
   req: FastifyRequest,
@@ -278,7 +358,9 @@ export function maybeRotateSession(
   if (sess.exp - now < rotateAt) {
     const refreshed: SessionPayload = { ...sess, iat: now, exp: now + ms };
     const encoded = Buffer.from(JSON.stringify(refreshed)).toString("base64url");
-    reply.setCookie(COOKIE_NAME, encoded, cookieOptions());
+    // Use surface-specific cookie name
+    const cookieName = getCookieName(surface);
+    reply.setCookie(cookieName, encoded, cookieOptions());
 
     // Also refresh the surface-bound CSRF token
     const csrfToken = generateCsrfToken(surface);

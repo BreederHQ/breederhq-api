@@ -2,13 +2,19 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
-import { requireClientPartyScope } from "../middleware/actor-context.js";
+import { requireMessagingPartyScope } from "../middleware/actor-context.js";
+import {
+  calculateBusinessHoursSeconds,
+  shouldHaveQuickResponderBadge,
+  updateRunningAverage,
+  type BusinessHoursSchedule,
+} from "../utils/business-hours.js";
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
   app.post("/messages/threads", async (req, reply) => {
-    // Enforce CLIENT party scope
-    const { tenantId, partyId: senderPartyId } = await requireClientPartyScope(req);
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: senderPartyId } = await requireMessagingPartyScope(req);
 
     const { recipientPartyId, subject, initialMessage } = req.body as any;
 
@@ -19,11 +25,19 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const now = new Date();
 
     try {
+      // Check if sender is the org party (for response time tracking)
+      const tenantParty = await prisma.party.findFirst({
+        where: { tenantId, type: "ORGANIZATION" },
+      });
+      const isOrgSending = tenantParty && senderPartyId === tenantParty.id;
+
       const thread = await prisma.messageThread.create({
         data: {
           tenantId,
           subject,
           lastMessageAt: now,
+          // Track first inbound message time for response metrics
+          firstInboundAt: isOrgSending ? undefined : now,
           participants: {
             create: [
               { partyId: senderPartyId, lastReadAt: now },
@@ -39,18 +53,13 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
         include: {
           participants: {
-            include: { party: { select: { id: true, name: true, email: true } } },
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
           },
           messages: {
             orderBy: { createdAt: "asc" },
             include: { senderParty: { select: { id: true, name: true } } },
           },
         },
-      });
-
-      // Check if sender is non-tenant party, evaluate auto-reply
-      const tenantParty = await prisma.party.findFirst({
-        where: { tenantId, type: "ORGANIZATION" },
       });
 
       if (tenantParty && senderPartyId !== tenantParty.id) {
@@ -85,8 +94,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // GET /messages/threads - List threads for current user's party
   app.get("/messages/threads", async (req, reply) => {
-    // Enforce CLIENT party scope
-    const { tenantId, partyId: currentUserPartyId } = await requireClientPartyScope(req);
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: currentUserPartyId } = await requireMessagingPartyScope(req);
 
     try {
       // Get threads where user is a participant
@@ -104,7 +113,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: { in: threadIds }, tenantId },
         include: {
           participants: {
-            include: { party: { select: { id: true, name: true, email: true } } },
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
           },
           messages: {
             orderBy: { createdAt: "desc" },
@@ -151,8 +160,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // GET /messages/threads/:id - Get thread details with all messages
   app.get("/messages/threads/:id", async (req, reply) => {
-    // Enforce CLIENT party scope
-    const { tenantId, partyId: userPartyId } = await requireClientPartyScope(req);
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
     const threadId = Number((req.params as any).id);
 
@@ -161,7 +170,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: threadId, tenantId },
         include: {
           participants: {
-            include: { party: { select: { id: true, name: true, email: true } } },
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
           },
           messages: {
             orderBy: { createdAt: "asc" },
@@ -194,8 +203,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   // POST /messages/threads/:id/messages - Send message in thread
   app.post("/messages/threads/:id/messages", async (req, reply) => {
-    // Enforce CLIENT party scope
-    const { tenantId, partyId: userPartyId } = await requireClientPartyScope(req);
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
     const threadId = Number((req.params as any).id);
     const { body: messageBody } = req.body as any;
@@ -207,7 +216,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const thread = await prisma.messageThread.findFirst({
         where: { id: threadId, tenantId },
-        select: { id: true, participants: { select: { partyId: true } } },
+        select: {
+          id: true,
+          firstInboundAt: true,
+          firstOrgReplyAt: true,
+          participants: { select: { partyId: true } },
+        },
       });
 
       if (!thread) {
@@ -232,21 +246,79 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      // Update thread lastMessageAt and updatedAt
+      // Check if sender is the org party (for response time tracking)
+      const tenantParty = await prisma.party.findFirst({
+        where: { tenantId, type: "ORGANIZATION" },
+      });
+      const isOrgSending = tenantParty && userPartyId === tenantParty.id;
+
+      // Build update data for thread
+      const threadUpdateData: any = { lastMessageAt: now, updatedAt: now };
+
+      // Response time tracking
+      if (!isOrgSending && !thread.firstInboundAt) {
+        // First inbound message from non-org party
+        threadUpdateData.firstInboundAt = now;
+      } else if (isOrgSending && thread.firstInboundAt && !thread.firstOrgReplyAt) {
+        // First reply from org to an inbound conversation
+        threadUpdateData.firstOrgReplyAt = now;
+        const responseTimeMs = now.getTime() - new Date(thread.firstInboundAt).getTime();
+        threadUpdateData.responseTimeSeconds = Math.floor(responseTimeMs / 1000);
+
+        // Calculate business hours response time for Quick Responder badge
+        // Fetch tenant's business hours settings
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: {
+            businessHours: true,
+            timeZone: true,
+            avgBusinessHoursResponseTime: true,
+            totalResponseCount: true,
+            quickResponderBadge: true,
+          },
+        });
+
+        if (tenant) {
+          const businessHoursResponse = calculateBusinessHoursSeconds(
+            new Date(thread.firstInboundAt),
+            now,
+            tenant.businessHours as BusinessHoursSchedule | null,
+            tenant.timeZone
+          );
+
+          threadUpdateData.businessHoursResponseTime = businessHoursResponse;
+
+          // Update tenant's running average and badge status
+          const { newAvg, newCount } = updateRunningAverage(
+            tenant.avgBusinessHoursResponseTime,
+            tenant.totalResponseCount,
+            businessHoursResponse
+          );
+
+          const shouldHaveBadge = shouldHaveQuickResponderBadge(newAvg, newCount);
+
+          await prisma.tenant.update({
+            where: { id: tenantId },
+            data: {
+              avgBusinessHoursResponseTime: newAvg,
+              totalResponseCount: newCount,
+              quickResponderBadge: shouldHaveBadge,
+              lastBadgeEvaluatedAt: now,
+            },
+          });
+        }
+      }
+
+      // Update thread
       await prisma.messageThread.update({
         where: { id: threadId },
-        data: { lastMessageAt: now, updatedAt: now },
+        data: threadUpdateData,
       });
 
       // Update sender's lastReadAt (they've seen their own message)
       await prisma.messageParticipant.updateMany({
         where: { threadId, partyId: userPartyId },
         data: { lastReadAt: now },
-      });
-
-      // Check if sender is non-tenant party, evaluate auto-reply
-      const tenantParty = await prisma.party.findFirst({
-        where: { tenantId, type: "ORGANIZATION" },
       });
 
       if (tenantParty && userPartyId !== tenantParty.id) {

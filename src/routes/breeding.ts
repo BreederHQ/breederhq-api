@@ -238,7 +238,8 @@ export function __makeOffspringGroupsService({
 // src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
-import { parseVerifiedSession } from "../utils/session.js";
+import { parseVerifiedSession, Surface } from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -256,8 +257,9 @@ function resolveTenantIdFromRequest(req: any): number | null {
     null;
   if (headerTenant) return headerTenant;
 
-  // Use signature-verified session parsing
-  const sess = parseVerifiedSession(req);
+  // Use signature-verified session parsing with surface-specific cookie
+  const surface = deriveSurface(req) as Surface;
+  const sess = parseVerifiedSession(req, surface);
   if (sess?.tenantId) return sess.tenantId;
 
   const fromReq =
@@ -668,19 +670,20 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (!org) return reply.code(400).send({ error: "organization_not_in_tenant" });
       }
 
+      // damId is optional in PLANNING status (required at commit time)
       const damId = idNum(b.damId);
-      if (!damId) return reply.code(400).send({ error: "damId_required" });
-
-      const dam = await prisma.animal.findFirst({
-        where: { id: damId, tenantId },
-        select: { species: true, sex: true },
-      });
-      if (!dam) return reply.code(400).send({ error: "dam_not_found" });
-      if (String(dam.species) !== String(b.species)) {
-        return reply.code(400).send({ error: "dam_species_mismatch" });
-      }
-      if (String(dam.sex) !== "FEMALE") {
-        return reply.code(400).send({ error: "dam_sex_mismatch" });
+      if (damId) {
+        const dam = await prisma.animal.findFirst({
+          where: { id: damId, tenantId },
+          select: { species: true, sex: true },
+        });
+        if (!dam) return reply.code(400).send({ error: "dam_not_found" });
+        if (String(dam.species) !== String(b.species)) {
+          return reply.code(400).send({ error: "dam_species_mismatch" });
+        }
+        if (String(dam.sex) !== "FEMALE") {
+          return reply.code(400).send({ error: "dam_sex_mismatch" });
+        }
       }
 
       if (b.sireId) {
@@ -725,7 +728,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         name,
         nickname: b.nickname ?? null,
         species: b.species,
-        damId,
+        damId: damId ?? null,
         sireId: b.sireId ?? null,
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
@@ -860,16 +863,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const targetSpecies = (b.species ?? existing.species) as string;
       if (b.damId !== undefined) {
-        const damId = idNum(b.damId);
-        if (!damId) return reply.code(400).send({ error: "bad_damId" });
-        const dam = await prisma.animal.findFirst({
-          where: { id: damId, tenantId },
-          select: { species: true, sex: true },
-        });
-        if (!dam) return reply.code(400).send({ error: "dam_not_found" });
-        if (String(dam.species) !== String(targetSpecies)) return reply.code(400).send({ error: "dam_species_mismatch" });
-        if (String(dam.sex) !== "FEMALE") return reply.code(400).send({ error: "dam_sex_mismatch" });
-        data.damId = damId;
+        // Allow null to clear dam (only valid in PLANNING status - enforced at commit)
+        if (b.damId === null) {
+          data.damId = null;
+        } else {
+          const damId = idNum(b.damId);
+          if (!damId) return reply.code(400).send({ error: "bad_damId" });
+          const dam = await prisma.animal.findFirst({
+            where: { id: damId, tenantId },
+            select: { species: true, sex: true },
+          });
+          if (!dam) return reply.code(400).send({ error: "dam_not_found" });
+          if (String(dam.species) !== String(targetSpecies)) return reply.code(400).send({ error: "dam_species_mismatch" });
+          if (String(dam.sex) !== "FEMALE") return reply.code(400).send({ error: "dam_sex_mismatch" });
+          data.damId = damId;
+        }
       }
       if (b.sireId !== undefined) {
         if (b.sireId === null) data.sireId = null;

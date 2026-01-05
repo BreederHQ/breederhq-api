@@ -5,8 +5,9 @@ import {
   parseVerifiedSession,
   setSessionCookies,
   maybeRotateSession,
-  SessionPayload,
+  Surface,
 } from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
 import { auditFailure } from "../services/audit.js";
 import { getTosStatus } from "../services/tos-service.js";
 
@@ -110,11 +111,12 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
   app.get("/session", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
 
-    // Use signature-verified session parsing
-    const sess = parseVerifiedSession(req);
+    // Use signature-verified session parsing with surface-specific cookie
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
     if (!sess) return reply.code(401).send({ user: null, tenant: null, memberships: [] });
 
-    if (!maybeRotateSession(req, reply, sess)) {
+    if (!maybeRotateSession(req, reply, sess, surface)) {
       return reply.code(401).send({ user: null, tenant: null, memberships: [] });
     }
 
@@ -186,8 +188,9 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
   // POST /session/tenant   body: { tenantId: number, saveDefault?: boolean }
   // Explicit tenant switch (CSRF-protected via your global preHandler)
   app.post<{ Body: { tenantId?: number; saveDefault?: boolean } }>("/session/tenant", async (req, reply) => {
-    // Use signature-verified session parsing
-    const sess = parseVerifiedSession(req);
+    // Use signature-verified session parsing with surface-specific cookie
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
     if (!sess) return reply.code(401).send({ error: "unauthorized" });
 
     const hasTenants = await detectTenantSupport();
@@ -219,8 +222,8 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       return reply.code(403).send({ error: "forbidden" });
     }
 
-    // Re-issue signed cookie with new tenantId
-    setSessionCookies(reply, { userId: sess.userId, tenantId });
+    // Re-issue signed cookie with new tenantId (surface-specific)
+    setSessionCookies(reply, { userId: sess.userId, tenantId }, surface);
 
     // Optionally persist as defaultTenantId (if the column exists)
     if (saveDefault) {

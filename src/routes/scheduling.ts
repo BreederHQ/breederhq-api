@@ -11,7 +11,8 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
-import { parseVerifiedSession } from "../utils/session.js";
+import { parseVerifiedSession, Surface } from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
 
 // ---------- Helpers ----------
 
@@ -33,7 +34,9 @@ function resolveTenantIdFromRequest(req: any): number | null {
     null;
   if (headerTenant) return headerTenant;
 
-  const sess = parseVerifiedSession(req);
+  // Use signature-verified session parsing with surface-specific cookie
+  const surface = deriveSurface(req) as Surface;
+  const sess = parseVerifiedSession(req, surface);
   if (sess?.tenantId) return sess.tenantId;
 
   const fromReq =
