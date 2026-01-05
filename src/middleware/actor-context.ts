@@ -563,6 +563,108 @@ export async function requireClientPartyScope(req: FastifyRequest): Promise<Clie
   }
 }
 
+/**
+ * Messaging party scope - supports both STAFF and CLIENT contexts.
+ * For STAFF: returns tenant's organization party
+ * For CLIENT: returns user's party via membership
+ */
+export interface MessagingPartyScope {
+  tenantId: number;
+  userId: string;
+  partyId: number;
+  context: "STAFF" | "CLIENT";
+}
+
+/**
+ * Require messaging party scope for messaging endpoints.
+ * Supports both STAFF (Platform/Marketing) and CLIENT (Portal) contexts.
+ *
+ * For STAFF context:
+ * - Returns the tenant's ORGANIZATION party as the messaging identity
+ * - This allows breeder staff to send/receive messages as the business
+ *
+ * For CLIENT context:
+ * - Returns the user's party via their CLIENT membership
+ * - This allows portal clients to message as themselves
+ *
+ * Throws 401/403 if requirements not met.
+ */
+export async function requireMessagingPartyScope(req: FastifyRequest): Promise<MessagingPartyScope> {
+  // Check userId from session
+  const userId = (req as any).userId;
+  if (!userId) {
+    throw { statusCode: 401, error: "unauthorized", detail: "no_session" };
+  }
+
+  // Check tenantId from context
+  const tenantId = Number((req as any).tenantId);
+  if (!tenantId || isNaN(tenantId)) {
+    throw { statusCode: 403, error: "forbidden", detail: "no_tenant_context" };
+  }
+
+  const actorContext = (req as any).actorContext as ActorContext;
+
+  // STAFF context: use tenant's organization party
+  if (actorContext === "STAFF") {
+    try {
+      // Find the tenant's ORGANIZATION party
+      const orgParty = await prisma.party.findFirst({
+        where: { tenantId, type: "ORGANIZATION" },
+        select: { id: true },
+      });
+
+      if (!orgParty) {
+        throw { statusCode: 403, error: "forbidden", detail: "no_organization_party" };
+      }
+
+      return {
+        tenantId,
+        userId,
+        partyId: orgParty.id,
+        context: "STAFF",
+      };
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      throw { statusCode: 500, error: "internal_error", detail: "party_lookup_failed" };
+    }
+  }
+
+  // CLIENT context: use user's party via membership
+  if (actorContext === "CLIENT") {
+    try {
+      const membership = await prisma.tenantMembership.findUnique({
+        where: { userId_tenantId: { userId, tenantId } },
+        select: {
+          membershipRole: true,
+          membershipStatus: true,
+          partyId: true,
+        },
+      });
+
+      if (!membership || membership.membershipRole !== "CLIENT" || membership.membershipStatus !== "ACTIVE") {
+        throw { statusCode: 403, error: "forbidden", detail: "invalid_client_membership" };
+      }
+
+      if (!membership.partyId) {
+        throw { statusCode: 403, error: "forbidden", detail: "no_party_id" };
+      }
+
+      return {
+        tenantId,
+        userId,
+        partyId: membership.partyId,
+        context: "CLIENT",
+      };
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      throw { statusCode: 500, error: "internal_error", detail: "membership_lookup_failed" };
+    }
+  }
+
+  // Neither STAFF nor CLIENT - not allowed
+  throw { statusCode: 403, error: "forbidden", detail: "invalid_context_for_messaging" };
+}
+
 // ---------- TypeScript Declaration Merge ----------
 declare module "fastify" {
   interface FastifyRequest {

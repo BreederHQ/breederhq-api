@@ -7,7 +7,6 @@ import rateLimit from "@fastify/rate-limit";
 import prisma from "./prisma.js";
 import {
   getCookieSecret,
-  COOKIE_NAME,
   parseVerifiedSession,
   validateCsrfToken,
   Surface as SessionSurface,
@@ -115,7 +114,8 @@ app.get("/__diag", async (req, reply) => {
   // In production, only superadmins can access diagnostics
   // Non-production allows unauthenticated access for debugging
   if (!IS_DEV) {
-    const sess = parseVerifiedSession(req);
+    const diagSurface = deriveSurface(req) as SessionSurface;
+    const sess = parseVerifiedSession(req, diagSurface);
     if (!sess) {
       return reply.code(404).send({ error: "not_found" });
     }
@@ -382,8 +382,9 @@ async function requireTenantMembership(
   reply: any,
   tenantId: number
 ) {
-  // Use signature-verified session parsing
-  const sess = parseVerifiedSession(req);
+  // Use signature-verified session parsing with surface-specific cookie
+  const surface = deriveSurface(req) as SessionSurface;
+  const sess = parseVerifiedSession(req, surface);
   if (!sess) {
     reply.code(401).send({ error: "unauthorized" });
     return null;
@@ -446,11 +447,14 @@ import publicMarketplaceRoutes from "./routes/public-marketplace.js"; // Marketp
 import marketplaceAssetsRoutes from "./routes/marketplace-assets.js"; // Marketplace assets (auth-gated)
 import marketplaceProfileRoutes from "./routes/marketplace-profile.js"; // Marketplace profile (draft/publish)
 import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Public breeder profiles (no auth)
+import marketplaceWaitlistRoutes from "./routes/marketplace-waitlist.js"; // Marketplace waitlist requests
+import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Marketplace messaging (buyer-to-breeder)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
+import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -570,7 +574,8 @@ app.register(
       }
 
       // ---------- Session verification ----------
-      const sess = parseVerifiedSession(req);
+      // Use surface-specific cookie for session isolation across subdomains
+      const sess = parseVerifiedSession(req, surface as SessionSurface);
       if (!sess) {
         return reply.code(401).send({ error: "unauthorized" });
       }
@@ -750,12 +755,15 @@ app.register(
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
+    api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
     api.register(marketplaceAssetsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/assets/*
     api.register(marketplaceProfileRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/profile/*
     api.register(marketplaceBreedersRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeders/* (PUBLIC)
+    api.register(marketplaceWaitlistRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/waitlist/* (auth required)
+    api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
   },
   { prefix: "/api/v1" }
 );
