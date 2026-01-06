@@ -93,7 +93,7 @@ interface PublishedBreederResponse {
     instagram: string | null;
     facebook: string | null;
   };
-  breeds: Array<{ name: string }>;
+  breeds: Array<{ name: string; species: string | null }>;
   programs: Array<{
     name: string;
     description: string | null;
@@ -125,7 +125,7 @@ interface BreederSummary {
   city: string | null;
   state: string | null;
   zip: string | null;
-  breeds: Array<{ name: string }>;
+  breeds: Array<{ name: string; species: string | null }>;
   logoAssetId: string | null;
 }
 
@@ -175,28 +175,29 @@ function sanitizeLocation(
 }
 
 /**
- * Extract breeds array from various possible shapes
+ * Extract breeds array from various possible shapes (now includes species)
  */
-function extractBreeds(published: Record<string, unknown>): Array<{ name: string }> {
+function extractBreeds(published: Record<string, unknown>): Array<{ name: string; species: string | null }> {
   // Try breeds array first (from publish payload)
   if (Array.isArray(published.breeds)) {
     return published.breeds
       .map((b: unknown) => {
-        if (typeof b === "string" && b.trim()) return { name: b.trim() };
+        if (typeof b === "string" && b.trim()) return { name: b.trim(), species: null };
         if (b && typeof b === "object" && "name" in b) {
           const name = safeString((b as any).name);
-          if (name) return { name };
+          const species = safeString((b as any).species);
+          if (name) return { name, species };
         }
         return null;
       })
-      .filter((b): b is { name: string } => b !== null);
+      .filter((b): b is { name: string; species: string | null } => b !== null);
   }
 
   // Fall back to listedBreeds (string array)
   if (Array.isArray(published.listedBreeds)) {
     return published.listedBreeds
       .filter((b): b is string => typeof b === "string" && b.trim() !== "")
-      .map((name) => ({ name: name.trim() }));
+      .map((name) => ({ name: name.trim(), species: null }));
   }
 
   return [];
@@ -428,6 +429,9 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const state = includeLocation && address ? safeString(address.state) : null;
       const zip = includeLocation && address ? safeString(address.zip) : null;
 
+      // Check if business identity (logo) should be shown
+      const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+
       const summary: BreederSummary = {
         tenantSlug,
         businessName,
@@ -437,7 +441,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         state,
         zip,
         breeds: extractBreeds(published),
-        logoAssetId: safeString(published.logoAssetId),
+        logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
       };
 
       publishedBreeders.push({
@@ -526,12 +530,16 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(404).send({ error: "not_published" });
     }
 
+    // Check visibility toggles
+    const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+
     // Build response with only public-safe fields
     const response: PublishedBreederResponse = {
       tenantSlug: tenant.slug,
-      businessName,
-      bio: safeString(published.bio),
-      logoAssetId: safeString(published.logoAssetId),
+      businessName, // Always shown (required for discovery)
+      // Only include bio/logo if showBusinessIdentity is true
+      bio: showBusinessIdentity ? safeString(published.bio) : null,
+      logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
       publicLocationMode: safeString(published.publicLocationMode),
       location: sanitizeLocation(published.address),
       // Only include website/socials if show toggles are true
@@ -546,7 +554,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       placementPolicies: extractPlacementPolicies(published),
       publishedAt: profileData.publishedAt ?? null,
       // Business hours and badge info
-      businessHours: (tenant.businessHours as BusinessHoursSchedule) ?? null,
+      businessHours: (tenant.businessHours as unknown as BusinessHoursSchedule) ?? null,
       timeZone: tenant.timeZone ?? null,
       quickResponderBadge: tenant.quickResponderBadge,
     };
@@ -584,13 +592,14 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(404).send({ error: "not_found" });
     }
 
-    // Get the tenant's ORGANIZATION party (the breeder's messaging identity)
-    const orgParty = await prisma.party.findFirst({
-      where: { tenantId: tenant.id, type: "ORGANIZATION" },
-      select: { id: true, name: true },
+    // Get the tenant's ORGANIZATION party via the Organization table (which has a unique partyId)
+    // This is more reliable than finding Party by type, as there could be multiple ORGANIZATION parties
+    const org = await prisma.organization.findFirst({
+      where: { tenantId: tenant.id },
+      select: { partyId: true, name: true },
     });
 
-    if (!orgParty) {
+    if (!org) {
       return reply.code(404).send({ error: "no_messaging_party", detail: "Breeder has not set up messaging" });
     }
 
@@ -598,8 +607,8 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
       businessName: tenant.name,
-      partyId: orgParty.id,
-      partyName: orgParty.name,
+      partyId: org.partyId,
+      partyName: org.name,
     });
   });
 };

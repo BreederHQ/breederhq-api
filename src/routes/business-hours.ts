@@ -7,6 +7,7 @@
 //   PUT    /api/v1/business-hours      - Update business hours settings
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { getActorId } from "../utils/session.js";
 
@@ -328,7 +329,7 @@ const businessHoursRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
     const inferredTimeZone = inferTimezoneFromZip(orgZip);
 
     // Return current settings or defaults
-    const schedule = (tenant.businessHours as BusinessHoursSchedule) ?? DEFAULT_BUSINESS_HOURS;
+    const schedule = (tenant.businessHours as unknown as BusinessHoursSchedule) ?? DEFAULT_BUSINESS_HOURS;
     const timeZone = tenant.timeZone ?? DEFAULT_TIMEZONE;
     const isCustom = tenant.businessHours !== null;
     const hasCustomTimeZone = tenant.timeZone !== null;
@@ -389,7 +390,7 @@ const businessHoursRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       await prisma.tenant.update({
         where: { id: tenantId },
         data: {
-          businessHours: null, // null means use system defaults
+          businessHours: Prisma.DbNull, // DbNull means use system defaults
           timeZone: null,
         },
       });
@@ -448,7 +449,7 @@ const businessHoursRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
     return reply.send({
       ok: true,
-      schedule: (updated.businessHours as BusinessHoursSchedule) ?? DEFAULT_BUSINESS_HOURS,
+      schedule: (updated.businessHours as unknown as BusinessHoursSchedule) ?? DEFAULT_BUSINESS_HOURS,
       timeZone: updated.timeZone ?? DEFAULT_TIMEZONE,
       isCustom: updated.businessHours !== null,
     });
