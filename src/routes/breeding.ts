@@ -894,6 +894,80 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.status !== undefined) {
         const s = normalizePlanStatus(b.status);
         if (!s) return reply.code(400).send({ error: "bad_status" });
+
+        // VALIDATION: Ensure required dates are present when advancing to certain phases
+        // Merge existing data with incoming data to check effective values
+        const effectiveCycleStart = data.cycleStartDateActual !== undefined
+          ? data.cycleStartDateActual
+          : (b.cycleStartDateActual !== undefined ? (b.cycleStartDateActual ? new Date(b.cycleStartDateActual) : null) : null);
+        const effectiveBreedDate = data.breedDateActual !== undefined
+          ? data.breedDateActual
+          : (b.breedDateActual !== undefined ? (b.breedDateActual ? new Date(b.breedDateActual) : null) : null);
+        const effectiveBirthDate = data.birthDateActual !== undefined
+          ? data.birthDateActual
+          : (b.birthDateActual !== undefined ? (b.birthDateActual ? new Date(b.birthDateActual) : null) : null);
+        const effectiveWeanedDate = data.weanedDateActual !== undefined
+          ? data.weanedDateActual
+          : (b.weanedDateActual !== undefined ? (b.weanedDateActual ? new Date(b.weanedDateActual) : null) : null);
+        const effectivePlacementStart = data.placementStartDateActual !== undefined
+          ? data.placementStartDateActual
+          : (b.placementStartDateActual !== undefined ? (b.placementStartDateActual ? new Date(b.placementStartDateActual) : null) : null);
+        const effectivePlacementCompleted = data.placementCompletedDateActual !== undefined
+          ? data.placementCompletedDateActual
+          : (b.placementCompletedDateActual !== undefined ? (b.placementCompletedDateActual ? new Date(b.placementCompletedDateActual) : null) : null);
+
+        // For status transitions, we need to check existing DB values too
+        const existingPlan = await prisma.breedingPlan.findFirst({
+          where: { id, tenantId },
+          select: {
+            cycleStartDateActual: true,
+            breedDateActual: true,
+            birthDateActual: true,
+            weanedDateActual: true,
+            placementStartDateActual: true,
+            placementCompletedDateActual: true,
+          },
+        });
+
+        const finalCycleStart = effectiveCycleStart ?? existingPlan?.cycleStartDateActual;
+        const finalBreedDate = effectiveBreedDate ?? existingPlan?.breedDateActual;
+        const finalBirthDate = effectiveBirthDate ?? existingPlan?.birthDateActual;
+        const finalWeanedDate = effectiveWeanedDate ?? existingPlan?.weanedDateActual;
+        const finalPlacementStart = effectivePlacementStart ?? existingPlan?.placementStartDateActual;
+        const finalPlacementCompleted = effectivePlacementCompleted ?? existingPlan?.placementCompletedDateActual;
+
+        // Validate required dates for each status
+        if (s === "BRED" && !finalCycleStart) {
+          return reply.code(400).send({
+            error: "date_required_for_status",
+            detail: "cycleStartDateActual is required to set status to BRED"
+          });
+        }
+        if (s === "BIRTHED" && !finalBreedDate) {
+          return reply.code(400).send({
+            error: "date_required_for_status",
+            detail: "breedDateActual is required to set status to BIRTHED"
+          });
+        }
+        if (s === "WEANED" && !finalBirthDate) {
+          return reply.code(400).send({
+            error: "date_required_for_status",
+            detail: "birthDateActual is required to set status to WEANED"
+          });
+        }
+        if (s === "PLACEMENT" && !finalWeanedDate) {
+          return reply.code(400).send({
+            error: "date_required_for_status",
+            detail: "weanedDateActual is required to set status to PLACEMENT"
+          });
+        }
+        if (s === "COMPLETE" && !finalPlacementCompleted) {
+          return reply.code(400).send({
+            error: "date_required_for_status",
+            detail: "placementCompletedDateActual is required to set status to COMPLETE"
+          });
+        }
+
         data.status = s as any;
       }
 
