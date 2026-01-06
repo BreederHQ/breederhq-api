@@ -26,10 +26,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       // Check if sender is the org party (for response time tracking)
-      const tenantParty = await prisma.party.findFirst({
-        where: { tenantId, type: "ORGANIZATION" },
+      // Use Organization table to get the correct partyId (more reliable than Party.type lookup)
+      const tenantOrg = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { partyId: true },
       });
-      const isOrgSending = tenantParty && senderPartyId === tenantParty.id;
+      const isOrgSending = tenantOrg && senderPartyId === tenantOrg.partyId;
 
       const thread = await prisma.messageThread.create({
         data: {
@@ -62,7 +64,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      if (tenantParty && senderPartyId !== tenantParty.id) {
+      if (tenantOrg && senderPartyId !== tenantOrg.partyId) {
         try {
           await evaluateAndSendAutoReply({
             prisma,
@@ -247,10 +249,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       // Check if sender is the org party (for response time tracking)
-      const tenantParty = await prisma.party.findFirst({
-        where: { tenantId, type: "ORGANIZATION" },
+      // Use Organization table to get the correct partyId (more reliable than Party.type lookup)
+      const tenantOrg = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { partyId: true },
       });
-      const isOrgSending = tenantParty && userPartyId === tenantParty.id;
+      const isOrgSending = tenantOrg && userPartyId === tenantOrg.partyId;
 
       // Build update data for thread
       const threadUpdateData: any = { lastMessageAt: now, updatedAt: now };
@@ -321,7 +325,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: { lastReadAt: now },
       });
 
-      if (tenantParty && userPartyId !== tenantParty.id) {
+      if (tenantOrg && userPartyId !== tenantOrg.partyId) {
         try {
           await evaluateAndSendAutoReply({
             prisma,

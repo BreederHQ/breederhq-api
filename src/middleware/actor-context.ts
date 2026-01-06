@@ -607,20 +607,21 @@ export async function requireMessagingPartyScope(req: FastifyRequest): Promise<M
   // STAFF context: use tenant's organization party
   if (actorContext === "STAFF") {
     try {
-      // Find the tenant's ORGANIZATION party
-      const orgParty = await prisma.party.findFirst({
-        where: { tenantId, type: "ORGANIZATION" },
-        select: { id: true },
+      // Find the tenant's organization via the Organization table (which has a unique partyId)
+      // This is more reliable than finding Party by type, as there could be multiple ORGANIZATION parties
+      const org = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { partyId: true },
       });
 
-      if (!orgParty) {
+      if (!org) {
         throw { statusCode: 403, error: "forbidden", detail: "no_organization_party" };
       }
 
       return {
         tenantId,
         userId,
-        partyId: orgParty.id,
+        partyId: org.partyId,
         context: "STAFF",
       };
     } catch (err: any) {
