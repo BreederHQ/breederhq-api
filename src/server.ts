@@ -456,6 +456,8 @@ import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal sc
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
+import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Admin breeder reports
+import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -758,6 +760,7 @@ app.register(
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
     api.register(adminMarketplaceRoutes); // /api/v1/admin/marketplace/* Admin marketplace management
+    api.register(adminBreederReportsRoutes); // /api/v1/admin/breeder-reports/* Admin breeder reports
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
@@ -766,6 +769,7 @@ app.register(
     api.register(marketplaceBreedersRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeders/* (PUBLIC)
     api.register(marketplaceWaitlistRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/waitlist/* (auth required)
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
+    api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
   },
   { prefix: "/api/v1" }
 );
