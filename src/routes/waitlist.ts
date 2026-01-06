@@ -82,6 +82,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const q = String((req.query as any)["q"] ?? "").trim();
     const status = String((req.query as any)["status"] ?? "").trim();
     const species = String((req.query as any)["species"] ?? "").trim();
+    const clientPartyIdParam = (req.query as any)["clientPartyId"] ? Number((req.query as any)["clientPartyId"]) : undefined;
     const validSpecies = species && Object.values(Species).includes(species as Species) ? (species as Species) : undefined;
     const validStatus = status && Object.values(WaitlistStatus).includes(status as WaitlistStatus) ? (status as WaitlistStatus) : undefined;
     const limit = Math.min(250, Math.max(1, Number((req.query as any)["limit"] ?? 25)));
@@ -106,6 +107,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if (actorContext === "CLIENT") {
       const { partyId } = await requireClientPartyScope(req);
       where.clientPartyId = partyId;
+    } else if (clientPartyIdParam) {
+      // STAFF can filter by clientPartyId query param
+      where.clientPartyId = clientPartyIdParam;
     }
 
     const rows = await prisma.waitlistEntry.findMany({

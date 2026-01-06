@@ -1,0 +1,447 @@
+// src/routes/marketplace-messages.ts
+// Marketplace messaging endpoints for buyer-to-breeder communication
+//
+// Endpoints:
+//   GET  /messages/threads           - List threads for current marketplace user
+//   GET  /messages/threads/:id       - Get thread details
+//   POST /messages/threads           - Create new thread with breeder
+//   POST /messages/threads/:id       - Send message in thread
+//
+// Security:
+// - Requires valid marketplace session (PUBLIC context with MARKETPLACE_ACCESS)
+// - Creates per-tenant Party for user when messaging a breeder
+// - Messages are stored in the breeder's tenant
+
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import prisma from "../prisma.js";
+
+/**
+ * Get user info for messaging context.
+ */
+async function getUserInfo(userId: string): Promise<{ id: string; email: string; name: string }> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, firstName: true, lastName: true },
+  });
+
+  if (!user) {
+    throw { statusCode: 401, error: "unauthorized", detail: "user_not_found" };
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
+  };
+}
+
+/**
+ * Get or create a Party for a marketplace user within a specific tenant.
+ * Marketplace users get a CONTACT party created in each breeder's tenant they message.
+ */
+async function getOrCreateUserPartyInTenant(
+  userId: string,
+  tenantId: number
+): Promise<{ id: number; name: string }> {
+  const userInfo = await getUserInfo(userId);
+
+  // Check if user already has a party in this tenant (lookup by email)
+  const existingParty = await prisma.party.findFirst({
+    where: {
+      tenantId,
+      email: userInfo.email,
+      type: "CONTACT",
+    },
+    select: { id: true, name: true },
+  });
+
+  if (existingParty) {
+    return existingParty;
+  }
+
+  // Create a new CONTACT party for this user in the breeder's tenant
+  const party = await prisma.party.create({
+    data: {
+      tenantId,
+      name: userInfo.name,
+      email: userInfo.email,
+      type: "CONTACT",
+    },
+    select: { id: true, name: true },
+  });
+
+  return party;
+}
+
+/**
+ * Require marketplace authentication.
+ * Returns userId if authenticated, throws 401 otherwise.
+ */
+function requireMarketplaceAuth(req: any): string {
+  const userId = req.userId;
+  if (!userId) {
+    throw { statusCode: 401, error: "unauthorized", detail: "no_session" };
+  }
+  return userId;
+}
+
+/**
+ * Get all tenantIds where user has message threads.
+ */
+async function getUserMessageTenants(userId: string): Promise<number[]> {
+  const userInfo = await getUserInfo(userId);
+
+  // Find all parties with this user's email across all tenants
+  const parties = await prisma.party.findMany({
+    where: { email: userInfo.email, type: "CONTACT" },
+    select: { id: true, tenantId: true },
+  });
+
+  return [...new Set(parties.map((p) => p.tenantId))];
+}
+
+/**
+ * Get all party IDs for this user across all tenants.
+ */
+async function getUserPartyIds(userId: string): Promise<number[]> {
+  const userInfo = await getUserInfo(userId);
+
+  const parties = await prisma.party.findMany({
+    where: { email: userInfo.email, type: "CONTACT" },
+    select: { id: true },
+  });
+
+  return parties.map((p) => p.id);
+}
+
+const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // --------------------------------------------------------------------------
+  // GET /messages/threads - List threads for current marketplace user
+  // --------------------------------------------------------------------------
+  app.get("/threads", async (req, reply) => {
+    const userId = requireMarketplaceAuth(req);
+
+    try {
+      // Get all party IDs for this user across all tenants
+      const userPartyIds = await getUserPartyIds(userId);
+
+      if (userPartyIds.length === 0) {
+        return reply.send({ threads: [] });
+      }
+
+      // Get threads where user is a participant
+      const participantRecords = await prisma.messageParticipant.findMany({
+        where: { partyId: { in: userPartyIds } },
+        select: { threadId: true, lastReadAt: true, partyId: true },
+      });
+
+      const threadIds = participantRecords.map((p) => p.threadId);
+      if (threadIds.length === 0) {
+        return reply.send({ threads: [] });
+      }
+
+      const threads = await prisma.messageThread.findMany({
+        where: { id: { in: threadIds } },
+        include: {
+          participants: {
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
+          },
+          messages: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+
+      // Calculate unread count for each thread
+      const threadsWithUnread = await Promise.all(
+        threads.map(async (t) => {
+          // Find this user's participant record for this thread
+          const participant = participantRecords.find((p) => p.threadId === t.id);
+          const lastReadAt = participant?.lastReadAt;
+          const userPartyId = participant?.partyId;
+
+          const unreadCount = lastReadAt
+            ? await prisma.message.count({
+                where: {
+                  threadId: t.id,
+                  createdAt: { gt: lastReadAt },
+                  senderPartyId: { not: userPartyId },
+                },
+              })
+            : await prisma.message.count({
+                where: {
+                  threadId: t.id,
+                  senderPartyId: { not: userPartyId },
+                },
+              });
+
+          return { ...t, unreadCount };
+        })
+      );
+
+      return reply.send({ threads: threadsWithUnread });
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /messages/threads/:id - Get thread details with messages
+  // --------------------------------------------------------------------------
+  app.get("/threads/:id", async (req, reply) => {
+    const userId = requireMarketplaceAuth(req);
+    const threadId = Number((req.params as any).id);
+
+    // Validate thread ID is a valid number
+    if (!Number.isFinite(threadId) || threadId <= 0) {
+      return reply.code(400).send({ error: "invalid_thread_id" });
+    }
+
+    try {
+      const userPartyIds = await getUserPartyIds(userId);
+
+      const thread = await prisma.messageThread.findFirst({
+        where: { id: threadId },
+        include: {
+          participants: {
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
+          },
+          messages: {
+            orderBy: { createdAt: "asc" },
+            include: { senderParty: { select: { id: true, name: true, type: true } } },
+          },
+        },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Verify user is a participant (via any of their party IDs)
+      const isParticipant = thread.participants.some((p) => userPartyIds.includes(p.partyId));
+      if (!isParticipant) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+
+      // Mark as read for this user's party
+      const userPartyInThread = thread.participants.find((p) => userPartyIds.includes(p.partyId));
+      if (userPartyInThread) {
+        await prisma.messageParticipant.updateMany({
+          where: { threadId, partyId: userPartyInThread.partyId },
+          data: { lastReadAt: new Date() },
+        });
+      }
+
+      return reply.send({ thread });
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /messages/threads - Create new thread with a breeder
+  // --------------------------------------------------------------------------
+  app.post("/threads", async (req, reply) => {
+    const userId = requireMarketplaceAuth(req);
+
+    const { recipientPartyId, breederTenantId, subject, initialMessage, context } = req.body as any;
+
+    if (!recipientPartyId || !initialMessage || !breederTenantId) {
+      return reply.code(400).send({
+        error: "missing_required_fields",
+        required: ["recipientPartyId", "breederTenantId", "initialMessage"],
+      });
+    }
+
+    const tenantId = Number(breederTenantId);
+    const now = new Date();
+
+    try {
+      // Get or create user's party in this breeder's tenant
+      const userParty = await getOrCreateUserPartyInTenant(userId, tenantId);
+
+      // Verify recipient party exists and belongs to this tenant
+      const recipientParty = await prisma.party.findFirst({
+        where: { id: Number(recipientPartyId), tenantId },
+        select: { id: true, name: true, type: true },
+      });
+
+      if (!recipientParty) {
+        return reply.code(404).send({ error: "recipient_not_found" });
+      }
+
+      // Check for existing thread between these parties
+      const existingThread = await prisma.messageThread.findFirst({
+        where: {
+          tenantId,
+          participants: {
+            every: {
+              partyId: { in: [userParty.id, Number(recipientPartyId)] },
+            },
+          },
+        },
+        include: {
+          participants: true,
+        },
+      });
+
+      // If thread exists with both participants, add message to it
+      if (existingThread) {
+        const hasUser = existingThread.participants.some((p) => p.partyId === userParty.id);
+        const hasRecipient = existingThread.participants.some((p) => p.partyId === Number(recipientPartyId));
+
+        if (hasUser && hasRecipient) {
+          // Add new message to existing thread
+          await prisma.message.create({
+            data: {
+              threadId: existingThread.id,
+              senderPartyId: userParty.id,
+              body: initialMessage,
+            },
+          });
+
+          // Update thread timestamps
+          await prisma.messageThread.update({
+            where: { id: existingThread.id },
+            data: { lastMessageAt: now, updatedAt: now },
+          });
+
+          // Update sender's lastReadAt
+          await prisma.messageParticipant.updateMany({
+            where: { threadId: existingThread.id, partyId: userParty.id },
+            data: { lastReadAt: now },
+          });
+
+          // Return the updated thread
+          const thread = await prisma.messageThread.findUnique({
+            where: { id: existingThread.id },
+            include: {
+              participants: {
+                include: { party: { select: { id: true, name: true, email: true, type: true } } },
+              },
+              messages: {
+                orderBy: { createdAt: "asc" },
+                include: { senderParty: { select: { id: true, name: true, type: true } } },
+              },
+            },
+          });
+
+          return reply.send({ ok: true, thread, reused: true });
+        }
+      }
+
+      // Create new thread
+      const threadSubject = subject || (context?.programName ? `Inquiry about ${context.programName}` : null);
+
+      const thread = await prisma.messageThread.create({
+        data: {
+          tenantId,
+          subject: threadSubject,
+          lastMessageAt: now,
+          // Marketplace messages are always inbound (from buyers), track for response time
+          firstInboundAt: now,
+          participants: {
+            create: [
+              { partyId: userParty.id, lastReadAt: now },
+              { partyId: Number(recipientPartyId) },
+            ],
+          },
+          messages: {
+            create: {
+              senderPartyId: userParty.id,
+              body: initialMessage,
+            },
+          },
+        },
+        include: {
+          participants: {
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
+          },
+          messages: {
+            orderBy: { createdAt: "asc" },
+            include: { senderParty: { select: { id: true, name: true, type: true } } },
+          },
+        },
+      });
+
+      return reply.send({ ok: true, thread });
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /messages/threads/:id/messages - Send message in existing thread
+  // --------------------------------------------------------------------------
+  app.post("/threads/:id/messages", async (req, reply) => {
+    const userId = requireMarketplaceAuth(req);
+    const threadId = Number((req.params as any).id);
+    const { body: messageBody } = req.body as any;
+
+    // Validate thread ID is a valid number
+    if (!Number.isFinite(threadId) || threadId <= 0) {
+      return reply.code(400).send({ error: "invalid_thread_id" });
+    }
+
+    if (!messageBody) {
+      return reply.code(400).send({ error: "missing_required_fields", required: ["body"] });
+    }
+
+    try {
+      const userPartyIds = await getUserPartyIds(userId);
+
+      const thread = await prisma.messageThread.findFirst({
+        where: { id: threadId },
+        select: { id: true, tenantId: true, participants: { select: { partyId: true } } },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Find user's party in this thread
+      const userParticipant = thread.participants.find((p) => userPartyIds.includes(p.partyId));
+      if (!userParticipant) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+
+      const userPartyId = userParticipant.partyId;
+      const now = new Date();
+
+      const message = await prisma.message.create({
+        data: {
+          threadId,
+          senderPartyId: userPartyId,
+          body: messageBody,
+        },
+        include: {
+          senderParty: { select: { id: true, name: true, type: true } },
+        },
+      });
+
+      // Update thread timestamps
+      await prisma.messageThread.update({
+        where: { id: threadId },
+        data: { lastMessageAt: now, updatedAt: now },
+      });
+
+      // Update sender's lastReadAt
+      await prisma.messageParticipant.updateMany({
+        where: { threadId, partyId: userPartyId },
+        data: { lastReadAt: now },
+      });
+
+      return reply.send({ ok: true, message });
+    } catch (err: any) {
+      if (err.statusCode) throw err;
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+};
+
+export default routes;

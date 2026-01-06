@@ -60,6 +60,22 @@ interface PlacementPolicies {
   note: string | null;
 }
 
+interface DaySchedule {
+  enabled: boolean;
+  open: string;
+  close: string;
+}
+
+interface BusinessHoursSchedule {
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+}
+
 interface PublishedBreederResponse {
   tenantSlug: string;
   businessName: string;
@@ -77,15 +93,21 @@ interface PublishedBreederResponse {
     instagram: string | null;
     facebook: string | null;
   };
-  breeds: Array<{ name: string }>;
+  breeds: Array<{ name: string; species: string | null }>;
   programs: Array<{
     name: string;
     description: string | null;
-    availability: string | null;
+    acceptInquiries: boolean;
+    openWaitlist: boolean;
+    comingSoon: boolean;
   }>;
   standardsAndCredentials: StandardsAndCredentials | null;
   placementPolicies: PlacementPolicies | null;
   publishedAt: string | null;
+  // Business hours and badge info
+  businessHours: BusinessHoursSchedule | null;
+  timeZone: string | null;
+  quickResponderBadge: boolean;
 }
 
 /**
@@ -103,7 +125,7 @@ interface BreederSummary {
   city: string | null;
   state: string | null;
   zip: string | null;
-  breeds: Array<{ name: string }>;
+  breeds: Array<{ name: string; species: string | null }>;
   logoAssetId: string | null;
 }
 
@@ -153,28 +175,29 @@ function sanitizeLocation(
 }
 
 /**
- * Extract breeds array from various possible shapes
+ * Extract breeds array from various possible shapes (now includes species)
  */
-function extractBreeds(published: Record<string, unknown>): Array<{ name: string }> {
+function extractBreeds(published: Record<string, unknown>): Array<{ name: string; species: string | null }> {
   // Try breeds array first (from publish payload)
   if (Array.isArray(published.breeds)) {
     return published.breeds
       .map((b: unknown) => {
-        if (typeof b === "string" && b.trim()) return { name: b.trim() };
+        if (typeof b === "string" && b.trim()) return { name: b.trim(), species: null };
         if (b && typeof b === "object" && "name" in b) {
           const name = safeString((b as any).name);
-          if (name) return { name };
+          const species = safeString((b as any).species);
+          if (name) return { name, species };
         }
         return null;
       })
-      .filter((b): b is { name: string } => b !== null);
+      .filter((b): b is { name: string; species: string | null } => b !== null);
   }
 
   // Fall back to listedBreeds (string array)
   if (Array.isArray(published.listedBreeds)) {
     return published.listedBreeds
       .filter((b): b is string => typeof b === "string" && b.trim() !== "")
-      .map((name) => ({ name: name.trim() }));
+      .map((name) => ({ name: name.trim(), species: null }));
   }
 
   return [];
@@ -185,7 +208,13 @@ function extractBreeds(published: Record<string, unknown>): Array<{ name: string
  */
 function extractPrograms(
   published: Record<string, unknown>
-): Array<{ name: string; description: string | null; availability: string | null }> {
+): Array<{
+  name: string;
+  description: string | null;
+  acceptInquiries: boolean;
+  openWaitlist: boolean;
+  comingSoon: boolean;
+}> {
   if (!Array.isArray(published.listedPrograms)) return [];
 
   return published.listedPrograms
@@ -197,7 +226,9 @@ function extractPrograms(
       return {
         name,
         description: safeString(prog.description),
-        availability: safeString(prog.availability),
+        acceptInquiries: safeBool(prog.acceptInquiries),
+        openWaitlist: safeBool(prog.openWaitlist),
+        comingSoon: safeBool(prog.comingSoon),
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -398,6 +429,9 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const state = includeLocation && address ? safeString(address.state) : null;
       const zip = includeLocation && address ? safeString(address.zip) : null;
 
+      // Check if business identity (logo) should be shown
+      const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+
       const summary: BreederSummary = {
         tenantSlug,
         businessName,
@@ -407,7 +441,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         state,
         zip,
         breeds: extractBreeds(published),
-        logoAssetId: safeString(published.logoAssetId),
+        logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
       };
 
       publishedBreeders.push({
@@ -458,10 +492,16 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
     const normalizedSlug = tenantSlug.trim().toLowerCase();
 
-    // Look up tenant by slug
+    // Look up tenant by slug with business hours and badge info
     const tenant = await prisma.tenant.findUnique({
       where: { slug: normalizedSlug },
-      select: { id: true, slug: true },
+      select: {
+        id: true,
+        slug: true,
+        businessHours: true,
+        timeZone: true,
+        quickResponderBadge: true,
+      },
     });
 
     if (!tenant || !tenant.slug) {
@@ -490,12 +530,16 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(404).send({ error: "not_published" });
     }
 
+    // Check visibility toggles
+    const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+
     // Build response with only public-safe fields
     const response: PublishedBreederResponse = {
       tenantSlug: tenant.slug,
-      businessName,
-      bio: safeString(published.bio),
-      logoAssetId: safeString(published.logoAssetId),
+      businessName, // Always shown (required for discovery)
+      // Only include bio/logo if showBusinessIdentity is true
+      bio: showBusinessIdentity ? safeString(published.bio) : null,
+      logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
       publicLocationMode: safeString(published.publicLocationMode),
       location: sanitizeLocation(published.address),
       // Only include website/socials if show toggles are true
@@ -509,9 +553,63 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       standardsAndCredentials: extractStandardsAndCredentials(published),
       placementPolicies: extractPlacementPolicies(published),
       publishedAt: profileData.publishedAt ?? null,
+      // Business hours and badge info
+      businessHours: (tenant.businessHours as unknown as BusinessHoursSchedule) ?? null,
+      timeZone: tenant.timeZone ?? null,
+      quickResponderBadge: tenant.quickResponderBadge,
     };
 
     return reply.send(response);
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /breeders/:tenantSlug/messaging - Get messaging info for breeder (auth required)
+  // Returns the breeder's ORGANIZATION party ID for messaging
+  // --------------------------------------------------------------------------
+  app.get<{ Params: { tenantSlug: string } }>("/breeders/:tenantSlug/messaging", async (req, reply) => {
+    const { tenantSlug } = req.params;
+
+    // Require authentication (PUBLIC context with valid session)
+    const userId = (req as any).userId;
+    if (!userId) {
+      return reply.code(401).send({ error: "unauthorized", detail: "authentication_required" });
+    }
+
+    // Validate slug format
+    if (!tenantSlug || typeof tenantSlug !== "string" || tenantSlug.trim() === "") {
+      return reply.code(400).send({ error: "invalid_slug" });
+    }
+
+    const normalizedSlug = tenantSlug.trim().toLowerCase();
+
+    // Look up tenant by slug
+    const tenant = await prisma.tenant.findUnique({
+      where: { slug: normalizedSlug },
+      select: { id: true, slug: true, name: true },
+    });
+
+    if (!tenant || !tenant.slug) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Get the tenant's ORGANIZATION party via the Organization table (which has a unique partyId)
+    // This is more reliable than finding Party by type, as there could be multiple ORGANIZATION parties
+    const org = await prisma.organization.findFirst({
+      where: { tenantId: tenant.id },
+      select: { partyId: true, name: true },
+    });
+
+    if (!org) {
+      return reply.code(404).send({ error: "no_messaging_party", detail: "Breeder has not set up messaging" });
+    }
+
+    return reply.send({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      businessName: tenant.name,
+      partyId: org.partyId,
+      partyName: org.name,
+    });
   });
 };
 
