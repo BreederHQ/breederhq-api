@@ -971,6 +971,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       tenant: { name: string; primaryEmail?: string | null };
       owner: {
         email: string;
+        firstName: string;
+        lastName?: string | null;
         name?: string | null;
         verify?: boolean;
         makeDefault?: boolean;
@@ -995,13 +997,14 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       if (!actor?.isSuperAdmin) return reply.status(403).send({ error: "forbidden" });
 
       const { tenant, owner, billing } = req.body || {};
-      if (!tenant?.name || !owner?.email) {
+      if (!tenant?.name || !owner?.email || !owner?.firstName) {
         return reply
           .status(400)
-          .send({ error: "bad_request", detail: "tenant.name and owner.email are required" });
+          .send({ error: "bad_request", detail: "tenant.name, owner.email, and owner.firstName are required" });
       }
 
       const ownerEmail = normEmail(owner.email);
+      const ownerName = [owner.firstName, owner.lastName].filter(Boolean).join(" ") || null;
 
       // Generate or use provided temp password
       let tempPassword = "";
@@ -1030,13 +1033,17 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         const user = await tx.user.upsert({
           where: { email: ownerEmail },
           update: {
-            name: owner.name ?? undefined,
+            name: ownerName ?? undefined,
+            firstName: owner.firstName,
+            lastName: owner.lastName ?? null,
             ...(owner.verify ? { emailVerifiedAt: new Date() } : {}),
             ...passwordData,
           },
           create: {
             email: ownerEmail,
-            name: owner.name ?? undefined,
+            name: ownerName ?? undefined,
+            firstName: owner.firstName,
+            lastName: owner.lastName ?? null,
             ...(owner.verify ? { emailVerifiedAt: new Date() } : {}),
             ...passwordData,
           },
