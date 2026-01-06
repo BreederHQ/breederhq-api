@@ -3,6 +3,7 @@
 //
 // Endpoints:
 //   POST /api/v1/marketplace/waitlist/:tenantSlug  - Request to join a breeder's waitlist
+//   GET  /api/v1/marketplace/waitlist/my-requests  - Get user's waitlist requests with status
 //
 // Security:
 // - Requires valid marketplace session (user must be logged in)
@@ -12,6 +13,8 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { parseVerifiedSession } from "../utils/session.js";
+import { isBlocked } from "../services/marketplace-block.js";
+import { isUserSuspended } from "../services/marketplace-flag.js";
 
 // ============================================================================
 // Constants
@@ -51,25 +54,70 @@ function buildNotesFromMarketplaceRequest(
   const lines: string[] = [
     `[Marketplace Waitlist Request]`,
     `Program: ${body.programName}`,
-    ``,
-    `Contact Information:`,
-    `Name: ${body.name}`,
-    `Email: ${body.email}`,
   ];
-
-  if (body.phone) {
-    lines.push(`Phone: ${body.phone}`);
-  }
-
-  lines.push(``, `User ID: ${userId}`);
 
   if (body.message) {
     lines.push(``, `Message from applicant:`, body.message);
   }
 
-  lines.push(``, `Submitted: ${new Date().toISOString()}`);
+  lines.push(``, `User ID: ${userId}`, `Submitted: ${new Date().toISOString()}`);
 
   return lines.join("\n");
+}
+
+/**
+ * Find or create a Contact in the breeder's tenant for the marketplace user.
+ * Returns the Party ID for the contact.
+ */
+async function findOrCreateContactParty(
+  tenantId: number,
+  userData: { name: string; email: string; phone?: string; userId: string }
+): Promise<number> {
+  // First, try to find existing contact by email
+  const existingContact = await prisma.contact.findFirst({
+    where: {
+      tenantId,
+      email: { equals: userData.email, mode: "insensitive" },
+    },
+    select: { id: true, partyId: true },
+  });
+
+  if (existingContact?.partyId) {
+    return existingContact.partyId;
+  }
+
+  // Parse name into first/last
+  const nameParts = userData.name.trim().split(/\s+/);
+  const firstName = nameParts[0] || "";
+  const lastName = nameParts.slice(1).join(" ") || "";
+
+  // Create new Party and Contact
+  const party = await prisma.party.create({
+    data: {
+      tenantId,
+      type: "CONTACT",
+      name: userData.name.trim(),
+      email: userData.email,
+    },
+    select: { id: true },
+  });
+
+  await prisma.contact.create({
+    data: {
+      tenantId,
+      partyId: party.id,
+      first_name: firstName,
+      last_name: lastName,
+      display_name: userData.name.trim(),
+      email: userData.email,
+      phoneE164: userData.phone || null,
+      // Store marketplace user ID in external fields for reference
+      externalProvider: "marketplace",
+      externalId: userData.userId,
+    },
+  });
+
+  return party.id;
 }
 
 // ============================================================================
@@ -120,6 +168,24 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(404).send({ error: "breeder_not_found" });
     }
 
+    // 3b) Check if user is suspended platform-wide
+    const suspended = await isUserSuspended(sess.userId);
+    if (suspended) {
+      return reply.code(403).send({
+        error: "not_accepting",
+        message: "This breeder is not accepting waitlist requests at this time.",
+      });
+    }
+
+    // 3c) Check if user is blocked by this breeder (LIGHT level or higher)
+    const blocked = await isBlocked(tenant.id, sess.userId, "LIGHT");
+    if (blocked) {
+      return reply.code(403).send({
+        error: "not_accepting",
+        message: "This breeder is not accepting waitlist requests at this time.",
+      });
+    }
+
     // 4) Verify breeder has a published marketplace profile
     const setting = await prisma.tenantSetting.findUnique({
       where: {
@@ -154,7 +220,15 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(400).send({ error: "program_waitlist_not_open" });
     }
 
-    // 6) Create waitlist entry with INQUIRY status (shows in Pending tab)
+    // 6) Find or create a Contact in the breeder's tenant for this marketplace user
+    const clientPartyId = await findOrCreateContactParty(tenant.id, {
+      name: body.name,
+      email: body.email,
+      phone: body.phone,
+      userId: sess.userId,
+    });
+
+    // 7) Create waitlist entry with INQUIRY status (shows in Pending tab)
     const notes = buildNotesFromMarketplaceRequest(body, sess.userId);
 
     const entry = await prisma.waitlistEntry.create({
@@ -162,11 +236,58 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         tenantId: tenant.id,
         status: "INQUIRY",
         notes,
-        // clientPartyId is null since marketplace user doesn't have a Party in this tenant
-        // Breeder can later convert this to a proper client if they accept the inquiry
+        clientPartyId,
       },
       select: { id: true },
     });
+
+    // 8) If user included a message, create a message thread with the breeder
+    if (body.message && body.message.trim()) {
+      try {
+        // Get the breeder's Organization party
+        const org = await prisma.organization.findFirst({
+          where: { tenantId: tenant.id },
+          select: { partyId: true },
+        });
+
+        if (org?.partyId) {
+          const now = new Date();
+
+          // Create message thread
+          const thread = await prisma.messageThread.create({
+            data: {
+              tenantId: tenant.id,
+              subject: `Waitlist Request: ${body.programName}`,
+              lastMessageAt: now,
+              firstInboundAt: now,
+              participants: {
+                create: [
+                  { partyId: clientPartyId, lastReadAt: now },
+                  { partyId: org.partyId },
+                ],
+              },
+              messages: {
+                create: {
+                  senderPartyId: clientPartyId,
+                  body: body.message.trim(),
+                },
+              },
+            },
+          });
+
+          // Update waitlist entry notes to include thread reference
+          await prisma.waitlistEntry.update({
+            where: { id: entry.id },
+            data: {
+              notes: `${notes}\n\nMessage Thread ID: ${thread.id}`,
+            },
+          });
+        }
+      } catch (e) {
+        // Log but don't fail the waitlist request if messaging fails
+        console.error("Failed to create message thread for waitlist request:", e);
+      }
+    }
 
     const response: WaitlistRequestResponse = {
       success: true,
@@ -174,6 +295,127 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     };
 
     return reply.code(201).send(response);
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /waitlist/my-requests - Get all waitlist requests for current user
+  // --------------------------------------------------------------------------
+  app.get("/waitlist/my-requests", async (req, reply) => {
+    // 1) Verify user is authenticated (marketplace session)
+    const sess = parseVerifiedSession(req, "MARKETPLACE");
+    if (!sess) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    try {
+      // 2) Get user's email to find their parties across all tenants
+      const user = await prisma.user.findUnique({
+        where: { id: sess.userId },
+        select: { email: true },
+      });
+
+      if (!user?.email) {
+        return reply.send({ requests: [] });
+      }
+
+      // 3) Find all Contact parties for this user (by email) across all tenants
+      const userParties = await prisma.party.findMany({
+        where: {
+          email: { equals: user.email, mode: "insensitive" },
+          type: "CONTACT",
+        },
+        select: { id: true, tenantId: true },
+      });
+
+      if (userParties.length === 0) {
+        return reply.send({ requests: [] });
+      }
+
+      const partyIds = userParties.map((p) => p.id);
+      const tenantIds = [...new Set(userParties.map((p) => p.tenantId))];
+
+      // 4) Get all waitlist entries where user is the client
+      const entries = await prisma.waitlistEntry.findMany({
+        where: {
+          clientPartyId: { in: partyIds },
+        },
+        select: {
+          id: true,
+          status: true,
+          notes: true,
+          createdAt: true,
+          approvedAt: true,
+          rejectedAt: true,
+          rejectedReason: true,
+          tenantId: true,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // 5) Get tenant info (breeder names, slugs) for context
+      // Query tenants and their organizations separately for cleaner typing
+      const tenants = await prisma.tenant.findMany({
+        where: { id: { in: tenantIds } },
+        select: {
+          id: true,
+          slug: true,
+        },
+      });
+
+      // Get organizations for these tenants
+      const organizations = await prisma.organization.findMany({
+        where: { tenantId: { in: tenantIds } },
+        select: {
+          tenantId: true,
+          name: true,
+        },
+      });
+
+      // Build lookup maps
+      const tenantMap = new Map(tenants.map((t) => [t.id, t]));
+      const orgMap = new Map(organizations.map((o) => [o.tenantId, o]));
+
+      // 6) Extract program name from notes and build response
+      const requests = entries.map((entry) => {
+        const tenant = tenantMap.get(entry.tenantId);
+        const org = orgMap.get(entry.tenantId);
+
+        // Extract program name from notes (format: "Program: XYZ")
+        let programName: string | null = null;
+        const programMatch = entry.notes?.match(/^Program:\s*(.+)$/m);
+        if (programMatch) {
+          programName = programMatch[1].trim();
+        }
+
+        // Map internal status to user-friendly status
+        let displayStatus: "pending" | "approved" | "rejected";
+        if (entry.status === "REJECTED") {
+          displayStatus = "rejected";
+        } else if (entry.status === "INQUIRY") {
+          displayStatus = "pending";
+        } else {
+          // APPROVED, DEPOSIT_DUE, DEPOSIT_PAID, etc. are all "approved"
+          displayStatus = "approved";
+        }
+
+        return {
+          id: entry.id,
+          status: displayStatus,
+          statusDetail: entry.status, // Full status for more context
+          breederName: org?.name || null,
+          breederSlug: tenant?.slug || null,
+          programName,
+          submittedAt: entry.createdAt,
+          approvedAt: entry.approvedAt,
+          rejectedAt: entry.rejectedAt,
+          rejectedReason: entry.rejectedReason,
+        };
+      });
+
+      return reply.send({ requests });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
   });
 };
 

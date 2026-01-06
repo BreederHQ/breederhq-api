@@ -42,7 +42,7 @@ function normalizeIsoDateOnly(v: unknown): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "whelp";
+type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "birth";
 
 type ReproEvent = {
   kind: ReproEventKind;
@@ -72,7 +72,7 @@ function buildReproFromCycles(cycles: Array<{
 
     const dueIso = normalizeIsoDateOnly(c.dueDate ?? null);
     if (dueIso) {
-      events.push({ kind: "whelp", date: dueIso });
+      events.push({ kind: "birth", date: dueIso });
     }
   }
 

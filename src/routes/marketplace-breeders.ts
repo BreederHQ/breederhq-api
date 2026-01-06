@@ -12,6 +12,8 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { isBlocked } from "../services/marketplace-block.js";
+import { isUserSuspended } from "../services/marketplace-flag.js";
 
 // ============================================================================
 // Constants
@@ -508,6 +510,17 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(404).send({ error: "not_found" });
     }
 
+    // If user is logged in, check for HEAVY block (profile hidden from this user)
+    const userId = (req as any).userId;
+    if (userId) {
+      const suspended = await isUserSuspended(userId);
+      const blocked = await isBlocked(tenant.id, userId, "HEAVY");
+      if (suspended || blocked) {
+        // Return 404 as if breeder doesn't exist (don't reveal user is blocked)
+        return reply.code(404).send({ error: "not_found" });
+      }
+    }
+
     // Read profile setting
     const setting = await prisma.tenantSetting.findUnique({
       where: { tenantId_namespace: { tenantId: tenant.id, namespace: NAMESPACE } },
@@ -590,6 +603,20 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
     if (!tenant || !tenant.slug) {
       return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Check if user is suspended platform-wide or blocked at MEDIUM level
+    const suspended = await isUserSuspended(userId);
+    const blocked = await isBlocked(tenant.id, userId, "MEDIUM");
+    if (suspended || blocked) {
+      // Return as if messaging is not enabled (don't reveal user is blocked)
+      return reply.send({
+        tenantId: tenant.id,
+        tenantSlug: tenant.slug,
+        businessName: tenant.name,
+        enabled: false,
+        reason: "not_available",
+      });
     }
 
     // Get the tenant's ORGANIZATION party via the Organization table (which has a unique partyId)

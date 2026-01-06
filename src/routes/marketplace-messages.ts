@@ -14,6 +14,8 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { isBlocked } from "../services/marketplace-block.js";
+import { isUserSuspended } from "../services/marketplace-flag.js";
 
 /**
  * Get user info for messaging context.
@@ -260,6 +262,24 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const tenantId = Number(breederTenantId);
     const now = new Date();
 
+    // Check if user is suspended platform-wide
+    const suspended = await isUserSuspended(userId);
+    if (suspended) {
+      return reply.code(403).send({
+        error: "not_accepting",
+        message: "This breeder is not accepting messages at this time.",
+      });
+    }
+
+    // Check if user is blocked by this breeder (MEDIUM level or higher)
+    const blocked = await isBlocked(tenantId, userId, "MEDIUM");
+    if (blocked) {
+      return reply.code(403).send({
+        error: "not_accepting",
+        message: "This breeder is not accepting messages at this time.",
+      });
+    }
+
     try {
       // Get or create user's party in this breeder's tenant
       const userParty = await getOrCreateUserPartyInTenant(userId, tenantId);
@@ -402,6 +422,24 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (!thread) {
         return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Check if user is suspended platform-wide
+      const suspended = await isUserSuspended(userId);
+      if (suspended) {
+        return reply.code(403).send({
+          error: "not_accepting",
+          message: "This breeder is not accepting messages at this time.",
+        });
+      }
+
+      // Check if user is blocked by this breeder (MEDIUM level or higher)
+      const blocked = await isBlocked(thread.tenantId, userId, "MEDIUM");
+      if (blocked) {
+        return reply.code(403).send({
+          error: "not_accepting",
+          message: "This breeder is not accepting messages at this time.",
+        });
       }
 
       // Find user's party in this thread
