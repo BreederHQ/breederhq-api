@@ -365,37 +365,8 @@ function toDateOrNull(v: any): Date | null {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
-function mapLegacyDates(body: any) {
-  if (body.expectedGoHome !== undefined && body.expectedPlacementStart === undefined) {
-    body.expectedPlacementStart = body.expectedGoHome;
-  }
-  if (body.expectedGoHomeExtendedEnd !== undefined && body.expectedPlacementCompleted === undefined) {
-    body.expectedPlacementCompleted = body.expectedGoHomeExtendedEnd;
-  }
-  if (body.lockedGoHomeDate !== undefined && body.lockedPlacementStartDate === undefined) {
-    body.lockedPlacementStartDate = body.lockedGoHomeDate;
-  }
-  if (body.goHomeDateActual !== undefined && body.placementStartDateActual === undefined) {
-    body.placementStartDateActual = body.goHomeDateActual;
-  }
-  if (body.lastGoHomeDateActual !== undefined && body.placementCompletedDateActual === undefined) {
-    body.placementCompletedDateActual = body.lastGoHomeDateActual;
-  }
-  if (body.expectedDue !== undefined && body.expectedBirthDate === undefined) {
-    body.expectedBirthDate = body.expectedDue;
-  }
-  if (body.whelpDateActual !== undefined && body.birthDateActual === undefined) {
-    body.birthDateActual = body.whelpDateActual;
-  }
-  if (body.expectedWhelpDate !== undefined && body.expectedBirthDate === undefined) {
-    body.expectedBirthDate = body.expectedWhelpDate;
-  }
-  return body;
-}
 
 function validateAndNormalizeLockPayload(body: any) {
-  mapLegacyDates(body);
-
   const provided = {
     start: body.hasOwnProperty("lockedCycleStart") ? toDateOrNull(body.lockedCycleStart) : undefined,
     ov: body.hasOwnProperty("lockedOvulationDate") ? toDateOrNull(body.lockedOvulationDate) : undefined,
@@ -656,7 +627,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const tenantId = Number((req as any).tenantId);
 
-      const b = mapLegacyDates((req.body || {}) as any);
+      const b = (req.body || {}) as any;
 
       const name = String(b.name || "").trim();
       if (!name) return reply.code(400).send({ error: "name_required" });
@@ -824,8 +795,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
-      const raw = (req.body || {}) as any;
-      const b = mapLegacyDates(raw);
+      const b = (req.body || {}) as any;
       const data: any = {};
 
       if (b.name !== undefined) {

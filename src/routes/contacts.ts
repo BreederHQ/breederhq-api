@@ -1,8 +1,14 @@
 // src/routes/contacts.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { MarketplaceBlockLevel } from "@prisma/client";
 import prisma from "../prisma.js";
 import { CommPrefsService } from "../services/comm-prefs-service.js";
 import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
+import {
+  blockUser,
+  unblockUser,
+  getBlockedUsers,
+} from "../services/marketplace-block.js";
 
 /**
  * Contact schema alignment
@@ -1027,6 +1033,157 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }));
 
     return reply.send({ items: animals, total: animals.length });
+  });
+
+  // ============================================================================
+  // Marketplace User Block Management
+  // ============================================================================
+
+  /**
+   * POST /contacts/block-marketplace-user
+   * Block a marketplace user at a specific level
+   */
+  app.post<{
+    Body: {
+      userId: string;
+      level: MarketplaceBlockLevel;
+      reason?: string;
+    };
+  }>("/contacts/block-marketplace-user", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { userId, level, reason } = req.body ?? {};
+
+      // Validate required fields
+      if (!userId || typeof userId !== "string") {
+        return reply.code(400).send({ error: "userId_required" });
+      }
+
+      if (!level || !["LIGHT", "MEDIUM", "HEAVY"].includes(level)) {
+        return reply.code(400).send({ error: "invalid_level", message: "Level must be LIGHT, MEDIUM, or HEAVY" });
+      }
+
+      // Verify the user exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+      });
+
+      if (!user) {
+        return reply.code(404).send({ error: "user_not_found" });
+      }
+
+      // Get the current user's party (for audit)
+      let blockedByPartyId: number | undefined;
+      const currentUserId = (req as any).userId;
+      if (currentUserId) {
+        const currentUser = await prisma.user.findUnique({
+          where: { id: currentUserId },
+          select: { partyId: true },
+        });
+        if (currentUser?.partyId) {
+          blockedByPartyId = currentUser.partyId;
+        }
+      }
+
+      const result = await blockUser({
+        tenantId,
+        userId,
+        level,
+        reason: reason?.trim() || undefined,
+        blockedByPartyId,
+      });
+
+      return reply.code(201).send({
+        success: true,
+        blockId: result.id,
+        isNew: result.isNew,
+      });
+    } catch (err: any) {
+      console.error("[block-marketplace-user] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  /**
+   * DELETE /contacts/block-marketplace-user/:userId
+   * Lift a block on a marketplace user
+   */
+  app.delete<{
+    Params: { userId: string };
+  }>("/contacts/block-marketplace-user/:userId", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { userId } = req.params;
+
+      if (!userId || typeof userId !== "string") {
+        return reply.code(400).send({ error: "userId_required" });
+      }
+
+      // Get the current user's party (for audit)
+      let liftedByPartyId: number | undefined;
+      const currentUserId = (req as any).userId;
+      if (currentUserId) {
+        const currentUser = await prisma.user.findUnique({
+          where: { id: currentUserId },
+          select: { partyId: true },
+        });
+        if (currentUser?.partyId) {
+          liftedByPartyId = currentUser.partyId;
+        }
+      }
+
+      const success = await unblockUser({
+        tenantId,
+        userId,
+        liftedByPartyId,
+      });
+
+      if (!success) {
+        return reply.code(404).send({ error: "block_not_found" });
+      }
+
+      return reply.send({ success: true });
+    } catch (err: any) {
+      console.error("[unblock-marketplace-user] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  /**
+   * GET /contacts/blocked-marketplace-users
+   * Get all blocked marketplace users for this tenant
+   */
+  app.get("/contacts/blocked-marketplace-users", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const blockedUsers = await getBlockedUsers(tenantId);
+
+      return reply.send({
+        items: blockedUsers.map((b) => ({
+          id: b.id,
+          userId: b.userId,
+          level: b.level,
+          reason: b.reason,
+          createdAt: b.createdAt,
+          user: {
+            id: b.user.id,
+            email: b.user.email,
+            name: b.user.name || `${b.user.firstName} ${b.user.lastName}`.trim(),
+          },
+        })),
+        total: blockedUsers.length,
+      });
+    } catch (err: any) {
+      console.error("[blocked-marketplace-users] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
   });
 };
 
