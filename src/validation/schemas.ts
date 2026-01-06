@@ -20,8 +20,8 @@ export const BreedingSchema = z.object({
   id: z.string().uuid().optional(),
   femaleId: z.string().min(1, "femaleId required"),
   maleId: z.string().optional(),
-  status: z.enum(["planned", "bred", "whelped", "cancelled"]).default("planned"),
+  status: z.enum(["planned", "bred", "birthed", "cancelled"]).default("planned"),
   plannedOvulationDate: z.string().datetime().optional(),
-  plannedWhelpDate: z.string().datetime().optional(),
+  plannedBirthDate: z.string().datetime().optional(),
   notes: z.string().optional(),
 });
