@@ -263,12 +263,14 @@ enum PregnancyCheckMethod {
 
 enum WaitlistStatus {
   INQUIRY
+  APPROVED
   DEPOSIT_DUE
   DEPOSIT_PAID
   READY
   ALLOCATED
   COMPLETED
   CANCELED
+  REJECTED
 }
 
 /**
@@ -442,6 +444,10 @@ model User {
 
   // Legal - Terms of Service acceptances
   tosAcceptances TosAcceptance[]
+
+  // Marketplace blocklist
+  marketplaceBlocks MarketplaceUserBlock[] @relation("BlockedMarketplaceUser")
+  marketplaceFlag   MarketplaceUserFlag?   @relation("MarketplaceUserFlagUser")
 }
 
 /**
@@ -670,6 +676,9 @@ model Tenant {
   totalResponseCount            Int      @default(0) // Number of responses used in average
   lastBadgeEvaluatedAt          DateTime?
 
+  // Marketplace blocklist
+  marketplaceUserBlocks MarketplaceUserBlock[]
+
   @@index([name])
   @@index([quickResponderBadge])
 }
@@ -818,6 +827,10 @@ model Party {
   portalAccess         PortalAccess?              @relation("PortalAccessParty")
   portalInvites        PortalInvite[]             @relation("PortalInviteParty")
   schedulingBookings   SchedulingBooking[]        @relation("SchedulingBookingParty")
+
+  // Marketplace blocklist (who blocked, who lifted)
+  marketplaceBlocksCreated MarketplaceUserBlock[] @relation("MarketplaceBlockCreator")
+  marketplaceBlocksLifted  MarketplaceUserBlock[] @relation("MarketplaceBlockLifter")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -1981,6 +1994,11 @@ model WaitlistEntry {
 
   skipCount  Int?
   lastSkipAt DateTime?
+
+  // Approval/rejection tracking
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+  rejectedReason String?
 
   notes         String?
   createdAt     DateTime        @default(now())
@@ -3480,6 +3498,12 @@ enum SchedulingBookingStatus {
   NO_SHOW
 }
 
+enum MarketplaceBlockLevel {
+  LIGHT    // Block waitlist requests only
+  MEDIUM   // Block waitlist + messages
+  HEAVY    // Block waitlist + messages + profile view
+}
+
 /**
  * SchedulingEventTemplate - Reusable event configuration
  * Optional for MVP but provides future flexibility for recurring events
@@ -3673,4 +3697,85 @@ model SchedulingBooking {
   @@index([partyId])
   @@index([eventId, partyId])
   @@index([status])
+}
+
+// ============================================================================
+// Marketplace Blocklist System
+// ============================================================================
+
+/**
+ * MarketplaceUserBlock - Per-tenant block records (breeder → marketplace user)
+ * Allows breeders to block marketplace users at different levels
+ */
+model MarketplaceUserBlock {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // The blocked user (by their User ID from marketplace auth)
+  blockedUserId String @db.VarChar(36)
+  blockedUser   User   @relation("BlockedMarketplaceUser", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  level  MarketplaceBlockLevel
+  reason String?               @db.Text // Optional reason for breeder's reference
+
+  // Who blocked them (optional - for audit)
+  blockedByPartyId Int?
+  blockedByParty   Party? @relation("MarketplaceBlockCreator", fields: [blockedByPartyId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  // Block can be lifted (soft delete pattern)
+  liftedAt        DateTime?
+  liftedByPartyId Int?
+  liftedByParty   Party?    @relation("MarketplaceBlockLifter", fields: [liftedByPartyId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, blockedUserId])
+  @@index([blockedUserId])
+  @@index([tenantId])
+  @@index([tenantId, liftedAt]) // For finding active blocks
+}
+
+/**
+ * MarketplaceUserFlag - Platform-level aggregation for admin visibility
+ * Tracks how many times a marketplace user has been blocked across all breeders
+ */
+model MarketplaceUserFlag {
+  id     Int    @id @default(autoincrement())
+  userId String @unique @db.VarChar(36)
+  user   User   @relation("MarketplaceUserFlagUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Aggregated stats
+  totalBlocks   Int @default(0) // Number of times blocked (any level, all-time)
+  activeBlocks  Int @default(0) // Current non-lifted blocks
+  lightBlocks   Int @default(0)
+  mediumBlocks  Int @default(0)
+  heavyBlocks   Int @default(0)
+
+  // Waitlist history (platform-wide)
+  totalApprovals  Int @default(0)
+  totalRejections Int @default(0)
+
+  // Admin action flags
+  flaggedAt       DateTime? // When auto-flagged for review
+  flagReason      String?   @db.Text
+  suspendedAt     DateTime? // If account disabled by admin
+  suspendedReason String?   @db.Text
+
+  updatedAt DateTime @updatedAt
+
+  @@index([flaggedAt])
+  @@index([suspendedAt])
+  @@index([activeBlocks])
+}
+
+/**
+ * PlatformSetting - Configurable platform-wide settings
+ * Used for admin-configurable thresholds like blocklist thresholds
+ */
+model PlatformSetting {
+  id        Int      @id @default(autoincrement())
+  namespace String   @unique @db.VarChar(64) // e.g., "marketplace-abuse"
+  data      Json
+  updatedAt DateTime @updatedAt
 }

@@ -455,6 +455,7 @@ import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
+import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -756,6 +757,7 @@ app.register(
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
+    api.register(adminMarketplaceRoutes); // /api/v1/admin/marketplace/* Admin marketplace management
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
