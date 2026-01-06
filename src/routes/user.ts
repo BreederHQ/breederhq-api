@@ -3,7 +3,8 @@ import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from "fast
 import prisma from "../prisma.js";
 import bcrypt from "bcryptjs";
 import { resolvePartyId } from "../services/party-resolver.js";
-import { getActorId, parseVerifiedSession } from "../utils/session.js";
+import { getActorId, parseVerifiedSession, Surface } from "../utils/session.js";
+import { deriveSurface } from "../middleware/actor-context.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -108,8 +109,9 @@ export default async function userRoutes(
   // GET /user → current session user (minimal)
   app.get("/user", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    // Use signature-verified session parsing
-    const sess = parseVerifiedSession(req);
+    // Use signature-verified session parsing with surface-specific cookie
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
     if (!sess) return reply.code(401).send({ user: null });
 
     const user = await prisma.user.findUnique({

@@ -191,6 +191,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         id: true,
         email: true,
         name: true,
+        firstName: true,
+        lastName: true,
+        phoneE164: true,
         isSuperAdmin: true,
       } as any,
     }) as any;
@@ -265,6 +268,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       userId: user.id,
       email: user.email,
       name: user.name || null,
+      firstName: user.firstName || null,
+      lastName: user.lastName || null,
+      phone: user.phoneE164 || null,
       actorContext,
       surface,
       entitlements: entitlements.map((e) => ({
@@ -276,6 +282,88 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       entitlementSource,
       tos: tosStatus,
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // PATCH /profile - Update user profile (basic profile maintenance)
+  // --------------------------------------------------------------------------
+  app.patch<{
+    Body: {
+      firstName?: string;
+      lastName?: string;
+      phoneE164?: string | null;
+    };
+  }>("/profile", async (req, reply) => {
+    const userId = (req as any).userId;
+
+    if (!userId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const { firstName, lastName, phoneE164 } = req.body || {};
+
+    // Build update data - only include fields that are provided
+    const updateData: any = {};
+    if (firstName !== undefined) {
+      if (!firstName.trim()) {
+        return reply.code(400).send({ error: "invalid_first_name", message: "First name is required" });
+      }
+      updateData.firstName = firstName.trim();
+    }
+    if (lastName !== undefined) {
+      if (!lastName.trim()) {
+        return reply.code(400).send({ error: "invalid_last_name", message: "Last name is required" });
+      }
+      updateData.lastName = lastName.trim();
+    }
+    if (phoneE164 !== undefined) {
+      updateData.phoneE164 = phoneE164 || null;
+    }
+
+    // Update the name field if firstName or lastName changed
+    if (firstName !== undefined || lastName !== undefined) {
+      const currentUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      });
+      const newFirstName = firstName !== undefined ? firstName.trim() : currentUser?.firstName || "";
+      const newLastName = lastName !== undefined ? lastName.trim() : currentUser?.lastName || "";
+      updateData.name = [newFirstName, newLastName].filter(Boolean).join(" ") || null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return reply.code(400).send({ error: "no_updates", message: "No fields to update" });
+    }
+
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: updateData,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          phoneE164: true,
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        user: {
+          userId: updatedUser.id,
+          email: updatedUser.email,
+          name: updatedUser.name,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          phone: updatedUser.phoneE164,
+        },
+      });
+    } catch (err: any) {
+      console.error("Failed to update user profile:", err);
+      return reply.code(500).send({ error: "internal_error", message: "Failed to update profile" });
+    }
   });
 
   // --------------------------------------------------------------------------

@@ -4,8 +4,6 @@ import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
 import {
-  COOKIE_NAME,
-  SessionPayload,
   setSessionCookies,
   clearSessionCookies,
   parseVerifiedSession,
@@ -13,7 +11,7 @@ import {
   Surface,
 } from "../utils/session.js";
 import { deriveSurface } from "../middleware/actor-context.js";
-import { audit, auditSuccess, auditFailure } from "../services/audit.js";
+import { auditSuccess, auditFailure } from "../services/audit.js";
 import {
   validateTosAcceptancePayload,
   writeTosAcceptance,
@@ -641,11 +639,13 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   // GET/POST /logout
   const handleLogout = async (req: any, reply: FastifyReply) => {
     // Get user ID before clearing session for audit
-    const sess = parseVerifiedSession(req);
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
     const userId = sess?.userId ?? null;
 
     const bag = (req.body || req.query || {}) as { redirect?: string };
-    clearSessionCookies(reply);
+    // Clear only the current surface's session cookie (not all surfaces)
+    clearSessionCookies(reply, surface);
 
     // Audit logout
     await auditSuccess(req, "AUTH_LOGOUT", { userId });
@@ -707,8 +707,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   // GET /me
   app.get("/me", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    // Use signature-verified session parsing
-    const sess = parseVerifiedSession(req);
+    // Use signature-verified session parsing with surface-specific cookie
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
 
     if (!sess) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
@@ -717,8 +718,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
     // Optional rotation if close to expiry
     const { rotateAt } = sessionLifetimes();
     if (sess.exp - Date.now() < rotateAt) {
-      const meSurface = deriveSurface(req) as Surface;
-      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId }, meSurface);
+      setSessionCookies(reply, { userId: sess.userId, tenantId: sess.tenantId }, surface);
     }
 
     const userRec = await prisma.user.findUnique({
@@ -766,8 +766,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
   app.post("/password", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    // Use signature-verified session parsing
-    const sess = parseVerifiedSession(req);
+    // Use signature-verified session parsing with surface-specific cookie
+    const surface = deriveSurface(req) as Surface;
+    const sess = parseVerifiedSession(req, surface);
 
     if (!sess) {
       return reply.code(401).send({ error: "unauthorized", message: "Not authenticated" });
@@ -833,8 +834,9 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       }
     });
 
-    // Clear current session cookie (user will need to re-login)
-    clearSessionCookies(reply);
+    // Clear current surface's session cookie (user will need to re-login)
+    // Note: Other surfaces' sessions remain valid - password change only affects current surface
+    clearSessionCookies(reply, surface);
 
     return reply.send({ ok: true, message: "Password changed successfully" });
   });

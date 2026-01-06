@@ -656,7 +656,22 @@ model Tenant {
   schedulingSlots               SchedulingSlot[]
   schedulingBookings            SchedulingBooking[]
 
+  // Business hours for messaging availability
+  // JSON structure: { monday: { open: "09:00", close: "17:00", enabled: true }, ... }
+  // If null, system defaults apply (Mon-Fri 9am-5pm)
+  businessHours Json?
+  timeZone      String? // IANA timezone e.g. "America/New_York"
+
+  // Quick Responder badge tracking
+  // Badge is earned when avgBusinessHoursResponseTime <= 4 hours (14400 seconds)
+  // Badge is lost when it exceeds that threshold
+  quickResponderBadge           Boolean  @default(false)
+  avgBusinessHoursResponseTime  Int?     // Average response time in seconds (business hours only)
+  totalResponseCount            Int      @default(0) // Number of responses used in average
+  lastBadgeEvaluatedAt          DateTime?
+
   @@index([name])
+  @@index([quickResponderBadge])
 }
 
 model TenantMembership {
@@ -2851,12 +2866,25 @@ model MessageThread {
 
   lastMessageAt DateTime?
 
+  // Response time tracking for "Quick Responder" badge
+  // Time when first inbound message was received (from non-org party)
+  firstInboundAt      DateTime?
+  // Time when org/breeder first replied to inbound message
+  firstOrgReplyAt     DateTime?
+  // Calculated response time in seconds (null until org replies) - raw wall-clock time
+  responseTimeSeconds Int?
+  // Calculated response time in seconds counting only business hours
+  // This is the value used for Quick Responder badge calculation
+  businessHoursResponseTime Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
   @@index([tenantId, updatedAt])
   @@index([inquiryType])
+  @@index([tenantId, responseTimeSeconds])
+  @@index([tenantId, businessHoursResponseTime])
 }
 
 model MessageParticipant {
