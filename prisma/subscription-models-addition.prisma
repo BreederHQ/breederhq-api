@@ -1,0 +1,553 @@
+// ============================================================================
+// SUBSCRIPTION & BILLING SYSTEM MODELS
+// Add these models to schema.prisma after the BillingAccount model (around line 728)
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// ENUMS (Add these to the enum section at the top of schema.prisma)
+// ----------------------------------------------------------------------------
+
+enum ProductType {
+  SUBSCRIPTION  // Recurring subscription plan
+  ADD_ON        // Add-on to subscription (animal slots, listings, etc.)
+  ONE_TIME      // One-time purchase
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+  QUARTERLY
+}
+
+enum SubscriptionStatus {
+  TRIAL          // In trial period
+  ACTIVE         // Paid and active
+  PAST_DUE       // Payment failed, in grace period
+  CANCELED       // Canceled by user
+  EXPIRED        // Trial or subscription expired
+  INCOMPLETE     // Stripe payment pending
+  PAUSED         // Paused (future feature)
+}
+
+enum UsageMetricKey {
+  ANIMAL_COUNT
+  CONTACT_COUNT
+  PORTAL_USER_COUNT
+  BREEDING_PLAN_COUNT
+  MARKETPLACE_LISTING_COUNT
+  STORAGE_BYTES
+  SMS_SENT
+  API_CALLS
+}
+
+enum AnimalCategory {
+  RABBIT
+  SMALL_RODENT       // Hamster, guinea pig, etc.
+  BIRD
+  CAT
+  SMALL_DOG          // Under 25 lbs
+  LARGE_DOG          // Over 25 lbs
+  HORSE
+  LIVESTOCK          // Cattle, sheep, goats
+  EXOTIC             // Reptiles, etc.
+  OTHER
+}
+
+enum ListingType {
+  BREEDING_PROGRAM   // Breeder's main program profile
+  STUD_SERVICE      // Stud/breeding services
+  TRAINING          // Training services
+  VETERINARY        // Vet services
+  PHOTOGRAPHY       // Photo/video services
+  GROOMING          // Grooming services
+  TRANSPORT         // Transport/shipping
+  BOARDING          // Boarding/kennel
+  PRODUCT           // Equipment, supplies
+  OTHER_SERVICE
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  EXPIRED
+  REMOVED
+}
+
+enum ListingTier {
+  FREE      // Basic listing
+  PREMIUM   // Featured, more photos
+  BUSINESS  // Top placement, analytics
+}
+
+// ----------------------------------------------------------------------------
+// PRODUCT CATALOG
+// ----------------------------------------------------------------------------
+
+model Product {
+  id              Int       @id @default(autoincrement())
+
+  // Product details
+  name            String    // "BreederHQ Pro", "Animal Slot Pack"
+  description     String?   @db.Text
+  type            ProductType
+  billingInterval BillingInterval?  // null for one-time products
+
+  // Stripe integration
+  stripeProductId String?   @unique
+  stripePriceId   String?   // Default price ID
+
+  // Status
+  active          Boolean   @default(true)
+
+  // Pricing
+  priceUSD        Int       // Price in cents
+  currency        String    @default("USD") @db.VarChar(3)
+
+  // Display order
+  sortOrder       Int       @default(0)
+
+  // Marketing
+  features        Json?     // Array of feature bullets for display
+
+  // Relations
+  entitlements    ProductEntitlement[]
+  subscriptions   Subscription[]
+  addOns          SubscriptionAddOn[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([type, active])
+  @@index([active, sortOrder])
+}
+
+// Links products to the entitlements they grant
+model ProductEntitlement {
+  id              Int            @id @default(autoincrement())
+  productId       Int
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  entitlementKey  EntitlementKey
+
+  // Quota/limit value (e.g., 50 for "50 animals", null for unlimited)
+  limitValue      Int?
+
+  // Metadata for flexible configuration
+  metadata        Json?          // Can store additional config
+
+  createdAt       DateTime       @default(now())
+
+  @@unique([productId, entitlementKey])
+  @@index([productId])
+  @@index([entitlementKey])
+}
+
+// ----------------------------------------------------------------------------
+// SUBSCRIPTIONS
+// ----------------------------------------------------------------------------
+
+model Subscription {
+  id                  Int                 @id @default(autoincrement())
+  tenantId            Int
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId           Int
+  product             Product             @relation(fields: [productId], references: [id])
+
+  status              SubscriptionStatus  @default(TRIAL)
+
+  // Stripe references
+  stripeSubscriptionId String?            @unique
+  stripeCustomerId     String?
+
+  // Billing cycle
+  currentPeriodStart  DateTime?
+  currentPeriodEnd    DateTime?
+  cancelAtPeriodEnd   Boolean             @default(false)
+  canceledAt          DateTime?
+
+  // Trial tracking
+  trialStart          DateTime?
+  trialEnd            DateTime?
+
+  // Pricing snapshot (at time of subscription creation)
+  amountCents         Int
+  currency            String              @default("USD") @db.VarChar(3)
+  billingInterval     BillingInterval
+
+  // Metadata
+  metadata            Json?               // Flexible storage for extra data
+
+  // Relations
+  addOns              SubscriptionAddOn[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([stripeSubscriptionId])
+  @@index([stripeCustomerId])
+  @@index([currentPeriodEnd])
+}
+
+// Add-ons attached to subscriptions
+model SubscriptionAddOn {
+  id              Int          @id @default(autoincrement())
+  subscriptionId  Int
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  productId       Int
+  product         Product      @relation(fields: [productId], references: [id])
+
+  quantity        Int          @default(1)
+  amountCents     Int          // Price at time of purchase
+
+  // Stripe reference
+  stripeItemId    String?      // Stripe subscription item ID
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([subscriptionId])
+  @@index([productId])
+}
+
+// ----------------------------------------------------------------------------
+// USAGE TRACKING
+// ----------------------------------------------------------------------------
+
+model UsageRecord {
+  id              Int            @id @default(autoincrement())
+  tenantId        Int
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  metricKey       UsageMetricKey
+  value           Int            // Count or quantity
+  recordedAt      DateTime       @default(now())
+
+  // Optional context
+  userId          String?
+  resourceId      Int?           // e.g., animalId, contactId
+  metadata        Json?          // Flexible storage
+
+  @@index([tenantId, metricKey, recordedAt])
+  @@index([recordedAt])
+}
+
+// Snapshot of current usage (updated periodically, fast reads)
+model UsageSnapshot {
+  tenantId        Int
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  metricKey       UsageMetricKey
+  currentValue    Int            // Current count
+  limit           Int?           // Current quota limit (null = unlimited)
+
+  lastUpdatedAt   DateTime       @default(now())
+
+  @@id([tenantId, metricKey])
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------------------------------
+// PAYMENT METHODS
+// ----------------------------------------------------------------------------
+
+model PaymentMethod {
+  id                    Int      @id @default(autoincrement())
+  tenantId              Int
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Stripe reference
+  stripePaymentMethodId String   @unique
+
+  // Type and details
+  type                  String   // "card", "us_bank_account"
+
+  // Card details (if card)
+  cardBrand             String?  // "visa", "mastercard", etc.
+  cardLast4             String?
+  cardExpMonth          Int?
+  cardExpYear           Int?
+
+  // Bank details (if bank account)
+  bankName              String?
+  bankLast4             String?
+
+  // Status
+  isDefault             Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, isDefault])
+}
+
+// ----------------------------------------------------------------------------
+// REFERRAL / AFFILIATE PROGRAM
+// ----------------------------------------------------------------------------
+
+model ReferralCode {
+  id               Int        @id @default(autoincrement())
+
+  // The code itself
+  code             String     @unique  // "GOLDEN_LABS_2026" or generated
+
+  // Who owns this code (the referrer)
+  referrerTenantId Int
+  referrer         Tenant     @relation("ReferralCodeOwner", fields: [referrerTenantId], references: [id], onDelete: Cascade)
+
+  // Reward structure (Stripe coupon IDs)
+  refereeDiscountStripeCouponId String?  // Coupon for new user
+  referrerCreditCents           Int?     // Credit amount for referrer
+
+  // Tracking
+  usedCount        Int        @default(0)
+  maxUses          Int?       // Optional limit
+  expiresAt        DateTime?
+
+  // Status
+  active           Boolean    @default(true)
+
+  // Relations
+  referrals        Referral[]
+
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@index([referrerTenantId])
+  @@index([code])
+  @@index([active, expiresAt])
+}
+
+model Referral {
+  id                     Int          @id @default(autoincrement())
+
+  // Code used
+  codeId                 Int
+  code                   ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  // Referrer (person who owns the code)
+  referrerTenantId       Int
+  referrer               Tenant       @relation("ReferralsMade", fields: [referrerTenantId], references: [id], onDelete: Cascade)
+
+  // Referee (new customer who used code)
+  refereeTenantId        Int
+  referee                Tenant       @relation("ReferralsReceived", fields: [refereeTenantId], references: [id], onDelete: Cascade)
+
+  // Reward tracking
+  refereeDiscountApplied Boolean      @default(false)
+  refereeStripeCouponId  String?      // Coupon that was applied
+
+  referrerCreditApplied  Boolean      @default(false)
+  referrerCreditCents    Int?
+  referrerCreditedAt     DateTime?
+
+  // Status
+  status                 String       @default("active")  // active, expired, revoked
+
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@unique([codeId, refereeTenantId])
+  @@index([referrerTenantId])
+  @@index([refereeTenantId])
+  @@index([codeId])
+}
+
+// ----------------------------------------------------------------------------
+// MARKETPLACE LISTINGS
+// ----------------------------------------------------------------------------
+
+model MarketplaceListing {
+  id              Int           @id @default(autoincrement())
+
+  // Owner (breeder tenant)
+  tenantId        Int?
+  tenant          Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // For non-breeder service providers
+  serviceProviderId Int?
+  serviceProvider   ServiceProviderProfile? @relation(fields: [serviceProviderId], references: [id], onDelete: Cascade)
+
+  // Listing details
+  listingType     ListingType
+  category        AnimalCategory?  // If listing animals
+  title           String
+  description     String?          @db.Text
+
+  // Contact info
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+
+  // Location
+  city            String?
+  state           String?
+  country         String         @default("US") @db.VarChar(2)
+
+  // Media
+  images          Json?          // Array of image URLs
+  videoUrl        String?
+
+  // Pricing (if applicable)
+  priceCents      Int?
+  priceType       String?        // "fixed", "starting_at", "contact", "stud_fee"
+
+  // Monetization
+  tier            ListingTier    @default(FREE)
+  monthlyFeeCents Int?           // What they're paying for this listing
+  commissionRate  Float?         // If we ever do commission model
+
+  // Status
+  status          ListingStatus  @default(DRAFT)
+  publishedAt     DateTime?
+  expiresAt       DateTime?
+
+  // SEO
+  slug            String?        @unique
+
+  // Analytics
+  viewCount       Int            @default(0)
+  inquiryCount    Int            @default(0)
+
+  // Metadata
+  metadata        Json?          // Flexible storage
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([tenantId])
+  @@index([serviceProviderId])
+  @@index([status, publishedAt])
+  @@index([listingType, category])
+  @@index([tier])
+}
+
+// Service provider profile (for non-breeders listing services)
+model ServiceProviderProfile {
+  id          Int      @id @default(autoincrement())
+
+  // User account
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Business details
+  businessName String
+  email        String
+  phone        String?
+  website      String?
+
+  // Location
+  city         String?
+  state        String?
+  country      String   @default("US") @db.VarChar(2)
+
+  // Subscription (separate from breeder subscriptions)
+  plan         ListingTier @default(FREE)
+
+  // Stripe references (separate from tenant billing)
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  // Relations
+  listings     MarketplaceListing[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([plan])
+}
+
+// ----------------------------------------------------------------------------
+// SYSTEM CONFIGURATION
+// ----------------------------------------------------------------------------
+
+model SystemConfig {
+  key         String     @id        // "pro_animal_limit", "trial_duration_days"
+  value       String                // Store as string, parse as needed
+  type        String                // "number", "boolean", "string", "json"
+  description String?    @db.Text
+  updatedBy   String?               // Admin user ID who last updated
+  updatedAt   DateTime   @updatedAt
+
+  @@index([key])
+}
+
+// ----------------------------------------------------------------------------
+// UPDATE EXISTING MODELS WITH NEW RELATIONS
+// ----------------------------------------------------------------------------
+
+// Add to Tenant model (around line 597):
+//   subscriptions         Subscription[]
+//   usageRecords          UsageRecord[]
+//   usageSnapshots        UsageSnapshot[]
+//   paymentMethods        PaymentMethod[]
+//   referralCodesOwned    ReferralCode[] @relation("ReferralCodeOwner")
+//   referralsMade         Referral[]     @relation("ReferralsMade")
+//   referralsReceived     Referral[]     @relation("ReferralsReceived")
+//   marketplaceListings   MarketplaceListing[]
+
+// Add to User model (around line 460):
+//   serviceProviderProfile ServiceProviderProfile?
+
+// Update BillingAccount model (replace existing one at line 715):
+model BillingAccountEnhanced {
+  id                   Int       @id @default(autoincrement())
+  tenantId             Int       @unique
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Stripe customer
+  stripeCustomerId     String?   @unique
+
+  // Billing contact
+  billingEmail         String?
+  companyName          String?
+  taxId                String?   // VAT/EIN
+
+  // Billing address
+  addressLine1         String?
+  addressLine2         String?
+  city                 String?
+  state                String?
+  postalCode           String?
+  country              String?   @db.VarChar(2)
+
+  // Legacy fields (deprecated, keep for backward compatibility)
+  provider             String?
+  subscriptionId       String?
+  plan                 String?
+  status               String?
+  currentPeriodEnd     DateTime?
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+// Update EntitlementKey enum (add to existing enum around line 158):
+// Add these to the EntitlementKey enum:
+//   PLATFORM_ACCESS
+//   PORTAL_ACCESS
+//   BREEDING_PLANS
+//   FINANCIAL_SUITE
+//   DOCUMENT_MANAGEMENT
+//   HEALTH_RECORDS
+//   WAITLIST_MANAGEMENT
+//   ADVANCED_REPORTING
+//   API_ACCESS
+//   MULTI_LOCATION
+//   E_SIGNATURES
+//
+//   // Quotas
+//   ANIMAL_QUOTA
+//   CONTACT_QUOTA
+//   PORTAL_USER_QUOTA
+//   BREEDING_PLAN_QUOTA
+//   MARKETPLACE_LISTING_QUOTA
+//   STORAGE_QUOTA_GB
+//   SMS_QUOTA

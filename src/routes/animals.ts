@@ -4,6 +4,8 @@ import prisma from "../prisma.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import sharp from "sharp";
+import { checkQuota } from "../middleware/quota-enforcement.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 
 const AVATAR_SIZE = 256;
 
@@ -478,9 +480,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /animals
-  app.post("/animals", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
+  app.post(
+    "/animals",
+    {
+      preHandler: [checkQuota("ANIMAL_COUNT")],
+    },
+    async (req, reply) => {
+      const tenantId = await assertTenant(req, reply);
+      if (!tenantId) return;
 
     const b = (req.body || {}) as Partial<{
       name: string;
@@ -594,6 +601,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Update usage snapshot after successful creation
+      await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
+
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -607,7 +617,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       throw e;
     }
-  });
+    }
+  );
 
   // PATCH /animals/:id
   app.patch("/animals/:id", async (req, reply) => {
@@ -852,6 +863,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.delete({ where: { id } });
+
+    // Update usage snapshot after deletion
+    await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
+
     reply.send({ ok: true });
   });
 
@@ -1701,6 +1716,86 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await prisma.animalPublicListing.delete({ where: { animalId } });
     reply.send({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Genetics endpoints
+  // ──────────────────────────────────────────────────────────────────────────
+
+  app.get("/animals/:id/genetics", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const genetics = await prisma.animalGenetics.findUnique({
+      where: { animalId },
+      select: {
+        id: true,
+        testProvider: true,
+        testDate: true,
+        testId: true,
+        coatColorData: true,
+        healthGeneticsData: true,
+      },
+    });
+
+    if (!genetics) {
+      return reply.send({
+        testProvider: null,
+        testDate: null,
+        testId: null,
+        coatColor: [],
+        health: [],
+      });
+    }
+
+    reply.send({
+      testProvider: genetics.testProvider,
+      testDate: genetics.testDate,
+      testId: genetics.testId,
+      coatColor: genetics.coatColorData || [],
+      health: genetics.healthGeneticsData || [],
+    });
+  });
+
+  app.put("/animals/:id/genetics", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as any;
+
+    const data = {
+      testProvider: body.testProvider || null,
+      testDate: body.testDate ? new Date(body.testDate) : null,
+      testId: body.testId || null,
+      coatColorData: body.coatColor || [],
+      healthGeneticsData: body.health || [],
+    };
+
+    const genetics = await prisma.animalGenetics.upsert({
+      where: { animalId },
+      create: {
+        animalId,
+        ...data,
+      },
+      update: data,
+    });
+
+    reply.send({
+      testProvider: genetics.testProvider,
+      testDate: genetics.testDate,
+      testId: genetics.testId,
+      coatColor: genetics.coatColorData || [],
+      health: genetics.healthGeneticsData || [],
+    });
   });
 };
 

@@ -240,6 +240,8 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { parseVerifiedSession, Surface } from "../utils/session.js";
 import { deriveSurface } from "../middleware/actor-context.js";
+import { checkQuota } from "../middleware/quota-enforcement.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -623,9 +625,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  app.post("/breeding/plans", async (req, reply) => {
-    try {
-      const tenantId = Number((req as any).tenantId);
+  app.post(
+    "/breeding/plans",
+    {
+      preHandler: [checkQuota("BREEDING_PLAN_COUNT")],
+    },
+    async (req, reply) => {
+      try {
+        const tenantId = Number((req as any).tenantId);
 
       const b = (req.body || {}) as any;
 
@@ -776,12 +783,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
+      // Update usage snapshot after successful creation
+      await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
       reply.code(201).send(created);
     } catch (err) {
-      const { status, payload } = errorReply(err);
+      const { status, payload} = errorReply(err);
       reply.status(status).send(payload);
     }
-  });
+    }
+  );
 
   app.patch("/breeding/plans/:id", async (req, reply) => {
     try {
@@ -1276,6 +1287,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       await getPlanInTenant(id, tenantId);
       await prisma.breedingPlan.update({ where: { id }, data: { archived: true } });
+
+      // Update usage snapshot after archiving (decreases count)
+      await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
       reply.send({ ok: true });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -1291,6 +1306,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       await getPlanInTenant(id, tenantId);
       await prisma.breedingPlan.update({ where: { id }, data: { archived: false } });
+
+      // Update usage snapshot after restoring (increases count)
+      await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
       reply.send({ ok: true });
     } catch (err) {
       const { status, payload } = errorReply(err);
