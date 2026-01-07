@@ -195,9 +195,10 @@ function validatePublishPayload(
     errors.push("at least one breed is required");
   }
 
-  // listedPrograms >= 1
-  if (!Array.isArray(data.listedPrograms) || data.listedPrograms.length < 1) {
-    errors.push("at least one listed program is required");
+  // listedPrograms >= 1 (only required for initial publish, allow empty for updates)
+  // Note: Frontend should warn if hiding all programs, but backend allows it
+  if (!Array.isArray(data.listedPrograms)) {
+    errors.push("listedPrograms must be an array");
   }
 
   if (errors.length > 0) {
@@ -375,20 +376,28 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
     }
 
-    const existing = await readProfileSetting(tenantId);
+    try {
+      const existing = await readProfileSetting(tenantId);
 
-    // Remove published data but keep draft
-    const updated: MarketplaceProfileData = {
-      ...existing,
-      published: undefined,
-      publishedAt: undefined,
-    };
+      // Remove published data but keep draft
+      const updated: MarketplaceProfileData = {
+        ...existing,
+        published: undefined,
+        publishedAt: undefined,
+      };
 
-    await writeProfileSetting(tenantId, updated, getActorId(req));
+      await writeProfileSetting(tenantId, updated, getActorId(req));
 
-    return reply.send({
-      ok: true,
-    });
+      return reply.send({
+        ok: true,
+      });
+    } catch (err: any) {
+      req.log.error({ err, tenantId }, "Failed to unpublish marketplace profile");
+      return reply.code(500).send({
+        error: "unpublish_failed",
+        message: err?.message || "Failed to remove marketplace listing",
+      });
+    }
   });
 };
 

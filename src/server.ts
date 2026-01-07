@@ -458,6 +458,7 @@ import businessHoursRoutes from "./routes/business-hours.js"; // Business hours 
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
 import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Admin breeder reports
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
+import usageRoutes from "./routes/usage.js"; // Usage and quota dashboard
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -759,6 +760,7 @@ app.register(
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
+    api.register(usageRoutes, { prefix: "/usage" }); // /api/v1/usage/* Usage and quota dashboard
     api.register(adminMarketplaceRoutes); // /api/v1/admin/marketplace/* Admin marketplace management
     api.register(adminBreederReportsRoutes); // /api/v1/admin/breeder-reports/* Admin breeder reports
 
