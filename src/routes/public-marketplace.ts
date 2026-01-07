@@ -467,7 +467,42 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      return reply.send(toPublicProgramDTO(org));
+      // Fetch marketplace profile from TenantSetting to get enhanced program fields
+      const profileSetting = await prisma.tenantSetting.findUnique({
+        where: {
+          tenantId_namespace: {
+            tenantId: resolved.tenantId,
+            namespace: "marketplace-profile",
+          },
+        },
+        select: { data: true },
+      });
+
+      // Extract published data and find matching program
+      const profileData = profileSetting?.data as Record<string, unknown> | null;
+      const published = profileData?.published as Record<string, unknown> | null;
+      const programs = (published?.programs || []) as Array<Record<string, unknown>>;
+
+      // Find the program that matches by name (programs don't have slugs, matched by org name)
+      const matchingProgram = programs.find((p) => p.status === true);
+
+      // Build response with enhanced fields from matching program
+      const baseDto = toPublicProgramDTO(org);
+
+      // If we found a matching published program, add its program-specific enhanced fields
+      // Note: Breeder-level info (health testing, registrations, credentials) comes from breeder profile
+      const enhancedFields = matchingProgram ? {
+        // Pricing & What's Included (program-specific)
+        pricingTiers: matchingProgram.pricingTiers as Array<{
+          tier: string;
+          priceRange: string;
+          description?: string;
+        }> | null || null,
+        whatsIncluded: matchingProgram.whatsIncluded as string | null || null,
+        typicalWaitTime: matchingProgram.typicalWaitTime as string | null || null,
+      } : {};
+
+      return reply.send({ ...baseDto, ...enhancedFields });
     }
   );
 

@@ -448,6 +448,10 @@ model User {
   // Marketplace blocklist
   marketplaceBlocks MarketplaceUserBlock[] @relation("BlockedMarketplaceUser")
   marketplaceFlag   MarketplaceUserFlag?   @relation("MarketplaceUserFlagUser")
+
+  // Breeder reports (user as reporter or reviewer)
+  breederReportsSubmitted BreederReport[] @relation("BreederReportReporter")
+  breederReportsReviewed  BreederReport[] @relation("BreederReportReviewedBy")
 }
 
 /**
@@ -678,6 +682,10 @@ model Tenant {
 
   // Marketplace blocklist
   marketplaceUserBlocks MarketplaceUserBlock[]
+
+  // Breeder report system (marketplace users reporting this breeder)
+  breederReports    BreederReport[]     @relation("BreederReports")
+  breederReportFlag BreederReportFlag?  @relation("BreederReportFlag")
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -3778,4 +3786,103 @@ model PlatformSetting {
   namespace String   @unique @db.VarChar(64) // e.g., "marketplace-abuse"
   data      Json
   updatedAt DateTime @updatedAt
+}
+
+// ============================================================================
+// Breeder Report System (Marketplace users → Breeders)
+// ============================================================================
+
+enum BreederReportReason {
+  SPAM
+  FRAUD
+  HARASSMENT
+  MISREPRESENTATION
+  OTHER
+}
+
+enum BreederReportSeverity {
+  LIGHT
+  MEDIUM
+  HEAVY
+}
+
+enum BreederReportStatus {
+  PENDING
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+
+/**
+ * BreederReport - Individual reports from marketplace users against breeders
+ * Reports require admin review before any action is taken
+ */
+model BreederReport {
+  id Int @id @default(autoincrement())
+
+  // The breeder being reported (by tenant)
+  breederTenantId Int
+  breederTenant   Tenant @relation("BreederReports", fields: [breederTenantId], references: [id], onDelete: Cascade)
+
+  // Reporter info (masked for privacy in admin view)
+  reporterUserId String @db.VarChar(36)
+  reporterUser   User   @relation("BreederReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+
+  // Report details
+  reason      BreederReportReason
+  severity    BreederReportSeverity
+  description String?               @db.Text
+
+  // Status tracking
+  status     BreederReportStatus @default(PENDING)
+  adminNotes String?             @db.Text
+
+  // Review tracking
+  reviewedByUserId String?
+  reviewedBy       User?     @relation("BreederReportReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([breederTenantId])
+  @@index([reporterUserId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * BreederReportFlag - Platform-level aggregation for admin visibility
+ * Tracks report counts per breeder for flagging and admin review
+ */
+model BreederReportFlag {
+  id Int @id @default(autoincrement())
+
+  breederTenantId Int    @unique
+  breederTenant   Tenant @relation("BreederReportFlag", fields: [breederTenantId], references: [id], onDelete: Cascade)
+
+  // Aggregated stats
+  totalReports   Int @default(0)
+  pendingReports Int @default(0)
+  lightReports   Int @default(0)
+  mediumReports  Int @default(0)
+  heavyReports   Int @default(0)
+
+  // Admin flags
+  flaggedAt  DateTime?
+  flagReason String?   @db.Text
+
+  // Warning tracking
+  warningIssuedAt DateTime?
+  warningNote     String?   @db.Text
+
+  // Marketplace suspension (soft - hides listing, not account ban)
+  marketplaceSuspendedAt DateTime?
+  suspendedReason        String?   @db.Text
+
+  updatedAt DateTime @updatedAt
+
+  @@index([flaggedAt])
+  @@index([marketplaceSuspendedAt])
+  @@index([pendingReports])
 }
