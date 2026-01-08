@@ -4,9 +4,29 @@ import prisma from "../prisma.js";
 import { canContactViaChannel } from "./comm-prefs-service.js";
 import { renderTemplate } from "./template-renderer.js";
 
+// ────────────────────────────────────────────────────────────────────────────
+// Configuration
+// ────────────────────────────────────────────────────────────────────────────
+
+const NODE_ENV = process.env.NODE_ENV || "development";
+const IS_PRODUCTION = NODE_ENV === "production";
+
+// From address configuration
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@breederhq.com";
 const FROM_NAME = process.env.RESEND_FROM_NAME || "BreederHQ";
 const FROM = `${FROM_NAME} <${FROM_EMAIL}>`;
+
+// Development mode settings
+// In dev mode, emails can be:
+// 1. Redirected to a test address (EMAIL_DEV_REDIRECT)
+// 2. Logged only without sending (EMAIL_DEV_LOG_ONLY=true)
+// 3. Sent normally to specific allowed domains (EMAIL_DEV_ALLOWED_DOMAINS)
+const EMAIL_DEV_REDIRECT = process.env.EMAIL_DEV_REDIRECT; // e.g., "dev@yourdomain.com"
+const EMAIL_DEV_LOG_ONLY = process.env.EMAIL_DEV_LOG_ONLY === "true";
+const EMAIL_DEV_ALLOWED_DOMAINS = (process.env.EMAIL_DEV_ALLOWED_DOMAINS || "")
+  .split(",")
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
 
 // Lazy initialization of Resend client
 let resend: Resend | null = null;
@@ -19,6 +39,42 @@ function getResendClient(): Resend {
     resend = new Resend(apiKey);
   }
   return resend;
+}
+
+/**
+ * Check if email should be sent in development mode
+ * Returns the actual recipient address (may be redirected)
+ */
+function getDevModeRecipient(originalTo: string): { to: string; redirected: boolean; blocked: boolean } {
+  // Production mode: no changes
+  if (IS_PRODUCTION) {
+    return { to: originalTo, redirected: false, blocked: false };
+  }
+
+  // Dev mode: log only (don't actually send)
+  if (EMAIL_DEV_LOG_ONLY) {
+    return { to: originalTo, redirected: false, blocked: true };
+  }
+
+  // Dev mode: check if recipient domain is in allowed list
+  const recipientDomain = originalTo.split("@")[1]?.toLowerCase();
+  if (EMAIL_DEV_ALLOWED_DOMAINS.length > 0 && recipientDomain) {
+    if (EMAIL_DEV_ALLOWED_DOMAINS.includes(recipientDomain)) {
+      return { to: originalTo, redirected: false, blocked: false };
+    }
+  }
+
+  // Dev mode: redirect all emails to test address
+  if (EMAIL_DEV_REDIRECT) {
+    return { to: EMAIL_DEV_REDIRECT, redirected: true, blocked: false };
+  }
+
+  // Dev mode with no safeguards configured - allow but warn
+  console.warn(
+    `[email-service] WARNING: Sending email to ${originalTo} in ${NODE_ENV} mode. ` +
+    `Set EMAIL_DEV_REDIRECT, EMAIL_DEV_LOG_ONLY, or EMAIL_DEV_ALLOWED_DOMAINS for safety.`
+  );
+  return { to: originalTo, redirected: false, blocked: false };
 }
 
 export interface SendEmailParams {
@@ -141,13 +197,53 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     }
   }
 
+  // Dev mode safeguards: redirect, block, or allow
+  const devMode = getDevModeRecipient(to);
+  const actualRecipient = devMode.to;
+
+  // Dev mode: log only (don't send)
+  if (devMode.blocked) {
+    console.log(`[email-service] DEV LOG ONLY - Would send to: ${to}`);
+    console.log(`  Subject: ${subject}`);
+    console.log(`  Category: ${category}`);
+    if (html) console.log(`  HTML: ${html.substring(0, 200)}...`);
+
+    await prisma.emailSendLog.create({
+      data: {
+        tenantId,
+        to,
+        from: FROM,
+        subject,
+        templateKey,
+        category,
+        provider: "resend",
+        relatedInvoiceId,
+        status: "sent", // Mark as sent since it's intentionally blocked
+        metadata: { ...metadata, devMode: "log_only", originalTo: to },
+      },
+    });
+
+    return { ok: true, skipped: true, providerMessageId: "dev-log-only" };
+  }
+
+  // Log if email was redirected in dev mode
+  if (devMode.redirected) {
+    console.log(`[email-service] DEV REDIRECT: ${to} -> ${actualRecipient}`);
+  }
+
   // Send via Resend
   try {
     const resendClient = getResendClient();
+
+    // In dev mode with redirect, prepend original recipient to subject
+    const actualSubject = devMode.redirected
+      ? `[DEV: ${to}] ${subject}`
+      : subject;
+
     const { data, error } = await resendClient.emails.send({
       from: FROM,
-      to,
-      subject,
+      to: actualRecipient,
+      subject: actualSubject,
       html: html || text || "",
       text,
     });
@@ -174,7 +270,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     await prisma.emailSendLog.create({
       data: {
         tenantId,
-        to,
+        to: devMode.redirected ? to : actualRecipient, // Log original recipient
         from: FROM,
         subject,
         templateKey,
@@ -183,7 +279,9 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         providerMessageId: messageId,
         relatedInvoiceId,
         status: "sent",
-        metadata,
+        metadata: devMode.redirected
+          ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to }
+          : metadata,
       },
     });
 

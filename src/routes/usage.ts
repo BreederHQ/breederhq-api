@@ -37,7 +37,7 @@ const usageRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    *   warnings: string[]
    * }
    */
-  app.get("/usage", async (req, reply) => {
+  app.get("/", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) {
@@ -49,7 +49,7 @@ const usageRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Get subscription info for plan details
       const subscription = await (app as any).prisma.subscription.findFirst({
-        where: { tenantId, status: "ACTIVE" },
+        where: { tenantId, status: { in: ["ACTIVE", "TRIAL", "PAST_DUE"] } },
         include: {
           product: {
             select: {
@@ -86,10 +86,20 @@ const usageRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Derive tier from product name (convention: name includes tier like "Pro", "Enterprise")
+      const deriveTier = (name: string): string => {
+        const lowerName = name.toLowerCase();
+        if (lowerName.includes("enterprise")) return "ENTERPRISE";
+        if (lowerName.includes("pro")) return "PRO";
+        if (lowerName.includes("starter")) return "STARTER";
+        return "FREE";
+      };
+
       return reply.send({
         plan: subscription?.product
           ? {
               name: subscription.product.name,
+              tier: deriveTier(subscription.product.name),
               features: subscription.product.features || [],
             }
           : null,
@@ -125,7 +135,7 @@ const usageRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    *   canAdd: boolean
    * }
    */
-  app.get<{ Params: { metricKey: string } }>("/usage/:metricKey", async (req, reply) => {
+  app.get<{ Params: { metricKey: string } }>("/:metricKey", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) {
@@ -190,7 +200,9 @@ function getFriendlyMetricName(metricKey: UsageMetricKey): string {
     case "MARKETPLACE_LISTING_COUNT":
       return "marketplaceListings";
     case "STORAGE_BYTES":
-      return "storage";
+      return "storageGB";
+    case "SMS_SENT":
+      return "smsMessages";
     default:
       return metricKey.toLowerCase();
   }
@@ -212,7 +224,10 @@ function getActualMetricKey(friendlyName: string): UsageMetricKey | null {
     case "marketplaceListings":
       return "MARKETPLACE_LISTING_COUNT";
     case "storage":
+    case "storageGB":
       return "STORAGE_BYTES";
+    case "smsMessages":
+      return "SMS_SENT";
     default:
       return null;
   }

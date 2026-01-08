@@ -202,6 +202,8 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           currentPeriodEnd: currentPeriodEnd
             ? new Date(currentPeriodEnd)
             : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+          amountCents: product.priceUSD,
+          billingInterval: product.billingInterval ?? "MONTHLY",
         },
         include: {
           product: true,
@@ -212,7 +214,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_SUBSCRIPTION_CREATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { subscriptionId: subscription.id, forTenantId: tenantId, productId },
       });
 
@@ -263,7 +265,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_SUBSCRIPTION_UPDATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { subscriptionId: subscription.id, changes: data },
       });
 
@@ -404,7 +406,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_PRODUCT_CREATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { productId: product.id, name },
       });
 
@@ -443,7 +445,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_PRODUCT_UPDATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { productId: product.id, changes: req.body },
       });
 
@@ -488,7 +490,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_ENTITLEMENT_CREATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { productId: Number(req.params.id), entitlementKey, limitValue },
       });
 
@@ -531,7 +533,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_ENTITLEMENT_UPDATED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: {
           productId: Number(req.params.id),
           entitlementKey: req.params.key,
@@ -565,7 +567,7 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       await auditSuccess(req, "ADMIN_ENTITLEMENT_DELETED" as any, {
         userId: (req as any).userId,
         tenantId: (req as any).tenantId,
-        surface: "ADMIN",
+        surface: "PLATFORM",
         detail: { productId: Number(req.params.id), entitlementKey: req.params.key },
       });
 
