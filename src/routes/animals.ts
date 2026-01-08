@@ -1741,6 +1741,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         testId: true,
         coatColorData: true,
         healthGeneticsData: true,
+        coatTypeData: true,
+        physicalTraitsData: true,
+        eyeColorData: true,
+        otherTraitsData: true,
       },
     });
 
@@ -1751,6 +1755,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         testId: null,
         coatColor: [],
         health: [],
+        coatType: [],
+        physicalTraits: [],
+        eyeColor: [],
+        otherTraits: [],
       });
     }
 
@@ -1760,6 +1768,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       testId: genetics.testId,
       coatColor: genetics.coatColorData || [],
       health: genetics.healthGeneticsData || [],
+      coatType: genetics.coatTypeData || [],
+      physicalTraits: genetics.physicalTraitsData || [],
+      eyeColor: genetics.eyeColorData || [],
+      otherTraits: genetics.otherTraitsData || [],
     });
   });
 
@@ -1779,6 +1791,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       testId: body.testId || null,
       coatColorData: body.coatColor || [],
       healthGeneticsData: body.health || [],
+      coatTypeData: body.coatType || [],
+      physicalTraitsData: body.physicalTraits || [],
+      eyeColorData: body.eyeColor || [],
+      otherTraitsData: body.otherTraits || [],
     };
 
     const genetics = await prisma.animalGenetics.upsert({
@@ -1796,6 +1812,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       testId: genetics.testId,
       coatColor: genetics.coatColorData || [],
       health: genetics.healthGeneticsData || [],
+      coatType: genetics.coatTypeData || [],
+      physicalTraits: genetics.physicalTraitsData || [],
+      eyeColor: genetics.eyeColorData || [],
+      otherTraits: genetics.otherTraitsData || [],
     });
   });
 
