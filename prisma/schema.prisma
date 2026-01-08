@@ -1494,8 +1494,8 @@ model Animal {
   childrenAsSire Animal[] @relation("AnimalSire")
 
   // Cached COI (coefficient of inbreeding) - recalculated when pedigree changes
-  coiPercent      Float?    // 0.0 to 1.0 (display as percentage)
-  coiGenerations  Int?      // number of generations used in calculation
+  coiPercent      Float? // 0.0 to 1.0 (display as percentage)
+  coiGenerations  Int? // number of generations used in calculation
   coiCalculatedAt DateTime? // when COI was last computed
 
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
@@ -1566,6 +1566,10 @@ model AnimalGenetics {
   testId             String?   @db.VarChar(255)
   coatColorData      Json?     @db.JsonB
   healthGeneticsData Json?     @db.JsonB
+  coatTypeData       Json?     @db.JsonB // Furnishings, Curly, Long Hair, Shedding
+  physicalTraitsData Json?     @db.JsonB // Size (IGF1), Bobtail, Dewclaws, etc.
+  eyeColorData       Json?     @db.JsonB // Eye color genetics
+  otherTraitsData    Json?     @db.JsonB // Breed-specific traits
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @default(now()) @updatedAt
 
