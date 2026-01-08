@@ -13,6 +13,7 @@
 import { spawn } from 'child_process';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
+import { createInterface } from 'readline';
 
 const args = process.argv.slice(2);
 
@@ -246,35 +247,124 @@ DOCUMENTATION:
   }
 }
 
-// Log status (redacted)
-console.log(`\n🔧 run-with-env: Loading environment from ${envFile}`);
-console.log('━'.repeat(60));
+// ═══════════════════════════════════════════════════════════════════════
+// GUARDRAIL: Interactive confirmation for destructive migration commands
+// This blocks AI tools (Claude Code, Codex, etc.) from running migrations
+// ═══════════════════════════════════════════════════════════════════════
+const DESTRUCTIVE_COMMANDS = [
+  'migrate dev',
+  'migrate deploy',
+  'migrate resolve',
+  'migrate reset',
+  'db execute',
+];
 
-for (const key of SENSITIVE_KEYS) {
-  const value = mergedEnv[key];
-  if (value && value.trim()) {
-    console.log(`  ${key}: [SET - REDACTED]`);
-  } else {
-    console.log(`  ${key}: [NOT SET]`);
+const isDestructiveCommand = DESTRUCTIVE_COMMANDS.some(cmd => fullCommand.includes(cmd));
+
+async function requireHumanConfirmation() {
+  // Check if running in non-interactive mode (CI, piped input, AI tools)
+  if (!process.stdin.isTTY) {
+    // Allow CI environments with explicit bypass
+    if (process.env.CI === 'true' && process.env.MIGRATION_CI_CONFIRMED === 'true') {
+      console.log('\n✓ CI environment with MIGRATION_CI_CONFIRMED=true - proceeding\n');
+      return true;
+    }
+
+    console.error(`
+═══════════════════════════════════════════════════════════════════════
+🚫 BLOCKED: Human Confirmation Required
+═══════════════════════════════════════════════════════════════════════
+
+This command requires interactive confirmation from a human operator.
+
+Detected: Non-interactive terminal (stdin is not a TTY)
+
+This safeguard prevents AI tools (Claude Code, Codex, Cursor, etc.) from
+running database migrations without human oversight.
+
+TO RUN THIS COMMAND:
+  Run it directly in your terminal (not through an AI assistant)
+
+FOR CI/CD PIPELINES:
+  Set both CI=true and MIGRATION_CI_CONFIRMED=true environment variables
+
+═══════════════════════════════════════════════════════════════════════
+`);
+    process.exit(1);
   }
+
+  // Interactive confirmation
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const targetEnv = envFile.includes('prod') ? '🔴 PRODUCTION' : '🟡 DEVELOPMENT';
+
+  return new Promise((resolve) => {
+    console.log(`
+═══════════════════════════════════════════════════════════════════════
+⚠️  DATABASE MIGRATION CONFIRMATION
+═══════════════════════════════════════════════════════════════════════
+
+  Target: ${targetEnv}
+  Command: ${command} ${commandArgs.join(' ')}
+
+This will modify the database schema. Please confirm you want to proceed.
+`);
+
+    rl.question('Type "yes" to continue: ', (answer) => {
+      rl.close();
+      if (answer.toLowerCase() === 'yes') {
+        console.log('\n✓ Confirmed by human operator\n');
+        resolve(true);
+      } else {
+        console.log('\n✗ Cancelled\n');
+        process.exit(0);
+      }
+    });
+  });
 }
 
-console.log('━'.repeat(60));
-console.log(`Running: ${command} ${commandArgs.join(' ')}\n`);
+// Main execution
+async function main() {
+  // Require confirmation for destructive commands
+  if (isDestructiveCommand) {
+    await requireHumanConfirmation();
+  }
 
-// Spawn the command with merged environment
-const child = spawn(command, commandArgs, {
-  stdio: 'inherit',
-  shell: true,
-  env: mergedEnv,
-  cwd: process.cwd()
-});
+  // Log status (redacted)
+  console.log(`\n🔧 run-with-env: Loading environment from ${envFile}`);
+  console.log('━'.repeat(60));
 
-child.on('exit', (code) => {
-  process.exit(code || 0);
-});
+  for (const key of SENSITIVE_KEYS) {
+    const value = mergedEnv[key];
+    if (value && value.trim()) {
+      console.log(`  ${key}: [SET - REDACTED]`);
+    } else {
+      console.log(`  ${key}: [NOT SET]`);
+    }
+  }
 
-child.on('error', (err) => {
-  console.error(`\n❌ Failed to start command: ${err.message}`);
-  process.exit(1);
-});
+  console.log('━'.repeat(60));
+  console.log(`Running: ${command} ${commandArgs.join(' ')}\n`);
+
+  // Spawn the command with merged environment
+  const child = spawn(command, commandArgs, {
+    stdio: 'inherit',
+    shell: true,
+    env: mergedEnv,
+    cwd: process.cwd()
+  });
+
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
+
+  child.on('error', (err) => {
+    console.error(`\n❌ Failed to start command: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+main();
