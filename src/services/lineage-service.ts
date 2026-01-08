@@ -17,6 +17,8 @@ export interface PedigreeNode {
   photoUrl: string | null;
   birthDate: string | null;
   coiPercent: number | null;
+  titlePrefix: string | null;
+  titleSuffix: string | null;
   dam: PedigreeNode | null;
   sire: PedigreeNode | null;
 }
@@ -63,6 +65,8 @@ type AnimalRow = {
   photoUrl: string | null;
   birthDate: Date | null;
   coiPercent: number | null;
+  titlePrefix: string | null;
+  titleSuffix: string | null;
   damId: number | null;
   sireId: number | null;
 };
@@ -76,6 +80,8 @@ const animalSelect = {
   photoUrl: true,
   birthDate: true,
   coiPercent: true,
+  titlePrefix: true,
+  titleSuffix: true,
   damId: true,
   sireId: true,
 } as const;
@@ -116,6 +122,8 @@ async function buildAncestorTree(
     photoUrl: animal.photoUrl,
     birthDate: animal.birthDate?.toISOString().slice(0, 10) ?? null,
     coiPercent: animal.coiPercent,
+    titlePrefix: animal.titlePrefix,
+    titleSuffix: animal.titleSuffix,
     dam,
     sire,
   };
