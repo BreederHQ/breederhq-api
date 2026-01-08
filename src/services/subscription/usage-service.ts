@@ -350,6 +350,7 @@ export async function getAllUsageStatuses(
     "BREEDING_PLAN_COUNT",
     "MARKETPLACE_LISTING_COUNT",
     "STORAGE_BYTES",
+    "SMS_SENT",
   ];
 
   const statuses = await Promise.all(
