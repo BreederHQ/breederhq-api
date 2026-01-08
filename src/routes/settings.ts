@@ -1,5 +1,5 @@
 // src/routes/settings.ts
-import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import prisma from "../prisma.js";
 import { getActorId } from "../utils/session.js";
 
@@ -9,7 +9,7 @@ export default async function settingsRoutes(
 ) {
   // POST /api/v1/settings/genetics-disclaimer - Save genetics disclaimer acceptance
   app.post<{ Body: { accepted: boolean; timestamp: string } }>(
-    "/api/v1/settings/genetics-disclaimer",
+    "/settings/genetics-disclaimer",
     async (req, reply) => {
       const actorId = getActorId(req);
       if (!actorId) {
@@ -46,7 +46,7 @@ export default async function settingsRoutes(
   );
 
   // GET /api/v1/settings/genetics-disclaimer - Check if user has accepted disclaimer
-  app.get("/api/v1/settings/genetics-disclaimer", async (req, reply) => {
+  app.get("/settings/genetics-disclaimer", async (req, reply) => {
     const actorId = getActorId(req);
     if (!actorId) {
       return reply.code(401).send({ error: "unauthorized" });

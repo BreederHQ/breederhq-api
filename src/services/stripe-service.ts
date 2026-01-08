@@ -9,16 +9,12 @@ import prisma from "../prisma.js";
 
 // Initialize Stripe
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const NODE_ENV = process.env.NODE_ENV || "development";
 
-if (!STRIPE_SECRET_KEY && NODE_ENV === "production") {
-  throw new Error("STRIPE_SECRET_KEY is required in production");
+if (!STRIPE_SECRET_KEY) {
+  throw new Error("STRIPE_SECRET_KEY environment variable is required");
 }
 
-// Use a placeholder key for development if not set
-const stripeKey = STRIPE_SECRET_KEY || "sk_test_placeholder_for_development";
-
-export const stripe = new Stripe(stripeKey, {
+export const stripe = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: "2025-12-15.clover",
   typescript: true,
 });
