@@ -118,14 +118,14 @@ enum TenantRole {
 
 // New enums for unified tenant membership model (STAFF vs CLIENT)
 enum TenantMembershipRole {
-  STAFF   // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
-  CLIENT  // Portal client (created via invite acceptance)
+  STAFF // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
+  CLIENT // Portal client (created via invite acceptance)
 }
 
 enum TenantMembershipStatus {
-  INVITED    // Invite sent, not yet accepted
-  ACTIVE     // Full access
-  SUSPENDED  // Access revoked
+  INVITED // Invite sent, not yet accepted
+  ACTIVE // Full access
+  SUSPENDED // Access revoked
 }
 
 enum ShareScope {
@@ -156,12 +156,110 @@ enum PortalAccessStatus {
 
 // User entitlement enums for marketplace and other feature access
 enum EntitlementKey {
-  MARKETPLACE_ACCESS  // Access to marketplace surface
+  // Surface access
+  MARKETPLACE_ACCESS // Access to marketplace surface
+  PLATFORM_ACCESS // Access to platform
+  PORTAL_ACCESS // Access to portal
+
+  // Feature access
+  BREEDING_PLANS
+  FINANCIAL_SUITE
+  DOCUMENT_MANAGEMENT
+  HEALTH_RECORDS
+  WAITLIST_MANAGEMENT
+  ADVANCED_REPORTING
+  API_ACCESS
+  MULTI_LOCATION
+  E_SIGNATURES
+
+  // Quotas (use ProductEntitlement.limitValue for the actual number)
+  ANIMAL_QUOTA
+  CONTACT_QUOTA
+  PORTAL_USER_QUOTA
+  BREEDING_PLAN_QUOTA
+  MARKETPLACE_LISTING_QUOTA
+  STORAGE_QUOTA_GB
+  SMS_QUOTA
 }
 
 enum EntitlementStatus {
-  ACTIVE   // Entitlement granted and active
-  REVOKED  // Entitlement revoked
+  ACTIVE // Entitlement granted and active
+  REVOKED // Entitlement revoked
+}
+
+// Subscription & Billing enums
+enum ProductType {
+  SUBSCRIPTION // Recurring subscription plan
+  ADD_ON // Add-on to subscription
+  ONE_TIME // One-time purchase
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+  QUARTERLY
+}
+
+enum SubscriptionStatus {
+  TRIAL // In trial period
+  ACTIVE // Paid and active
+  PAST_DUE // Payment failed, in grace period
+  CANCELED // Canceled by user
+  EXPIRED // Trial or subscription expired
+  INCOMPLETE // Stripe payment pending
+  PAUSED // Paused (future feature)
+}
+
+enum UsageMetricKey {
+  ANIMAL_COUNT
+  CONTACT_COUNT
+  PORTAL_USER_COUNT
+  BREEDING_PLAN_COUNT
+  MARKETPLACE_LISTING_COUNT
+  STORAGE_BYTES
+  SMS_SENT
+  API_CALLS
+}
+
+enum AnimalCategory {
+  RABBIT
+  SMALL_RODENT // Hamster, guinea pig, etc.
+  BIRD
+  CAT
+  SMALL_DOG // Under 25 lbs
+  LARGE_DOG // Over 25 lbs
+  HORSE
+  LIVESTOCK // Cattle, sheep, goats
+  EXOTIC // Reptiles, etc.
+  OTHER
+}
+
+enum ListingType {
+  BREEDING_PROGRAM // Breeder's main program profile
+  STUD_SERVICE // Stud/breeding services
+  TRAINING // Training services
+  VETERINARY // Vet services
+  PHOTOGRAPHY // Photo/video services
+  GROOMING // Grooming services
+  TRANSPORT // Transport/shipping
+  BOARDING // Boarding/kennel
+  PRODUCT // Equipment, supplies
+  OTHER_SERVICE
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  EXPIRED
+  REMOVED
+}
+
+enum ListingTier {
+  FREE // Basic listing
+  PREMIUM // Featured, more photos
+  BUSINESS // Top placement, analytics
 }
 
 enum CommChannel {
@@ -433,17 +531,14 @@ model User {
   portalInvites           PortalInvite[] @relation("PortalInviteUser")
   portalInvitesSentBy     PortalInvite[] @relation("PortalInviteSentBy")
 
-  @@index([partyId])
-  @@index([defaultTenantId])
-  @@index([phoneE164])
-  @@index([whatsappE164])
-  @@index([country])
-
   // User entitlements (marketplace access, etc.)
   entitlements UserEntitlement[]
 
   // Legal - Terms of Service acceptances
   tosAcceptances TosAcceptance[]
+
+  // Legal - Genetics Lab disclaimer acceptances
+  geneticsDisclaimerAcceptances GeneticsDisclaimerAcceptance[]
 
   // Marketplace blocklist
   marketplaceBlocks MarketplaceUserBlock[] @relation("BlockedMarketplaceUser")
@@ -452,6 +547,15 @@ model User {
   // Breeder reports (user as reporter or reviewer)
   breederReportsSubmitted BreederReport[] @relation("BreederReportReporter")
   breederReportsReviewed  BreederReport[] @relation("BreederReportReviewedBy")
+
+  // Service provider profile (for non-breeders listing services)
+  serviceProviderProfile ServiceProviderProfile?
+
+  @@index([partyId])
+  @@index([defaultTenantId])
+  @@index([phoneE164])
+  @@index([whatsappE164])
+  @@index([country])
 }
 
 /**
@@ -657,14 +761,14 @@ model Tenant {
   Template               Template[]
   AutoReplyRule          AutoReplyRule[]
   AutoReplyLog           AutoReplyLog[]
-  portalAccesses         PortalAccess[]  @relation("PortalAccessTenant")
-  portalInvites          PortalInvite[]  @relation("PortalInviteTenant")
+  portalAccesses         PortalAccess[]          @relation("PortalAccessTenant")
+  portalInvites          PortalInvite[]          @relation("PortalInviteTenant")
 
   // Scheduling
-  schedulingEventTemplates      SchedulingEventTemplate[]
-  schedulingAvailabilityBlocks  SchedulingAvailabilityBlock[]
-  schedulingSlots               SchedulingSlot[]
-  schedulingBookings            SchedulingBooking[]
+  schedulingEventTemplates     SchedulingEventTemplate[]
+  schedulingAvailabilityBlocks SchedulingAvailabilityBlock[]
+  schedulingSlots              SchedulingSlot[]
+  schedulingBookings           SchedulingBooking[]
 
   // Business hours for messaging availability
   // JSON structure: { monday: { open: "09:00", close: "17:00", enabled: true }, ... }
@@ -675,17 +779,27 @@ model Tenant {
   // Quick Responder badge tracking
   // Badge is earned when avgBusinessHoursResponseTime <= 4 hours (14400 seconds)
   // Badge is lost when it exceeds that threshold
-  quickResponderBadge           Boolean  @default(false)
-  avgBusinessHoursResponseTime  Int?     // Average response time in seconds (business hours only)
-  totalResponseCount            Int      @default(0) // Number of responses used in average
-  lastBadgeEvaluatedAt          DateTime?
+  quickResponderBadge          Boolean   @default(false)
+  avgBusinessHoursResponseTime Int? // Average response time in seconds (business hours only)
+  totalResponseCount           Int       @default(0) // Number of responses used in average
+  lastBadgeEvaluatedAt         DateTime?
 
   // Marketplace blocklist
   marketplaceUserBlocks MarketplaceUserBlock[]
 
   // Breeder report system (marketplace users reporting this breeder)
-  breederReports    BreederReport[]     @relation("BreederReports")
-  breederReportFlag BreederReportFlag?  @relation("BreederReportFlag")
+  breederReports    BreederReport[]    @relation("BreederReports")
+  breederReportFlag BreederReportFlag? @relation("BreederReportFlag")
+
+  // Subscription & Billing
+  subscriptions       Subscription[]
+  usageRecords        UsageRecord[]
+  usageSnapshots      UsageSnapshot[]
+  paymentMethods      PaymentMethod[]
+  referralCodesOwned  ReferralCode[]       @relation("ReferralCodeOwner")
+  referralsMade       Referral[]           @relation("ReferralsMade")
+  referralsReceived   Referral[]           @relation("ReferralsReceived")
+  marketplaceListings MarketplaceListing[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -694,14 +808,14 @@ model Tenant {
 model TenantMembership {
   userId   String
   tenantId Int
-  role     TenantRole       @default(MEMBER)
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role     TenantRole @default(MEMBER)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // New fields for unified membership model
   membershipRole   TenantMembershipRole   @default(STAFF)
   membershipStatus TenantMembershipStatus @default(ACTIVE)
-  partyId          Int?                   // Links CLIENT memberships to their Party record
+  partyId          Int? // Links CLIENT memberships to their Party record
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -713,17 +827,389 @@ model TenantMembership {
 }
 
 model BillingAccount {
-  id               Int       @id @default(autoincrement())
-  tenantId         Int       @unique
-  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int    @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Stripe customer
+  stripeCustomerId String? @unique
+
+  // Billing contact
+  billingEmail String?
+  companyName  String?
+  taxId        String? // VAT/EIN
+
+  // Billing address
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String? @db.VarChar(2)
+
+  // Legacy fields (deprecated, keep for backward compatibility)
   provider         String?
-  customerId       String?
   subscriptionId   String?
   plan             String?
   status           String?
   currentPeriodEnd DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stripeCustomerId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Subscription & Billing System
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model Product {
+  id Int @id @default(autoincrement())
+
+  // Product details
+  name            String
+  description     String?          @db.Text
+  type            ProductType
+  billingInterval BillingInterval?
+
+  // Stripe integration
+  stripeProductId String? @unique
+  stripePriceId   String?
+
+  // Status
+  active Boolean @default(true)
+
+  // Pricing
+  priceUSD Int // Price in cents
+  currency String @default("USD") @db.VarChar(3)
+
+  // Display
+  sortOrder Int   @default(0)
+  features  Json? // Feature bullets for display
+
+  // Relations
+  entitlements  ProductEntitlement[]
+  subscriptions Subscription[]
+  addOns        SubscriptionAddOn[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type, active])
+  @@index([active, sortOrder])
+}
+
+model ProductEntitlement {
+  id        Int     @id @default(autoincrement())
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  entitlementKey EntitlementKey
+  limitValue     Int? // Quota limit (null = unlimited)
+  metadata       Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, entitlementKey])
+  @@index([productId])
+  @@index([entitlementKey])
+}
+
+model Subscription {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  status SubscriptionStatus @default(TRIAL)
+
+  // Stripe references
+  stripeSubscriptionId String? @unique
+  stripeCustomerId     String?
+
+  // Billing cycle
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+  canceledAt         DateTime?
+
+  // Trial tracking
+  trialStart DateTime?
+  trialEnd   DateTime?
+
+  // Pricing snapshot
+  amountCents     Int
+  currency        String          @default("USD") @db.VarChar(3)
+  billingInterval BillingInterval
+
+  // Metadata
+  metadata Json?
+
+  // Relations
+  addOns SubscriptionAddOn[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([stripeSubscriptionId])
+  @@index([stripeCustomerId])
+  @@index([currentPeriodEnd])
+}
+
+model SubscriptionAddOn {
+  id             Int          @id @default(autoincrement())
+  subscriptionId Int
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity    Int @default(1)
+  amountCents Int
+
+  // Stripe reference
+  stripeItemId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subscriptionId])
+  @@index([productId])
+}
+
+model UsageRecord {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  metricKey  UsageMetricKey
+  value      Int
+  recordedAt DateTime       @default(now())
+
+  // Optional context
+  userId     String?
+  resourceId Int?
+  metadata   Json?
+
+  @@index([tenantId, metricKey, recordedAt])
+  @@index([recordedAt])
+}
+
+model UsageSnapshot {
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  metricKey    UsageMetricKey
+  currentValue Int
+  limit        Int? // null = unlimited
+
+  lastUpdatedAt DateTime @default(now())
+
+  @@id([tenantId, metricKey])
+  @@index([tenantId])
+}
+
+model PaymentMethod {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  stripePaymentMethodId String @unique
+  type                  String // "card", "us_bank_account"
+
+  // Card details
+  cardBrand    String?
+  cardLast4    String?
+  cardExpMonth Int?
+  cardExpYear  Int?
+
+  // Bank details
+  bankName  String?
+  bankLast4 String?
+
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, isDefault])
+}
+
+model ReferralCode {
+  id Int @id @default(autoincrement())
+
+  code String @unique
+
+  referrerTenantId Int
+  referrer         Tenant @relation("ReferralCodeOwner", fields: [referrerTenantId], references: [id], onDelete: Cascade)
+
+  // Reward structure
+  refereeDiscountStripeCouponId String?
+  referrerCreditCents           Int?
+
+  // Tracking
+  usedCount Int       @default(0)
+  maxUses   Int?
+  expiresAt DateTime?
+  active    Boolean   @default(true)
+
+  // Relations
+  referrals Referral[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerTenantId])
+  @@index([code])
+  @@index([active, expiresAt])
+}
+
+model Referral {
+  id Int @id @default(autoincrement())
+
+  codeId Int
+  code   ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  referrerTenantId Int
+  referrer         Tenant @relation("ReferralsMade", fields: [referrerTenantId], references: [id], onDelete: Cascade)
+
+  refereeTenantId Int
+  referee         Tenant @relation("ReferralsReceived", fields: [refereeTenantId], references: [id], onDelete: Cascade)
+
+  // Reward tracking
+  refereeDiscountApplied Boolean @default(false)
+  refereeStripeCouponId  String?
+
+  referrerCreditApplied Boolean   @default(false)
+  referrerCreditCents   Int?
+  referrerCreditedAt    DateTime?
+
+  status String @default("active")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([codeId, refereeTenantId])
+  @@index([referrerTenantId])
+  @@index([refereeTenantId])
+  @@index([codeId])
+}
+
+model MarketplaceListing {
+  id Int @id @default(autoincrement())
+
+  // Owner
+  tenantId Int?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  serviceProviderId Int?
+  serviceProvider   ServiceProviderProfile? @relation(fields: [serviceProviderId], references: [id], onDelete: Cascade)
+
+  // Listing details
+  listingType ListingType
+  category    AnimalCategory?
+  title       String
+  description String?         @db.Text
+
+  // Contact
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+
+  // Location
+  city    String?
+  state   String?
+  country String  @default("US") @db.VarChar(2)
+
+  // Media
+  images   Json?
+  videoUrl String?
+
+  // Pricing
+  priceCents Int?
+  priceType  String? // "fixed", "starting_at", "contact"
+
+  // Monetization
+  tier            ListingTier @default(FREE)
+  monthlyFeeCents Int?
+  commissionRate  Float?
+
+  // Status
+  status      ListingStatus @default(DRAFT)
+  publishedAt DateTime?
+  expiresAt   DateTime?
+
+  // SEO
+  slug String? @unique
+
+  // Analytics
+  viewCount    Int @default(0)
+  inquiryCount Int @default(0)
+
+  // Metadata
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([serviceProviderId])
+  @@index([status, publishedAt])
+  @@index([listingType, category])
+  @@index([tier])
+}
+
+model ServiceProviderProfile {
+  id Int @id @default(autoincrement())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Business details
+  businessName String
+  email        String
+  phone        String?
+  website      String?
+
+  // Location
+  city    String?
+  state   String?
+  country String  @default("US") @db.VarChar(2)
+
+  // Subscription
+  plan ListingTier @default(FREE)
+
+  // Stripe references
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  // Relations
+  listings MarketplaceListing[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([plan])
+}
+
+model SystemConfig {
+  key         String   @id
+  value       String
+  type        String // "number", "boolean", "string", "json"
+  description String?  @db.Text
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
 }
 
 model Organization {
@@ -994,6 +1480,24 @@ model Animal {
   offspringAsDam  Offspring[] @relation("OffspringIndividualDam")
   offspringAsSire Offspring[] @relation("OffspringIndividualSire")
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Lineage: Direct parent references for pedigree tracking
+  // These allow setting parents for animals not born in-system (imports, purchases)
+  // ─────────────────────────────────────────────────────────────────────────────
+  damId  Int?
+  dam    Animal? @relation("AnimalDam", fields: [damId], references: [id], onDelete: SetNull)
+  sireId Int?
+  sire   Animal? @relation("AnimalSire", fields: [sireId], references: [id], onDelete: SetNull)
+
+  // Reverse relations: offspring where this animal is a parent
+  childrenAsDam  Animal[] @relation("AnimalDam")
+  childrenAsSire Animal[] @relation("AnimalSire")
+
+  // Cached COI (coefficient of inbreeding) - recalculated when pedigree changes
+  coiPercent      Float?    // 0.0 to 1.0 (display as percentage)
+  coiGenerations  Int?      // number of generations used in calculation
+  coiCalculatedAt DateTime? // when COI was last computed
+
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
   waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
   waitlistDamPrefs    WaitlistEntry[] @relation("WaitlistDamPref")
@@ -1034,6 +1538,7 @@ model Animal {
   Document         Document[]
   Invoice          Invoice[]
   Expense          Expense[]
+  genetics         AnimalGenetics?
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -1048,6 +1553,23 @@ model Animal {
   @@index([tenantId, placedAt])
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
+  @@index([damId])
+  @@index([sireId])
+}
+
+model AnimalGenetics {
+  id                 Int       @id @default(autoincrement())
+  animalId           Int       @unique
+  animal             Animal    @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  testProvider       String?   @db.VarChar(255)
+  testDate           DateTime? @db.Date
+  testId             String?   @db.VarChar(255)
+  coatColorData      Json?     @db.JsonB
+  healthGeneticsData Json?     @db.JsonB
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  @@index([animalId])
 }
 
 model AnimalOwner {
@@ -1120,48 +1642,48 @@ model AnimalShare {
 }
 
 model AnimalPublicListing {
-  id          Int      @id @default(autoincrement())
-  animalId    Int      @unique
-  animal      Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  tenantId    Int
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  animalId Int    @unique
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Core listing fields
-  urlSlug     String?  @unique
-  intent      AnimalListingIntent?
-  status      AnimalListingStatus  @default(DRAFT)
+  urlSlug String?              @unique
+  intent  AnimalListingIntent?
+  status  AnimalListingStatus  @default(DRAFT)
 
   // Display fields
-  headline    String?  @db.VarChar(120)
+  headline    String? @db.VarChar(120)
   title       String?
-  summary     String?  @db.Text
-  description String?  @db.Text
+  summary     String? @db.Text
+  description String? @db.Text
 
   // Legacy visibility control (retained for compatibility)
-  isListed    Boolean  @default(false)
-  visibility  String?
+  isListed   Boolean @default(false)
+  visibility String?
 
   // Publishing timestamps
   publishedAt DateTime?
   pausedAt    DateTime?
 
   // Location override (optional, defaults to org location if null)
-  locationCity    String?  @db.VarChar(100)
-  locationRegion  String?  @db.VarChar(100)
-  locationCountry String?  @db.VarChar(2)
+  locationCity    String? @db.VarChar(100)
+  locationRegion  String? @db.VarChar(100)
+  locationCountry String? @db.VarChar(2)
 
   // Pricing fields for marketplace cards
-  priceModel     String?  @db.VarChar(32)  // "fixed" | "range" | "negotiable" | "inquire"
-  priceCents     Int?
-  priceMinCents  Int?
-  priceMaxCents  Int?
-  priceText      String?  @db.VarChar(100)
+  priceModel    String? @db.VarChar(32) // "fixed" | "range" | "negotiable" | "inquire"
+  priceCents    Int?
+  priceMinCents Int?
+  priceMaxCents Int?
+  priceText     String? @db.VarChar(100)
 
   // Intent-specific details (JSON for flexibility)
-  detailsJson    Json?    @db.JsonB
+  detailsJson Json? @db.JsonB
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1315,9 +1837,9 @@ model Breed {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  registries   BreedRegistryLink[]
-  Animal       Animal[]
-  AnimalBreeds AnimalBreed[]
+  registries         BreedRegistryLink[]
+  Animal             Animal[]
+  AnimalBreeds       AnimalBreed[]
   TenantProgramBreed TenantProgramBreed[]
 
   @@index([species])
@@ -1369,9 +1891,9 @@ model CustomBreed {
   name        String
   composition Json?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  Animal    Animal[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  Animal             Animal[]
   TenantProgramBreed TenantProgramBreed[]
 
   @@unique([id, tenantId])
@@ -1428,7 +1950,7 @@ model BreedingPlan {
   breedText String?
 
   damId  Int?
-  dam    Animal?  @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
+  dam    Animal? @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
   sireId Int?
   sire   Animal? @relation("PlanSire", fields: [sireId], references: [id], onDelete: SetNull)
 
@@ -1682,7 +2204,7 @@ model OffspringGroup {
 
   species Species
   damId   Int?
-  dam     Animal?  @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
+  dam     Animal? @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
   sireId  Int?
   sire    Animal? @relation("OffspringSire", fields: [sireId], references: [id], onDelete: SetNull)
   name    String?
@@ -1724,22 +2246,22 @@ model OffspringGroup {
   // legacy Animal linkage retained for compatibility
   AnimalsLegacy Animal[] @relation("OffspringGroupPuppiesLegacy")
 
-  Waitlist        WaitlistEntry[]
-  Tags            TagAssignment[]
-  Events          OffspringGroupEvent[]
-  Attachment      Attachment[]
-  groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerGroup")
+  Waitlist         WaitlistEntry[]
+  Tags             TagAssignment[]
+  Events           OffspringGroupEvent[]
+  Attachment       Attachment[]
+  groupBuyerLinks  OffspringGroupBuyer[]         @relation("GroupBuyerGroup")
   schedulingBlocks SchedulingAvailabilityBlock[] @relation("GroupSchedulingBlocks")
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
   archivedAt DateTime?
-  Invoice   Invoice[]
-  Campaign  Campaign[]
-  Task      Task[]
-  Document  Document[]
-  Contract  Contract[]
-  Expense   Expense[]
+  Invoice    Invoice[]
+  Campaign   Campaign[]
+  Task       Task[]
+  Document   Document[]
+  Contract   Contract[]
+  Expense    Expense[]
 
   @@unique([planId])
   @@unique([tenantId, listingSlug])
@@ -1834,7 +2356,7 @@ model Offspring {
   placedAt         DateTime?
 
   // marketplace listing control
-  marketplaceListed    Boolean @default(false)
+  marketplaceListed     Boolean @default(false)
   marketplacePriceCents Int?
 
   // promotion link
@@ -1856,12 +2378,12 @@ model Offspring {
   Documents  Document[]
   Contracts  Contract[]
 
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
-  InvoiceLinks        OffspringInvoiceLink[]
-  CampaignAttribution CampaignAttribution[]
-  OffspringDocument   OffspringDocument[]
-  OffspringContract   OffspringContract[]
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  InvoiceLinks             OffspringInvoiceLink[]
+  CampaignAttribution      CampaignAttribution[]
+  OffspringDocument        OffspringDocument[]
+  OffspringContract        OffspringContract[]
   schedulingEventTemplates SchedulingEventTemplate[]
 
   @@index([tenantId])
@@ -2894,11 +3416,11 @@ model MessageThread {
 
   // Response time tracking for "Quick Responder" badge
   // Time when first inbound message was received (from non-org party)
-  firstInboundAt      DateTime?
+  firstInboundAt            DateTime?
   // Time when org/breeder first replied to inbound message
-  firstOrgReplyAt     DateTime?
+  firstOrgReplyAt           DateTime?
   // Calculated response time in seconds (null until org replies) - raw wall-clock time
-  responseTimeSeconds Int?
+  responseTimeSeconds       Int?
   // Calculated response time in seconds counting only business hours
   // This is the value used for Quick Responder badge calculation
   businessHoursResponseTime Int?
@@ -3482,16 +4004,16 @@ model AuditEvent {
  */
 
 enum SchedulingEventStatus {
-  DRAFT      // Not yet published
-  OPEN       // Accepting bookings
-  CLOSED     // No longer accepting bookings
-  CANCELLED  // Event cancelled
+  DRAFT // Not yet published
+  OPEN // Accepting bookings
+  CLOSED // No longer accepting bookings
+  CANCELLED // Event cancelled
 }
 
 enum SchedulingSlotStatus {
-  AVAILABLE  // Open for booking
-  FULL       // Capacity reached
-  CANCELLED  // Slot cancelled
+  AVAILABLE // Open for booking
+  FULL // Capacity reached
+  CANCELLED // Slot cancelled
 }
 
 enum SchedulingSlotMode {
@@ -3507,9 +4029,9 @@ enum SchedulingBookingStatus {
 }
 
 enum MarketplaceBlockLevel {
-  LIGHT    // Block waitlist requests only
-  MEDIUM   // Block waitlist + messages
-  HEAVY    // Block waitlist + messages + profile view
+  LIGHT // Block waitlist requests only
+  MEDIUM // Block waitlist + messages
+  HEAVY // Block waitlist + messages + profile view
 }
 
 /**
@@ -3517,20 +4039,20 @@ enum MarketplaceBlockLevel {
  * Optional for MVP but provides future flexibility for recurring events
  */
 model SchedulingEventTemplate {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name        String             // e.g., "Pickup Appointment", "Meet and Greet"
-  eventType   String             // e.g., "pickup", "meet_greet", "vet_visit"
-  description String?            @db.Text
+  name        String // e.g., "Pickup Appointment", "Meet and Greet"
+  eventType   String // e.g., "pickup", "meet_greet", "vet_visit"
+  description String?               @db.Text
   status      SchedulingEventStatus @default(DRAFT)
 
   // Booking rules (can be overridden per slot block)
-  defaultDurationMinutes  Int     @default(60)
-  defaultCapacity         Int     @default(1)
-  canCancel               Boolean @default(true)
-  canReschedule           Boolean @default(true)
+  defaultDurationMinutes    Int     @default(60)
+  defaultCapacity           Int     @default(1)
+  canCancel                 Boolean @default(true)
+  canReschedule             Boolean @default(true)
   cancellationDeadlineHours Int?
   rescheduleDeadlineHours   Int?
 
@@ -3539,7 +4061,7 @@ model SchedulingEventTemplate {
 
   // Subject context (what this event is about)
   // Links to offspring, placement, agreement, or transaction
-  subjectType String?  // "offspring" | "placement" | "agreement" | "transaction"
+  subjectType String? // "offspring" | "placement" | "agreement" | "transaction"
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
 
@@ -3562,9 +4084,9 @@ model SchedulingEventTemplate {
  * Represents a period during which the breeder is available for appointments
  */
 model SchedulingAvailabilityBlock {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Optional template reference (can create ad-hoc blocks without template)
   templateId Int?
@@ -3583,11 +4105,11 @@ model SchedulingAvailabilityBlock {
   status SchedulingEventStatus @default(OPEN)
 
   // Override rules from template
-  canCancel               Boolean?
-  canReschedule           Boolean?
+  canCancel                 Boolean?
+  canReschedule             Boolean?
   cancellationDeadlineHours Int?
   rescheduleDeadlineHours   Int?
-  nextStepsText           String? @db.Text
+  nextStepsText             String?  @db.Text
 
   // Location for in-person slots in this block
   location String? @db.Text
@@ -3611,9 +4133,9 @@ model SchedulingAvailabilityBlock {
  * SchedulingSlot - Individual bookable time slot
  */
 model SchedulingSlot {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Parent block
   blockId Int
@@ -3653,9 +4175,9 @@ model SchedulingSlot {
  * Links a party (client) to a slot
  */
 model SchedulingBooking {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Slot reference
   slotId Int
@@ -3673,8 +4195,8 @@ model SchedulingBooking {
   status SchedulingBookingStatus @default(CONFIRMED)
 
   // Timestamps
-  bookedAt     DateTime  @default(now())
-  cancelledAt  DateTime?
+  bookedAt      DateTime  @default(now())
+  cancelledAt   DateTime?
   rescheduledAt DateTime?
 
   // Notes from client or breeder
@@ -3692,12 +4214,11 @@ model SchedulingBooking {
   // Audit
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // Unique constraint: one booking per slot per party
-  @@unique([slotId, partyId])
   // Unique constraint: one active booking per event per party
   // (enforced in application layer - can't have @@unique with status filter)
 
+  // Unique constraint: one booking per slot per party
+  @@unique([slotId, partyId])
   @@index([tenantId])
   @@index([tenantId, partyId])
   @@index([tenantId, eventId])
@@ -3754,11 +4275,11 @@ model MarketplaceUserFlag {
   user   User   @relation("MarketplaceUserFlagUser", fields: [userId], references: [id], onDelete: Cascade)
 
   // Aggregated stats
-  totalBlocks   Int @default(0) // Number of times blocked (any level, all-time)
-  activeBlocks  Int @default(0) // Current non-lifted blocks
-  lightBlocks   Int @default(0)
-  mediumBlocks  Int @default(0)
-  heavyBlocks   Int @default(0)
+  totalBlocks  Int @default(0) // Number of times blocked (any level, all-time)
+  activeBlocks Int @default(0) // Current non-lifted blocks
+  lightBlocks  Int @default(0)
+  mediumBlocks Int @default(0)
+  heavyBlocks  Int @default(0)
 
   // Waitlist history (platform-wide)
   totalApprovals  Int @default(0)
@@ -3885,4 +4406,19 @@ model BreederReportFlag {
   @@index([flaggedAt])
   @@index([marketplaceSuspendedAt])
   @@index([pendingReports])
+}
+
+/**
+ * GeneticsDisclaimerAcceptance - Genetics Lab disclaimer acceptance records
+ * Stores acceptance of genetics calculator disclaimers for legal protection.
+ */
+model GeneticsDisclaimerAcceptance {
+  id         Int      @id @default(autoincrement())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  acceptedAt DateTime @default(now())
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.Text
+
+  @@index([userId])
 }

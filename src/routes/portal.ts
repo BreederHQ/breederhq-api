@@ -15,6 +15,7 @@ import {
   validateTosAcceptancePayload,
   writeTosAcceptance,
 } from "../services/tos-service.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 
 function sha256(input: string | Buffer): string {
   return createHash("sha256").update(input).digest("hex");
@@ -335,6 +336,9 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Record ToS acceptance (server-side timestamp)
         await writeTosAcceptance(result.userId, tosPayload, req);
 
+        // Update usage snapshot after portal activation (membership status changed to ACTIVE)
+        await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
+
         // Set session cookie (no tenantId - portal derives from URL slug)
         setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 
@@ -557,6 +561,9 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // Record ToS acceptance (server-side timestamp)
         await writeTosAcceptance(result.userId, tosPayload, req);
+
+        // Update usage snapshot after portal activation (membership status changed to ACTIVE)
+        await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
 
         setSessionCookies(reply, { userId: result.userId }, "PORTAL");
 
