@@ -8,6 +8,11 @@
 import type { UsageMetricKey, EntitlementKey, Prisma } from "@prisma/client";
 import prisma from "../../prisma.js";
 import { getQuotaLimit } from "./entitlement-service.js";
+import {
+  sendQuotaWarningEmail,
+  sendQuotaCriticalEmail,
+  sendQuotaExceededEmail,
+} from "../email-service.js";
 
 export type UsageStatus = {
   metricKey: UsageMetricKey;
@@ -47,6 +52,32 @@ function metricToQuotaKey(metricKey: UsageMetricKey): Extract<
       return "SMS_QUOTA";
     default:
       return null;
+  }
+}
+
+/**
+ * Get human-readable label for a metric
+ */
+function getMetricLabel(metricKey: UsageMetricKey): string {
+  switch (metricKey) {
+    case "ANIMAL_COUNT":
+      return "Animals";
+    case "CONTACT_COUNT":
+      return "Contacts";
+    case "PORTAL_USER_COUNT":
+      return "Portal Users";
+    case "BREEDING_PLAN_COUNT":
+      return "Breeding Plans";
+    case "MARKETPLACE_LISTING_COUNT":
+      return "Marketplace Listings";
+    case "STORAGE_BYTES":
+      return "Storage";
+    case "SMS_SENT":
+      return "SMS Messages";
+    case "API_CALLS":
+      return "API Calls";
+    default:
+      return metricKey;
   }
 }
 
@@ -164,6 +195,17 @@ export async function updateUsageSnapshot(
   const quotaKey = metricToQuotaKey(metricKey);
   const limit = quotaKey ? await getQuotaLimit(tenantId, quotaKey) : null;
 
+  // Get previous snapshot to detect threshold crossings
+  const previousSnapshot = await prisma.usageSnapshot.findUnique({
+    where: {
+      tenantId_metricKey: {
+        tenantId,
+        metricKey,
+      },
+    },
+  });
+
+  // Update the snapshot
   await prisma.usageSnapshot.upsert({
     where: {
       tenantId_metricKey: {
@@ -184,6 +226,52 @@ export async function updateUsageSnapshot(
       lastUpdatedAt: new Date(),
     },
   });
+
+  // Check for quota threshold crossings and send emails
+  if (limit !== null && limit > 0) {
+    const previousValue = previousSnapshot?.currentValue ?? 0;
+    const previousPercent = (previousValue / limit) * 100;
+    const currentPercent = (currentValue / limit) * 100;
+
+    const metricLabel = getMetricLabel(metricKey);
+
+    // Check if we crossed 100% threshold (exceeded)
+    if (previousPercent < 100 && currentPercent >= 100) {
+      try {
+        await sendQuotaExceededEmail(tenantId, metricLabel, limit);
+      } catch (error) {
+        console.error("Failed to send quota exceeded email:", error);
+      }
+    }
+    // Check if we crossed 95% threshold (critical)
+    else if (previousPercent < 95 && currentPercent >= 95) {
+      try {
+        await sendQuotaCriticalEmail(
+          tenantId,
+          metricLabel,
+          currentValue,
+          limit,
+          currentPercent
+        );
+      } catch (error) {
+        console.error("Failed to send quota critical email:", error);
+      }
+    }
+    // Check if we crossed 80% threshold (warning)
+    else if (previousPercent < 80 && currentPercent >= 80) {
+      try {
+        await sendQuotaWarningEmail(
+          tenantId,
+          metricLabel,
+          currentValue,
+          limit,
+          currentPercent
+        );
+      } catch (error) {
+        console.error("Failed to send quota warning email:", error);
+      }
+    }
+  }
 }
 
 /**
