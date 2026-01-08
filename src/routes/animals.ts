@@ -4,6 +4,9 @@ import prisma from "../prisma.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import sharp from "sharp";
+import { checkQuota } from "../middleware/quota-enforcement.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
+import * as lineageService from "../services/lineage-service.js";
 
 const AVATAR_SIZE = 256;
 
@@ -478,9 +481,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /animals
-  app.post("/animals", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
+  app.post(
+    "/animals",
+    {
+      preHandler: [checkQuota("ANIMAL_COUNT")],
+    },
+    async (req, reply) => {
+      const tenantId = await assertTenant(req, reply);
+      if (!tenantId) return;
 
     const b = (req.body || {}) as Partial<{
       name: string;
@@ -594,6 +602,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Update usage snapshot after successful creation
+      await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
+
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -607,7 +618,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       throw e;
     }
-  });
+    }
+  );
 
   // PATCH /animals/:id
   app.patch("/animals/:id", async (req, reply) => {
@@ -852,6 +864,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.delete({ where: { id } });
+
+    // Update usage snapshot after deletion
+    await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
+
     reply.send({ ok: true });
   });
 
@@ -1701,6 +1717,304 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await prisma.animalPublicListing.delete({ where: { animalId } });
     reply.send({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Genetics endpoints
+  // ──────────────────────────────────────────────────────────────────────────
+
+  app.get("/animals/:id/genetics", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const genetics = await prisma.animalGenetics.findUnique({
+      where: { animalId },
+      select: {
+        id: true,
+        testProvider: true,
+        testDate: true,
+        testId: true,
+        coatColorData: true,
+        healthGeneticsData: true,
+      },
+    });
+
+    if (!genetics) {
+      return reply.send({
+        testProvider: null,
+        testDate: null,
+        testId: null,
+        coatColor: [],
+        health: [],
+      });
+    }
+
+    reply.send({
+      testProvider: genetics.testProvider,
+      testDate: genetics.testDate,
+      testId: genetics.testId,
+      coatColor: genetics.coatColorData || [],
+      health: genetics.healthGeneticsData || [],
+    });
+  });
+
+  app.put("/animals/:id/genetics", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as any;
+
+    const data = {
+      testProvider: body.testProvider || null,
+      testDate: body.testDate ? new Date(body.testDate) : null,
+      testId: body.testId || null,
+      coatColorData: body.coatColor || [],
+      healthGeneticsData: body.health || [],
+    };
+
+    const genetics = await prisma.animalGenetics.upsert({
+      where: { animalId },
+      create: {
+        animalId,
+        ...data,
+      },
+      update: data,
+    });
+
+    reply.send({
+      testProvider: genetics.testProvider,
+      testDate: genetics.testDate,
+      testId: genetics.testId,
+      coatColor: genetics.coatColorData || [],
+      health: genetics.healthGeneticsData || [],
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Lineage / Pedigree endpoints
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /animals/:id/pedigree
+   * Get the pedigree (ancestor tree) for an animal
+   * Query params:
+   *   - generations: number of generations to fetch (default 5, max 10)
+   */
+  app.get("/animals/:id/pedigree", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const { generations = "5" } = (req.query || {}) as { generations?: string };
+    const gen = Math.min(10, Math.max(1, parseInt(generations, 10) || 5));
+
+    const result = await lineageService.getPedigree(animalId, tenantId, gen);
+    reply.send(result);
+  });
+
+  /**
+   * GET /animals/:id/descendants
+   * Get the descendants (offspring tree) for an animal
+   * Query params:
+   *   - generations: number of generations to fetch (default 3, max 5)
+   */
+  app.get("/animals/:id/descendants", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const { generations = "3" } = (req.query || {}) as { generations?: string };
+    const gen = Math.min(5, Math.max(1, parseInt(generations, 10) || 3));
+
+    const result = await lineageService.getDescendants(animalId, tenantId, gen);
+    reply.send(result);
+  });
+
+  /**
+   * PUT /animals/:id/parents
+   * Set the dam and/or sire for an animal
+   * Body: { damId?: number | null, sireId?: number | null }
+   */
+  app.put("/animals/:id/parents", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = (req.body || {}) as { damId?: number | null; sireId?: number | null };
+
+    // Parse damId - allow null to clear
+    let damId: number | null = null;
+    if (body.damId !== undefined) {
+      damId = body.damId === null ? null : parseIntStrict(body.damId);
+      if (body.damId !== null && !damId) {
+        return reply.code(400).send({ error: "damId_invalid" });
+      }
+    } else {
+      // If not provided, keep existing
+      const existing = await prisma.animal.findFirst({
+        where: { id: animalId, tenantId },
+        select: { damId: true },
+      });
+      damId = existing?.damId ?? null;
+    }
+
+    // Parse sireId - allow null to clear
+    let sireId: number | null = null;
+    if (body.sireId !== undefined) {
+      sireId = body.sireId === null ? null : parseIntStrict(body.sireId);
+      if (body.sireId !== null && !sireId) {
+        return reply.code(400).send({ error: "sireId_invalid" });
+      }
+    } else {
+      // If not provided, keep existing
+      const existing = await prisma.animal.findFirst({
+        where: { id: animalId, tenantId },
+        select: { sireId: true },
+      });
+      sireId = existing?.sireId ?? null;
+    }
+
+    try {
+      await lineageService.setParents(animalId, tenantId, damId, sireId);
+
+      // Return updated animal with parent info
+      const updated = await prisma.animal.findFirst({
+        where: { id: animalId, tenantId },
+        select: {
+          id: true,
+          name: true,
+          damId: true,
+          sireId: true,
+          coiPercent: true,
+          coiGenerations: true,
+          coiCalculatedAt: true,
+          dam: { select: { id: true, name: true } },
+          sire: { select: { id: true, name: true } },
+        },
+      });
+
+      reply.send(updated);
+    } catch (e: any) {
+      if (e.statusCode) {
+        return reply.code(e.statusCode).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  /**
+   * GET /animals/:id/parents
+   * Get the parents for an animal
+   */
+  app.get("/animals/:id/parents", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+      select: {
+        id: true,
+        name: true,
+        damId: true,
+        sireId: true,
+        coiPercent: true,
+        coiGenerations: true,
+        coiCalculatedAt: true,
+        dam: {
+          select: {
+            id: true,
+            name: true,
+            species: true,
+            breed: true,
+            photoUrl: true,
+            birthDate: true,
+          },
+        },
+        sire: {
+          select: {
+            id: true,
+            name: true,
+            species: true,
+            breed: true,
+            photoUrl: true,
+            birthDate: true,
+          },
+        },
+      },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    reply.send({
+      dam: animal.dam,
+      sire: animal.sire,
+      coi: animal.coiPercent
+        ? {
+            percent: animal.coiPercent,
+            generations: animal.coiGenerations,
+            calculatedAt: animal.coiCalculatedAt,
+          }
+        : null,
+    });
+  });
+
+  /**
+   * GET /lineage/coi
+   * Calculate prospective COI for a hypothetical breeding
+   * Query params:
+   *   - damId: ID of the female
+   *   - sireId: ID of the male
+   *   - generations: number of generations to analyze (default 10)
+   */
+  app.get("/lineage/coi", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const { damId, sireId, generations = "10" } = (req.query || {}) as {
+      damId?: string;
+      sireId?: string;
+      generations?: string;
+    };
+
+    const dam = parseIntStrict(damId);
+    const sire = parseIntStrict(sireId);
+
+    if (!dam) return reply.code(400).send({ error: "damId_required" });
+    if (!sire) return reply.code(400).send({ error: "sireId_required" });
+
+    const gen = Math.min(15, Math.max(1, parseInt(generations, 10) || 10));
+
+    try {
+      const result = await lineageService.getProspectiveCOI(dam, sire, tenantId, gen);
+      reply.send(result);
+    } catch (e: any) {
+      if (e.statusCode) {
+        return reply.code(e.statusCode).send({ error: e.message });
+      }
+      throw e;
+    }
   });
 };
 

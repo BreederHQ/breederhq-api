@@ -4,6 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
 import { sendEmail } from "../services/email-service.js";
 import { auditSuccess } from "../services/audit.js";
+import { checkQuota } from "../middleware/quota-enforcement.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 
 /**
  * Portal Access Management Routes
@@ -58,22 +60,37 @@ function normalizeEmail(email: string): string {
 }
 
 async function getPartyWithAccess(tenantId: number, partyId: number) {
-  const party = await prisma.party.findFirst({
-    where: { id: partyId, tenantId },
-    include: {
-      portalAccess: {
-        include: {
-          createdBy: { select: { id: true, email: true } },
-          updatedBy: { select: { id: true, email: true } },
-        },
-      },
-      portalInvites: {
-        orderBy: { sentAt: "desc" },
-        take: 1,
-        select: { sentAt: true, expiresAt: true },
+  const include = {
+    portalAccess: {
+      include: {
+        createdBy: { select: { id: true, email: true } },
+        updatedBy: { select: { id: true, email: true } },
       },
     },
+    portalInvites: {
+      orderBy: { sentAt: "desc" as const },
+      take: 1,
+      select: { sentAt: true, expiresAt: true },
+    },
+  };
+
+  // Try to find party by ID first
+  let party = await prisma.party.findFirst({
+    where: { id: partyId, tenantId },
+    include,
   });
+
+  // If not found as party, check if it's a contact ID and get the party from there
+  if (!party) {
+    const contact = await (prisma as any).contact.findFirst({
+      where: { id: partyId, tenantId },
+      include: { party: { include } },
+    });
+    if (contact?.party) {
+      party = contact.party;
+    }
+  }
+
   return party;
 }
 
@@ -205,6 +222,7 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Body: { contextType?: "INQUIRY" | "WAITLIST" | "INVOICE", contextId?: number }
   app.post("/portal-access/:partyId/enable", {
     config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    // preHandler: [checkQuota("PORTAL_USER_COUNT")], // Temporarily disabled for testing
   }, async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
@@ -220,11 +238,77 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const contextType = body.contextType || null;
       const contextId = body.contextId ? Number(body.contextId) : null;
 
-      const party = await prisma.party.findFirst({
+      // Try to find party by ID first, then check if it's a contact ID
+      let party = await prisma.party.findFirst({
         where: { id: partyId, tenantId },
         include: { portalAccess: true },
       });
-      if (!party) return reply.code(404).send({ error: "party_not_found" });
+
+      // If not found as party, check if it's a contact ID and get/create the party
+      if (!party) {
+        req.log.info({ partyId, tenantId }, "Party not found by ID, trying contact lookup");
+        const contact = await (prisma as any).contact.findFirst({
+          where: { id: partyId, tenantId },
+          select: {
+            id: true,
+            partyId: true,
+            email: true,
+            first_name: true,
+            last_name: true,
+            display_name: true,
+          },
+        });
+        req.log.info({ contact: contact ? { id: contact.id, partyId: contact.partyId } : null }, "Contact lookup result");
+
+        if (contact) {
+          if (contact.partyId) {
+            // Contact has a party, fetch it
+            req.log.info({ contactId: partyId, actualPartyId: contact.partyId }, "Found partyId via contact, fetching party");
+            party = await prisma.party.findFirst({
+              where: { id: contact.partyId, tenantId },
+              include: { portalAccess: true },
+            });
+            req.log.info({ party: !!party }, "Party fetch result");
+          } else {
+            // Contact exists but has no party - create one on-the-fly
+            req.log.info({ contactId: partyId }, "Contact has no party, creating party");
+            const displayName = contact.display_name ||
+              [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim() ||
+              contact.email ||
+              `Contact ${contact.id}`;
+
+            const newParty = await prisma.party.create({
+              data: {
+                tenantId,
+                name: displayName,
+                email: contact.email,
+                type: "CONTACT",
+              },
+            });
+
+            // Link the party back to the contact
+            await (prisma as any).contact.update({
+              where: { id: contact.id },
+              data: { partyId: newParty.id },
+            });
+
+            // Fetch the party with portalAccess included to match the expected type
+            party = await prisma.party.findFirst({
+              where: { id: newParty.id, tenantId },
+              include: { portalAccess: true },
+            });
+            req.log.info({ contactId: partyId, createdPartyId: newParty.id }, "Created party for contact");
+          }
+        }
+      }
+
+      if (!party) {
+        req.log.warn({ partyId, tenantId }, "party_not_found after all lookups");
+        return reply.code(404).send({ error: "party_not_found" });
+      }
+
+      // Use the actual party ID from here on (in case we looked up via contact ID)
+      const actualPartyId = party.id;
 
       if (!party.email) {
         return reply.code(400).send({ error: "party_has_no_email" });
@@ -265,7 +349,7 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           prisma.portalInvite.create({
             data: {
               tenantId,
-              partyId,
+              partyId: actualPartyId,
               emailNorm,
               userId: existingUser?.id ?? null,
               tokenHash,
@@ -284,6 +368,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           surface: "PLATFORM",
           detail: { partyId, toEmail: party.email },
         });
+
+        // Update usage snapshot after re-enabling portal access
+        await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
 
         const updated = await getPartyWithAccess(tenantId, partyId);
         return reply.send({ portalAccess: toDTO(updated!), inviteSent: true });
@@ -305,7 +392,7 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         await tx.portalAccess.create({
           data: {
             tenantId,
-            partyId,
+            partyId: actualPartyId,
             status: "INVITED",
             invitedAt: new Date(),
             createdByUserId: userId,
@@ -317,7 +404,7 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         await tx.portalInvite.create({
           data: {
             tenantId,
-            partyId,
+            partyId: actualPartyId,
             emailNorm,
             userId: existingUser?.id ?? null,
             tokenHash,
@@ -358,6 +445,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         surface: "PLATFORM",
         detail: { partyId, toEmail: party.email },
       });
+
+      // Update usage snapshot after creating portal access
+      await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
 
       const updated = await getPartyWithAccess(tenantId, partyId);
       return reply.send({ portalAccess: toDTO(updated!), inviteSent: true });
@@ -506,6 +596,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       });
 
+      // Update usage snapshot after suspending portal access
+      await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
+
       const updated = await getPartyWithAccess(tenantId, partyId);
       return reply.send({ portalAccess: toDTO(updated!) });
     } catch (err) {
@@ -595,6 +688,9 @@ const portalAccessRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           detail: { partyId, toEmail: party.email, context: "reenable" },
         });
       }
+
+      // Update usage snapshot after re-enabling portal access
+      await updateUsageSnapshot(tenantId, "PORTAL_USER_COUNT");
 
       const updated = await getPartyWithAccess(tenantId, partyId);
       return reply.send({ portalAccess: toDTO(updated!) });

@@ -10,6 +10,7 @@
   "scripts": {
     "preflight": "node scripts/preflight-env.js",
     "dev": "npx dotenv -e .env.dev -- node scripts/preflight-env.js && npx dotenv -e .env.dev -- tsx watch src/server.ts",
+    "dev:stripe": "echo \"ℹ️  Starting with Stripe billing enabled (requires STRIPE_SECRET_KEY in .env.dev)\" && npm run dev",
     "build": "tsc -p .",
     "start": "node scripts/preflight-env.js && node dist/server.js",
     "start:render": "node scripts/preflight-env.js && node dist/server.js",
@@ -31,8 +32,11 @@
     "db:dev:seed:users": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-test-users.ts",
     "db:dev:seed:traits": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:dev:seed:tattooine": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-tattooine-contacts.ts",
-    "db:dev:seed": "npm run db:dev:seed:traits && npm run db:dev:seed:users",
+    "db:dev:seed:products": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-subscription-products.ts",
+    "db:dev:seed": "npm run db:dev:seed:traits && npm run db:dev:seed:users && npm run db:dev:seed:products",
     "db:dev:reset": "npm run db:dev:deploy && npm run db:dev:seed",
+    "test:quota": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/test-quota-enforcement.ts",
+    "test:usage": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/test-usage-api.ts",
     "db:prod:seed:traits": "node scripts/run-with-env.js .env.prod.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:prod:status": "node scripts/run-with-env.js .env.prod.migrate prisma migrate status --schema=prisma/schema.prisma",
     "db:prod:deploy": "node scripts/run-with-env.js .env.prod.migrate prisma migrate deploy --schema=prisma/schema.prisma",
@@ -74,6 +78,7 @@
     "resend": "^6.6.0",
     "sharp": "^0.34.5",
     "slugify": "^1.6.6",
+    "stripe": "^20.1.2",
     "zod": "^4.1.8"
   },
   "devDependencies": {

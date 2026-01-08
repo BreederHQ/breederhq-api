@@ -9,6 +9,8 @@ import {
   unblockUser,
   getBlockedUsers,
 } from "../services/marketplace-block.js";
+import { checkQuota } from "../middleware/quota-enforcement.js";
+import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 
 /**
  * Contact schema alignment
@@ -377,12 +379,17 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /contacts
-  app.post("/contacts", async (req, reply) => {
-    try {
-      ensureAuth(req);
+  app.post(
+    "/contacts",
+    {
+      preHandler: [checkQuota("CONTACT_COUNT")],
+    },
+    async (req, reply) => {
+      try {
+        ensureAuth(req);
 
-      const tenantId = Number((req as any).tenantId);
-      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+        const tenantId = Number((req as any).tenantId);
+        if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
       req.log?.info?.({ body: req.body }, "[POST /contacts] Request body");
 
@@ -507,12 +514,16 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       });
 
+      // Update usage snapshot after successful creation
+      await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
+
       return reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
       return reply.code(status).send(payload);
     }
-  });
+    }
+  );
 
   function setIfProvided(
     src: Record<string, any>,
@@ -887,6 +898,9 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!updated) return reply.code(404).send({ error: "not_found" });
 
+      // Update usage snapshot after archiving (decreases count)
+      await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
+
       return reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -933,6 +947,9 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       });
       if (!updated) return reply.code(404).send({ error: "not_found" });
+
+      // Update usage snapshot after restoring (increases count)
+      await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
 
       return reply.send(updated);
     } catch (err) {
