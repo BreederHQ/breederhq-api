@@ -191,6 +191,9 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   // Portal activation - user may not have CSRF token for portal surface yet
   if (pathname === "/api/v1/portal/activate") return true;
 
+  // Stripe webhook - verified by Stripe signature, not CSRF
+  if (pathname === "/api/v1/billing/webhooks/stripe") return true;
+
   return false;
 }
 
@@ -321,6 +324,12 @@ app.addHook("preValidation", (req, _reply, done) => {
 app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req, body, done) => {
   try {
     const raw = typeof body === 'string' ? body : body.toString('utf8');
+
+    // Save raw body for Stripe webhook signature verification
+    if (req.url?.includes('/billing/webhooks/stripe')) {
+      (req as any).rawBody = Buffer.from(raw, 'utf8');
+    }
+
     done(null, JSON.parse(raw));
   } catch (err) {
     done(err as Error);
@@ -457,8 +466,11 @@ import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpo
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
 import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Admin breeder reports
+import adminSubscriptionRoutes from "./routes/admin-subscriptions.js"; // Admin subscription management
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
 import usageRoutes from "./routes/usage.js"; // Usage and quota dashboard
+import billingRoutes from "./routes/billing.js"; // Billing and Stripe integration
+import settingsRoutes from "./routes/settings.js"; // User settings (genetics disclaimer, etc.)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -483,6 +495,8 @@ app.register(
     api.register(accountRoutes);                   // /api/v1/account/*
     api.register(tenantRoutes);                    // /api/v1/tenants/*
     api.register(portalRoutes);                    // /api/v1/portal/* (activation - no auth)
+    api.register(billingRoutes, { prefix: "/billing" }); // /api/v1/billing/webhooks/* (Stripe webhooks - no auth)
+    api.register(settingsRoutes); // /api/v1/settings/* (user settings)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -763,6 +777,7 @@ app.register(
     api.register(usageRoutes, { prefix: "/usage" }); // /api/v1/usage/* Usage and quota dashboard
     api.register(adminMarketplaceRoutes); // /api/v1/admin/marketplace/* Admin marketplace management
     api.register(adminBreederReportsRoutes); // /api/v1/admin/breeder-reports/* Admin breeder reports
+    api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
