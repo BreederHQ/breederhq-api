@@ -33,9 +33,9 @@ interface ProductConfig {
 }
 
 const PRODUCTS: ProductConfig[] = [
-  // Pro Monthly
+  // Breeder Monthly
   {
-    name: "BreederHQ Pro (Monthly)",
+    name: "Breeder (Monthly)",
     description: "Professional breeding management for small to medium operations",
     type: "SUBSCRIPTION",
     billingInterval: "MONTHLY",
@@ -67,9 +67,9 @@ const PRODUCTS: ProductConfig[] = [
     ],
   },
 
-  // Pro Yearly
+  // Breeder Yearly
   {
-    name: "BreederHQ Pro (Yearly)",
+    name: "Breeder (Yearly)",
     description: "Professional breeding management - annual billing (save $78/year)",
     type: "SUBSCRIPTION",
     billingInterval: "YEARLY",
@@ -102,9 +102,9 @@ const PRODUCTS: ProductConfig[] = [
     ],
   },
 
-  // Enterprise Monthly
+  // Pro Monthly
   {
-    name: "BreederHQ Enterprise (Monthly)",
+    name: "Pro (Monthly)",
     description: "Advanced features for large breeding operations",
     type: "SUBSCRIPTION",
     billingInterval: "MONTHLY",
@@ -145,9 +145,9 @@ const PRODUCTS: ProductConfig[] = [
     ],
   },
 
-  // Enterprise Yearly
+  // Pro Yearly
   {
-    name: "BreederHQ Enterprise (Yearly)",
+    name: "Pro (Yearly)",
     description: "Advanced features - annual billing (save $198/year)",
     type: "SUBSCRIPTION",
     billingInterval: "YEARLY",

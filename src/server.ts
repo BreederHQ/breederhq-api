@@ -471,6 +471,9 @@ import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.
 import usageRoutes from "./routes/usage.js"; // Usage and quota dashboard
 import billingRoutes from "./routes/billing.js"; // Billing and Stripe integration
 import settingsRoutes from "./routes/settings.js"; // User settings (genetics disclaimer, etc.)
+import titlesRoutes from "./routes/titles.js"; // Title definitions and animal titles
+import competitionsRoutes from "./routes/competitions.js"; // Competition entry tracking
+import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -751,6 +754,9 @@ app.register(
       (req as any).tenantId = tId;
     });
 
+    // Dashboard Mission Control
+    api.register(dashboardRoutes);     // /api/v1/dashboard/*
+
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
     api.register(partiesRoutes);       // /api/v1/parties/*
@@ -760,6 +766,8 @@ app.register(
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
+    api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
+    api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user

@@ -7,6 +7,8 @@ import sharp from "sharp";
 import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import * as lineageService from "../services/lineage-service.js";
+import * as identityMatchingService from "../services/identity-matching-service.js";
+import type { IdentifierType } from "@prisma/client";
 
 const AVATAR_SIZE = 256;
 
@@ -503,6 +505,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       organizationId: number | null;
       photoUrl: string | null;
+      // Lineage fields
+      damId: number | null;
+      sireId: number | null;
     }>;
 
 
@@ -558,6 +563,26 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.organizationId = orgId;
     }
 
+    // Lineage: set parents if provided (must be animals in same tenant)
+    if (b.damId != null) {
+      const damId = typeof b.damId === "number" ? b.damId : parseInt(String(b.damId), 10);
+      if (!Number.isNaN(damId)) {
+        const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId } });
+        if (!dam) return reply.code(400).send({ error: "damId_not_found" });
+        if (dam.sex !== "FEMALE") return reply.code(400).send({ error: "dam_must_be_female" });
+        data.damId = damId;
+      }
+    }
+    if (b.sireId != null) {
+      const sireId = typeof b.sireId === "number" ? b.sireId : parseInt(String(b.sireId), 10);
+      if (!Number.isNaN(sireId)) {
+        const sire = await prisma.animal.findFirst({ where: { id: sireId, tenantId } });
+        if (!sire) return reply.code(400).send({ error: "sireId_not_found" });
+        if (sire.sex !== "MALE") return reply.code(400).send({ error: "sire_must_be_male" });
+        data.sireId = sireId;
+      }
+    }
+
     try {
       const created = await prisma.animal.create({
         data,
@@ -580,6 +605,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          // Lineage
+          damId: true,
+          sireId: true,
         },
       });
 
@@ -1820,6 +1848,233 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Genetics Import endpoints
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * POST /animals/:id/genetics/import/preview
+   * Preview/validate an import file without saving
+   * Returns parsed data + warnings for user review before final import
+   */
+  app.post("/animals/:id/genetics/import/preview", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as {
+      provider: string;
+      fileContent: string;
+    };
+
+    if (!body.provider) {
+      return reply.code(400).send({ error: "provider_required" });
+    }
+    if (!body.fileContent) {
+      return reply.code(400).send({ error: "file_content_required" });
+    }
+
+    // Import parser dynamically to avoid circular dependencies
+    const { parseEmbarkCSV, toDatabaseFormat, GENETICS_PROVIDERS, getProviderById } = await import("../lib/genetics-import/index.js");
+
+    const provider = getProviderById(body.provider as any);
+    if (!provider) {
+      return reply.code(400).send({ error: "unknown_provider", message: `Unknown provider: ${body.provider}` });
+    }
+    if (!provider.isSupported) {
+      return reply.code(400).send({ error: "provider_not_supported", message: `Provider ${provider.name} is not yet supported` });
+    }
+
+    // Parse based on provider
+    let parseResult;
+    if (body.provider === "embark") {
+      parseResult = parseEmbarkCSV(body.fileContent);
+    } else {
+      return reply.code(400).send({ error: "unsupported_provider", message: `Import for ${body.provider} is not implemented yet` });
+    }
+
+    if (!parseResult.success) {
+      return reply.code(400).send({
+        error: "parse_failed",
+        errors: parseResult.errors,
+      });
+    }
+
+    // Convert to database format for preview
+    const dbFormat = toDatabaseFormat(parseResult.genetics);
+
+    // Get summary counts
+    const summary = {
+      coatColor: parseResult.genetics.coatColor.length,
+      coatType: parseResult.genetics.coatType.length,
+      physicalTraits: parseResult.genetics.physicalTraits.length,
+      eyeColor: parseResult.genetics.eyeColor.length,
+      health: parseResult.genetics.health.length,
+      otherTraits: parseResult.genetics.otherTraits.length,
+      unmapped: parseResult.genetics.unmapped.length,
+      total: parseResult.genetics.coatColor.length +
+        parseResult.genetics.coatType.length +
+        parseResult.genetics.physicalTraits.length +
+        parseResult.genetics.eyeColor.length +
+        parseResult.genetics.health.length +
+        parseResult.genetics.otherTraits.length,
+    };
+
+    reply.send({
+      success: true,
+      provider: provider.name,
+      summary,
+      preview: {
+        coatColor: dbFormat.coatColorData,
+        coatType: dbFormat.coatTypeData,
+        physicalTraits: dbFormat.physicalTraitsData,
+        eyeColor: dbFormat.eyeColorData,
+        health: dbFormat.healthGeneticsData,
+        otherTraits: dbFormat.otherTraitsData,
+      },
+      unmapped: parseResult.genetics.unmapped,
+      warnings: parseResult.warnings,
+    });
+  });
+
+  /**
+   * POST /animals/:id/genetics/import
+   * Import genetics from a lab test file
+   * Body: { provider: string, fileContent: string, mergeStrategy?: 'replace' | 'merge' }
+   */
+  app.post("/animals/:id/genetics/import", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as {
+      provider: string;
+      fileContent: string;
+      mergeStrategy?: "replace" | "merge";
+      testDate?: string;
+      testId?: string;
+    };
+
+    if (!body.provider) {
+      return reply.code(400).send({ error: "provider_required" });
+    }
+    if (!body.fileContent) {
+      return reply.code(400).send({ error: "file_content_required" });
+    }
+
+    const mergeStrategy = body.mergeStrategy || "replace";
+
+    // Import parser
+    const { parseEmbarkCSV, toDatabaseFormat, getProviderById } = await import("../lib/genetics-import/index.js");
+
+    const provider = getProviderById(body.provider as any);
+    if (!provider) {
+      return reply.code(400).send({ error: "unknown_provider" });
+    }
+    if (!provider.isSupported) {
+      return reply.code(400).send({ error: "provider_not_supported" });
+    }
+
+    // Parse the file
+    let parseResult;
+    if (body.provider === "embark") {
+      parseResult = parseEmbarkCSV(body.fileContent);
+    } else {
+      return reply.code(400).send({ error: "unsupported_provider" });
+    }
+
+    if (!parseResult.success) {
+      return reply.code(400).send({
+        error: "parse_failed",
+        errors: parseResult.errors,
+      });
+    }
+
+    const dbFormat = toDatabaseFormat(parseResult.genetics);
+
+    // Get existing genetics if merge strategy
+    let existingGenetics = null;
+    if (mergeStrategy === "merge") {
+      existingGenetics = await prisma.animalGenetics.findUnique({
+        where: { animalId },
+      });
+    }
+
+    // Merge or replace
+    const mergeArrays = (existing: any[] | null, imported: any[]) => {
+      if (!existing || mergeStrategy === "replace") return imported;
+      // Merge by locus - imported takes precedence
+      const locusMap = new Map();
+      for (const item of existing) {
+        if (item.locus) locusMap.set(item.locus, item);
+      }
+      for (const item of imported) {
+        if (item.locus) locusMap.set(item.locus, item);
+      }
+      return Array.from(locusMap.values());
+    };
+
+    const data = {
+      testProvider: provider.name,
+      testDate: body.testDate ? new Date(body.testDate) : new Date(),
+      testId: body.testId || null,
+      coatColorData: mergeArrays(existingGenetics?.coatColorData as any, dbFormat.coatColorData),
+      healthGeneticsData: mergeArrays(existingGenetics?.healthGeneticsData as any, dbFormat.healthGeneticsData),
+      coatTypeData: mergeArrays(existingGenetics?.coatTypeData as any, dbFormat.coatTypeData),
+      physicalTraitsData: mergeArrays(existingGenetics?.physicalTraitsData as any, dbFormat.physicalTraitsData),
+      eyeColorData: mergeArrays(existingGenetics?.eyeColorData as any, dbFormat.eyeColorData),
+      otherTraitsData: mergeArrays(existingGenetics?.otherTraitsData as any, dbFormat.otherTraitsData),
+    };
+
+    const genetics = await prisma.animalGenetics.upsert({
+      where: { animalId },
+      create: {
+        animalId,
+        ...data,
+      },
+      update: data,
+    });
+
+    reply.send({
+      success: true,
+      imported: {
+        coatColor: (dbFormat.coatColorData || []).length,
+        health: (dbFormat.healthGeneticsData || []).length,
+        coatType: (dbFormat.coatTypeData || []).length,
+        physicalTraits: (dbFormat.physicalTraitsData || []).length,
+        eyeColor: (dbFormat.eyeColorData || []).length,
+        otherTraits: (dbFormat.otherTraitsData || []).length,
+      },
+      warnings: parseResult.warnings,
+      genetics: {
+        testProvider: genetics.testProvider,
+        testDate: genetics.testDate,
+        testId: genetics.testId,
+        coatColor: genetics.coatColorData || [],
+        health: genetics.healthGeneticsData || [],
+        coatType: genetics.coatTypeData || [],
+        physicalTraits: genetics.physicalTraitsData || [],
+        eyeColor: genetics.eyeColorData || [],
+        otherTraits: genetics.otherTraitsData || [],
+      },
+    });
+  });
+
+  /**
+   * GET /genetics/providers
+   * Get list of supported genetics providers
+   */
+  app.get("/genetics/providers", async (req, reply) => {
+    const { GENETICS_PROVIDERS } = await import("../lib/genetics-import/index.js");
+    reply.send({ providers: GENETICS_PROVIDERS });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Lineage / Pedigree endpoints
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -2036,6 +2291,526 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       throw e;
     }
   });
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * PRIVACY SETTINGS - Per-animal cross-tenant sharing controls
+   * ═══════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * GET /animals/:id/privacy
+   * Get privacy settings for an animal
+   */
+  app.get("/animals/:id/privacy", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    // Verify animal belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+    });
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    // Get or create default privacy settings
+    let settings = await prisma.animalPrivacySettings.findUnique({
+      where: { animalId },
+    });
+
+    if (!settings) {
+      // Return defaults (don't create until explicitly saved)
+      return reply.send({
+        animalId,
+        allowCrossTenantMatching: true,
+        showName: true,
+        showPhoto: true,
+        showFullDob: true,
+        showRegistryFull: false,
+        showHealthResults: false,
+        showGeneticData: false,
+        showBreeder: true,
+        allowInfoRequests: true,
+        allowDirectContact: false,
+      });
+    }
+
+    reply.send(settings);
+  });
+
+  /**
+   * PUT /animals/:id/privacy
+   * Update privacy settings for an animal
+   */
+  app.put("/animals/:id/privacy", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    // Verify animal belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+    });
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    const body = (req.body || {}) as Partial<{
+      allowCrossTenantMatching: boolean;
+      showName: boolean;
+      showPhoto: boolean;
+      showFullDob: boolean;
+      showRegistryFull: boolean;
+      showHealthResults: boolean;
+      showGeneticData: boolean;
+      showBreeder: boolean;
+      allowInfoRequests: boolean;
+      allowDirectContact: boolean;
+    }>;
+
+    // Upsert settings
+    const settings = await prisma.animalPrivacySettings.upsert({
+      where: { animalId },
+      create: {
+        animalId,
+        allowCrossTenantMatching: body.allowCrossTenantMatching ?? true,
+        showName: body.showName ?? true,
+        showPhoto: body.showPhoto ?? true,
+        showFullDob: body.showFullDob ?? true,
+        showRegistryFull: body.showRegistryFull ?? false,
+        showHealthResults: body.showHealthResults ?? false,
+        showGeneticData: body.showGeneticData ?? false,
+        showBreeder: body.showBreeder ?? true,
+        allowInfoRequests: body.allowInfoRequests ?? true,
+        allowDirectContact: body.allowDirectContact ?? false,
+      },
+      update: {
+        ...(body.allowCrossTenantMatching !== undefined && { allowCrossTenantMatching: body.allowCrossTenantMatching }),
+        ...(body.showName !== undefined && { showName: body.showName }),
+        ...(body.showPhoto !== undefined && { showPhoto: body.showPhoto }),
+        ...(body.showFullDob !== undefined && { showFullDob: body.showFullDob }),
+        ...(body.showRegistryFull !== undefined && { showRegistryFull: body.showRegistryFull }),
+        ...(body.showHealthResults !== undefined && { showHealthResults: body.showHealthResults }),
+        ...(body.showGeneticData !== undefined && { showGeneticData: body.showGeneticData }),
+        ...(body.showBreeder !== undefined && { showBreeder: body.showBreeder }),
+        ...(body.allowInfoRequests !== undefined && { allowInfoRequests: body.allowInfoRequests }),
+        ...(body.allowDirectContact !== undefined && { allowDirectContact: body.allowDirectContact }),
+      },
+    });
+
+    reply.send(settings);
+  });
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * IDENTITY MATCHING - Cross-tenant animal identity resolution
+   * ═══════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * GET /animals/:id/identity
+   * Get global identity info for an animal (if linked)
+   */
+  app.get("/animals/:id/identity", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    // Verify animal belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+      include: {
+        identityLink: {
+          include: {
+            identity: {
+              include: {
+                identifiers: true,
+                linkedAnimals: {
+                  include: {
+                    animal: {
+                      select: {
+                        id: true,
+                        tenantId: true,
+                        name: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    if (!animal.identityLink) {
+      return reply.send({
+        linked: false,
+        globalIdentityId: null,
+        identifiers: [],
+        linkedTenants: 0,
+      });
+    }
+
+    const identity = animal.identityLink.identity;
+    const otherTenants = new Set(
+      identity.linkedAnimals
+        .map((l) => l.animal.tenantId)
+        .filter((t) => t !== tenantId)
+    );
+
+    reply.send({
+      linked: true,
+      globalIdentityId: identity.id,
+      confidence: animal.identityLink.confidence,
+      matchedOn: animal.identityLink.matchedOn,
+      autoMatched: animal.identityLink.autoMatched,
+      confirmedAt: animal.identityLink.confirmedAt,
+      identifiers: identity.identifiers.map((i) => ({
+        type: i.type,
+        value: i.sourceTenantId === tenantId ? i.rawValue || i.value : maskIdentifier(i.type, i.value),
+        isOwn: i.sourceTenantId === tenantId,
+      })),
+      linkedTenants: otherTenants.size,
+      globalPedigree: {
+        damId: identity.damId,
+        sireId: identity.sireId,
+      },
+    });
+  });
+
+  /**
+   * POST /animals/:id/identity/match
+   * Find potential global identity matches for an animal
+   */
+  app.post("/animals/:id/identity/match", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    // Get identifiers from request body or from animal record
+    const body = (req.body || {}) as {
+      microchip?: string;
+      registrations?: Array<{ type: IdentifierType; value: string }>;
+      dnaProfileId?: string;
+    };
+
+    const identifiers = {
+      microchip: body.microchip || animal.microchip,
+      registrations: body.registrations || [],
+      dnaProfileId: body.dnaProfileId,
+    };
+
+    const result = await identityMatchingService.processAnimalForMatching(
+      {
+        id: animal.id,
+        tenantId: animal.tenantId,
+        name: animal.name,
+        species: animal.species,
+        sex: animal.sex,
+        birthDate: animal.birthDate,
+        breed: animal.breed,
+        microchip: animal.microchip,
+      },
+      identifiers
+    );
+
+    reply.send({
+      matched: result.matched,
+      globalIdentityId: result.globalIdentityId,
+      confidence: result.confidence,
+      autoLinked: result.autoLinked,
+      candidates: result.candidates.map((c) => ({
+        globalIdentityId: c.globalIdentityId,
+        confidence: c.confidence,
+        matchedIdentifiers: c.matchedIdentifiers,
+        matchedFields: c.matchedFields,
+      })),
+    });
+  });
+
+  /**
+   * POST /animals/:id/identity/link
+   * Manually link an animal to a global identity
+   */
+  app.post("/animals/:id/identity/link", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const userId = (req as any).userId as string;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    const body = (req.body || {}) as {
+      globalIdentityId: number;
+    };
+
+    if (!body.globalIdentityId) {
+      return reply.code(400).send({ error: "globalIdentityId required" });
+    }
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    // Verify the global identity exists
+    const identity = await prisma.globalAnimalIdentity.findUnique({
+      where: { id: body.globalIdentityId },
+    });
+
+    if (!identity) {
+      return reply.code(404).send({ error: "global identity not found" });
+    }
+
+    // Verify species match
+    if (identity.species !== animal.species) {
+      return reply.code(400).send({ error: "species mismatch" });
+    }
+
+    await identityMatchingService.linkAnimalToIdentity(
+      animalId,
+      body.globalIdentityId,
+      ["manual_link"],
+      1.0,
+      false, // not auto-matched
+      userId
+    );
+
+    reply.send({ success: true, globalIdentityId: body.globalIdentityId });
+  });
+
+  /**
+   * DELETE /animals/:id/identity/link
+   * Unlink an animal from its global identity
+   */
+  app.delete("/animals/:id/identity/link", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    await prisma.animalIdentityLink.deleteMany({
+      where: { animalId },
+    });
+
+    reply.send({ success: true });
+  });
+
+  /**
+   * POST /animals/:id/identity/identifiers
+   * Add an identifier to an animal's global identity
+   */
+  app.post("/animals/:id/identity/identifiers", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt((req.params as any).id, 10);
+    if (!animalId || Number.isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid animal id" });
+    }
+
+    const body = (req.body || {}) as {
+      type: IdentifierType;
+      value: string;
+    };
+
+    if (!body.type || !body.value) {
+      return reply.code(400).send({ error: "type and value required" });
+    }
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+      include: { identityLink: true },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal not found" });
+    }
+
+    if (!animal.identityLink) {
+      return reply.code(400).send({ error: "animal not linked to global identity" });
+    }
+
+    // Normalize the identifier value
+    const normalizedValue = body.value.trim().toUpperCase().replace(/[\s-]/g, "");
+
+    try {
+      const identifier = await prisma.globalAnimalIdentifier.create({
+        data: {
+          identityId: animal.identityLink.identityId,
+          type: body.type,
+          value: normalizedValue,
+          rawValue: body.value.trim(),
+          sourceTenantId: tenantId,
+        },
+      });
+
+      reply.code(201).send({
+        id: identifier.id,
+        type: identifier.type,
+        value: identifier.rawValue,
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        return reply.code(409).send({ error: "identifier already exists" });
+      }
+      throw e;
+    }
+  });
+
+  /**
+   * GET /lineage/global-pedigree/:globalIdentityId
+   * Get cross-tenant pedigree from a global identity
+   */
+  app.get("/lineage/global-pedigree/:globalIdentityId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const globalIdentityId = parseInt((req.params as any).globalIdentityId, 10);
+    if (!globalIdentityId || Number.isNaN(globalIdentityId)) {
+      return reply.code(400).send({ error: "invalid globalIdentityId" });
+    }
+
+    const query = (req.query || {}) as { generations?: string };
+    const generations = Math.min(10, Math.max(1, parseInt(query.generations || "5", 10)));
+
+    const identity = await prisma.globalAnimalIdentity.findUnique({
+      where: { id: globalIdentityId },
+    });
+
+    if (!identity) {
+      return reply.code(404).send({ error: "global identity not found" });
+    }
+
+    // Build the global pedigree tree
+    const pedigree = await buildGlobalPedigreeForApi(globalIdentityId, generations, tenantId);
+
+    reply.send({ pedigree });
+  });
 };
+
+/**
+ * Helper to mask sensitive identifiers for non-owners
+ */
+function maskIdentifier(type: IdentifierType, value: string): string {
+  if (value.length <= 4) return "****";
+  return "****" + value.slice(-4);
+}
+
+/**
+ * Build global pedigree tree for API response
+ */
+async function buildGlobalPedigreeForApi(
+  identityId: number,
+  depth: number,
+  viewingTenantId: number
+): Promise<any> {
+  if (depth <= 0) return null;
+
+  const identity = await prisma.globalAnimalIdentity.findUnique({
+    where: { id: identityId },
+    include: {
+      linkedAnimals: {
+        include: {
+          animal: {
+            select: {
+              id: true,
+              tenantId: true,
+              name: true,
+              photoUrl: true,
+              breed: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!identity) return null;
+
+  // Find if viewer has a local animal linked to this identity
+  const ownAnimal = identity.linkedAnimals.find(
+    (l) => l.animal.tenantId === viewingTenantId
+  )?.animal;
+
+  // Check privacy settings for the primary owner's animal
+  const primaryAnimal = identity.linkedAnimals[0]?.animal;
+  let privacySettings = null;
+  if (primaryAnimal) {
+    privacySettings = await prisma.animalPrivacySettings.findUnique({
+      where: { animalId: primaryAnimal.id },
+    });
+  }
+
+  const isOwn = !!ownAnimal;
+  const showName = isOwn || privacySettings?.showName !== false;
+  const showPhoto = isOwn || privacySettings?.showPhoto !== false;
+
+  const node: any = {
+    globalIdentityId: identity.id,
+    species: identity.species,
+    sex: identity.sex,
+    name: showName ? (ownAnimal?.name || identity.name) : null,
+    photoUrl: showPhoto ? ownAnimal?.photoUrl : null,
+    breed: ownAnimal?.breed || null,
+    birthDate: identity.birthDate,
+    isOwn,
+    isHidden: !showName,
+    localAnimalId: ownAnimal?.id || null,
+  };
+
+  // Recursively get parents
+  if (identity.damId) {
+    node.dam = await buildGlobalPedigreeForApi(identity.damId, depth - 1, viewingTenantId);
+  }
+  if (identity.sireId) {
+    node.sire = await buildGlobalPedigreeForApi(identity.sireId, depth - 1, viewingTenantId);
+  }
+
+  return node;
+}
 
 export default animalsRoutes;
