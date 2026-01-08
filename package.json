@@ -10,6 +10,7 @@
   "scripts": {
     "preflight": "node scripts/preflight-env.js",
     "dev": "npx dotenv -e .env.dev -- node scripts/preflight-env.js && npx dotenv -e .env.dev -- tsx watch src/server.ts",
+    "dev:stripe": "echo \"ℹ️  Starting with Stripe billing enabled (requires STRIPE_SECRET_KEY in .env.dev)\" && npm run dev",
     "build": "tsc -p .",
     "start": "node scripts/preflight-env.js && node dist/server.js",
     "start:render": "node scripts/preflight-env.js && node dist/server.js",
@@ -77,6 +78,7 @@
     "resend": "^6.6.0",
     "sharp": "^0.34.5",
     "slugify": "^1.6.6",
+    "stripe": "^20.1.2",
     "zod": "^4.1.8"
   },
   "devDependencies": {

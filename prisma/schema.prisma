@@ -537,6 +537,9 @@ model User {
   // Legal - Terms of Service acceptances
   tosAcceptances TosAcceptance[]
 
+  // Legal - Genetics Lab disclaimer acceptances
+  geneticsDisclaimerAcceptances GeneticsDisclaimerAcceptance[]
+
   // Marketplace blocklist
   marketplaceBlocks MarketplaceUserBlock[] @relation("BlockedMarketplaceUser")
   marketplaceFlag   MarketplaceUserFlag?   @relation("MarketplaceUserFlagUser")
@@ -1477,6 +1480,24 @@ model Animal {
   offspringAsDam  Offspring[] @relation("OffspringIndividualDam")
   offspringAsSire Offspring[] @relation("OffspringIndividualSire")
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Lineage: Direct parent references for pedigree tracking
+  // These allow setting parents for animals not born in-system (imports, purchases)
+  // ─────────────────────────────────────────────────────────────────────────────
+  damId  Int?
+  dam    Animal? @relation("AnimalDam", fields: [damId], references: [id], onDelete: SetNull)
+  sireId Int?
+  sire   Animal? @relation("AnimalSire", fields: [sireId], references: [id], onDelete: SetNull)
+
+  // Reverse relations: offspring where this animal is a parent
+  childrenAsDam  Animal[] @relation("AnimalDam")
+  childrenAsSire Animal[] @relation("AnimalSire")
+
+  // Cached COI (coefficient of inbreeding) - recalculated when pedigree changes
+  coiPercent      Float?    // 0.0 to 1.0 (display as percentage)
+  coiGenerations  Int?      // number of generations used in calculation
+  coiCalculatedAt DateTime? // when COI was last computed
+
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
   waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
   waitlistDamPrefs    WaitlistEntry[] @relation("WaitlistDamPref")
@@ -1532,6 +1553,8 @@ model Animal {
   @@index([tenantId, placedAt])
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
+  @@index([damId])
+  @@index([sireId])
 }
 
 model AnimalGenetics {
@@ -4383,4 +4406,19 @@ model BreederReportFlag {
   @@index([flaggedAt])
   @@index([marketplaceSuspendedAt])
   @@index([pendingReports])
+}
+
+/**
+ * GeneticsDisclaimerAcceptance - Genetics Lab disclaimer acceptance records
+ * Stores acceptance of genetics calculator disclaimers for legal protection.
+ */
+model GeneticsDisclaimerAcceptance {
+  id         Int      @id @default(autoincrement())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  acceptedAt DateTime @default(now())
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.Text
+
+  @@index([userId])
 }
