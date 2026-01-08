@@ -17,10 +17,13 @@
 // POST   /api/v1/admin/products/:id/entitlements    - Add entitlement to product
 // PATCH  /api/v1/admin/products/:id/entitlements/:key - Update entitlement
 // DELETE /api/v1/admin/products/:id/entitlements/:key - Remove entitlement
+//
+// POST   /api/v1/admin/test-email              - Send a test email (dev/testing)
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { auditSuccess } from "../services/audit.js";
+import { sendEmail } from "../services/email-service.js";
 
 const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ─────────────────── SUBSCRIPTIONS ───────────────────
@@ -575,6 +578,85 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to delete entitlement");
       return reply.code(500).send({ error: "delete_entitlement_failed" });
+    }
+  });
+
+  // ─────────────────── TEST EMAIL ───────────────────
+
+  /**
+   * POST /api/v1/admin/test-email
+   *
+   * Send a test email to verify email configuration.
+   * In dev mode, this will respect EMAIL_DEV_REDIRECT/EMAIL_DEV_LOG_ONLY settings.
+   *
+   * Body:
+   * {
+   *   to?: string (defaults to current user's email)
+   * }
+   */
+  app.post<{
+    Body: {
+      to?: string;
+    };
+  }>("/admin/test-email", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const userId = (req as any).userId;
+
+      // Get recipient - use provided email or fall back to current user's email
+      let recipientEmail = req.body?.to;
+
+      if (!recipientEmail && userId) {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
+        recipientEmail = user?.email;
+      }
+
+      if (!recipientEmail) {
+        return reply.code(400).send({ error: "missing_recipient", message: "Provide 'to' in body or ensure you're logged in" });
+      }
+
+      const result = await sendEmail({
+        tenantId: tenantId || 1,
+        to: recipientEmail,
+        subject: "BreederHQ Test Email",
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #2563eb;">Test Email from BreederHQ</h1>
+            <p>This is a test email to verify your email configuration is working correctly.</p>
+            <p style="background: #f3f4f6; padding: 12px; border-radius: 6px;">
+              <strong>Timestamp:</strong> ${new Date().toISOString()}<br>
+              <strong>Environment:</strong> ${process.env.NODE_ENV || "development"}<br>
+              <strong>From:</strong> ${process.env.RESEND_FROM_EMAIL || "not configured"}
+            </p>
+            <p style="color: #6b7280; font-size: 14px;">If you received this email, your email setup is working!</p>
+          </div>
+        `,
+        category: "transactional",
+        metadata: { test: true, initiatedBy: userId },
+      });
+
+      if (result.ok) {
+        return reply.send({
+          success: true,
+          message: result.skipped
+            ? "Email logged (dev mode - not actually sent)"
+            : "Test email sent successfully",
+          providerMessageId: result.providerMessageId,
+          skipped: result.skipped,
+        });
+      } else {
+        return reply.code(500).send({
+          success: false,
+          error: result.error,
+          message: "Failed to send test email",
+        });
+      }
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to send test email");
+      return reply.code(500).send({ error: "test_email_failed", message: err.message });
     }
   });
 };

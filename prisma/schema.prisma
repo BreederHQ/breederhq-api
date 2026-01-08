@@ -551,6 +551,9 @@ model User {
   // Service provider profile (for non-breeders listing services)
   serviceProviderProfile ServiceProviderProfile?
 
+  // Cross-tenant lineage
+  lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -800,6 +803,16 @@ model Tenant {
   referralsMade       Referral[]           @relation("ReferralsMade")
   referralsReceived   Referral[]           @relation("ReferralsReceived")
   marketplaceListings MarketplaceListing[]
+
+  // Cross-tenant lineage
+  contributedIdentifiers  GlobalAnimalIdentifier[]
+  lineageRequestsSent     LineageInfoRequest[]     @relation("LineageRequestFrom")
+  lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
+
+  // Title & Competition tracking
+  titleDefinitions   TitleDefinition[]
+  animalTitles       AnimalTitle[]
+  competitionEntries CompetitionEntry[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1498,6 +1511,10 @@ model Animal {
   coiGenerations  Int? // number of generations used in calculation
   coiCalculatedAt DateTime? // when COI was last computed
 
+  // Cross-tenant lineage identity link
+  identityLink    AnimalIdentityLink?
+  privacySettings AnimalPrivacySettings?
+
   waitlistAllocations WaitlistEntry[] @relation("WaitlistAllocation")
   waitlistSirePrefs   WaitlistEntry[] @relation("WaitlistSirePref")
   waitlistDamPrefs    WaitlistEntry[] @relation("WaitlistDamPref")
@@ -1539,6 +1556,14 @@ model Animal {
   Invoice          Invoice[]
   Expense          Expense[]
   genetics         AnimalGenetics?
+
+  // Title & Competition tracking
+  titles             AnimalTitle[]
+  competitionEntries CompetitionEntry[]
+
+  // Cached title strings for display (computed and stored on title changes)
+  titlePrefix String? // "GCH CH" - prefix titles in display order
+  titleSuffix String? // "CD CGC" - suffix titles in display order
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -3585,6 +3610,10 @@ model Document {
   // Relation to trait values
   traitValueLinks AnimalTraitValueDocument[]
 
+  // Title & Competition document links
+  titleLinks       AnimalTitleDocument[]
+  competitionLinks CompetitionEntryDocument[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -4425,4 +4454,431 @@ model GeneticsDisclaimerAcceptance {
   userAgent  String?  @db.Text
 
   @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CROSS-TENANT LINEAGE TRACKING
+// Global animal identity matching and pedigree sharing across tenants
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * IdentifierType - Types of unique identifiers that can be used to match animals
+ */
+enum IdentifierType {
+  MICROCHIP // ISO 15-digit microchip number
+  AKC // American Kennel Club registration
+  UKC // United Kennel Club registration
+  CKC // Canadian Kennel Club registration
+  KC // The Kennel Club (UK)
+  FCI // Fédération Cynologique Internationale
+  AQHA // American Quarter Horse Association
+  JOCKEY_CLUB // The Jockey Club (thoroughbreds)
+  USEF // US Equestrian Federation
+  ADGA // American Dairy Goat Association
+  AGS // American Goat Society
+  ARBA // American Rabbit Breeders Association
+  TICA // The International Cat Association
+  CFA // Cat Fanciers Association
+  EMBARK // Embark DNA test ID
+  WISDOM_PANEL // Wisdom Panel DNA test ID
+  DNA_PROFILE // Generic DNA profile identifier
+  TATTOO // Tattoo ID (common in livestock/horses)
+  EAR_TAG // Ear tag number (livestock)
+  USDA_SCRAPIE // USDA Scrapie ID (sheep/goats)
+  OTHER // Other registry or identifier
+}
+
+/**
+ * GlobalAnimalIdentity - A canonical identity cluster for an animal across all tenants
+ * When we're confident animals across tenants are the same individual, they share one of these.
+ */
+model GlobalAnimalIdentity {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Denormalized core identity (from highest-confidence source)
+  species   Species
+  sex       Sex?
+  birthDate DateTime?
+  name      String? // "Call name" - most commonly used name
+
+  // All identifiers associated with this identity
+  identifiers GlobalAnimalIdentifier[]
+
+  // All tenant-local animals linked to this identity
+  linkedAnimals AnimalIdentityLink[]
+
+  // Cross-tenant parent relationships (the global pedigree)
+  damId  Int?
+  dam    GlobalAnimalIdentity? @relation("GlobalDam", fields: [damId], references: [id], onDelete: SetNull)
+  sireId Int?
+  sire   GlobalAnimalIdentity? @relation("GlobalSire", fields: [sireId], references: [id], onDelete: SetNull)
+
+  // Reverse: offspring in the global graph
+  childrenAsDam  GlobalAnimalIdentity[] @relation("GlobalDam")
+  childrenAsSire GlobalAnimalIdentity[] @relation("GlobalSire")
+
+  // Lineage info requests targeting this identity
+  infoRequests LineageInfoRequest[]
+
+  @@index([species])
+  @@index([damId])
+  @@index([sireId])
+}
+
+/**
+ * GlobalAnimalIdentifier - A unique identifier attached to a global identity
+ * Multiple identifiers can point to the same GlobalAnimalIdentity
+ */
+model GlobalAnimalIdentifier {
+  id         Int                  @id @default(autoincrement())
+  identityId Int
+  identity   GlobalAnimalIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  type     IdentifierType
+  value    String // The actual identifier value (normalized/uppercased)
+  rawValue String? // Original value as entered (for display)
+
+  // Confidence and provenance
+  confidence Float     @default(1.0) // 0.0-1.0, how confident we are this is correct
+  verifiedAt DateTime? // If manually verified
+  verifiedBy String? // User ID who verified
+
+  // Which tenant contributed this identifier
+  sourceTenantId Int?
+  sourceTenant   Tenant? @relation(fields: [sourceTenantId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([type, value]) // Each identifier value is globally unique per type
+  @@index([identityId])
+  @@index([type, value])
+}
+
+/**
+ * AnimalIdentityLink - Links a tenant's local Animal record to a GlobalAnimalIdentity
+ * This is how we know "Animal #123 in Tenant A" is the same as "Animal #456 in Tenant B"
+ */
+model AnimalIdentityLink {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // The tenant-local animal
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // The global identity
+  identityId Int
+  identity   GlobalAnimalIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  // How confident are we in this link?
+  confidence      Float     @default(1.0) // 0.0-1.0
+  matchedOn       String[] // Which identifiers matched: ["MICROCHIP", "AKC", "NAME_DOB"]
+  autoMatched     Boolean   @default(false) // Was this auto-matched or manually confirmed?
+  confirmedAt     DateTime?
+  confirmedByUser String? // User ID who confirmed
+
+  @@unique([animalId]) // Each local animal links to at most one global identity
+  @@index([identityId])
+}
+
+/**
+ * AnimalPrivacySettings - Per-animal controls over what's shared cross-tenant
+ * Owner of the animal (tenant) controls visibility of their animal's data
+ */
+model AnimalPrivacySettings {
+  id        Int      @id @default(autoincrement())
+  animalId  Int      @unique
+  animal    Animal   @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  updatedAt DateTime @updatedAt
+
+  // Opt-in to cross-tenant matching at all
+  allowCrossTenantMatching Boolean @default(true)
+
+  // Field-level visibility controls
+  showName          Boolean @default(true)
+  showPhoto         Boolean @default(true)
+  showFullDob       Boolean @default(true) // false = year only
+  showRegistryFull  Boolean @default(false) // false = last 4 digits only
+  showHealthResults Boolean @default(false) // false = summary only (clear/carrier/affected)
+  showGeneticData   Boolean @default(false)
+  showBreeder       Boolean @default(true) // Show tenant/breeder name
+
+  // Contact preferences
+  allowInfoRequests  Boolean @default(true) // Can others request more info?
+  allowDirectContact Boolean @default(false) // Show contact info directly?
+}
+
+/**
+ * LineageInfoRequest - Request from one breeder to another for animal information
+ * When you see a silhouette in your pedigree, you can request details from the owner
+ */
+model LineageInfoRequest {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Who is requesting
+  requestingTenantId Int
+  requestingTenant   Tenant @relation("LineageRequestFrom", fields: [requestingTenantId], references: [id], onDelete: Cascade)
+  requestingUserId   String
+  requestingUser     User   @relation("LineageRequestFromUser", fields: [requestingUserId], references: [id], onDelete: Cascade)
+
+  // What animal they want info about
+  targetIdentityId Int
+  targetIdentity   GlobalAnimalIdentity @relation(fields: [targetIdentityId], references: [id], onDelete: Cascade)
+
+  // Who owns that animal (resolved at request time)
+  targetTenantId Int
+  targetTenant   Tenant @relation("LineageRequestTo", fields: [targetTenantId], references: [id], onDelete: Cascade)
+
+  // Request details
+  message String? @db.Text // Optional message from requester
+  purpose String? // "pedigree_research", "coi_calculation", "breeding_decision", etc.
+
+  // Response
+  status          LineageRequestStatus @default(PENDING)
+  respondedAt     DateTime?
+  responseMessage String?              @db.Text
+  grantedAccess   LineageAccessLevel? // What level of access was granted
+
+  // If granted, when does access expire?
+  accessExpiresAt DateTime?
+
+  @@index([requestingTenantId])
+  @@index([targetTenantId])
+  @@index([targetIdentityId])
+  @@index([status])
+}
+
+enum LineageRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+}
+
+enum LineageAccessLevel {
+  LINEAGE_ONLY // Just position in pedigree, no details
+  BASIC // Name, breed, DOB year
+  STANDARD // Name, breed, full DOB, registry (partial)
+  FULL // Everything the owner has made shareable
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Title & Competition Tracking
+ * For show/performance breeders to track achievements and competition records
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum TitleCategory {
+  CONFORMATION // CH, GCH, GCHB, etc.
+  OBEDIENCE // CD, CDX, UD, OTCH
+  AGILITY // MACH, PACH, etc.
+  FIELD // FC, AFC, MH, etc.
+  HERDING // HT, PT, HC, etc.
+  TRACKING // TD, TDX, VST
+  RALLY // RN, RA, RE, etc.
+  PRODUCING // ROM, ROMX (breed club)
+  BREED_SPECIFIC // Breed club awards
+  PERFORMANCE // Racing, working, etc.
+  OTHER
+}
+
+enum TitleStatus {
+  IN_PROGRESS // Working toward (optional tracking)
+  EARNED // Title completed
+  VERIFIED // Confirmed by registry/org
+}
+
+enum CompetitionType {
+  CONFORMATION_SHOW
+  OBEDIENCE_TRIAL
+  AGILITY_TRIAL
+  FIELD_TRIAL
+  HERDING_TRIAL
+  TRACKING_TEST
+  RALLY_TRIAL
+  RACE
+  PERFORMANCE_TEST
+  BREED_SPECIALTY
+  OTHER
+}
+
+/**
+ * TitleDefinition - Defines available titles (global or tenant-specific)
+ * Global titles (tenantId=null) are seeded for common registries (AKC, UKC, etc.)
+ * Tenants can create custom titles for breed clubs or internal awards
+ */
+model TitleDefinition {
+  id       Int     @id @default(autoincrement())
+  tenantId Int? // null = global, set = tenant-specific custom title
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  species  Species
+
+  abbreviation String // "CH", "GCH", "MACH"
+  fullName     String // "Champion", "Grand Champion"
+  category     TitleCategory
+  organization String? // "AKC", "UKC", "AQHA", breed club name
+
+  // Title hierarchy (e.g., CH required before GCH)
+  parentTitleId Int?
+  parentTitle   TitleDefinition?  @relation("TitleHierarchy", fields: [parentTitleId], references: [id], onDelete: SetNull)
+  childTitles   TitleDefinition[] @relation("TitleHierarchy")
+
+  // Requirements (informational display)
+  pointsRequired Int?
+  description    String? @db.Text // "15 points + 2 majors under different judges"
+
+  // Producing title flag (ROM, ROMX - based on offspring achievements)
+  isProducingTitle Boolean @default(false)
+
+  // Display position in title string
+  prefixTitle  Boolean @default(true) // CH goes before name
+  suffixTitle  Boolean @default(false) // CGC goes after name
+  displayOrder Int     @default(0) // Sort order within prefix/suffix group
+
+  createdAt DateTime @default(now())
+
+  // Relation to earned titles
+  animalTitles AnimalTitle[]
+
+  @@unique([species, abbreviation, organization, tenantId])
+  @@index([species])
+  @@index([category])
+  @@index([tenantId])
+}
+
+/**
+ * AnimalTitle - A title earned by a specific animal
+ */
+model AnimalTitle {
+  id                Int             @id @default(autoincrement())
+  tenantId          Int
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId          Int
+  animal            Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  titleDefinitionId Int
+  titleDefinition   TitleDefinition @relation(fields: [titleDefinitionId], references: [id], onDelete: Restrict)
+
+  // When earned
+  dateEarned DateTime?
+  status     TitleStatus @default(EARNED)
+
+  // Points/progress tracking
+  pointsEarned Float? // Total points at time of earning
+  majorWins    Int? // For conformation titles
+
+  // Where the title was earned (event info)
+  eventName    String? // "Westminster Kennel Club 2024"
+  eventLocation String? // "New York, NY"
+  handlerName  String? // Person who handled/showed the animal
+
+  // Verification
+  verified    Boolean   @default(false)
+  verifiedAt  DateTime?
+  verifiedBy  String? // User ID or "AKC Registry"
+  registryRef String? // External reference number
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Supporting documents
+  documents AnimalTitleDocument[]
+
+  @@unique([animalId, titleDefinitionId])
+  @@index([tenantId])
+  @@index([animalId])
+  @@index([status])
+}
+
+/**
+ * AnimalTitleDocument - Links documents to animal titles
+ */
+model AnimalTitleDocument {
+  id            Int         @id @default(autoincrement())
+  animalTitleId Int
+  animalTitle   AnimalTitle @relation(fields: [animalTitleId], references: [id], onDelete: Cascade)
+  documentId    Int
+  document      Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([animalTitleId, documentId])
+}
+
+/**
+ * CompetitionEntry - Individual competition/show entries
+ * Tracks placements, points, and results for performance analysis
+ */
+model CompetitionEntry {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Event info
+  eventName       String // "Westminster Kennel Club", "Kentucky Derby"
+  eventDate       DateTime
+  location        String? // "New York, NY", "Churchill Downs"
+  organization    String? // "AKC", "Jockey Club"
+  competitionType CompetitionType
+
+  // Class/division
+  className String? // "Open Dogs", "Excellent B Standard", "G1 Stakes"
+
+  // Results
+  placement       Int? // 1, 2, 3, 4 or null if no placement
+  placementLabel  String? // "Best of Breed", "Winners Dog", "High in Trial"
+  pointsEarned    Float?
+  isMajorWin      Boolean @default(false)
+  qualifyingScore Boolean @default(false) // Q for agility, pass for tracking
+
+  // Scores (for performance events)
+  score    Float? // Agility time, obedience score, race time
+  scoreMax Float? // Max possible score
+
+  // Racing-specific fields
+  prizeMoneyCents  Int?     // Prize/purse won in cents (e.g., 100000 = $1,000.00)
+  trackName        String?  // "Churchill Downs", "Santa Anita", "Shelbourne Park"
+  trackSurface     String?  // "dirt", "turf", "synthetic", "sand"
+  distanceFurlongs Float?   // Race distance in furlongs (1 furlong = 1/8 mile)
+  distanceMeters   Int?     // Race distance in meters (for greyhounds/international)
+  raceGrade        String?  // "G1", "G2", "G3", "Listed", "A", "B", "Open"
+  finishTime       String?  // "1:59.40" or "29.45" - stored as string for display
+  speedFigure      Int?     // Beyer speed figure, Timeform, etc.
+
+  // Handler/rider info
+  handlerName String? // Jockey, driver, handler (person who competed with animal)
+  trainerName String? // Trainer at time of event (if different from current)
+
+  // Judge
+  judgeName String?
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Supporting documents (ribbons, photos, scoresheets)
+  documents CompetitionEntryDocument[]
+
+  @@index([tenantId])
+  @@index([animalId])
+  @@index([eventDate])
+  @@index([competitionType])
+}
+
+/**
+ * CompetitionEntryDocument - Links documents to competition entries
+ */
+model CompetitionEntryDocument {
+  id                 Int              @id @default(autoincrement())
+  competitionEntryId Int
+  competitionEntry   CompetitionEntry @relation(fields: [competitionEntryId], references: [id], onDelete: Cascade)
+  documentId         Int
+  document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([competitionEntryId, documentId])
 }

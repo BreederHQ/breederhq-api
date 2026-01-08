@@ -11,8 +11,8 @@
  */
 
 import { spawn } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { resolve, basename } from 'path';
 
 const args = process.argv.slice(2);
 
@@ -142,9 +142,73 @@ DOCUMENTATION:
 }
 
 // Check for pooler URL in DATABASE_URL when running migrations
-const isMigrateCommand = commandArgs.some(arg =>
+const isMigrateCommand = command.includes('migrate') || commandArgs.some(arg =>
   arg === 'migrate' || arg.includes('migrate')
 );
+
+// ═══════════════════════════════════════════════════════════════════════
+// GUARDRAIL: Check for duplicate migration names before running migrations
+// ═══════════════════════════════════════════════════════════════════════
+if (isMigrateCommand) {
+  const migrationsDir = resolve(process.cwd(), 'prisma/migrations');
+  if (existsSync(migrationsDir)) {
+    const migrationFolders = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+
+    // Extract migration names (everything after the timestamp_)
+    const migrationNames = migrationFolders
+      .filter(f => /^\d{14}_/.test(f)) // Only folders matching YYYYMMDDHHMMSS_name
+      .map(f => {
+        const match = f.match(/^\d{14}_(.+)$/);
+        return match ? { folder: f, name: match[1] } : null;
+      })
+      .filter(Boolean);
+
+    // Find duplicates by name
+    const nameCount = {};
+    for (const m of migrationNames) {
+      nameCount[m.name] = (nameCount[m.name] || []);
+      nameCount[m.name].push(m.folder);
+    }
+
+    const duplicates = Object.entries(nameCount).filter(([_, folders]) => folders.length > 1);
+
+    if (duplicates.length > 0) {
+      console.error(`
+═══════════════════════════════════════════════════════════════════════
+🚫 BLOCKED: Duplicate Migration Names Detected
+═══════════════════════════════════════════════════════════════════════
+
+Multiple migration folders have the same name (different timestamps):
+`);
+      for (const [name, folders] of duplicates) {
+        console.error(`  "${name}":`);
+        for (const folder of folders) {
+          console.error(`    - ${folder}`);
+        }
+      }
+      console.error(`
+This causes shadow database failures because the same types/tables
+are created multiple times.
+
+TO FIX:
+  1. Determine which migration should be kept (usually the first one)
+  2. Delete the duplicate migration folder(s)
+  3. If migrations were already applied to a database, you may need to
+     clean up the _prisma_migrations table
+
+PREVENTION:
+  - Always use 'npm run db:dev:migrate' to create migrations
+  - NEVER manually create migration folders with backdated timestamps
+  - NEVER copy/rename existing migration folders
+
+═══════════════════════════════════════════════════════════════════════
+`);
+      process.exit(1);
+    }
+  }
+}
 
 if (isMigrateCommand) {
   const dbUrl = mergedEnv.DATABASE_URL || '';

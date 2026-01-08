@@ -1899,6 +1899,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         breed: derivedBreed,
         bornAt,
 
+        // Auto-link parents from the offspring group (lineage tracking)
+        damId: group.damId ?? null,
+        sireId: group.sireId ?? null,
+
         // new: core identity fields
         notes: body.notes ?? null,
 
