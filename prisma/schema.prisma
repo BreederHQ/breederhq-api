@@ -171,6 +171,7 @@ enum EntitlementKey {
   API_ACCESS
   MULTI_LOCATION
   E_SIGNATURES
+  DATA_EXPORT // Blocked during free trial to prevent data cleaning abuse
 
   // Quotas (use ProductEntitlement.limitValue for the actual number)
   ANIMAL_QUOTA
