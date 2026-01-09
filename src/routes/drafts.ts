@@ -355,7 +355,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           partyId: draft.partyId,
           status: "queued",
           templateId: draft.templateId,
-          metadata: draft.metadata,
+          metadata: draft.metadata ?? undefined,
         },
       });
 
