@@ -1330,6 +1330,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           id: true,
           tenantId: true,
           status: true,
+          damId: true,
+          sireId: true,
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
