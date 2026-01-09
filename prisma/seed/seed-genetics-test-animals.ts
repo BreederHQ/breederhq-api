@@ -745,6 +745,496 @@ const GOAT_TEST_ANIMALS: TestAnimal[] = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TEST ANIMALS - COI Testing (with Lineage)
+// These animals form a family tree to test Coefficient of Inbreeding calculations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// We'll create these programmatically with relationships in the main function
+// Family tree structure:
+//
+// Generation 0 (Great-grandparents):
+//   Anakin Skybarker (M) ─┬─ Shmi Skybarker (F)
+//                         │
+// Generation 1 (Grandparents):
+//   King Veruna Naberrie (M) ─┬─ Queen Amidala Pawdmé (F)     Jaina Solo Dam (F) ─┬─ Corell Solo (M)
+//                              │                                                    │
+// Generation 2 (Parents):      │                                                    │
+//   Elder Skybarker Sire (M) ──┼── Elder Skybarker Dam (F)   Royal Naberrie Sire ──┼── Royal Naberrie Dam (F)
+//          │                   │         │                           │              │
+// Gen 3:   └───────────────────┴─────────┴───────────────────────────┴──────────────┘
+//                              │                                     │
+//              Omega (F) ──────┴───── Echo (M) ─────────────┬────────┘
+//                                                           │
+// Generation 4:                                     Fives (M), Captain Rex (M), Commander Cody (M)
+//
+// COI Test Cases:
+// - Omega × Echo = Moderate COI (half-siblings share grandparents)
+// - Omega × Fives = High COI (aunt-nephew)
+// - Captain Rex × Commander Cody = Same generation, high COI
+
+const COI_FAMILY_TREE_DOGS: Array<{
+  name: string;
+  sex: Sex;
+  breed: string;
+  generation: number;
+  sireRef?: string;  // Reference by name
+  damRef?: string;   // Reference by name
+  notes: string;
+  genetics: GeneticsData;
+}> = [
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GENERATION 0 - Great-grandparents (founders, no inbreeding)
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Anakin Skybarker",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder sire. No known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Shmi Skybarker",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder dam. No known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "King Veruna Naberrie",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder sire (Naberrie line). No known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "b"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Queen Amidala Pawdmé",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder dam (Naberrie line). No known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "Ay"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "d"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Corell Solo",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder sire (Solo line). Unrelated to Skybarker/Naberrie lines.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "a"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Mallatobuck",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder dam (Solo line). Unrelated to Skybarker/Naberrie lines.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Attichitcuk",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Founder sire (Wookie line). Completely unrelated.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "Ay"),
+        locus("B", "Brown", "b", "b"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GENERATION 1 - Grandparents
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Elder Skybarker Sire",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Anakin Skybarker",
+    damRef: "Shmi Skybarker",
+    notes: "Son of Anakin and Shmi. Grandfather in linebreeding.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Elder Skybarker Dam",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Anakin Skybarker",
+    damRef: "Shmi Skybarker",
+    notes: "Daughter of Anakin and Shmi. Full sibling to Elder Skybarker Sire.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Royal Naberrie Sire",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "King Veruna Naberrie",
+    damRef: "Queen Amidala Pawdmé",
+    notes: "Son of King Veruna and Queen Amidala.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "d"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Royal Naberrie Dam",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "King Veruna Naberrie",
+    damRef: "Queen Amidala Pawdmé",
+    notes: "Daughter of King Veruna and Queen Amidala. Full sibling to Royal Naberrie Sire.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "b"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Jaina Solo Dam",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Corell Solo",
+    damRef: "Mallatobuck",
+    notes: "Daughter of Corell and Mallatobuck. Solo line.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GENERATION 2 - Parents (some inbreeding starts here)
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Omega",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 2,
+    sireRef: "Elder Skybarker Sire",
+    damRef: "Elder Skybarker Dam",
+    notes: "Daughter of FULL SIBLINGS. High COI from sibling mating. Use for COI testing.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "Clear"),
+      ],
+    },
+  },
+  {
+    name: "Echo",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 2,
+    sireRef: "Royal Naberrie Sire",
+    damRef: "Royal Naberrie Dam",
+    notes: "Son of FULL SIBLINGS (Naberrie line). High COI. Pair with Omega for moderate COI offspring.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "d"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "N/m"),
+      ],
+    },
+  },
+  {
+    name: "Concord Dawn Dam",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 2,
+    sireRef: "Royal Naberrie Sire",
+    damRef: "Jaina Solo Dam",
+    notes: "Daughter of Royal Naberrie Sire and Jaina Solo. Mixed lines.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GENERATION 3 - Current breeding stock
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Fives",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 3,
+    sireRef: "Echo",
+    damRef: "Omega",
+    notes: "Son of Omega and Echo. VERY HIGH COI (both parents from sibling matings). Testing extreme inbreeding.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "N/m"),
+      ],
+    },
+  },
+  {
+    name: "Captain Rex",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 3,
+    sireRef: "Echo",
+    damRef: "Omega",
+    notes: "Full brother to Fives. Use to test sibling pairing warnings.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "d"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "Clear"),
+      ],
+    },
+  },
+  {
+    name: "Commander Cody",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 3,
+    sireRef: "Echo",
+    damRef: "Concord Dawn Dam",
+    notes: "Half-brother to Fives and Rex (same sire, different dam). Lower COI.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "Ay", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "N/m"),
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ADDITIONAL - Clone program with known lineage for testing
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Jango Fett (Template)",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Clone template sire. Founder with no known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+        locus("M", "Merle", "m", "m"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "Clear"),
+        healthLocus("MDR1", "MDR1 Drug Sensitivity", "Clear"),
+      ],
+    },
+  },
+  {
+    name: "Nala Se's Project Dam",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 0,
+    notes: "Clone project dam. Founder with no known ancestry.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+        locus("M", "Merle", "m", "m"),
+      ],
+    },
+  },
+  {
+    name: "Kamino Clone Dam Alpha",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Jango Fett (Template)",
+    damRef: "Nala Se's Project Dam",
+    notes: "First generation clone dam.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Kamino Clone Dam Beta",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Jango Fett (Template)",
+    damRef: "Nala Se's Project Dam",
+    notes: "Full sister to Alpha. Second generation clone dam.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Kamino Clone Dam Gamma",
+    sex: "FEMALE",
+    breed: "German Shepherd",
+    generation: 1,
+    sireRef: "Jango Fett (Template)",
+    damRef: "Nala Se's Project Dam",
+    notes: "Full sister to Alpha and Beta. Third clone dam.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+  {
+    name: "Enhanced Clone Sire",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 2,
+    sireRef: "Jango Fett (Template)",
+    damRef: "Kamino Clone Dam Alpha",
+    notes: "Father-daughter breeding. VERY HIGH COI. Use for extreme COI testing.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+      health: [
+        healthLocus("DM", "Degenerative Myelopathy", "Clear"),
+      ],
+    },
+  },
+  {
+    name: "Mandalorian Bounty Sire",
+    sex: "MALE",
+    breed: "German Shepherd",
+    generation: 2,
+    sireRef: "Jango Fett (Template)",
+    damRef: "Kamino Clone Dam Beta",
+    notes: "Father-daughter from different dam. High COI but slightly different line.",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        locus("D", "Dilute", "D", "D"),
+        locus("K", "Black Extension", "ky", "ky"),
+      ],
+    },
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN SEED FUNCTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -784,7 +1274,7 @@ async function main() {
     ...GOAT_TEST_ANIMALS,
   ];
 
-  console.log(`📦 Creating ${allTestAnimals.length} test animals with genetics...\n`);
+  console.log(`📦 Creating ${allTestAnimals.length} basic test animals with genetics...\n`);
 
   let created = 0;
   let skipped = 0;
@@ -841,21 +1331,135 @@ async function main() {
     created++;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CREATE COI FAMILY TREE ANIMALS (with lineage relationships)
+  // ═══════════════════════════════════════════════════════════════════════════════
+  console.log('\n📦 Creating COI family tree animals with lineage...\n');
+
+  // Map to store created animal IDs by name for relationship linking
+  const animalIdMap = new Map<string, number>();
+
+  // Sort by generation to ensure parents exist before children
+  const sortedCoiAnimals = [...COI_FAMILY_TREE_DOGS].sort((a, b) => a.generation - b.generation);
+
+  let coiCreated = 0;
+  let coiSkipped = 0;
+
+  for (const animal of sortedCoiAnimals) {
+    // Check if animal already exists
+    const existing = await prisma.animal.findFirst({
+      where: {
+        tenantId,
+        name: animal.name,
+        species: 'DOG',
+      }
+    });
+
+    if (existing) {
+      console.log(`⏭️  Skipped (exists): ${animal.name}`);
+      animalIdMap.set(animal.name, existing.id);
+      coiSkipped++;
+      continue;
+    }
+
+    // Look up parent IDs if specified
+    let sireId: number | null = null;
+    let damId: number | null = null;
+
+    if (animal.sireRef) {
+      sireId = animalIdMap.get(animal.sireRef) || null;
+      if (!sireId) {
+        // Try to find existing animal
+        const sire = await prisma.animal.findFirst({
+          where: { tenantId, name: animal.sireRef, species: 'DOG' }
+        });
+        sireId = sire?.id || null;
+      }
+    }
+
+    if (animal.damRef) {
+      damId = animalIdMap.get(animal.damRef) || null;
+      if (!damId) {
+        // Try to find existing animal
+        const dam = await prisma.animal.findFirst({
+          where: { tenantId, name: animal.damRef, species: 'DOG' }
+        });
+        damId = dam?.id || null;
+      }
+    }
+
+    // Calculate birthDate based on generation (roughly 2 years per generation, starting from 2015)
+    const baseBirthYear = 2015;
+    const birthYear = baseBirthYear + (animal.generation * 2);
+    const birthDate = new Date(`${birthYear}-06-15`);
+
+    // Create the animal with lineage
+    const newAnimal = await prisma.animal.create({
+      data: {
+        tenantId,
+        name: animal.name,
+        species: 'DOG',
+        sex: animal.sex,
+        breed: animal.breed,
+        birthDate,
+        notes: animal.notes,
+        status: AnimalStatus.ACTIVE,
+        sireId,
+        damId,
+      }
+    });
+
+    // Create genetics record
+    await prisma.animalGenetics.create({
+      data: {
+        animalId: newAnimal.id,
+        testProvider: 'Embark',
+        testDate: new Date(birthDate.getTime() + 180 * 24 * 60 * 60 * 1000),
+        coatColorData: animal.genetics.coatColor || [],
+        coatTypeData: animal.genetics.coatType || [],
+        physicalTraitsData: animal.genetics.physicalTraits || [],
+        eyeColorData: animal.genetics.eyeColor || [],
+        healthGeneticsData: animal.genetics.health || [],
+      }
+    });
+
+    // Store in map for children
+    animalIdMap.set(animal.name, newAnimal.id);
+
+    const parentInfo = [];
+    if (animal.sireRef) parentInfo.push(`Sire: ${animal.sireRef}`);
+    if (animal.damRef) parentInfo.push(`Dam: ${animal.damRef}`);
+    const parentStr = parentInfo.length > 0 ? ` [${parentInfo.join(', ')}]` : ' [Founder]';
+
+    console.log(`✅ Created: ${animal.name} (Gen ${animal.generation})${parentStr}`);
+    coiCreated++;
+  }
+
   console.log('\n' + '═'.repeat(70));
   console.log('🎉 Genetics Test Animals seed completed!');
   console.log('═'.repeat(70));
-  console.log(`   Created: ${created} animals`);
-  console.log(`   Skipped: ${skipped} (already existed)`);
-  console.log(`   Total:   ${allTestAnimals.length} animals\n`);
+  console.log(`   Basic animals created: ${created}`);
+  console.log(`   Basic animals skipped: ${skipped} (already existed)`);
+  console.log(`   COI family created:    ${coiCreated}`);
+  console.log(`   COI family skipped:    ${coiSkipped} (already existed)`);
+  console.log(`   Total animals:         ${allTestAnimals.length + COI_FAMILY_TREE_DOGS.length}\n`);
 
   console.log('📋 TEST SCENARIOS:');
   console.log('─'.repeat(70));
-  console.log('🐕 DOGS:');
+  console.log('🐕 DOGS - Genetics:');
   console.log('   • Luna × Maverick = DOUBLE MERLE WARNING (M/m × M/m)');
   console.log('   • Luna × Shadow = Safe merle breeding');
   console.log('   • Bella × Cooper = Doodle furnishings test');
   console.log('   • Max × Sadie = EIC carrier × carrier (25% affected)');
   console.log('   • Pierre × Fifi = Fluffy French Bulldog test');
+  console.log('');
+  console.log('🧬 DOGS - COI Testing (with lineage):');
+  console.log('   • Omega × Echo = HIGH COI (both from sibling matings)');
+  console.log('   • Omega × Fives = CRITICAL COI (mother-son pairing!)');
+  console.log('   • Fives × Captain Rex = CRITICAL COI (full siblings)');
+  console.log('   • Commander Cody × Fives = HIGH COI (half-siblings)');
+  console.log('   • Enhanced Clone Sire × any = HIGH COI (father-daughter origin)');
+  console.log('   • Jango Fett × Kamino Clone Dam Alpha = CRITICAL (father-daughter)');
   console.log('');
   console.log('🐴 HORSES:');
   console.log('   • Painted Lady × Storm Chaser = LETHAL WHITE OVERO WARNING');
