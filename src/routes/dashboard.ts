@@ -762,6 +762,224 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "complete_failed" });
     }
   });
+
+  /**
+   * GET /api/v1/dashboard/contact-tasks
+   * Contact follow-up tasks for the dashboard widget
+   * Aggregates: overdue events, upcoming events, upcoming milestones, overdue invoices
+   */
+  app.get("/dashboard/contact-tasks", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const now = new Date();
+      const today = startOfDay(now);
+      const in7Days = addDays(today, 7);
+      const in30Days = addDays(today, 30);
+
+      type ContactTask = {
+        id: string;
+        kind: "follow_up" | "event" | "milestone" | "overdue_invoice";
+        title: string;
+        description?: string;
+        partyId: number;
+        partyName: string;
+        partyKind: "CONTACT" | "ORGANIZATION";
+        dueDate: string;
+        severity: "info" | "warning" | "overdue";
+        eventId?: number;
+        milestoneId?: number;
+        invoiceId?: number;
+      };
+
+      const tasks: ContactTask[] = [];
+
+      // 1. Get overdue and upcoming events (SCHEDULED status)
+      const events = await prisma.partyEvent.findMany({
+        where: {
+          tenantId,
+          status: "SCHEDULED",
+          scheduledAt: { lte: in7Days },
+        },
+        include: {
+          party: {
+            select: { id: true, name: true, type: true },
+          },
+        },
+        orderBy: { scheduledAt: "asc" },
+        take: 20,
+      });
+
+      for (const event of events) {
+        const isOverdue = event.scheduledAt < today;
+        const isWarning = !isOverdue && event.scheduledAt < addDays(today, 3);
+
+        tasks.push({
+          id: `event-${event.id}`,
+          kind: event.kind === "FOLLOW_UP" ? "follow_up" : "event",
+          title: event.title,
+          description: event.notes || undefined,
+          partyId: event.partyId,
+          partyName: event.party?.name || "Unknown",
+          partyKind: event.party?.type === "ORGANIZATION" ? "ORGANIZATION" : "CONTACT",
+          dueDate: event.scheduledAt.toISOString(),
+          severity: isOverdue ? "overdue" : isWarning ? "warning" : "info",
+          eventId: event.id,
+        });
+      }
+
+      // 2. Get upcoming annual milestones (within 30 days based on month/day)
+      // This is a bit tricky - we need to check if the milestone date's month/day is coming up
+      const allMilestones = await prisma.partyMilestone.findMany({
+        where: {
+          tenantId,
+          annual: true,
+        },
+        include: {
+          party: {
+            select: { id: true, name: true, type: true },
+          },
+        },
+      });
+
+      for (const milestone of allMilestones) {
+        const milestoneDate = new Date(milestone.date);
+        const thisYearDate = new Date(
+          now.getFullYear(),
+          milestoneDate.getMonth(),
+          milestoneDate.getDate()
+        );
+
+        // If this year's occurrence has passed, check next year
+        let nextOccurrence = thisYearDate;
+        if (thisYearDate < today) {
+          nextOccurrence = new Date(
+            now.getFullYear() + 1,
+            milestoneDate.getMonth(),
+            milestoneDate.getDate()
+          );
+        }
+
+        // Only include if within 30 days
+        if (nextOccurrence <= in30Days) {
+          const isToday = nextOccurrence.getTime() === today.getTime();
+          const isWarning = nextOccurrence < addDays(today, 7);
+
+          tasks.push({
+            id: `milestone-${milestone.id}`,
+            kind: "milestone",
+            title: milestone.label,
+            description: milestone.notes || undefined,
+            partyId: milestone.partyId,
+            partyName: milestone.party?.name || "Unknown",
+            partyKind: milestone.party?.type === "ORGANIZATION" ? "ORGANIZATION" : "CONTACT",
+            dueDate: nextOccurrence.toISOString(),
+            severity: isToday ? "warning" : isWarning ? "warning" : "info",
+            milestoneId: milestone.id,
+          });
+        }
+      }
+
+      // 3. Get overdue invoices linked to parties
+      const overdueInvoices = await prisma.invoice.findMany({
+        where: {
+          tenantId,
+          status: { in: ["issued", "partially_paid"] },
+          dueAt: { lt: now },
+          clientPartyId: { not: null },
+        },
+        include: {
+          clientParty: {
+            select: { id: true, name: true, type: true },
+          },
+        },
+        take: 10,
+      });
+
+      for (const inv of overdueInvoices) {
+        if (!inv.clientPartyId || !inv.clientParty) continue;
+
+        const daysPastDue = Math.floor(
+          (now.getTime() - (inv.dueAt?.getTime() || now.getTime())) / (1000 * 60 * 60 * 24)
+        );
+
+        tasks.push({
+          id: `invoice-${inv.id}`,
+          kind: "overdue_invoice",
+          title: `Invoice #${inv.invoiceNumber || inv.id} overdue`,
+          description: `$${((inv.balanceCents || 0) / 100).toFixed(2)} outstanding - ${daysPastDue} days past due`,
+          partyId: inv.clientPartyId,
+          partyName: inv.clientParty.name || "Unknown",
+          partyKind: inv.clientParty.type === "ORGANIZATION" ? "ORGANIZATION" : "CONTACT",
+          dueDate: inv.dueAt?.toISOString() || now.toISOString(),
+          severity: "overdue",
+          invoiceId: inv.id,
+        });
+      }
+
+      // Sort by severity (overdue first) then by date
+      const severityOrder = { overdue: 0, warning: 1, info: 2 };
+      tasks.sort((a, b) => {
+        const sevDiff = severityOrder[a.severity] - severityOrder[b.severity];
+        if (sevDiff !== 0) return sevDiff;
+        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+      });
+
+      return reply.send(tasks);
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get contact tasks");
+      return reply.code(500).send({ error: "get_contact_tasks_failed" });
+    }
+  });
+
+  /**
+   * POST /api/v1/dashboard/contact-tasks/:id/complete
+   * Mark a contact task as complete (completes the underlying event)
+   */
+  app.post("/dashboard/contact-tasks/:id/complete", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const taskId = (req.params as any).id;
+      if (!taskId) {
+        return reply.code(400).send({ error: "missing_id" });
+      }
+
+      // Parse the task ID to determine type and actual ID
+      const [type, idStr] = taskId.split("-");
+      const id = Number(idStr);
+
+      if (!id || isNaN(id)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      if (type === "event") {
+        await prisma.partyEvent.update({
+          where: { id, tenantId },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+          },
+        });
+      }
+      // Milestones and invoices can't be "completed" in the same way
+      // but we acknowledge the request
+
+      return reply.send({ ok: true });
+    } catch (err: any) {
+      if (err?.code === "P2025") {
+        return reply.code(404).send({ error: "task_not_found" });
+      }
+      req.log?.error?.({ err }, "Failed to complete contact task");
+      return reply.code(500).send({ error: "complete_task_failed" });
+    }
+  });
 };
 
 export default dashboardRoutes;

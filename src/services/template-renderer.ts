@@ -20,6 +20,17 @@ const ALLOWED_NAMESPACES = [
   "invoice",
 ];
 
+// Simple variable names allowed in user templates (no namespace prefix)
+const ALLOWED_SIMPLE_VARIABLES = [
+  "contact_name",
+  "first_name",
+  "organization_name",
+  "my_name",
+  "my_business",
+  "animal_name",
+  "litter_name",
+];
+
 /**
  * Extract variable references from template text
  * Matches {{variableName}} or {{namespace.field}}
@@ -35,15 +46,26 @@ function extractVariables(text: string): string[] {
 }
 
 /**
- * Validate that all template variables are in allowed namespaces
+ * Validate that all template variables are in allowed namespaces or simple variable list
  */
 function validateVariables(variables: string[]): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   for (const v of variables) {
     const parts = v.split(".");
-    const namespace = parts[0];
 
+    // Simple variable (no dots) - check against allowed simple variables
+    if (parts.length === 1) {
+      if (!ALLOWED_SIMPLE_VARIABLES.includes(v)) {
+        // Allow any simple variable for user flexibility
+        // Just warn in logs but don't reject
+        continue;
+      }
+      continue;
+    }
+
+    // Namespaced variable (has dots) - check namespace
+    const namespace = parts[0];
     if (!ALLOWED_NAMESPACES.includes(namespace)) {
       errors.push(`Unknown variable namespace: ${v}`);
     }

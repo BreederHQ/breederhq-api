@@ -474,6 +474,10 @@ import settingsRoutes from "./routes/settings.js"; // User settings (genetics di
 import titlesRoutes from "./routes/titles.js"; // Title definitions and animal titles
 import competitionsRoutes from "./routes/competitions.js"; // Competition entry tracking
 import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
+import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
+import templatesRoutes from "./routes/templates.js"; // Email/message templates
+import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
+import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -760,6 +764,8 @@ app.register(
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
     api.register(partiesRoutes);       // /api/v1/parties/*
+    api.register(partyCrmRoutes);      // /api/v1/parties/:partyId/notes|events|milestones|emails|activity
+    api.register(templatesRoutes);     // /api/v1/templates/* Email/message templates
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*
@@ -777,6 +783,8 @@ app.register(
     api.register(expensesRoutes);      // /api/v1/expenses/* Finance MVP
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
+    api.register(communicationsRoutes); // /api/v1/communications/* Communications Hub
+    api.register(draftsRoutes);         // /api/v1/drafts/* Draft messages/emails
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling

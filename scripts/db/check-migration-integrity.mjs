@@ -51,6 +51,8 @@ const prisma = new PrismaClient();
 const BASELINE_MIGRATIONS = [
   "20251230112400_init",
   "20251231162841_add_audit_event_log",
+  "20260102204500_add_offspringgroup_link_to_scheduling_block", // DDL existed in prod, baselined 2026-01-03
+  "20260108160000_add_titles_competitions", // DDL existed from prior db:push, baselined 2026-01-08
 ];
 
 async function main() {

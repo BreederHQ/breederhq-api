@@ -17,6 +17,7 @@ import {
   writeTosAcceptance,
   getTosStatus,
 } from "../services/tos-service.js";
+import { sendEmail } from "../services/email-service.js";
 
 /**
  * Mounted with: app.register(authRoutes, { prefix: "/api/v1/auth" })
@@ -40,9 +41,12 @@ import {
  */
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const DEV_LOGIN_ENABLED = String(process.env.DEV_LOGIN_ENABLED || "").trim() === "1";
-const ALLOW_CROSS_SITE = String(process.env.COOKIE_CROSS_SITE || "").trim() === "1";
 const IS_PROD = NODE_ENV === "production";
 const EXPOSE_DEV_TOKENS = !IS_PROD; // never expose raw tokens in prod
+
+// Email link URLs
+const APP_URL = process.env.APP_URL || "https://app.breederhq.com";
+const FROM_NAME = process.env.RESEND_FROM_NAME || "BreederHQ";
 
 /* ───────────────────────── schema guards ───────────────────────── */
 
@@ -355,6 +359,57 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       ttlMinutes: 60,
     });
 
+    // Send welcome/verification email
+    const verifyUrl = `${APP_URL}/verify-email?token=${raw}`;
+    const userName = fn || "there";
+
+    const welcomeHtml = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1f2937;">Welcome to ${FROM_NAME}!</h2>
+        <p>Hi ${userName},</p>
+        <p>Thanks for signing up! Please verify your email address to complete your registration.</p>
+        <p style="margin: 24px 0;">
+          <a href="${verifyUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
+            Verify Email Address
+          </a>
+        </p>
+        <p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>
+        <p style="color: #6b7280; font-size: 14px;">If you didn't create this account, you can safely ignore this email.</p>
+        <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+          — The ${FROM_NAME} Team
+        </p>
+      </div>
+    `;
+
+    const welcomeText = `
+Welcome to ${FROM_NAME}!
+
+Hi ${userName},
+
+Thanks for signing up! Please verify your email address to complete your registration.
+
+Click this link to verify: ${verifyUrl}
+
+This link will expire in 1 hour.
+
+If you didn't create this account, you can safely ignore this email.
+
+— The ${FROM_NAME} Team
+    `.trim();
+
+    // Fire and forget - don't block response on email delivery
+    sendEmail({
+      tenantId: 0, // System email, no tenant context
+      to: e,
+      subject: `Welcome to ${FROM_NAME} - Please verify your email`,
+      html: welcomeHtml,
+      text: welcomeText,
+      templateKey: "auth_welcome_verify",
+      category: "transactional",
+    }).catch((err) => {
+      req.log?.error?.({ err, email: e }, "Failed to send welcome verification email");
+    });
+
     // Record ToS acceptance (server-side timestamp)
     await writeTosAcceptance(userId, tosPayload, req);
 
@@ -479,7 +534,7 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
       return reply.send({ ok: true });
     }
 
-    const user = await prisma.user.findUnique({ where: { email: e }, select: { id: true } });
+    const user = await prisma.user.findUnique({ where: { email: e }, select: { id: true, name: true } as any }) as any;
     if (user) {
       const { raw } = await createVerificationToken({
         identifier: e,
@@ -487,7 +542,59 @@ export default async function authRoutes(app: FastifyInstance, _opts: FastifyPlu
         userId: user.id,
         ttlMinutes: 30,
       });
-      // TODO: send email link: https://yourapp.example/reset-password?token=${raw}
+
+      // Send password reset email
+      const resetUrl = `${APP_URL}/reset-password?token=${raw}`;
+      const userName = user.name || "there";
+
+      const html = `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1f2937;">Reset Your Password</h2>
+          <p>Hi ${userName},</p>
+          <p>We received a request to reset the password for your ${FROM_NAME} account.</p>
+          <p>Click the button below to set a new password:</p>
+          <p style="margin: 24px 0;">
+            <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
+              Reset Password
+            </a>
+          </p>
+          <p style="color: #6b7280; font-size: 14px;">This link will expire in 30 minutes.</p>
+          <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
+          <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+            — The ${FROM_NAME} Team
+          </p>
+        </div>
+      `;
+
+      const text = `
+Reset Your Password
+
+Hi ${userName},
+
+We received a request to reset the password for your ${FROM_NAME} account.
+
+Click this link to set a new password: ${resetUrl}
+
+This link will expire in 30 minutes.
+
+If you didn't request this, you can safely ignore this email.
+
+— The ${FROM_NAME} Team
+      `.trim();
+
+      // Fire and forget - don't block response on email delivery
+      sendEmail({
+        tenantId: 0, // System email, no tenant context
+        to: e,
+        subject: `Reset your ${FROM_NAME} password`,
+        html,
+        text,
+        templateKey: "auth_password_reset",
+        category: "transactional",
+      }).catch((err) => {
+        req.log?.error?.({ err, email: e }, "Failed to send password reset email");
+      });
+
       if (EXPOSE_DEV_TOKENS) {
         return reply.send({ ok: true, dev_token: raw });
       }

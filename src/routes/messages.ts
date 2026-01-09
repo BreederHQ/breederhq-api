@@ -2,6 +2,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
+import { autoProvisionPortalAccessForDM, sendNewMessageNotification } from "../services/portal-provisioning-service.js";
 import { requireMessagingPartyScope } from "../middleware/actor-context.js";
 import {
   calculateBusinessHoursSeconds,
@@ -63,6 +64,38 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         },
       });
+
+      // Auto-provision portal access if org/breeder is sending to a contact without access
+      // This ensures the recipient can log in to the portal to view and reply to the message
+      if (isOrgSending) {
+        const userId = (req as any).userId as string | undefined;
+        const senderParty = thread.participants.find(p => p.partyId === senderPartyId)?.party;
+        const recipientParty = thread.participants.find(p => p.partyId === recipientPartyId)?.party;
+
+        // Auto-provision portal access for the recipient
+        const provisionResult = await autoProvisionPortalAccessForDM(
+          tenantId,
+          recipientPartyId,
+          { userId, senderPartyId }
+        );
+
+        // If recipient already had access (or just got it), send new message notification
+        // Skip if we just sent the portal invite (they'll get that email first)
+        if (!provisionResult.inviteSent && recipientParty?.email) {
+          try {
+            await sendNewMessageNotification(
+              tenantId,
+              recipientParty.email,
+              recipientParty.name || "there",
+              senderParty?.name || "Your breeder",
+              initialMessage
+            );
+          } catch (notifErr) {
+            // Don't fail the thread creation if notification fails
+            console.error("Failed to send new message notification:", notifErr);
+          }
+        }
+      }
 
       if (tenantOrg && senderPartyId !== tenantOrg.partyId) {
         try {
@@ -350,6 +383,58 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       return reply.send({ ok: true, message });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // PATCH /messages/threads/:id - Update thread (flag/archive)
+  app.patch("/messages/threads/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const threadId = Number((req.params as any).id);
+    const { flagged, archived } = req.body as {
+      flagged?: boolean;
+      archived?: boolean;
+    };
+
+    try {
+      const existing = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const now = new Date();
+      const updateData: any = {};
+
+      if (flagged !== undefined) {
+        updateData.flagged = flagged;
+        updateData.flaggedAt = flagged ? now : null;
+      }
+
+      if (archived !== undefined) {
+        updateData.archived = archived;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return reply.code(400).send({ error: "no_updates_provided" });
+      }
+
+      const updated = await prisma.messageThread.update({
+        where: { id: threadId },
+        data: updateData,
+        include: {
+          participants: {
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
+          },
+        },
+      });
+
+      return reply.send({ ok: true, thread: updated });
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }

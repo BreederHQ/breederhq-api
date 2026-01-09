@@ -101,6 +101,8 @@ enum TagModule {
   WAITLIST_ENTRY
   OFFSPRING_GROUP
   OFFSPRING
+  MESSAGE_THREAD
+  DRAFT
 }
 
 enum OwnerPartyType {
@@ -171,6 +173,7 @@ enum EntitlementKey {
   API_ACCESS
   MULTI_LOCATION
   E_SIGNATURES
+  DATA_EXPORT // Blocked during free trial to prevent data cleaning abuse
 
   // Quotas (use ProductEntitlement.limitValue for the actual number)
   ANIMAL_QUOTA
@@ -554,6 +557,9 @@ model User {
   // Cross-tenant lineage
   lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
 
+  // Communications Hub
+  drafts Draft[] @relation("DraftCreatedBy")
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -813,6 +819,16 @@ model Tenant {
   titleDefinitions   TitleDefinition[]
   animalTitles       AnimalTitle[]
   competitionEntries CompetitionEntry[]
+
+  // CRM
+  partyNotes      PartyNote[]
+  partyEvents     PartyEvent[]
+  partyMilestones PartyMilestone[]
+  partyEmails     PartyEmail[]
+  partyActivity   PartyActivity[]
+
+  // Communications Hub
+  drafts Draft[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1339,6 +1355,17 @@ model Party {
   marketplaceBlocksCreated MarketplaceUserBlock[] @relation("MarketplaceBlockCreator")
   marketplaceBlocksLifted  MarketplaceUserBlock[] @relation("MarketplaceBlockLifter")
 
+  // CRM relations
+  notes       PartyNote[]      @relation("PartyNotes")
+  events      PartyEvent[]     @relation("PartyEvents")
+  milestones  PartyMilestone[] @relation("PartyMilestones")
+  emails      PartyEmail[]     @relation("PartyEmails")
+  activity    PartyActivity[]  @relation("PartyActivity")
+
+  // Communications Hub relations
+  emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
+  drafts        Draft[]        @relation("DraftParty")
+
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
@@ -1426,6 +1453,148 @@ model Contact {
   @@index([first_name])
   @@index([nickname])
   @@index([tenantId, partyId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Party CRM (Notes, Events, Milestones, Emails, Activity)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum PartyEventKind {
+  FOLLOW_UP
+  MEETING
+  CALL
+  VISIT
+  CUSTOM
+}
+
+enum PartyEventStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum PartyMilestoneKind {
+  BIRTHDAY
+  CUSTOMER_ANNIVERSARY
+  PLACEMENT_ANNIVERSARY
+  CUSTOM
+}
+
+enum PartyActivityKind {
+  NOTE_ADDED
+  NOTE_UPDATED
+  EMAIL_SENT
+  EVENT_CREATED
+  EVENT_COMPLETED
+  MILESTONE_OCCURRED
+  STATUS_CHANGED
+  TAG_ADDED
+  TAG_REMOVED
+  INVOICE_CREATED
+  PAYMENT_RECEIVED
+  MESSAGE_SENT
+  MESSAGE_RECEIVED
+}
+
+model PartyNote {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party    @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
+
+  content   String   @db.Text
+  pinned    Boolean  @default(false)
+  createdBy Int?     // userId who created
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, pinned])
+}
+
+model PartyEvent {
+  id        Int              @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party            @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyEventKind   @default(FOLLOW_UP)
+  title     String
+  notes     String?          @db.Text
+  scheduledAt DateTime
+  status    PartyEventStatus @default(SCHEDULED)
+  completedAt DateTime?
+  createdBy Int?             // userId who created
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, scheduledAt])
+  @@index([tenantId, status, scheduledAt])
+}
+
+model PartyMilestone {
+  id        Int                 @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party               @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyMilestoneKind  @default(CUSTOM)
+  label     String              // e.g., "Birthday", "1st Placement Anniversary"
+  date      DateTime            @db.Date  // The actual date (month/day matters for annual)
+  annual    Boolean             @default(true) // If true, recurs yearly
+  notes     String?             @db.Text
+  createdBy Int?                // userId who created
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, date])
+  @@index([tenantId, annual])
+}
+
+model PartyEmail {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party    @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
+
+  subject   String
+  body      String   @db.Text
+  toEmail   String   // recipient email at time of send
+  sentAt    DateTime @default(now())
+  status    String   @default("sent") // sent, delivered, bounced, failed
+  messageId String?  // external mail provider message ID
+  createdBy Int?     // userId who sent
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, partyId])
+  @@index([partyId, sentAt])
+}
+
+model PartyActivity {
+  id        Int               @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party             @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyActivityKind
+  title     String
+  detail    String?           @db.Text
+  metadata  Json?             // flexible store for entity IDs, etc.
+  actorId   Int?              // userId who performed action
+  createdAt DateTime          @default(now())
+
+  @@index([tenantId, partyId])
+  @@index([partyId, createdAt])
+  @@index([tenantId, kind])
 }
 
 /**
@@ -1837,6 +2006,13 @@ model TagAssignment {
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: Cascade)
 
+  // Communications Hub: Message threads and drafts
+  messageThreadId Int?
+  messageThread   MessageThread? @relation(fields: [messageThreadId], references: [id], onDelete: Cascade)
+
+  draftId Int?
+  draft   Draft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
 
   @@unique([tagId, taggedPartyId])
@@ -1844,11 +2020,15 @@ model TagAssignment {
   @@unique([tagId, waitlistEntryId])
   @@unique([tagId, offspringGroupId])
   @@unique([tagId, offspringId])
+  @@unique([tagId, messageThreadId])
+  @@unique([tagId, draftId])
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
   @@index([offspringGroupId])
   @@index([offspringId])
+  @@index([messageThreadId])
+  @@index([draftId])
   @@index([tagId, taggedPartyId])
 }
 
@@ -3310,6 +3490,7 @@ model Template {
 
   content        TemplateContent[]
   autoReplyRules AutoReplyRule[]
+  drafts         Draft[]          @relation("DraftTemplate")
 
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -3411,6 +3592,16 @@ model EmailSendLog {
   error    Json?
   metadata Json?
 
+  // Communications Hub: archive and flag support
+  archived   Boolean   @default(false)
+  archivedAt DateTime?
+  flagged    Boolean   @default(false)
+  flaggedAt  DateTime?
+
+  // Link to party for inbox aggregation
+  partyId Int?
+  party   Party? @relation("EmailSendLogParty", fields: [partyId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@unique([tenantId, templateKey, relatedInvoiceId])
@@ -3421,6 +3612,9 @@ model EmailSendLog {
   @@index([relatedInvoiceId])
   @@index([templateId])
   @@index([tenantId, category])
+  @@index([tenantId, archived])
+  @@index([tenantId, flagged])
+  @@index([tenantId, partyId])
 }
 
 model MessageThread {
@@ -3431,6 +3625,10 @@ model MessageThread {
   subject  String?
   archived Boolean @default(false)
 
+  // Communications Hub: flagging for starred/important threads
+  flagged   Boolean   @default(false)
+  flaggedAt DateTime?
+
   // Marketplace MVP: inquiry context fields
   inquiryType       String? // "MARKETPLACE" | "WAITLIST" | "GENERAL" | null
   sourceListingSlug String?
@@ -3440,6 +3638,7 @@ model MessageThread {
   participants  MessageParticipant[]
   messages      Message[]
   autoReplyLogs AutoReplyLog[]
+  tagAssignments TagAssignment[]
 
   lastMessageAt DateTime?
 
@@ -3462,6 +3661,8 @@ model MessageThread {
   @@index([inquiryType])
   @@index([tenantId, responseTimeSeconds])
   @@index([tenantId, businessHoursResponseTime])
+  @@index([tenantId, flagged])
+  @@index([tenantId, archived])
 }
 
 model MessageParticipant {
@@ -3498,6 +3699,52 @@ model Message {
 
   @@index([threadId, createdAt])
   @@index([senderPartyId])
+}
+
+// ---------- Communications Hub: Drafts ----------
+enum DraftChannel {
+  email
+  dm
+}
+
+model Draft {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  partyId Int?
+  party   Party? @relation("DraftParty", fields: [partyId], references: [id], onDelete: SetNull)
+
+  channel DraftChannel
+
+  // Email-specific fields
+  subject     String?
+  toAddresses String[] // For emails when partyId not set
+
+  // Content
+  bodyText String  @db.Text
+  bodyHtml String? @db.Text
+
+  // Template reference
+  templateId Int?
+  template   Template? @relation("DraftTemplate", fields: [templateId], references: [id], onDelete: SetNull)
+
+  // Metadata
+  metadata Json?
+
+  // Created by
+  createdByUserId String?
+  createdByUser   User?   @relation("DraftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  tagAssignments TagAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, partyId])
+  @@index([tenantId, channel])
+  @@index([tenantId, updatedAt])
 }
 
 // ---------- Tasks ----------
