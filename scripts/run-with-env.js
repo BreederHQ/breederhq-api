@@ -12,8 +12,81 @@
 
 import { spawn } from 'child_process';
 import { readFileSync, existsSync, readdirSync } from 'fs';
-import { resolve, basename } from 'path';
+import { resolve, basename, join } from 'path';
 import { createInterface } from 'readline';
+
+// ═══════════════════════════════════════════════════════════════════════
+// Migration Ordering Validator
+// Ensures migrations don't reference tables/types before they're created
+// ═══════════════════════════════════════════════════════════════════════
+
+function validateMigrationOrdering(migrationsDir) {
+  const violations = [];
+  const createdEntities = new Map(); // entity name -> { timestamp, migration }
+
+  // Get all migration folders sorted by timestamp
+  const migrations = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter(e => e.isDirectory() && /^\d{14}_/.test(e.name))
+    .map(e => ({
+      name: e.name,
+      timestamp: e.name.substring(0, 14),
+      path: join(migrationsDir, e.name),
+    }))
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  // Regex patterns
+  const CREATE_TABLE_REGEX = /CREATE TABLE\s+"(\w+)"/gi;
+  const CREATE_TYPE_REGEX = /CREATE TYPE\s+"(\w+)"/gi;
+  const REFERENCES_REGEX = /REFERENCES\s+"(\w+)"/gi;
+
+  // First pass: collect all created entities
+  for (const migration of migrations) {
+    const sqlPath = join(migration.path, 'migration.sql');
+    if (!existsSync(sqlPath)) continue;
+
+    const sql = readFileSync(sqlPath, 'utf-8');
+    let match;
+
+    // Reset regex state
+    CREATE_TABLE_REGEX.lastIndex = 0;
+    CREATE_TYPE_REGEX.lastIndex = 0;
+
+    while ((match = CREATE_TABLE_REGEX.exec(sql)) !== null) {
+      createdEntities.set(match[1], { timestamp: migration.timestamp, migration: migration.name });
+    }
+    while ((match = CREATE_TYPE_REGEX.exec(sql)) !== null) {
+      createdEntities.set(match[1], { timestamp: migration.timestamp, migration: migration.name });
+    }
+  }
+
+  // Second pass: check for forward references
+  for (const migration of migrations) {
+    const sqlPath = join(migration.path, 'migration.sql');
+    if (!existsSync(sqlPath)) continue;
+
+    const sql = readFileSync(sqlPath, 'utf-8');
+    let match;
+
+    // Reset regex state
+    REFERENCES_REGEX.lastIndex = 0;
+
+    while ((match = REFERENCES_REGEX.exec(sql)) !== null) {
+      const refTable = match[1];
+      const creator = createdEntities.get(refTable);
+
+      if (creator && creator.timestamp > migration.timestamp) {
+        violations.push({
+          migration: migration.name,
+          message: `References table "${refTable}" before it exists`,
+          detail: `"${refTable}" created in ${creator.migration} (${creator.timestamp}) but referenced in ${migration.name} (${migration.timestamp})`,
+          fix: `Rename folder to timestamp > ${creator.timestamp} (e.g., ${creator.timestamp.substring(0, 8)}${String(parseInt(creator.timestamp.substring(8)) + 1000).padStart(6, '0')}_${migration.name.split('_').slice(1).join('_')})`,
+        });
+      }
+    }
+  }
+
+  return violations;
+}
 
 const args = process.argv.slice(2);
 
@@ -146,6 +219,48 @@ DOCUMENTATION:
 const isMigrateCommand = command.includes('migrate') || commandArgs.some(arg =>
   arg === 'migrate' || arg.includes('migrate')
 );
+
+// ═══════════════════════════════════════════════════════════════════════
+// GUARDRAIL: Validate migration ordering before running migrations
+// ═══════════════════════════════════════════════════════════════════════
+if (isMigrateCommand) {
+  const migrationsDir = resolve(process.cwd(), 'prisma/migrations');
+  if (existsSync(migrationsDir)) {
+    // Validate migration ordering (tables must be created before referenced)
+    const orderingViolations = validateMigrationOrdering(migrationsDir);
+    if (orderingViolations.length > 0) {
+      console.error(`
+═══════════════════════════════════════════════════════════════════════
+🚫 BLOCKED: Migration Ordering Violation Detected
+═══════════════════════════════════════════════════════════════════════
+
+Migrations reference tables/types that haven't been created yet:
+`);
+      for (const v of orderingViolations) {
+        console.error(`  Migration: ${v.migration}`);
+        console.error(`  Issue:     ${v.message}`);
+        console.error(`  Detail:    ${v.detail}`);
+        console.error(`  Fix:       ${v.fix}`);
+        console.error('');
+      }
+      console.error(`
+TO FIX:
+  Rename the migration folder to have a timestamp AFTER the migration
+  that creates the table/type it depends on.
+
+  Example: mv prisma/migrations/20260109143000_foo prisma/migrations/20260109180000_foo
+
+PREVENTION:
+  - ALWAYS use 'npm run db:dev:migrate' to create migrations
+  - NEVER manually create migration folders
+  - NEVER hand-pick timestamps
+
+═══════════════════════════════════════════════════════════════════════
+`);
+      process.exit(1);
+    }
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // GUARDRAIL: Check for duplicate migration names before running migrations
