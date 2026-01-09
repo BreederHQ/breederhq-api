@@ -101,6 +101,8 @@ enum TagModule {
   WAITLIST_ENTRY
   OFFSPRING_GROUP
   OFFSPRING
+  MESSAGE_THREAD
+  DRAFT
 }
 
 enum OwnerPartyType {
@@ -555,6 +557,9 @@ model User {
   // Cross-tenant lineage
   lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
 
+  // Communications Hub
+  drafts Draft[] @relation("DraftCreatedBy")
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -821,6 +826,9 @@ model Tenant {
   partyMilestones PartyMilestone[]
   partyEmails     PartyEmail[]
   partyActivity   PartyActivity[]
+
+  // Communications Hub
+  drafts Draft[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1353,6 +1361,10 @@ model Party {
   milestones  PartyMilestone[] @relation("PartyMilestones")
   emails      PartyEmail[]     @relation("PartyEmails")
   activity    PartyActivity[]  @relation("PartyActivity")
+
+  // Communications Hub relations
+  emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
+  drafts        Draft[]        @relation("DraftParty")
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -1994,6 +2006,13 @@ model TagAssignment {
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: Cascade)
 
+  // Communications Hub: Message threads and drafts
+  messageThreadId Int?
+  messageThread   MessageThread? @relation(fields: [messageThreadId], references: [id], onDelete: Cascade)
+
+  draftId Int?
+  draft   Draft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
 
   @@unique([tagId, taggedPartyId])
@@ -2001,11 +2020,15 @@ model TagAssignment {
   @@unique([tagId, waitlistEntryId])
   @@unique([tagId, offspringGroupId])
   @@unique([tagId, offspringId])
+  @@unique([tagId, messageThreadId])
+  @@unique([tagId, draftId])
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
   @@index([offspringGroupId])
   @@index([offspringId])
+  @@index([messageThreadId])
+  @@index([draftId])
   @@index([tagId, taggedPartyId])
 }
 
@@ -3467,6 +3490,7 @@ model Template {
 
   content        TemplateContent[]
   autoReplyRules AutoReplyRule[]
+  drafts         Draft[]          @relation("DraftTemplate")
 
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -3568,6 +3592,16 @@ model EmailSendLog {
   error    Json?
   metadata Json?
 
+  // Communications Hub: archive and flag support
+  archived   Boolean   @default(false)
+  archivedAt DateTime?
+  flagged    Boolean   @default(false)
+  flaggedAt  DateTime?
+
+  // Link to party for inbox aggregation
+  partyId Int?
+  party   Party? @relation("EmailSendLogParty", fields: [partyId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@unique([tenantId, templateKey, relatedInvoiceId])
@@ -3578,6 +3612,9 @@ model EmailSendLog {
   @@index([relatedInvoiceId])
   @@index([templateId])
   @@index([tenantId, category])
+  @@index([tenantId, archived])
+  @@index([tenantId, flagged])
+  @@index([tenantId, partyId])
 }
 
 model MessageThread {
@@ -3588,6 +3625,10 @@ model MessageThread {
   subject  String?
   archived Boolean @default(false)
 
+  // Communications Hub: flagging for starred/important threads
+  flagged   Boolean   @default(false)
+  flaggedAt DateTime?
+
   // Marketplace MVP: inquiry context fields
   inquiryType       String? // "MARKETPLACE" | "WAITLIST" | "GENERAL" | null
   sourceListingSlug String?
@@ -3597,6 +3638,7 @@ model MessageThread {
   participants  MessageParticipant[]
   messages      Message[]
   autoReplyLogs AutoReplyLog[]
+  tagAssignments TagAssignment[]
 
   lastMessageAt DateTime?
 
@@ -3619,6 +3661,8 @@ model MessageThread {
   @@index([inquiryType])
   @@index([tenantId, responseTimeSeconds])
   @@index([tenantId, businessHoursResponseTime])
+  @@index([tenantId, flagged])
+  @@index([tenantId, archived])
 }
 
 model MessageParticipant {
@@ -3655,6 +3699,52 @@ model Message {
 
   @@index([threadId, createdAt])
   @@index([senderPartyId])
+}
+
+// ---------- Communications Hub: Drafts ----------
+enum DraftChannel {
+  email
+  dm
+}
+
+model Draft {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  partyId Int?
+  party   Party? @relation("DraftParty", fields: [partyId], references: [id], onDelete: SetNull)
+
+  channel DraftChannel
+
+  // Email-specific fields
+  subject     String?
+  toAddresses String[] // For emails when partyId not set
+
+  // Content
+  bodyText String  @db.Text
+  bodyHtml String? @db.Text
+
+  // Template reference
+  templateId Int?
+  template   Template? @relation("DraftTemplate", fields: [templateId], references: [id], onDelete: SetNull)
+
+  // Metadata
+  metadata Json?
+
+  // Created by
+  createdByUserId String?
+  createdByUser   User?   @relation("DraftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  tagAssignments TagAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, partyId])
+  @@index([tenantId, channel])
+  @@index([tenantId, updatedAt])
 }
 
 // ---------- Tasks ----------

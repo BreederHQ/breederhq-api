@@ -387,6 +387,58 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
+
+  // PATCH /messages/threads/:id - Update thread (flag/archive)
+  app.patch("/messages/threads/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const threadId = Number((req.params as any).id);
+    const { flagged, archived } = req.body as {
+      flagged?: boolean;
+      archived?: boolean;
+    };
+
+    try {
+      const existing = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const now = new Date();
+      const updateData: any = {};
+
+      if (flagged !== undefined) {
+        updateData.flagged = flagged;
+        updateData.flaggedAt = flagged ? now : null;
+      }
+
+      if (archived !== undefined) {
+        updateData.archived = archived;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return reply.code(400).send({ error: "no_updates_provided" });
+      }
+
+      const updated = await prisma.messageThread.update({
+        where: { id: threadId },
+        data: updateData,
+        include: {
+          participants: {
+            include: { party: { select: { id: true, name: true, email: true, type: true } } },
+          },
+        },
+      });
+
+      return reply.send({ ok: true, thread: updated });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
 };
 
 export default routes;

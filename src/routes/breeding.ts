@@ -250,6 +250,139 @@ function toNum(v: any): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/* ───────────────────────── animal breeding status sync ───────────────────────── */
+
+/**
+ * Sync animal breeding status based on active breeding plans.
+ *
+ * Rules:
+ * - If animal is linked to ANY non-archived plan with status in active breeding phases,
+ *   set animal status to BREEDING
+ * - If animal is not linked to any active breeding plans and current status is BREEDING,
+ *   revert to ACTIVE
+ * - Never downgrade from RETIRED, DECEASED, or manually set statuses
+ *
+ * Active breeding phases: COMMITTED, CYCLE_EXPECTED, HORMONE_TESTING, BRED, PREGNANT, BIRTHED, WEANED, PLACEMENT
+ */
+const ACTIVE_BREEDING_STATUSES = new Set([
+  "COMMITTED",
+  "CYCLE_EXPECTED",
+  "HORMONE_TESTING",
+  "BRED",
+  "PREGNANT",
+  "BIRTHED",
+  "WEANED",
+  "PLACEMENT",
+]);
+
+async function syncAnimalBreedingStatus(
+  animalId: number,
+  tenantId: number,
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  const db = tx ?? prisma;
+
+  // Get the animal's current status
+  const animal = await db.animal.findFirst({
+    where: { id: animalId, tenantId },
+    select: { id: true, status: true, sex: true },
+  });
+
+  if (!animal) return;
+
+  // Never auto-change RETIRED, DECEASED, or UNAVAILABLE statuses
+  const protectedStatuses = ["RETIRED", "DECEASED", "UNAVAILABLE"];
+  if (protectedStatuses.includes(String(animal.status))) return;
+
+  // Check if animal is linked to any active breeding plans
+  const whereClause: any = {
+    tenantId,
+    archived: false,
+    status: { in: Array.from(ACTIVE_BREEDING_STATUSES) },
+  };
+
+  // Check both dam and sire based on animal's sex
+  if (animal.sex === "FEMALE") {
+    whereClause.damId = animalId;
+  } else {
+    whereClause.sireId = animalId;
+  }
+
+  const activeBreedingPlan = await db.breedingPlan.findFirst({
+    where: whereClause,
+    select: { id: true, status: true },
+  });
+
+  const currentStatus = String(animal.status);
+
+  if (activeBreedingPlan) {
+    // Animal is in an active breeding plan - set to BREEDING if not already
+    if (currentStatus !== "BREEDING") {
+      await db.animal.update({
+        where: { id: animalId },
+        data: { status: "BREEDING" },
+      });
+    }
+  } else {
+    // Animal is not in any active breeding plan
+    // Only revert from BREEDING to ACTIVE (don't touch other statuses)
+    if (currentStatus === "BREEDING") {
+      await db.animal.update({
+        where: { id: animalId },
+        data: { status: "ACTIVE" },
+      });
+    }
+  }
+}
+
+/**
+ * Sync breeding status for both dam and sire of a plan
+ */
+async function syncPlanAnimalsBreedingStatus(
+  planId: number,
+  tenantId: number,
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  const db = tx ?? prisma;
+
+  const plan = await db.breedingPlan.findFirst({
+    where: { id: planId, tenantId },
+    select: { damId: true, sireId: true },
+  });
+
+  if (!plan) return;
+
+  const syncPromises: Promise<void>[] = [];
+  if (plan.damId) syncPromises.push(syncAnimalBreedingStatus(plan.damId, tenantId, tx));
+  if (plan.sireId) syncPromises.push(syncAnimalBreedingStatus(plan.sireId, tenantId, tx));
+
+  await Promise.all(syncPromises);
+}
+
+/**
+ * When dam/sire changes on a plan, sync both the old and new animals
+ */
+async function syncAnimalChangeOnPlan(
+  oldAnimalId: number | null,
+  newAnimalId: number | null,
+  tenantId: number,
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  const syncPromises: Promise<void>[] = [];
+
+  // Sync old animal (may need to revert from BREEDING)
+  if (oldAnimalId) {
+    syncPromises.push(syncAnimalBreedingStatus(oldAnimalId, tenantId, tx));
+  }
+
+  // Sync new animal (may need to set to BREEDING)
+  if (newAnimalId && newAnimalId !== oldAnimalId) {
+    syncPromises.push(syncAnimalBreedingStatus(newAnimalId, tenantId, tx));
+  }
+
+  await Promise.all(syncPromises);
+}
+
 function resolveTenantIdFromRequest(req: any): number | null {
   const h = req.headers || {};
   const headerTenant =
@@ -802,7 +935,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const existing = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
-        select: { species: true, code: true, status: true },
+        select: { species: true, code: true, status: true, damId: true, sireId: true },
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
@@ -1023,7 +1156,31 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(status).send(payload);
       }
 
+      // Track dam/sire changes for status sync
+      const damChanged = data.damId !== undefined;
+      const sireChanged = data.sireId !== undefined;
+      const statusChanged = data.status !== undefined;
+
       const updated = await prisma.breedingPlan.update({ where: { id }, data });
+
+      // Sync animal breeding statuses if dam, sire, or plan status changed
+      if (damChanged || sireChanged || statusChanged) {
+        // If dam changed, sync both old and new dam
+        if (damChanged) {
+          await syncAnimalChangeOnPlan(existing.damId ?? null, data.damId ?? null, tenantId);
+        }
+
+        // If sire changed, sync both old and new sire
+        if (sireChanged) {
+          await syncAnimalChangeOnPlan(existing.sireId ?? null, data.sireId ?? null, tenantId);
+        }
+
+        // If status changed (but not dam/sire), sync current dam and sire
+        if (statusChanged && !damChanged && !sireChanged) {
+          await syncPlanAnimalsBreedingStatus(id, tenantId);
+        }
+      }
+
       reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -1140,6 +1297,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           });
           return { mode: "ensure", payload: { planId: plan.id, group } };
         }
+
+        // Sync animal breeding statuses for dam and sire
+        if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId, tx);
+        if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId, tx);
 
         // Legacy response, return the updated plan
         return { mode: "legacy", payload: saved };
@@ -1264,12 +1425,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        return { blocked: false, plan: updated };
+        return { blocked: false, plan: updated, damId: plan.damId, sireId: plan.sireId };
       });
 
       if (result.blocked) {
         return reply.code(409).send({ blockers: result.blockers });
       }
+
+      // Sync animal breeding statuses after uncommit (they may revert from BREEDING)
+      // Note: We need to get damId/sireId from before the plan status changed
+      const planForSync = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: { damId: true, sireId: true },
+      });
+      if (planForSync?.damId) await syncAnimalBreedingStatus(planForSync.damId, tenantId);
+      if (planForSync?.sireId) await syncAnimalBreedingStatus(planForSync.sireId, tenantId);
 
       reply.send({ ok: true });
     } catch (err) {
@@ -1285,8 +1455,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      await getPlanInTenant(id, tenantId);
+      // Get plan with dam/sire before archiving
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: { id: true, damId: true, sireId: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
       await prisma.breedingPlan.update({ where: { id }, data: { archived: true } });
+
+      // Sync animal breeding statuses (they may revert from BREEDING if no other active plans)
+      if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
+      if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
 
       // Update usage snapshot after archiving (decreases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
@@ -1304,8 +1484,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      await getPlanInTenant(id, tenantId);
+      // Get plan with dam/sire and status before restoring
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: { id: true, damId: true, sireId: true, status: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
       await prisma.breedingPlan.update({ where: { id }, data: { archived: false } });
+
+      // Sync animal breeding statuses (they may need to be set to BREEDING if plan is active)
+      if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
+      if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
 
       // Update usage snapshot after restoring (increases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");

@@ -345,7 +345,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? }
+  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? }
   // Exactly one target; target must be in the same tenant; tag.module must match target type.
   // Step 6B: Party-only writes - resolves contactId/organizationId to taggedPartyId
   app.post("/tags/:id/assign", async (req, reply) => {
@@ -365,8 +365,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "tag_archived", detail: "Cannot assign archived tag" });
       }
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number };
-      const targets = ["contactId", "organizationId", "animalId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       try {
@@ -396,6 +396,34 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           // Dual-write: use service to set both contactId and taggedPartyId
           await createTagAssignment({ tagId: tag.id, contactId: c.id });
+        } else if (body.messageThreadId != null) {
+          if (tag.module !== "MESSAGE_THREAD") return reply.code(400).send({ error: "module_mismatch" });
+          const threadId = parseIntOrNull(body.messageThreadId);
+          if (!threadId) return reply.code(400).send({ error: "messageThreadId_invalid" });
+          const thread = await prisma.messageThread.findUnique({
+            where: { id: threadId },
+            select: { id: true, tenantId: true },
+          });
+          if (!thread) return reply.code(404).send({ error: "thread_not_found" });
+          if (thread.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+          await prisma.tagAssignment.create({
+            data: { tagId: tag.id, messageThreadId: thread.id },
+          });
+        } else if (body.draftId != null) {
+          if (tag.module !== "DRAFT") return reply.code(400).send({ error: "module_mismatch" });
+          const draftId = parseIntOrNull(body.draftId);
+          if (!draftId) return reply.code(400).send({ error: "draftId_invalid" });
+          const draft = await prisma.draft.findUnique({
+            where: { id: draftId },
+            select: { id: true, tenantId: true },
+          });
+          if (!draft) return reply.code(404).send({ error: "draft_not_found" });
+          if (draft.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+          await prisma.tagAssignment.create({
+            data: { tagId: tag.id, draftId: draft.id },
+          });
         } else {
           if (tag.module !== "ANIMAL") return reply.code(400).send({ error: "module_mismatch" });
           const animalId = parseIntOrNull(body.animalId);
@@ -425,7 +453,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? }
+  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? }
   // Step 6B: Resolves contactId/organizationId to taggedPartyId before deletion
   app.post("/tags/:id/unassign", async (req, reply) => {
     try {
@@ -436,8 +464,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true } });
       if (!tag) return reply.code(404).send({ error: "not_found" });
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number };
-      const targets = ["contactId", "organizationId", "animalId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       if (body.organizationId != null) {
@@ -468,6 +496,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (contact.partyId) {
           await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, taggedPartyId: contact.partyId } });
         }
+      } else if (body.messageThreadId != null) {
+        const threadId = parseIntOrNull(body.messageThreadId);
+        if (!threadId) return reply.code(400).send({ error: "messageThreadId_invalid" });
+        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, messageThreadId: threadId } });
+      } else if (body.draftId != null) {
+        const draftIdVal = parseIntOrNull(body.draftId);
+        if (!draftIdVal) return reply.code(400).send({ error: "draftId_invalid" });
+        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, draftId: draftIdVal } });
       } else {
         const animalId = parseIntOrNull(body.animalId);
         if (!animalId) return reply.code(400).send({ error: "animalId_invalid" });
@@ -475,6 +511,76 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       reply.send({ ok: true });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /message-threads/:id/tags - Get tags for a message thread
+  app.get("/message-threads/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { id } = req.params as { id: string };
+      const threadId = Number(id);
+      if (!Number.isInteger(threadId) || threadId <= 0) {
+        return reply.code(400).send({ error: "invalid_thread_id" });
+      }
+
+      const thread = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+        select: { id: true },
+      });
+      if (!thread) return reply.code(404).send({ error: "thread_not_found" });
+
+      const assignments = await prisma.tagAssignment.findMany({
+        where: { messageThreadId: threadId },
+        include: {
+          tag: {
+            select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const items = assignments.map((a) => tagDTO(a.tag));
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /drafts/:id/tags - Get tags for a draft
+  app.get("/drafts/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { id } = req.params as { id: string };
+      const draftId = Number(id);
+      if (!Number.isInteger(draftId) || draftId <= 0) {
+        return reply.code(400).send({ error: "invalid_draft_id" });
+      }
+
+      const draft = await prisma.draft.findFirst({
+        where: { id: draftId, tenantId },
+        select: { id: true },
+      });
+      if (!draft) return reply.code(404).send({ error: "draft_not_found" });
+
+      const assignments = await prisma.tagAssignment.findMany({
+        where: { draftId },
+        include: {
+          tag: {
+            select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const items = assignments.map((a) => tagDTO(a.tag));
+      return reply.send({ items, total: items.length });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
