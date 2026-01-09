@@ -29,6 +29,7 @@
     "db:dev:baseline": "node scripts/run-with-env.js .env.dev.migrate prisma migrate resolve --applied 20251230112400_init --schema=prisma/schema.prisma",
     "db:dev:deploy": "node scripts/run-with-env.js .env.dev.migrate prisma migrate deploy --schema=prisma/schema.prisma",
     "db:dev:integrity": "node scripts/run-with-env.js .env.dev.migrate node scripts/db/check-migration-integrity.mjs",
+    "db:validate:order": "node scripts/db/validate-migration-order.mjs",
     "db:dev:seed:users": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-test-users.ts",
     "db:dev:seed:traits": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:dev:seed:tattooine": "node scripts/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-tattooine-contacts.ts",

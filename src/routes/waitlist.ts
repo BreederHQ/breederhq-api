@@ -427,6 +427,134 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
   });
 
   /**
+   * GET /api/v1/waitlist/check-duplicate
+   * Check if a duplicate waitlist entry exists for a contact with the same species/breed/sire/dam combination.
+   * Query params: clientPartyId, contactId, organizationId, speciesPref, breedPrefs, sirePrefId, damPrefId
+   * Returns: { isDuplicate: boolean, existingEntry?: {...} }
+   */
+  app.get("/waitlist/check-duplicate", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const query = req.query as any;
+
+    const clientPartyId = query.clientPartyId ? Number(query.clientPartyId) : null;
+    const contactId = query.contactId ? Number(query.contactId) : null;
+    const organizationId = query.organizationId ? Number(query.organizationId) : null;
+    const speciesPref = query.speciesPref ? String(query.speciesPref).trim() : null;
+    const breedPrefsRaw = query.breedPrefs ? String(query.breedPrefs).trim() : null;
+    const breedPrefs = breedPrefsRaw ? breedPrefsRaw.split(",").map((b: string) => b.trim()).filter(Boolean) : null;
+    const sirePrefId = query.sirePrefId ? Number(query.sirePrefId) : null;
+    const damPrefId = query.damPrefId ? Number(query.damPrefId) : null;
+
+    // Need at least a party/contact/org identifier to check
+    if (!clientPartyId && !contactId && !organizationId) {
+      return reply.send({ isDuplicate: false });
+    }
+
+    // Need species to check for duplicates
+    if (!speciesPref) {
+      return reply.send({ isDuplicate: false });
+    }
+
+    // Build the where clause for finding duplicates
+    const where: any = {
+      tenantId,
+      speciesPref,
+    };
+
+    // Match by party ID
+    if (clientPartyId) {
+      where.clientPartyId = clientPartyId;
+    } else if (contactId) {
+      // Find party ID from contact
+      const contact = await prisma.contact.findFirst({
+        where: { id: contactId, tenantId },
+        select: { partyId: true },
+      });
+      if (contact?.partyId) {
+        where.clientPartyId = contact.partyId;
+      } else {
+        return reply.send({ isDuplicate: false });
+      }
+    } else if (organizationId) {
+      // Find party ID from organization
+      const org = await prisma.organization.findFirst({
+        where: { id: organizationId, tenantId },
+        select: { partyId: true },
+      });
+      if (org?.partyId) {
+        where.clientPartyId = org.partyId;
+      } else {
+        return reply.send({ isDuplicate: false });
+      }
+    }
+
+    // Match sire/dam exactly (null matches null)
+    if (sirePrefId !== null) {
+      where.sirePrefId = sirePrefId;
+    } else {
+      where.sirePrefId = null;
+    }
+
+    if (damPrefId !== null) {
+      where.damPrefId = damPrefId;
+    } else {
+      where.damPrefId = null;
+    }
+
+    // Find existing entries with the same combination
+    const existingEntries = await prisma.waitlistEntry.findMany({
+      where,
+      include: {
+        sirePref: { select: { id: true, name: true } },
+        damPref: { select: { id: true, name: true } },
+        clientParty: {
+          include: {
+            contact: {
+              select: {
+                id: true,
+                display_name: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+      take: 10, // Limit results
+    });
+
+    // Check for breed match - breedPrefs is stored as JSON array
+    // We need to check if any existing entry has the same breed preferences
+    for (const entry of existingEntries) {
+      const entryBreeds = Array.isArray(entry.breedPrefs)
+        ? (entry.breedPrefs as string[]).map((b) => b.toLowerCase().trim())
+        : [];
+      const requestBreeds = breedPrefs
+        ? breedPrefs.map((b) => b.toLowerCase().trim())
+        : [];
+
+      // Consider it a duplicate if:
+      // 1. Both have no breeds specified, OR
+      // 2. They have the same breeds (order doesn't matter)
+      const breedsMatch =
+        (entryBreeds.length === 0 && requestBreeds.length === 0) ||
+        (entryBreeds.length === requestBreeds.length &&
+          entryBreeds.every((b) => requestBreeds.includes(b)) &&
+          requestBreeds.every((b) => entryBreeds.includes(b)));
+
+      if (breedsMatch) {
+        return reply.send({
+          isDuplicate: true,
+          existingEntry: serializeEntry(entry),
+        });
+      }
+    }
+
+    return reply.send({ isDuplicate: false });
+  });
+
+  /**
    * GET /api/v1/waitlist/pending-count
    * Returns count of INQUIRY status entries for notification badge
    */
