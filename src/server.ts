@@ -474,6 +474,7 @@ import settingsRoutes from "./routes/settings.js"; // User settings (genetics di
 import titlesRoutes from "./routes/titles.js"; // Title definitions and animal titles
 import competitionsRoutes from "./routes/competitions.js"; // Competition entry tracking
 import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
+import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -760,6 +761,7 @@ app.register(
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
     api.register(partiesRoutes);       // /api/v1/parties/*
+    api.register(partyCrmRoutes);      // /api/v1/parties/:partyId/notes|events|milestones|emails|activity
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(animalsRoutes);       // /api/v1/animals/*

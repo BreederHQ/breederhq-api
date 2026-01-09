@@ -2,6 +2,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
+import { autoProvisionPortalAccessForDM, sendNewMessageNotification } from "../services/portal-provisioning-service.js";
 import { requireMessagingPartyScope } from "../middleware/actor-context.js";
 import {
   calculateBusinessHoursSeconds,
@@ -63,6 +64,38 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         },
       });
+
+      // Auto-provision portal access if org/breeder is sending to a contact without access
+      // This ensures the recipient can log in to the portal to view and reply to the message
+      if (isOrgSending) {
+        const userId = (req as any).userId as string | undefined;
+        const senderParty = thread.participants.find(p => p.partyId === senderPartyId)?.party;
+        const recipientParty = thread.participants.find(p => p.partyId === recipientPartyId)?.party;
+
+        // Auto-provision portal access for the recipient
+        const provisionResult = await autoProvisionPortalAccessForDM(
+          tenantId,
+          recipientPartyId,
+          { userId, senderPartyId }
+        );
+
+        // If recipient already had access (or just got it), send new message notification
+        // Skip if we just sent the portal invite (they'll get that email first)
+        if (!provisionResult.inviteSent && recipientParty?.email) {
+          try {
+            await sendNewMessageNotification(
+              tenantId,
+              recipientParty.email,
+              recipientParty.name || "there",
+              senderParty?.name || "Your breeder",
+              initialMessage
+            );
+          } catch (notifErr) {
+            // Don't fail the thread creation if notification fails
+            console.error("Failed to send new message notification:", notifErr);
+          }
+        }
+      }
 
       if (tenantOrg && senderPartyId !== tenantOrg.partyId) {
         try {

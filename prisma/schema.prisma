@@ -815,6 +815,13 @@ model Tenant {
   animalTitles       AnimalTitle[]
   competitionEntries CompetitionEntry[]
 
+  // CRM
+  partyNotes      PartyNote[]
+  partyEvents     PartyEvent[]
+  partyMilestones PartyMilestone[]
+  partyEmails     PartyEmail[]
+  partyActivity   PartyActivity[]
+
   @@index([name])
   @@index([quickResponderBadge])
 }
@@ -1340,6 +1347,13 @@ model Party {
   marketplaceBlocksCreated MarketplaceUserBlock[] @relation("MarketplaceBlockCreator")
   marketplaceBlocksLifted  MarketplaceUserBlock[] @relation("MarketplaceBlockLifter")
 
+  // CRM relations
+  notes       PartyNote[]      @relation("PartyNotes")
+  events      PartyEvent[]     @relation("PartyEvents")
+  milestones  PartyMilestone[] @relation("PartyMilestones")
+  emails      PartyEmail[]     @relation("PartyEmails")
+  activity    PartyActivity[]  @relation("PartyActivity")
+
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
@@ -1427,6 +1441,148 @@ model Contact {
   @@index([first_name])
   @@index([nickname])
   @@index([tenantId, partyId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Party CRM (Notes, Events, Milestones, Emails, Activity)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum PartyEventKind {
+  FOLLOW_UP
+  MEETING
+  CALL
+  VISIT
+  CUSTOM
+}
+
+enum PartyEventStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum PartyMilestoneKind {
+  BIRTHDAY
+  CUSTOMER_ANNIVERSARY
+  PLACEMENT_ANNIVERSARY
+  CUSTOM
+}
+
+enum PartyActivityKind {
+  NOTE_ADDED
+  NOTE_UPDATED
+  EMAIL_SENT
+  EVENT_CREATED
+  EVENT_COMPLETED
+  MILESTONE_OCCURRED
+  STATUS_CHANGED
+  TAG_ADDED
+  TAG_REMOVED
+  INVOICE_CREATED
+  PAYMENT_RECEIVED
+  MESSAGE_SENT
+  MESSAGE_RECEIVED
+}
+
+model PartyNote {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party    @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
+
+  content   String   @db.Text
+  pinned    Boolean  @default(false)
+  createdBy Int?     // userId who created
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, pinned])
+}
+
+model PartyEvent {
+  id        Int              @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party            @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyEventKind   @default(FOLLOW_UP)
+  title     String
+  notes     String?          @db.Text
+  scheduledAt DateTime
+  status    PartyEventStatus @default(SCHEDULED)
+  completedAt DateTime?
+  createdBy Int?             // userId who created
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, scheduledAt])
+  @@index([tenantId, status, scheduledAt])
+}
+
+model PartyMilestone {
+  id        Int                 @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party               @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyMilestoneKind  @default(CUSTOM)
+  label     String              // e.g., "Birthday", "1st Placement Anniversary"
+  date      DateTime            @db.Date  // The actual date (month/day matters for annual)
+  annual    Boolean             @default(true) // If true, recurs yearly
+  notes     String?             @db.Text
+  createdBy Int?                // userId who created
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([tenantId, partyId])
+  @@index([partyId, date])
+  @@index([tenantId, annual])
+}
+
+model PartyEmail {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party    @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
+
+  subject   String
+  body      String   @db.Text
+  toEmail   String   // recipient email at time of send
+  sentAt    DateTime @default(now())
+  status    String   @default("sent") // sent, delivered, bounced, failed
+  messageId String?  // external mail provider message ID
+  createdBy Int?     // userId who sent
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, partyId])
+  @@index([partyId, sentAt])
+}
+
+model PartyActivity {
+  id        Int               @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   Int
+  party     Party             @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
+
+  kind      PartyActivityKind
+  title     String
+  detail    String?           @db.Text
+  metadata  Json?             // flexible store for entity IDs, etc.
+  actorId   Int?              // userId who performed action
+  createdAt DateTime          @default(now())
+
+  @@index([tenantId, partyId])
+  @@index([partyId, createdAt])
+  @@index([tenantId, kind])
 }
 
 /**
