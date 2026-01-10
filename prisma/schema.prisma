@@ -103,6 +103,7 @@ enum TagModule {
   OFFSPRING
   MESSAGE_THREAD
   DRAFT
+  BREEDING_PLAN
 }
 
 enum OwnerPartyType {
@@ -175,6 +176,10 @@ enum EntitlementKey {
   E_SIGNATURES
   DATA_EXPORT // Blocked during free trial to prevent data cleaning abuse
 
+  // Genetics tier features
+  GENETICS_STANDARD // Basic genetics features (Punnett, trait predictions, etc.)
+  GENETICS_PRO // Advanced genetics (COI, best match, breeding goals, etc.)
+
   // Quotas (use ProductEntitlement.limitValue for the actual number)
   ANIMAL_QUOTA
   CONTACT_QUOTA
@@ -183,6 +188,21 @@ enum EntitlementKey {
   MARKETPLACE_LISTING_QUOTA
   STORAGE_QUOTA_GB
   SMS_QUOTA
+}
+
+enum FeatureModule {
+  GENETICS
+  MARKETPLACE
+  FINANCIAL
+  ANIMALS
+  CONTACTS
+  BREEDING
+  DOCUMENTS
+  HEALTH
+  SCHEDULING
+  PORTAL
+  REPORTING
+  SETTINGS
 }
 
 enum EntitlementStatus {
@@ -375,6 +395,40 @@ enum WaitlistStatus {
 }
 
 /**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Cross-tenant animal linking enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum ParentType {
+  SIRE
+  DAM
+}
+
+enum LinkRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
+enum LinkMethod {
+  GAID
+  EXCHANGE_CODE
+  REGISTRY_MATCH
+  MICROCHIP_MATCH
+  BREEDER_REQUEST
+  OFFSPRING_DERIVED
+}
+
+enum RevokedBy {
+  CHILD_OWNER
+  PARENT_OWNER
+  SYSTEM
+}
+
+/**
  * Offspring Group linking state
  */
 enum OffspringLinkState {
@@ -556,6 +610,9 @@ model User {
 
   // Cross-tenant lineage
   lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
+
+  // Cross-tenant animal linking
+  animalLinkRequestsSent AnimalLinkRequest[] @relation("LinkRequestFromUser")
 
   // Communications Hub
   drafts Draft[] @relation("DraftCreatedBy")
@@ -809,11 +866,18 @@ model Tenant {
   referralsMade       Referral[]           @relation("ReferralsMade")
   referralsReceived   Referral[]           @relation("ReferralsReceived")
   marketplaceListings MarketplaceListing[]
+  featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
   contributedIdentifiers  GlobalAnimalIdentifier[]
   lineageRequestsSent     LineageInfoRequest[]     @relation("LineageRequestFrom")
   lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
+
+  // Cross-tenant animal linking
+  linkRequestsFrom          AnimalLinkRequest[]     @relation("LinkRequestFrom")
+  linkRequestsTo            AnimalLinkRequest[]     @relation("LinkRequestTo")
+  crossTenantLinksAsChild   CrossTenantAnimalLink[] @relation("LinkChildTenant")
+  crossTenantLinksAsParent  CrossTenantAnimalLink[] @relation("LinkParentTenant")
 
   // Title & Competition tracking
   titleDefinitions   TitleDefinition[]
@@ -826,6 +890,7 @@ model Tenant {
   partyMilestones PartyMilestone[]
   partyEmails     PartyEmail[]
   partyActivity   PartyActivity[]
+  unlinkedEmails  UnlinkedEmail[]
 
   // Communications Hub
   drafts Draft[]
@@ -1042,6 +1107,96 @@ model UsageSnapshot {
   lastUpdatedAt DateTime @default(now())
 
   @@id([tenantId, metricKey])
+  @@index([tenantId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Feature Registry & Analytics
+ * ────────────────────────────────────────────────────────────────────────────
+ * Features are individual platform capabilities that can be gated by subscription.
+ * Each feature maps to an entitlement key for access control.
+ */
+
+model Feature {
+  id Int @id @default(autoincrement())
+
+  // Unique identifier used in code: "GENETICS_COI_CALCULATIONS"
+  key String @unique @db.VarChar(100)
+
+  // Display info
+  name        String  @db.VarChar(100) // "COI Calculations"
+  description String? @db.Text // Longer description for admin reference
+
+  // Categorization
+  module FeatureModule // GENETICS, MARKETPLACE, etc.
+
+  // Access control - which entitlement key grants access to this feature
+  entitlementKey EntitlementKey
+
+  // Admin reference - where this feature appears in UI
+  uiHint String? @db.VarChar(200) // "Genetics Lab > Analysis Tools"
+
+  // Kill switch - allows disabling feature platform-wide
+  isActive Boolean @default(true)
+
+  // Soft delete
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([module])
+  @@index([entitlementKey])
+  @@index([isActive])
+}
+
+/**
+ * Feature check telemetry - logs when features are checked in the UI.
+ * Used for analytics: which features are used, denied access attempts, etc.
+ * Raw events - aggregated daily into FeatureCheckDaily for long-term storage.
+ */
+model FeatureCheck {
+  id BigInt @id @default(autoincrement())
+
+  featureKey String @db.VarChar(100) // "GENETICS_COI_CALCULATIONS"
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String? // Optional - which user triggered the check
+
+  granted Boolean // Did they have access?
+
+  // Where in UI this was checked (e.g., "genetics-lab", "dashboard")
+  context String? @db.VarChar(100)
+
+  timestamp DateTime @default(now())
+
+  @@index([featureKey, timestamp])
+  @@index([tenantId, timestamp])
+  @@index([timestamp])
+  @@index([granted, timestamp])
+}
+
+/**
+ * Aggregated daily feature check statistics.
+ * Raw FeatureCheck events older than 30 days should be aggregated here then deleted.
+ */
+model FeatureCheckDaily {
+  id Int @id @default(autoincrement())
+
+  date       DateTime @db.Date
+  featureKey String   @db.VarChar(100)
+  tenantId   Int
+
+  checkCount Int @default(0) // Total checks
+  grantCount Int @default(0) // Checks where granted=true
+  denyCount  Int @default(0) // Checks where granted=false
+
+  @@unique([date, featureKey, tenantId])
+  @@index([date])
+  @@index([featureKey])
   @@index([tenantId])
 }
 
@@ -1366,6 +1521,9 @@ model Party {
   emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
   drafts        Draft[]        @relation("DraftParty")
 
+  // MessagingHub - unlinked emails that were later linked to this party
+  unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
+
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
@@ -1570,12 +1728,58 @@ model PartyEmail {
   toEmail   String   // recipient email at time of send
   sentAt    DateTime @default(now())
   status    String   @default("sent") // sent, delivered, bounced, failed
+  isRead    Boolean  @default(false)  // whether user has acknowledged this sent email
   messageId String?  // external mail provider message ID
   createdBy Int?     // userId who sent
   createdAt DateTime @default(now())
 
   @@index([tenantId, partyId])
   @@index([partyId, sentAt])
+}
+
+/// UnlinkedEmail - Emails sent to addresses not associated with a contact/org
+/// Used by MessagingHub to store emails that can later be linked when contacts are created
+model UnlinkedEmail {
+  id            Int       @id @default(autoincrement())
+  tenantId      Int
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Recipient info (no party association initially)
+  toAddresses   String[]  // array of email addresses
+  fromAddress   String    // sender email
+
+  // Email content
+  subject       String
+  bodyText      String?   @db.Text
+  bodyHtml      String?   @db.Text
+  bodyPreview   String?   // First ~200 chars for list display
+
+  // Status tracking
+  status        String    @default("sent") // queued, sent, delivered, bounced, failed
+  direction     String    @default("outbound") // outbound, inbound
+  isRead        Boolean   @default(false) // whether user has acknowledged this sent email
+
+  // Timestamps
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // For later reconciliation - link to party when contact is created
+  linkedPartyId Int?
+  linkedParty   Party?    @relation("UnlinkedEmailsLinked", fields: [linkedPartyId], references: [id], onDelete: SetNull)
+  linkedAt      DateTime?
+
+  // Metadata
+  messageId     String?   // external mail provider message ID
+  templateKey   String?   // template used if any
+  category      String    @default("transactional") // transactional, marketing
+  metadata      Json?     // flexible store for additional data
+  createdBy     Int?      // userId who sent
+
+  @@index([tenantId])
+  @@index([tenantId, linkedPartyId])
+  @@index([tenantId, createdAt])
+  @@index([toAddresses])
 }
 
 model PartyActivity {
@@ -1680,6 +1884,12 @@ model Animal {
   coiGenerations  Int? // number of generations used in calculation
   coiCalculatedAt DateTime? // when COI was last computed
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-tenant linking: Exchange codes for quick breeder-to-breeder sharing
+  // ─────────────────────────────────────────────────────────────────────────────
+  exchangeCode          String?   @unique // Short-lived shareable code (e.g., "DUKE-8472")
+  exchangeCodeExpiresAt DateTime? // When the code expires (7 days from generation)
+
   // Cross-tenant lineage identity link
   identityLink    AnimalIdentityLink?
   privacySettings AnimalPrivacySettings?
@@ -1733,6 +1943,14 @@ model Animal {
   // Cached title strings for display (computed and stored on title changes)
   titlePrefix String? // "GCH CH" - prefix titles in display order
   titleSuffix String? // "CD CGC" - suffix titles in display order
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-tenant animal linking relations
+  // ─────────────────────────────────────────────────────────────────────────────
+  linkRequestsAsSource AnimalLinkRequest[]    @relation("LinkSource")
+  linkRequestsAsTarget AnimalLinkRequest[]    @relation("LinkTarget")
+  crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkedChild")
+  crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkedParent")
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -1933,6 +2151,7 @@ model AnimalTraitValue {
   verified           Boolean                    @default(false)
   verifiedAt         DateTime?
   marketplaceVisible Boolean?
+  networkVisible     Boolean?                   // Cross-tenant sharing visibility (when enableHealthSharing is on)
   notes              String?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
@@ -2013,6 +2232,10 @@ model TagAssignment {
   draftId Int?
   draft   Draft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
+  // Breeding Plans
+  breedingPlanId Int?
+  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
 
   @@unique([tagId, taggedPartyId])
@@ -2022,6 +2245,7 @@ model TagAssignment {
   @@unique([tagId, offspringId])
   @@unique([tagId, messageThreadId])
   @@unique([tagId, draftId])
+  @@unique([tagId, breedingPlanId])
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
@@ -2029,6 +2253,7 @@ model TagAssignment {
   @@index([offspringId])
   @@index([messageThreadId])
   @@index([draftId])
+  @@index([breedingPlanId])
   @@index([tagId, taggedPartyId])
 }
 
@@ -2209,6 +2434,7 @@ model BreedingPlan {
   Parties          PlanParty[]
   Invoice          Invoice[]
   Expense          Expense[]
+  TagAssignments   TagAssignment[]
 
   archived  Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -2714,7 +2940,8 @@ model WaitlistEntry {
 
   status               WaitlistStatus @default(INQUIRY)
   priority             Int?
-  depositInvoiceId     String?
+  depositInvoiceId     Int?
+  depositInvoice       Invoice?       @relation("WaitlistDepositInvoice")
   balanceInvoiceId     String?
   depositPaidAt        DateTime?
   depositRequiredCents Int?
@@ -2951,6 +3178,7 @@ enum FinanceScope {
   contact
   organization
   general
+  waitlist
 }
 
 enum InvoiceStatus {
@@ -3143,6 +3371,10 @@ model Invoice {
   animal         Animal?       @relation(fields: [animalId], references: [id], onDelete: SetNull)
   breedingPlanId Int?
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Waitlist deposit invoice anchor
+  waitlistEntryId Int?           @unique
+  waitlistEntry   WaitlistEntry? @relation("WaitlistDepositInvoice", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
 
   invoiceNumber String // Server-generated, format: INV-YYYY-NNNN
   number        String? // Legacy field, keep for compatibility
@@ -4744,6 +4976,9 @@ model GlobalAnimalIdentity {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Global Animal ID - human-readable unique identifier (e.g., "DOG-7X4K-9M2P-QR8T")
+  gaid String? @unique
+
   // Denormalized core identity (from highest-confidence source)
   species   Species
   sex       Sex?
@@ -4848,9 +5083,22 @@ model AnimalPrivacySettings {
   showPhoto         Boolean @default(true)
   showFullDob       Boolean @default(true) // false = year only
   showRegistryFull  Boolean @default(false) // false = last 4 digits only
-  showHealthResults Boolean @default(false) // false = summary only (clear/carrier/affected)
-  showGeneticData   Boolean @default(false)
   showBreeder       Boolean @default(true) // Show tenant/breeder name
+
+  // Gate toggles for granular per-item sharing (enables networkVisible toggles in respective tabs)
+  enableHealthSharing   Boolean @default(false) // Gate for per-test visibility in Health tab
+  enableGeneticsSharing Boolean @default(false) // Gate for per-result visibility in Genetics tab
+  enableDocumentSharing Boolean @default(false) // Gate for per-document visibility in Documents tab
+  enableMediaSharing    Boolean @default(false) // Gate for per-item visibility in Media tab
+
+  // Breeding visibility
+  showBreedingHistory Boolean @default(false) // Show past matings, litter counts, offspring
+
+  // Achievements visibility - controls what shows in cross-tenant pedigree views
+  showTitles             Boolean @default(true) // Show title abbreviations (CH, GCH, etc.)
+  showTitleDetails       Boolean @default(false) // Show event name, location, date where earned
+  showCompetitions       Boolean @default(false) // Show competition entry count and placements
+  showCompetitionDetails Boolean @default(false) // Show individual competition results
 
   // Contact preferences
   allowInfoRequests  Boolean @default(true) // Can others request more info?
@@ -4911,6 +5159,102 @@ enum LineageAccessLevel {
   BASIC // Name, breed, DOB year
   STANDARD // Name, breed, full DOB, registry (partial)
   FULL // Everything the owner has made shareable
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Cross-Tenant Animal Linking
+ * Enables breeders to link their animals' pedigrees with animals owned by other breeders
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * AnimalLinkRequest - Request from one breeder to link their animal's parent to another breeder's animal
+ * Workflow: Create Request → Target Breeder Approves/Denies → Active Link Created
+ */
+model AnimalLinkRequest {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Requesting party (the breeder who wants to link a parent)
+  requestingTenantId Int
+  requestingTenant   Tenant @relation("LinkRequestFrom", fields: [requestingTenantId], references: [id], onDelete: Cascade)
+  requestingUserId   String
+  requestingUser     User   @relation("LinkRequestFromUser", fields: [requestingUserId], references: [id], onDelete: Cascade)
+
+  // Source animal (the animal that needs a parent linked)
+  sourceAnimalId   Int
+  sourceAnimal     Animal     @relation("LinkSource", fields: [sourceAnimalId], references: [id], onDelete: Cascade)
+  relationshipType ParentType // SIRE or DAM
+
+  // Target discovery - how the target animal was found (at least one populated)
+  targetAnimalId     Int? // Direct animal ID if known
+  targetAnimal       Animal?  @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
+  targetGaid         String? // GAID if searched by global ID
+  targetExchangeCode String? // Exchange code if shared directly
+  targetRegistryId   Int? // Registry ID if searched by registry number
+  targetRegistryNum  String? // Registry number
+  targetTenantId     Int? // Target breeder if found via breeder search
+  targetTenant       Tenant?  @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
+
+  // Request details
+  message String? @db.Text // Message from requester
+
+  // Response
+  status                  LinkRequestStatus @default(PENDING)
+  respondedAt             DateTime?
+  responseMessage         String?           @db.Text
+  denialReason            String? // Reason if denied
+  confirmedTargetAnimalId Int? // The actual animal ID selected by target breeder on approval
+
+  // Link created from this request (if approved)
+  resultingLink CrossTenantAnimalLink?
+
+  @@index([requestingTenantId])
+  @@index([targetTenantId])
+  @@index([targetAnimalId])
+  @@index([sourceAnimalId])
+  @@index([status])
+}
+
+/**
+ * CrossTenantAnimalLink - An active link between a child animal and a parent animal across tenants
+ * Created when a link request is approved
+ */
+model CrossTenantAnimalLink {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Child animal (the animal with the linked parent)
+  childAnimalId Int
+  childAnimal   Animal @relation("LinkedChild", fields: [childAnimalId], references: [id], onDelete: Cascade)
+  childTenantId Int
+  childTenant   Tenant @relation("LinkChildTenant", fields: [childTenantId], references: [id], onDelete: Cascade)
+
+  // Parent animal (the animal being linked as parent)
+  parentAnimalId Int
+  parentAnimal   Animal     @relation("LinkedParent", fields: [parentAnimalId], references: [id], onDelete: Cascade)
+  parentTenantId Int
+  parentTenant   Tenant     @relation("LinkParentTenant", fields: [parentTenantId], references: [id], onDelete: Cascade)
+  parentType     ParentType // SIRE or DAM
+
+  // Provenance
+  linkRequestId Int?               @unique
+  linkRequest   AnimalLinkRequest? @relation(fields: [linkRequestId], references: [id], onDelete: SetNull)
+  linkMethod    LinkMethod // How the link was established
+
+  // Status
+  active           Boolean    @default(true)
+  revokedAt        DateTime?
+  revokedBy        RevokedBy?
+  revocationReason String?
+
+  @@unique([childAnimalId, parentType]) // Each animal can have only one sire and one dam linked cross-tenant
+  @@index([parentAnimalId])
+  @@index([childTenantId])
+  @@index([parentTenantId])
+  @@index([active])
 }
 
 /**
@@ -5029,6 +5373,9 @@ model AnimalTitle {
   verifiedBy  String? // User ID or "AKC Registry"
   registryRef String? // External reference number
 
+  // Public visibility for cross-tenant pedigree views
+  isPublic Boolean @default(false)
+
   notes     String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5040,6 +5387,7 @@ model AnimalTitle {
   @@index([tenantId])
   @@index([animalId])
   @@index([status])
+  @@index([isPublic])
 }
 
 /**
@@ -5104,6 +5452,9 @@ model CompetitionEntry {
   // Judge
   judgeName String?
 
+  // Public visibility for cross-tenant pedigree views
+  isPublic Boolean @default(false)
+
   notes     String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5115,6 +5466,7 @@ model CompetitionEntry {
   @@index([animalId])
   @@index([eventDate])
   @@index([competitionType])
+  @@index([isPublic])
 }
 
 /**

@@ -15,6 +15,7 @@ import prisma from "../prisma.js";
 import { parseVerifiedSession } from "../utils/session.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
+import { stripe } from "../services/stripe-service.js";
 
 // ============================================================================
 // Constants
@@ -348,6 +349,16 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           rejectedAt: true,
           rejectedReason: true,
           tenantId: true,
+          depositInvoice: {
+            select: {
+              id: true,
+              status: true,
+              totalCents: true,
+              paidCents: true,
+              balanceCents: true,
+              dueAt: true,
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -409,12 +420,183 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           approvedAt: entry.approvedAt,
           rejectedAt: entry.rejectedAt,
           rejectedReason: entry.rejectedReason,
+          invoice: entry.depositInvoice
+            ? {
+                id: entry.depositInvoice.id,
+                status: entry.depositInvoice.status,
+                totalCents: entry.depositInvoice.totalCents,
+                paidCents: entry.depositInvoice.paidCents,
+                balanceCents: entry.depositInvoice.balanceCents,
+                dueAt: entry.depositInvoice.dueAt,
+              }
+            : null,
         };
       });
 
       return reply.send({ requests });
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /invoices/:id/checkout - Create Stripe checkout session for invoice
+  // --------------------------------------------------------------------------
+  app.post<{
+    Params: { id: string };
+  }>("/invoices/:id/checkout", async (req, reply) => {
+    // 1) Verify user is authenticated (marketplace session)
+    const sess = parseVerifiedSession(req, "MARKETPLACE");
+    if (!sess) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const invoiceId = parseInt(req.params.id, 10);
+    if (isNaN(invoiceId)) {
+      return reply.code(400).send({ error: "invalid_invoice_id" });
+    }
+
+    try {
+      // 2) Get user's email to verify they have access to this invoice
+      const user = await prisma.user.findUnique({
+        where: { id: sess.userId },
+        select: { email: true },
+      });
+
+      if (!user?.email) {
+        return reply.code(403).send({ error: "no_email" });
+      }
+
+      // 3) Find the invoice and verify the user is the client
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: invoiceId },
+        select: {
+          id: true,
+          status: true,
+          totalCents: true,
+          balanceCents: true,
+          tenantId: true,
+          clientPartyId: true,
+          waitlistEntryId: true,
+          invoiceNumber: true,
+          clientParty: {
+            select: { email: true },
+          },
+          tenant: {
+            select: {
+              name: true,
+              stripeCustomerId: true,
+              stripeAccountId: true,
+            },
+          },
+          lineItems: {
+            select: {
+              description: true,
+              quantity: true,
+              unitPriceCents: true,
+            },
+          },
+        },
+      });
+
+      if (!invoice) {
+        return reply.code(404).send({ error: "invoice_not_found" });
+      }
+
+      // Verify the user's email matches the invoice client
+      if (invoice.clientParty?.email?.toLowerCase() !== user.email.toLowerCase()) {
+        return reply.code(403).send({ error: "not_authorized" });
+      }
+
+      // 4) Check invoice is in a payable state
+      if (invoice.status === "PAID") {
+        return reply.code(400).send({ error: "already_paid" });
+      }
+
+      if (invoice.status === "VOID" || invoice.status === "CANCELED") {
+        return reply.code(400).send({ error: "invoice_canceled" });
+      }
+
+      // 5) Calculate amount to charge (balance remaining)
+      const amountCents = invoice.balanceCents > 0 ? invoice.balanceCents : invoice.totalCents;
+
+      if (amountCents <= 0) {
+        return reply.code(400).send({ error: "nothing_to_pay" });
+      }
+
+      // 6) Build line items for Stripe checkout
+      const lineItems = invoice.lineItems.map((item) => ({
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: item.description || "Invoice item",
+          },
+          unit_amount: item.unitPriceCents,
+        },
+        quantity: item.quantity,
+      }));
+
+      // If there's a partial payment, adjust or add a credit line
+      if (invoice.balanceCents !== invoice.totalCents && invoice.balanceCents > 0) {
+        // Simplify: just show balance as single line item
+        lineItems.length = 0;
+        lineItems.push({
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `Balance due on Invoice #${invoice.invoiceNumber}`,
+            },
+            unit_amount: invoice.balanceCents,
+          },
+          quantity: 1,
+        });
+      }
+
+      // 7) Determine success/cancel URLs
+      const baseUrl = process.env.MARKETPLACE_URL || "https://marketplace.breederhq.com";
+      const successUrl = `${baseUrl}/inquiries?tab=waitlist&payment=success`;
+      const cancelUrl = `${baseUrl}/inquiries?tab=waitlist&payment=canceled`;
+
+      // 8) Create Stripe checkout session
+      // If breeder has Stripe Connect, use destination charges
+      const checkoutConfig: any = {
+        mode: "payment",
+        line_items: lineItems,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        customer_email: user.email,
+        metadata: {
+          invoiceId: invoice.id.toString(),
+          tenantId: invoice.tenantId.toString(),
+          waitlistEntryId: invoice.waitlistEntryId?.toString() || "",
+          type: "deposit_invoice",
+        },
+        payment_intent_data: {
+          metadata: {
+            invoiceId: invoice.id.toString(),
+            tenantId: invoice.tenantId.toString(),
+            waitlistEntryId: invoice.waitlistEntryId?.toString() || "",
+          },
+        },
+      };
+
+      // If breeder has connected Stripe account, route payment to them
+      if ((invoice.tenant as any).stripeAccountId) {
+        checkoutConfig.payment_intent_data.transfer_data = {
+          destination: (invoice.tenant as any).stripeAccountId,
+        };
+      }
+
+      const session = await stripe.checkout.sessions.create(checkoutConfig);
+
+      if (!session.url) {
+        return reply.code(500).send({ error: "checkout_session_failed" });
+      }
+
+      return reply.send({ checkoutUrl: session.url });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to create invoice checkout session");
+      return reply.code(500).send({ error: "checkout_failed", detail: err.message });
     }
   });
 };

@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 
 type CommunicationChannel = "all" | "email" | "dm";
-type CommunicationStatus = "all" | "unread" | "flagged" | "archived" | "draft";
+type CommunicationStatus = "all" | "unread" | "sent" | "flagged" | "archived" | "draft";
 type CommunicationType = "email" | "dm" | "draft";
 type SortOption = "newest" | "oldest" | "unread_first";
 type BulkAction = "archive" | "unarchive" | "flag" | "unflag" | "markRead" | "markUnread" | "delete";
@@ -15,6 +15,7 @@ interface CommunicationItem {
   type: CommunicationType;
   partyId: number | null;
   partyName: string | null;
+  toEmail?: string | null; // Email address for email items
   subject: string | null;
   preview: string;
   isRead: boolean;
@@ -30,7 +31,7 @@ interface CommunicationItem {
  * Parse composite ID back to type and numeric ID
  */
 function parseCompositeId(compositeId: string): { type: string; id: number } | null {
-  const match = compositeId.match(/^(email|thread|draft):(\d+)$/);
+  const match = compositeId.match(/^(email|thread|draft|partyEmail|unlinkedEmail):(\d+)$/);
   if (!match) return null;
   return { type: match[1], id: Number(match[2]) };
 }
@@ -156,8 +157,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
-    // === Fetch Emails ===
-    if ((channel === "all" || channel === "email") && status !== "draft") {
+    // === Fetch Emails (from EmailSendLog - legacy) ===
+    if ((channel === "all" || channel === "email") && status !== "draft" && status !== "sent") {
       const emailWhere: any = { tenantId };
 
       // Archive filter
@@ -218,8 +219,93 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // === Fetch Sent Emails (from PartyEmail - linked) ===
+    if ((channel === "all" || channel === "email") && (status === "all" || status === "sent")) {
+      const partyEmailWhere: any = { tenantId, status: "sent" };
+
+      // Party filter
+      if (partyIdFilter) {
+        partyEmailWhere.partyId = partyIdFilter;
+      }
+
+      // Search filter
+      if (search) {
+        partyEmailWhere.OR = [
+          { subject: { contains: search, mode: "insensitive" } },
+          { toEmail: { contains: search, mode: "insensitive" } },
+          { body: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      const partyEmails = await prisma.partyEmail.findMany({
+        where: partyEmailWhere,
+        include: {
+          party: { select: { id: true, name: true } },
+        },
+        orderBy: sort === "oldest" ? { createdAt: "asc" } : { createdAt: "desc" },
+      });
+
+      for (const email of partyEmails) {
+        items.push({
+          id: `partyEmail:${email.id}`,
+          type: "email",
+          partyId: email.partyId,
+          partyName: email.party?.name || null,
+          toEmail: email.toEmail,
+          subject: email.subject,
+          preview: email.body?.substring(0, 100) || "",
+          isRead: email.isRead ?? false,
+          flagged: false,
+          archived: false,
+          channel: "email",
+          direction: "outbound",
+          createdAt: email.createdAt.toISOString(),
+          updatedAt: email.createdAt.toISOString(),
+        });
+      }
+    }
+
+    // === Fetch Sent Emails (from UnlinkedEmail - not linked to party) ===
+    if ((channel === "all" || channel === "email") && (status === "all" || status === "sent")) {
+      const unlinkedWhere: any = { tenantId, direction: "outbound" };
+
+      // Search filter
+      if (search) {
+        unlinkedWhere.OR = [
+          { subject: { contains: search, mode: "insensitive" } },
+          { toAddresses: { hasSome: [search.toLowerCase()] } },
+          { bodyPreview: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      const unlinkedEmails = await prisma.unlinkedEmail.findMany({
+        where: unlinkedWhere,
+        orderBy: sort === "oldest" ? { createdAt: "asc" } : { createdAt: "desc" },
+      });
+
+      for (const email of unlinkedEmails) {
+        const toDisplay = email.toAddresses.join(", ");
+        items.push({
+          id: `unlinkedEmail:${email.id}`,
+          type: "email",
+          partyId: email.linkedPartyId,
+          partyName: null, // Unlinked emails don't have a party name
+          toEmail: toDisplay,
+          subject: email.subject,
+          preview: email.bodyPreview || "",
+          isRead: email.isRead ?? false,
+          flagged: false,
+          archived: false,
+          channel: "email",
+          direction: "outbound",
+          createdAt: email.createdAt.toISOString(),
+          updatedAt: email.createdAt.toISOString(),
+        });
+      }
+    }
+
     // === Fetch Drafts ===
-    if (status === "draft" || (channel === "all" && status === "all")) {
+    if (status === "draft") {
       const draftWhere: any = { tenantId };
 
       if (channel === "dm") {
@@ -239,32 +325,29 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ];
       }
 
-      // Only show drafts if specifically requesting drafts tab
-      if (status === "draft") {
-        const drafts = await prisma.draft.findMany({
-          where: draftWhere,
-          include: {
-            party: { select: { id: true, name: true } },
-          },
-          orderBy: sort === "oldest" ? { updatedAt: "asc" } : { updatedAt: "desc" },
-        });
+      const drafts = await prisma.draft.findMany({
+        where: draftWhere,
+        include: {
+          party: { select: { id: true, name: true } },
+        },
+        orderBy: sort === "oldest" ? { updatedAt: "asc" } : { updatedAt: "desc" },
+      });
 
-        for (const draft of drafts) {
-          items.push({
-            id: `draft:${draft.id}`,
-            type: "draft",
-            partyId: draft.partyId,
-            partyName: draft.party?.name || (draft.toAddresses[0] ?? null),
-            subject: draft.subject,
-            preview: draft.bodyText.substring(0, 100),
-            isRead: true, // Drafts are always "read"
-            flagged: false,
-            archived: false,
-            channel: draft.channel,
-            createdAt: draft.createdAt.toISOString(),
-            updatedAt: draft.updatedAt.toISOString(),
-          });
-        }
+      for (const draft of drafts) {
+        items.push({
+          id: `draft:${draft.id}`,
+          type: "draft",
+          partyId: draft.partyId,
+          partyName: draft.party?.name || (draft.toAddresses[0] ?? null),
+          subject: draft.subject,
+          preview: draft.bodyText.substring(0, 100),
+          isRead: true, // Drafts are always "read"
+          flagged: false,
+          archived: false,
+          channel: draft.channel,
+          createdAt: draft.createdAt.toISOString(),
+          updatedAt: draft.updatedAt.toISOString(),
+        });
       }
     }
 
@@ -493,18 +576,119 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
-    // Count flagged items
-    const [flaggedThreads, flaggedEmails, draftCount] = await Promise.all([
+    // Count flagged items and sent emails
+    const [flaggedThreads, flaggedEmails, draftCount, sentPartyEmails, sentUnlinkedEmails] = await Promise.all([
       prisma.messageThread.count({ where: { tenantId, flagged: true, archived: false } }),
       prisma.emailSendLog.count({ where: { tenantId, flagged: true, archived: false } }),
       prisma.draft.count({ where: { tenantId } }),
+      prisma.partyEmail.count({ where: { tenantId, status: "sent" } }),
+      prisma.unlinkedEmail.count({ where: { tenantId, direction: "outbound" } }),
     ]);
 
     return reply.send({
       unreadCount: unreadThreads,
       flaggedCount: flaggedThreads + flaggedEmails,
       draftCount,
+      sentCount: sentPartyEmails + sentUnlinkedEmails,
     });
+  });
+
+  // GET /communications/email/:compositeId - Get email details by composite ID
+  // Supports partyEmail:123 and unlinkedEmail:456 formats
+  app.get("/communications/email/:compositeId", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const compositeId = (req.params as any).compositeId as string;
+    const parsed = parseCompositeId(compositeId);
+
+    if (!parsed) {
+      return reply.code(400).send({ error: "invalid_id_format" });
+    }
+
+    try {
+      if (parsed.type === "partyEmail") {
+        const email = await prisma.partyEmail.findFirst({
+          where: { id: parsed.id, tenantId },
+          include: {
+            party: { select: { id: true, name: true, email: true } },
+          },
+        });
+
+        if (!email) {
+          return reply.code(404).send({ error: "not_found" });
+        }
+
+        // Mark as read
+        if (!email.isRead) {
+          await prisma.partyEmail.update({
+            where: { id: email.id },
+            data: { isRead: true },
+          });
+        }
+
+        return reply.send({
+          email: {
+            id: compositeId,
+            type: "partyEmail",
+            partyId: email.partyId,
+            partyName: email.party?.name || null,
+            partyEmail: email.party?.email || null,
+            toEmail: email.toEmail,
+            subject: email.subject,
+            body: email.body,
+            status: email.status,
+            sentAt: email.sentAt?.toISOString(),
+            createdAt: email.createdAt.toISOString(),
+            isRead: true, // Now marked as read
+          },
+        });
+      } else if (parsed.type === "unlinkedEmail") {
+        const email = await prisma.unlinkedEmail.findFirst({
+          where: { id: parsed.id, tenantId },
+          include: {
+            linkedParty: { select: { id: true, name: true, email: true } },
+          },
+        });
+
+        if (!email) {
+          return reply.code(404).send({ error: "not_found" });
+        }
+
+        // Mark as read
+        if (!email.isRead) {
+          await prisma.unlinkedEmail.update({
+            where: { id: email.id },
+            data: { isRead: true },
+          });
+        }
+
+        return reply.send({
+          email: {
+            id: compositeId,
+            type: "unlinkedEmail",
+            partyId: email.linkedPartyId,
+            partyName: email.linkedParty?.name || null,
+            partyEmail: email.linkedParty?.email || null,
+            toEmail: email.toAddresses.join(", "),
+            fromEmail: email.fromAddress,
+            subject: email.subject,
+            bodyText: email.bodyText,
+            bodyHtml: email.bodyHtml,
+            status: email.status,
+            direction: email.direction,
+            sentAt: email.sentAt?.toISOString(),
+            createdAt: email.createdAt.toISOString(),
+            isRead: true, // Now marked as read
+          },
+        });
+      } else {
+        return reply.code(400).send({ error: "unsupported_email_type" });
+      }
+    } catch (err) {
+      console.error("Failed to get email:", err);
+      return reply.code(500).send({ error: "get_email_failed" });
+    }
   });
 };
 

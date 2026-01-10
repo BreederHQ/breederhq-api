@@ -5,6 +5,9 @@ import { WaitlistStatus } from "@prisma/client";
 import { Species } from "@prisma/client";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
 import { recordWaitlistOutcome } from "../services/marketplace-flag.js";
+import { generateInvoiceNumber } from "../services/finance/invoice-numbering.js";
+import { sendEmail } from "../services/email-service.js";
+import { renderInvoiceEmail } from "../services/email-templates.js";
 
 /* ───────── helpers ───────── */
 
@@ -49,6 +52,23 @@ function serializeEntry(w: any) {
   const clientParty = w.clientParty;
   const contact = clientParty?.contact;
 
+  // Serialize deposit invoice if included
+  const depositInvoice = w.depositInvoice;
+  let invoiceSummary = null;
+  if (depositInvoice) {
+    const paidCents = depositInvoice.amountCents - depositInvoice.balanceCents;
+    invoiceSummary = {
+      id: depositInvoice.id,
+      invoiceNumber: depositInvoice.invoiceNumber ?? null,
+      status: depositInvoice.status?.toUpperCase() ?? "DRAFT",
+      totalCents: depositInvoice.amountCents,
+      paidCents,
+      balanceCents: depositInvoice.balanceCents,
+      dueAt: depositInvoice.dueAt?.toISOString() ?? null,
+      issuedAt: depositInvoice.issuedAt?.toISOString() ?? null,
+    };
+  }
+
   return {
     id: w.id,
     tenantId: w.tenantId,
@@ -60,6 +80,10 @@ function serializeEntry(w: any) {
     depositPaidCents: w.depositPaidCents,
     balanceDueCents: w.balanceDueCents,
     depositPaidAt: w.depositPaidAt?.toISOString() ?? null,
+
+    // Invoice link
+    invoiceId: w.depositInvoiceId ?? null,
+    invoice: invoiceSummary,
 
     clientPartyId: w.clientPartyId,
     litterId: w.litterId,
@@ -138,14 +162,15 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const species = String((req.query as any)["species"] ?? "").trim();
     const clientPartyIdParam = (req.query as any)["clientPartyId"] ? Number((req.query as any)["clientPartyId"]) : undefined;
     const validSpecies = species && Object.values(Species).includes(species as Species) ? (species as Species) : undefined;
-    const validStatus = status && Object.values(WaitlistStatus).includes(status as WaitlistStatus) ? (status as WaitlistStatus) : undefined;
+    // Support comma-separated status values (e.g., "INQUIRY,DEPOSIT_PAID")
+    const statusValues = status.split(",").map(s => s.trim()).filter(s => Object.values(WaitlistStatus).includes(s as WaitlistStatus)) as WaitlistStatus[];
     const limit = Math.min(250, Math.max(1, Number((req.query as any)["limit"] ?? 25)));
     const cursorId = (req.query as any)["cursor"] ? Number((req.query as any)["cursor"]) : undefined;
 
     const where: any = {
       tenantId,
       litterId: null, // parking lot
-      ...(validStatus ? { status } : null),
+      ...(statusValues.length === 1 ? { status: statusValues[0] } : statusValues.length > 1 ? { status: { in: statusValues } } : null),
       ...(species ? { speciesPref: species } : null),
       ...(cursorId ? { id: { lt: cursorId } } : null),
       ...(q
@@ -174,6 +199,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -192,8 +228,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     });
 
     // Count without cursor to give a stable aggregate for UI; still scoped to parking-lot, status/species
+    const statusFilter = statusValues.length === 1 ? { status: statusValues[0] } : statusValues.length > 1 ? { status: { in: statusValues } } : null;
     const total = await prisma.waitlistEntry.count({
-      where: { tenantId, litterId: null, ...(validStatus ? { status: validStatus } : null), ...(validSpecies ? { speciesPref: validSpecies } : null) },
+      where: { tenantId, litterId: null, ...statusFilter, ...(validSpecies ? { speciesPref: validSpecies } : null) },
     });
 
     reply.send({ items: rows.map(serializeEntry), total });
@@ -221,6 +258,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -289,6 +337,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -368,6 +427,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -667,7 +737,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * POST /api/v1/waitlist/:id/approve
-   * Approve a pending (INQUIRY) waitlist entry
+   * Approve a pending (INQUIRY or DEPOSIT_PAID) waitlist entry
    * Body: { linkToExistingContactId?: number }
    * Returns: updated entry with linkedToExisting flag
    */
@@ -689,8 +759,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     });
 
     if (!entry) return reply.code(404).send({ error: "not found" });
-    if (entry.status !== "INQUIRY") {
-      return reply.code(400).send({ error: "Entry is not in INQUIRY status" });
+    // Allow approval of both INQUIRY (new) and DEPOSIT_PAID (paid deposit awaiting finalization)
+    if (entry.status !== "INQUIRY" && entry.status !== "DEPOSIT_PAID") {
+      return reply.code(400).send({ error: "Entry must be in INQUIRY or DEPOSIT_PAID status to approve" });
     }
 
     let linkedToExisting = false;
@@ -742,6 +813,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -812,6 +894,17 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         sirePref: { select: { id: true, name: true } },
         damPref: { select: { id: true, name: true } },
         TagAssignment: { include: { tag: true } },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            balanceCents: true,
+            dueAt: true,
+            issuedAt: true,
+          },
+        },
         clientParty: {
           include: {
             contact: {
@@ -1009,6 +1102,245 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     }
 
     reply.send({ ok: true, threadId });
+  });
+
+  /**
+   * POST /api/v1/waitlist/:id/generate-deposit-invoice
+   * Generate a deposit invoice for a waitlist entry
+   * Body: { amountCents?: number, dueAt?: string, sendEmail?: boolean }
+   * Returns: { invoice: InvoiceSummary, emailSent: boolean }
+   */
+  app.post("/waitlist/:id/generate-deposit-invoice", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+    const b = (req.body as any) ?? {};
+
+    // Fetch the entry with client party
+    const entry = await prisma.waitlistEntry.findFirst({
+      where: { id, tenantId },
+      include: {
+        clientParty: {
+          select: { id: true, name: true, email: true },
+        },
+        depositInvoice: { select: { id: true } },
+      },
+    });
+
+    if (!entry) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Check if already has an invoice
+    if (entry.depositInvoiceId || entry.depositInvoice) {
+      return reply.code(400).send({ error: "invoice_already_exists" });
+    }
+
+    // Get tenant name for email
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+
+    // Determine amount - use provided value, or look for default in tenant settings
+    let amountCents = b.amountCents ? Number(b.amountCents) : null;
+
+    // If no amount provided, try to get from tenant's program settings
+    if (!amountCents) {
+      const programSetting = await prisma.tenantSetting.findUnique({
+        where: {
+          tenantId_namespace: {
+            tenantId,
+            namespace: "breedingProgramProfile",
+          },
+        },
+        select: { data: true },
+      });
+      const settings = programSetting?.data as any;
+      const depositAmount = settings?.placement?.depositAmountUSD;
+      if (depositAmount) {
+        amountCents = Math.round(depositAmount * 100);
+      }
+    }
+
+    if (!amountCents || amountCents <= 0) {
+      return reply.code(400).send({ error: "amountCents_required" });
+    }
+
+    // Calculate due date (default 14 days from now)
+    const dueAt = b.dueAt ? new Date(b.dueAt) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    const shouldSendEmail = b.sendEmail !== false; // Default true
+
+    // Create the invoice in a transaction
+    const result = await prisma.$transaction(async (tx: any) => {
+      const invoiceNumber = await generateInvoiceNumber(tx, tenantId);
+
+      const invoice = await tx.invoice.create({
+        data: {
+          tenantId,
+          invoiceNumber,
+          scope: "waitlist",
+          clientPartyId: entry.clientPartyId,
+          amountCents,
+          balanceCents: amountCents,
+          currency: "USD",
+          status: "issued",
+          category: "DEPOSIT",
+          issuedAt: new Date(),
+          dueAt,
+          notes: `Deposit for waitlist entry #${id}`,
+          waitlistEntryId: id,
+        },
+      });
+
+      // Create line item
+      await tx.invoiceLineItem.create({
+        data: {
+          tenantId,
+          invoiceId: invoice.id,
+          kind: "DEPOSIT",
+          description: "Waitlist Deposit",
+          qty: 1,
+          unitCents: amountCents,
+          totalCents: amountCents,
+        },
+      });
+
+      // Link invoice to waitlist entry
+      await tx.waitlistEntry.update({
+        where: { id },
+        data: {
+          depositInvoiceId: invoice.id,
+          depositRequiredCents: amountCents,
+        },
+      });
+
+      return invoice;
+    });
+
+    // Build invoice summary for response
+    const invoiceSummary = {
+      id: result.id,
+      invoiceNumber: result.invoiceNumber,
+      status: result.status?.toUpperCase() ?? "ISSUED",
+      totalCents: result.amountCents,
+      paidCents: 0,
+      balanceCents: result.balanceCents,
+      dueAt: result.dueAt?.toISOString() ?? null,
+      issuedAt: result.issuedAt?.toISOString() ?? null,
+    };
+
+    // Send email if requested and client has email
+    let emailSent = false;
+    const clientEmail = entry.clientParty?.email;
+    if (shouldSendEmail && clientEmail) {
+      try {
+        const emailContent = renderInvoiceEmail({
+          invoiceNumber: result.invoiceNumber,
+          amountCents: result.amountCents,
+          currency: "USD",
+          dueAt: result.dueAt,
+          clientName: entry.clientParty?.name || "Valued Customer",
+          tenantName: tenant?.name || "BreederHQ",
+        });
+
+        await sendEmail({
+          tenantId,
+          to: clientEmail,
+          subject: emailContent.subject,
+          html: emailContent.html,
+          text: emailContent.text,
+          templateKey: "invoice_issued",
+          relatedInvoiceId: result.id,
+          category: "transactional",
+          metadata: { invoiceId: result.id, invoiceNumber: result.invoiceNumber, waitlistEntryId: id },
+        });
+
+        emailSent = true;
+      } catch (err) {
+        // Log but don't fail the request
+        console.error("[waitlist/generate-deposit-invoice] Failed to send email:", err);
+      }
+    }
+
+    reply.send({ invoice: invoiceSummary, emailSent });
+  });
+
+  /**
+   * POST /api/v1/waitlist/:id/resend-invoice-email
+   * Resend the deposit invoice email for a waitlist entry
+   * Returns: { success: boolean }
+   */
+  app.post("/waitlist/:id/resend-invoice-email", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+
+    // Fetch the entry with invoice and client party
+    const entry = await prisma.waitlistEntry.findFirst({
+      where: { id, tenantId },
+      include: {
+        clientParty: {
+          select: { id: true, name: true, email: true },
+        },
+        depositInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            amountCents: true,
+            dueAt: true,
+          },
+        },
+      },
+    });
+
+    if (!entry) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    if (!entry.depositInvoice) {
+      return reply.code(400).send({ error: "no_invoice" });
+    }
+
+    const clientEmail = entry.clientParty?.email;
+    if (!clientEmail) {
+      return reply.code(400).send({ error: "no_email" });
+    }
+
+    // Get tenant name for email
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+
+    const invoice = entry.depositInvoice;
+
+    try {
+      const emailContent = renderInvoiceEmail({
+        invoiceNumber: invoice.invoiceNumber,
+        amountCents: invoice.amountCents,
+        currency: "USD",
+        dueAt: invoice.dueAt,
+        clientName: entry.clientParty?.name || "Valued Customer",
+        tenantName: tenant?.name || "BreederHQ",
+      });
+
+      await sendEmail({
+        tenantId,
+        to: clientEmail,
+        subject: emailContent.subject,
+        html: emailContent.html,
+        text: emailContent.text,
+        templateKey: "invoice_resend",
+        relatedInvoiceId: invoice.id,
+        category: "transactional",
+        metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, waitlistEntryId: id, resend: true },
+      });
+
+      reply.send({ success: true });
+    } catch (err: any) {
+      console.error("[waitlist/resend-invoice-email] Failed to send email:", err);
+      return reply.code(500).send({ error: "email_send_failed", detail: err?.message });
+    }
   });
 
   done();
