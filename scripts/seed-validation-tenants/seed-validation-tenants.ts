@@ -31,6 +31,8 @@ import {
   BreedingPlanStatus,
   ListingType,
   ListingStatus,
+  TagModule,
+  PortalAccessStatus,
 } from '@prisma/client';
 
 import {
@@ -43,12 +45,16 @@ import {
   getTenantAnimals,
   getTenantBreedingPlans,
   getTenantMarketplaceListings,
+  getPortalAccessDefinitions,
+  getMarketplaceUsers,
   getEnvName,
   getEnvSlug,
   getEnvEmail,
   generateCredentialsSummary,
   AnimalDefinition,
   TenantDefinition,
+  PortalAccessDefinition,
+  MarketplaceUserDefinition,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -230,9 +236,15 @@ async function seedOrganizations(
       ? getEnvSlug(orgDef.programSlug, env)
       : undefined;
 
-    // Check if organization already exists
+    // Check if organization already exists (by name or by programSlug)
     let org = await prisma.organization.findFirst({
-      where: { tenantId, name: envName },
+      where: {
+        tenantId,
+        OR: [
+          { name: envName },
+          ...(envProgramSlug ? [{ programSlug: envProgramSlug }] : []),
+        ],
+      },
     });
 
     if (!org) {
@@ -300,6 +312,7 @@ async function seedContacts(
 
   for (const contactDef of contactDefs) {
     const envEmail = getEnvEmail(contactDef.emailBase, env);
+    const displayName = `${contactDef.firstName} ${contactDef.lastName}`;
 
     // Check if contact already exists
     let contact = await prisma.contact.findFirst({
@@ -307,24 +320,67 @@ async function seedContacts(
     });
 
     if (!contact) {
-      contact = await prisma.contact.create({
-        data: {
-          tenantId,
-          first_name: contactDef.firstName,
-          last_name: contactDef.lastName,
-          display_name: `${contactDef.firstName} ${contactDef.lastName}`,
-          nickname: contactDef.nickname,
-          email: envEmail,
-          phoneE164: contactDef.phone,
-          city: contactDef.city,
-          state: contactDef.state,
-          country: contactDef.country,
-          archived: false,
-        },
+      contact = await prisma.$transaction(async (tx) => {
+        // Create Party first for tag assignment support
+        const party = await tx.party.create({
+          data: {
+            tenantId,
+            type: 'CONTACT',
+            name: displayName,
+            email: envEmail,
+            phoneE164: contactDef.phone,
+            city: contactDef.city,
+            state: contactDef.state,
+            country: contactDef.country,
+            archived: false,
+          },
+        });
+
+        // Create Contact linked to Party
+        const newContact = await tx.contact.create({
+          data: {
+            tenantId,
+            partyId: party.id,
+            first_name: contactDef.firstName,
+            last_name: contactDef.lastName,
+            display_name: displayName,
+            nickname: contactDef.nickname,
+            email: envEmail,
+            phoneE164: contactDef.phone,
+            city: contactDef.city,
+            state: contactDef.state,
+            country: contactDef.country,
+            archived: false,
+          },
+        });
+
+        return newContact;
       });
       console.log(`  + Created contact: ${contact.display_name}`);
     } else {
-      console.log(`  = Contact exists: ${contact.display_name}`);
+      // Ensure existing contact has a party for tag assignment
+      if (!contact.partyId) {
+        const party = await prisma.party.create({
+          data: {
+            tenantId,
+            type: 'CONTACT',
+            name: displayName,
+            email: envEmail,
+            phoneE164: contactDef.phone,
+            city: contactDef.city,
+            state: contactDef.state,
+            country: contactDef.country,
+            archived: false,
+          },
+        });
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { partyId: party.id },
+        });
+        console.log(`  = Contact exists: ${contact.display_name} (added Party)`);
+      } else {
+        console.log(`  = Contact exists: ${contact.display_name}`);
+      }
     }
   }
 }
@@ -588,6 +644,474 @@ async function seedMarketplaceListings(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TAG DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TagDefinition {
+  name: string;
+  module: TagModule;
+  color: string;
+}
+
+// Tags to create for each tenant - same tags across all tenants for consistency
+const TAG_DEFINITIONS: TagDefinition[] = [
+  // Contact tags
+  { name: 'VIP', module: TagModule.CONTACT, color: '#FFD700' },
+  { name: 'Repeat Buyer', module: TagModule.CONTACT, color: '#4CAF50' },
+  { name: 'Breeder', module: TagModule.CONTACT, color: '#2196F3' },
+  { name: 'Vet', module: TagModule.CONTACT, color: '#9C27B0' },
+  { name: 'Pending Follow-up', module: TagModule.CONTACT, color: '#FF9800' },
+
+  // Organization tags
+  { name: 'Partner', module: TagModule.ORGANIZATION, color: '#3F51B5' },
+  { name: 'Supplier', module: TagModule.ORGANIZATION, color: '#607D8B' },
+  { name: 'Show Club', module: TagModule.ORGANIZATION, color: '#E91E63' },
+  { name: 'Rescue', module: TagModule.ORGANIZATION, color: '#00BCD4' },
+
+  // Animal tags
+  { name: 'Show Prospect', module: TagModule.ANIMAL, color: '#9C27B0' },
+  { name: 'Pet Quality', module: TagModule.ANIMAL, color: '#8BC34A' },
+  { name: 'Breeding Stock', module: TagModule.ANIMAL, color: '#FF5722' },
+  { name: 'Retired', module: TagModule.ANIMAL, color: '#795548' },
+  { name: 'Health Watch', module: TagModule.ANIMAL, color: '#F44336' },
+  { name: 'Champion Bloodline', module: TagModule.ANIMAL, color: '#FFD700' },
+
+  // Breeding Plan tags
+  { name: 'High Priority', module: TagModule.BREEDING_PLAN, color: '#F44336' },
+  { name: 'Waitlist Interest', module: TagModule.BREEDING_PLAN, color: '#4CAF50' },
+  { name: 'First Litter', module: TagModule.BREEDING_PLAN, color: '#2196F3' },
+  { name: 'Repeat Pairing', module: TagModule.BREEDING_PLAN, color: '#9C27B0' },
+
+  // Waitlist Entry tags
+  { name: 'Deposit Paid', module: TagModule.WAITLIST_ENTRY, color: '#4CAF50' },
+  { name: 'First Pick', module: TagModule.WAITLIST_ENTRY, color: '#FFD700' },
+  { name: 'Flexible', module: TagModule.WAITLIST_ENTRY, color: '#03A9F4' },
+  { name: 'Specific Request', module: TagModule.WAITLIST_ENTRY, color: '#FF9800' },
+
+  // Offspring Group tags
+  { name: 'All Reserved', module: TagModule.OFFSPRING_GROUP, color: '#4CAF50' },
+  { name: 'Available', module: TagModule.OFFSPRING_GROUP, color: '#2196F3' },
+  { name: 'Photos Needed', module: TagModule.OFFSPRING_GROUP, color: '#FF9800' },
+
+  // Offspring tags
+  { name: 'Reserved', module: TagModule.OFFSPRING, color: '#4CAF50' },
+  { name: 'Available', module: TagModule.OFFSPRING, color: '#2196F3' },
+  { name: 'Keeper', module: TagModule.OFFSPRING, color: '#9C27B0' },
+  { name: 'Co-own', module: TagModule.OFFSPRING, color: '#FF5722' },
+];
+
+// Which entities should get which tags (by index pattern for variety)
+const TAG_ASSIGNMENT_RULES = {
+  // Assign to first 2-3 contacts: VIP, Repeat Buyer, Breeder
+  contacts: ['VIP', 'Repeat Buyer', 'Breeder'],
+  // Assign to first organization: Partner, Show Club
+  organizations: ['Partner', 'Show Club'],
+  // Assign to founder animals: Show Prospect, Breeding Stock, Champion Bloodline
+  animals: ['Show Prospect', 'Breeding Stock', 'Champion Bloodline', 'Health Watch'],
+  // Assign to breeding plans: High Priority, Waitlist Interest
+  breedingPlans: ['High Priority', 'Waitlist Interest', 'First Litter'],
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAG SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedTags(tenantId: number): Promise<Map<string, number>> {
+  const tagIdMap = new Map<string, number>();
+
+  for (const tagDef of TAG_DEFINITIONS) {
+    // Check if tag already exists
+    let tag = await prisma.tag.findFirst({
+      where: { tenantId, module: tagDef.module, name: tagDef.name },
+    });
+
+    if (!tag) {
+      tag = await prisma.tag.create({
+        data: {
+          tenantId,
+          name: tagDef.name,
+          module: tagDef.module,
+          color: tagDef.color,
+        },
+      });
+      console.log(`  + Created tag: ${tagDef.name} (${tagDef.module})`);
+    } else {
+      console.log(`  = Tag exists: ${tagDef.name} (${tagDef.module})`);
+    }
+
+    // Store with module prefix to handle same name across modules
+    tagIdMap.set(`${tagDef.module}:${tagDef.name}`, tag.id);
+  }
+
+  return tagIdMap;
+}
+
+async function seedTagAssignments(
+  tenantId: number,
+  tagIdMap: Map<string, number>
+): Promise<void> {
+  // Get contacts for tag assignment (contacts don't use partyId for tags)
+  const contacts = await prisma.contact.findMany({
+    where: { tenantId },
+    take: 3,
+    orderBy: { id: 'asc' },
+  });
+
+  // Assign contact tags
+  for (let i = 0; i < contacts.length && i < TAG_ASSIGNMENT_RULES.contacts.length; i++) {
+    const contact = contacts[i];
+    const tagName = TAG_ASSIGNMENT_RULES.contacts[i];
+    const tagId = tagIdMap.get(`${TagModule.CONTACT}:${tagName}`);
+
+    if (tagId && contact.partyId) {
+      const existing = await prisma.tagAssignment.findFirst({
+        where: { tagId, taggedPartyId: contact.partyId },
+      });
+      if (!existing) {
+        await prisma.tagAssignment.create({
+          data: { tagId, taggedPartyId: contact.partyId },
+        });
+        console.log(`  + Tagged contact "${contact.display_name}" with "${tagName}"`);
+      }
+    }
+  }
+
+  // Get organizations for tag assignment
+  const organizations = await prisma.organization.findMany({
+    where: { tenantId },
+    take: 2,
+    orderBy: { id: 'asc' },
+  });
+
+  // Assign organization tags
+  for (let i = 0; i < organizations.length && i < TAG_ASSIGNMENT_RULES.organizations.length; i++) {
+    const org = organizations[i];
+    const tagName = TAG_ASSIGNMENT_RULES.organizations[i];
+    const tagId = tagIdMap.get(`${TagModule.ORGANIZATION}:${tagName}`);
+
+    if (tagId && org.partyId) {
+      const existing = await prisma.tagAssignment.findFirst({
+        where: { tagId, taggedPartyId: org.partyId },
+      });
+      if (!existing) {
+        await prisma.tagAssignment.create({
+          data: { tagId, taggedPartyId: org.partyId },
+        });
+        console.log(`  + Tagged org "${org.name}" with "${tagName}"`);
+      }
+    }
+  }
+
+  // Get founder animals (generation 0, via notes field or just first few)
+  const animals = await prisma.animal.findMany({
+    where: { tenantId },
+    take: 4,
+    orderBy: { id: 'asc' },
+  });
+
+  // Assign animal tags
+  for (let i = 0; i < animals.length && i < TAG_ASSIGNMENT_RULES.animals.length; i++) {
+    const animal = animals[i];
+    const tagName = TAG_ASSIGNMENT_RULES.animals[i];
+    const tagId = tagIdMap.get(`${TagModule.ANIMAL}:${tagName}`);
+
+    if (tagId) {
+      const existing = await prisma.tagAssignment.findFirst({
+        where: { tagId, animalId: animal.id },
+      });
+      if (!existing) {
+        await prisma.tagAssignment.create({
+          data: { tagId, animalId: animal.id },
+        });
+        console.log(`  + Tagged animal "${animal.name}" with "${tagName}"`);
+      }
+    }
+  }
+
+  // Get breeding plans
+  const breedingPlans = await prisma.breedingPlan.findMany({
+    where: { tenantId },
+    take: 3,
+    orderBy: { id: 'asc' },
+  });
+
+  // Assign breeding plan tags
+  for (let i = 0; i < breedingPlans.length && i < TAG_ASSIGNMENT_RULES.breedingPlans.length; i++) {
+    const plan = breedingPlans[i];
+    const tagName = TAG_ASSIGNMENT_RULES.breedingPlans[i];
+    const tagId = tagIdMap.get(`${TagModule.BREEDING_PLAN}:${tagName}`);
+
+    if (tagId) {
+      const existing = await prisma.tagAssignment.findFirst({
+        where: { tagId, breedingPlanId: plan.id },
+      });
+      if (!existing) {
+        await prisma.tagAssignment.create({
+          data: { tagId, breedingPlanId: plan.id },
+        });
+        console.log(`  + Tagged breeding plan "${plan.name}" with "${tagName}"`);
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PORTAL ACCESS SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedPortalAccess(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  portalAccessDef: PortalAccessDefinition,
+  tenantContacts: Record<string, any[]>,
+  tenantOrganizations: Record<string, any[]>
+): Promise<{ contactPortalUserId: string | null; orgPortalUserId: string | null }> {
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  const orgDefs = tenantOrganizations[tenantSlug] || [];
+
+  let contactPortalUserId: string | null = null;
+  let orgPortalUserId: string | null = null;
+
+  // 1. Create portal access for contact
+  if (portalAccessDef.contactIndex < contactDefs.length) {
+    const contactDef = contactDefs[portalAccessDef.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+    });
+
+    if (contact && contact.partyId) {
+      const portalUserDef = portalAccessDef.contactPortalUser;
+      const portalEmail = getEnvEmail(portalUserDef.emailBase, env);
+
+      // Check if portal user already exists
+      let portalUser = await prisma.user.findUnique({
+        where: { email: portalEmail },
+      });
+
+      if (!portalUser) {
+        const passwordHash = await bcrypt.hash(portalUserDef.password, 12);
+        portalUser = await prisma.user.create({
+          data: {
+            email: portalEmail,
+            firstName: portalUserDef.firstName,
+            lastName: portalUserDef.lastName,
+            passwordHash,
+            emailVerifiedAt: new Date(),
+            defaultTenantId: tenantId,
+          },
+        });
+        console.log(`  + Created portal user: ${portalEmail}`);
+      } else {
+        console.log(`  = Portal user exists: ${portalEmail}`);
+      }
+
+      contactPortalUserId = portalUser.id;
+
+      // Check if PortalAccess record exists
+      let portalAccess = await prisma.portalAccess.findUnique({
+        where: { partyId: contact.partyId },
+      });
+
+      if (!portalAccess) {
+        portalAccess = await prisma.portalAccess.create({
+          data: {
+            tenantId,
+            partyId: contact.partyId,
+            status: PortalAccessStatus.ACTIVE,
+            userId: portalUser.id,
+            invitedAt: new Date(),
+            activatedAt: new Date(),
+          },
+        });
+        console.log(`  + Created portal access for contact: ${contact.display_name}`);
+      } else {
+        // Update to link user if not already linked
+        if (!portalAccess.userId) {
+          await prisma.portalAccess.update({
+            where: { id: portalAccess.id },
+            data: {
+              userId: portalUser.id,
+              status: PortalAccessStatus.ACTIVE,
+              activatedAt: new Date(),
+            },
+          });
+          console.log(`  = Updated portal access for contact: ${contact.display_name}`);
+        } else {
+          console.log(`  = Portal access exists for contact: ${contact.display_name}`);
+        }
+      }
+
+      // Ensure tenant membership for portal user
+      const existingMembership = await prisma.tenantMembership.findUnique({
+        where: { userId_tenantId: { userId: portalUser.id, tenantId } },
+      });
+
+      if (!existingMembership) {
+        await prisma.tenantMembership.create({
+          data: {
+            userId: portalUser.id,
+            tenantId,
+            role: TenantRole.VIEWER,
+            membershipRole: TenantMembershipRole.CLIENT,
+            membershipStatus: TenantMembershipStatus.ACTIVE,
+          },
+        });
+        console.log(`    + Added CLIENT membership for portal user`);
+      }
+    }
+  }
+
+  // 2. Create portal access for organization
+  if (portalAccessDef.organizationIndex < orgDefs.length) {
+    const orgDef = orgDefs[portalAccessDef.organizationIndex];
+    const orgName = getEnvName(orgDef.name, env);
+    const envProgramSlug = orgDef.programSlug
+      ? getEnvSlug(orgDef.programSlug, env)
+      : undefined;
+
+    // Find the organization - check by name (with or without prefix) or programSlug
+    // Some orgs may have been created with the old naming convention that included [DEV]/[PROD] prefix
+    const organization = await prisma.organization.findFirst({
+      where: {
+        tenantId,
+        OR: [
+          { name: orgName },
+          { name: { contains: orgDef.name } },
+          ...(envProgramSlug ? [{ programSlug: envProgramSlug }] : []),
+        ],
+      },
+    });
+
+    if (organization && organization.partyId) {
+      const portalUserDef = portalAccessDef.organizationPortalUser;
+      const portalEmail = getEnvEmail(portalUserDef.emailBase, env);
+
+      // Check if portal user already exists
+      let portalUser = await prisma.user.findUnique({
+        where: { email: portalEmail },
+      });
+
+      if (!portalUser) {
+        const passwordHash = await bcrypt.hash(portalUserDef.password, 12);
+        portalUser = await prisma.user.create({
+          data: {
+            email: portalEmail,
+            firstName: portalUserDef.firstName,
+            lastName: portalUserDef.lastName,
+            passwordHash,
+            emailVerifiedAt: new Date(),
+            defaultTenantId: tenantId,
+          },
+        });
+        console.log(`  + Created portal user: ${portalEmail}`);
+      } else {
+        console.log(`  = Portal user exists: ${portalEmail}`);
+      }
+
+      orgPortalUserId = portalUser.id;
+
+      // Check if PortalAccess record exists
+      let portalAccess = await prisma.portalAccess.findUnique({
+        where: { partyId: organization.partyId },
+      });
+
+      if (!portalAccess) {
+        portalAccess = await prisma.portalAccess.create({
+          data: {
+            tenantId,
+            partyId: organization.partyId,
+            status: PortalAccessStatus.ACTIVE,
+            userId: portalUser.id,
+            invitedAt: new Date(),
+            activatedAt: new Date(),
+          },
+        });
+        console.log(`  + Created portal access for org: ${organization.name}`);
+      } else {
+        // Update to link user if not already linked
+        if (!portalAccess.userId) {
+          await prisma.portalAccess.update({
+            where: { id: portalAccess.id },
+            data: {
+              userId: portalUser.id,
+              status: PortalAccessStatus.ACTIVE,
+              activatedAt: new Date(),
+            },
+          });
+          console.log(`  = Updated portal access for org: ${organization.name}`);
+        } else {
+          console.log(`  = Portal access exists for org: ${organization.name}`);
+        }
+      }
+
+      // Ensure tenant membership for portal user
+      const existingMembership = await prisma.tenantMembership.findUnique({
+        where: { userId_tenantId: { userId: portalUser.id, tenantId } },
+      });
+
+      if (!existingMembership) {
+        await prisma.tenantMembership.create({
+          data: {
+            userId: portalUser.id,
+            tenantId,
+            role: TenantRole.VIEWER,
+            membershipRole: TenantMembershipRole.CLIENT,
+            membershipStatus: TenantMembershipStatus.ACTIVE,
+          },
+        });
+        console.log(`    + Added CLIENT membership for portal user`);
+      }
+    }
+  }
+
+  return { contactPortalUserId, orgPortalUserId };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE USER SEEDING (standalone shoppers with no tenant membership)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedMarketplaceUsers(
+  env: Environment,
+  marketplaceUserDefs: MarketplaceUserDefinition[]
+): Promise<number> {
+  let createdCount = 0;
+
+  for (const userDef of marketplaceUserDefs) {
+    const envEmail = getEnvEmail(userDef.emailBase, env);
+
+    // Check if user already exists
+    let user = await prisma.user.findUnique({
+      where: { email: envEmail },
+    });
+
+    if (!user) {
+      const passwordHash = await bcrypt.hash(userDef.password, 12);
+      user = await prisma.user.create({
+        data: {
+          email: envEmail,
+          firstName: userDef.firstName,
+          lastName: userDef.lastName,
+          passwordHash,
+          emailVerifiedAt: new Date(),
+          // No defaultTenantId - these are marketplace-only users
+        },
+      });
+      console.log(`  + Created marketplace user: ${envEmail} (${userDef.description})`);
+      createdCount++;
+    } else {
+      console.log(`  = Marketplace user exists: ${envEmail}`);
+    }
+  }
+
+  return createdCount;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -602,6 +1126,8 @@ async function main() {
   const tenantAnimals = getTenantAnimals(env);
   const tenantBreedingPlans = getTenantBreedingPlans(env);
   const tenantMarketplaceListings = getTenantMarketplaceListings(env);
+  const portalAccessDefinitions = getPortalAccessDefinitions(env);
+  const marketplaceUserDefs = getMarketplaceUsers();
 
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════════');
@@ -617,6 +1143,10 @@ async function main() {
     animals: 0,
     breedingPlans: 0,
     marketplaceListings: 0,
+    tags: 0,
+    tagAssignments: 0,
+    portalUsers: 0,
+    marketplaceUsers: 0,
   };
 
   for (const tenantDef of tenantDefinitions) {
@@ -667,8 +1197,53 @@ async function main() {
       tenantMarketplaceListings[tenantDef.slug] || []
     ).length;
 
+    // 8. Create tags and tag assignments
+    console.log('\n  [Tags]');
+    const tagIdMap = await seedTags(tenantId);
+    stats.tags += tagIdMap.size;
+
+    console.log('\n  [Tag Assignments]');
+    const assignmentCountBefore = await prisma.tagAssignment.count({
+      where: {
+        tag: { tenantId },
+      },
+    });
+    await seedTagAssignments(tenantId, tagIdMap);
+    const assignmentCountAfter = await prisma.tagAssignment.count({
+      where: {
+        tag: { tenantId },
+      },
+    });
+    stats.tagAssignments += assignmentCountAfter - assignmentCountBefore;
+
+    // 9. Create portal access for first contact and first organization
+    const portalAccessDef = portalAccessDefinitions[tenantDef.slug];
+    if (portalAccessDef) {
+      console.log('\n  [Portal Access]');
+      const { contactPortalUserId, orgPortalUserId } = await seedPortalAccess(
+        tenantDef.slug,
+        tenantId,
+        env,
+        portalAccessDef,
+        tenantContacts,
+        tenantOrganizations
+      );
+      if (contactPortalUserId) stats.portalUsers++;
+      if (orgPortalUserId) stats.portalUsers++;
+    }
+
     console.log('');
   }
+
+  // 10. Create marketplace shoppers (standalone users, no tenant membership)
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  MARKETPLACE SHOPPERS');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('\n  [Marketplace Users]');
+  const marketplaceUsersCreated = await seedMarketplaceUsers(env, marketplaceUserDefs);
+  stats.marketplaceUsers = marketplaceUserDefs.length;
+
+  console.log('');
 
   // Print summary
   console.log('═══════════════════════════════════════════════════════════════════════════════');
@@ -681,6 +1256,10 @@ async function main() {
   console.log(`  Animals:              ${stats.animals}`);
   console.log(`  Breeding Plans:       ${stats.breedingPlans}`);
   console.log(`  Marketplace Listings: ${stats.marketplaceListings}`);
+  console.log(`  Tags:                 ${stats.tags}`);
+  console.log(`  Tag Assignments:      ${stats.tagAssignments}`);
+  console.log(`  Portal Users:         ${stats.portalUsers}`);
+  console.log(`  Marketplace Users:    ${stats.marketplaceUsers}`);
   console.log('');
 
   // Print credentials summary
