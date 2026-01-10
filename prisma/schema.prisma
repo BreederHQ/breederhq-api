@@ -103,6 +103,7 @@ enum TagModule {
   OFFSPRING
   MESSAGE_THREAD
   DRAFT
+  BREEDING_PLAN
 }
 
 enum OwnerPartyType {
@@ -175,6 +176,10 @@ enum EntitlementKey {
   E_SIGNATURES
   DATA_EXPORT // Blocked during free trial to prevent data cleaning abuse
 
+  // Genetics tier features
+  GENETICS_STANDARD // Basic genetics features (Punnett, trait predictions, etc.)
+  GENETICS_PRO // Advanced genetics (COI, best match, breeding goals, etc.)
+
   // Quotas (use ProductEntitlement.limitValue for the actual number)
   ANIMAL_QUOTA
   CONTACT_QUOTA
@@ -183,6 +188,21 @@ enum EntitlementKey {
   MARKETPLACE_LISTING_QUOTA
   STORAGE_QUOTA_GB
   SMS_QUOTA
+}
+
+enum FeatureModule {
+  GENETICS
+  MARKETPLACE
+  FINANCIAL
+  ANIMALS
+  CONTACTS
+  BREEDING
+  DOCUMENTS
+  HEALTH
+  SCHEDULING
+  PORTAL
+  REPORTING
+  SETTINGS
 }
 
 enum EntitlementStatus {
@@ -846,6 +866,7 @@ model Tenant {
   referralsMade       Referral[]           @relation("ReferralsMade")
   referralsReceived   Referral[]           @relation("ReferralsReceived")
   marketplaceListings MarketplaceListing[]
+  featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
   contributedIdentifiers  GlobalAnimalIdentifier[]
@@ -1085,6 +1106,96 @@ model UsageSnapshot {
   lastUpdatedAt DateTime @default(now())
 
   @@id([tenantId, metricKey])
+  @@index([tenantId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Feature Registry & Analytics
+ * ────────────────────────────────────────────────────────────────────────────
+ * Features are individual platform capabilities that can be gated by subscription.
+ * Each feature maps to an entitlement key for access control.
+ */
+
+model Feature {
+  id Int @id @default(autoincrement())
+
+  // Unique identifier used in code: "GENETICS_COI_CALCULATIONS"
+  key String @unique @db.VarChar(100)
+
+  // Display info
+  name        String  @db.VarChar(100) // "COI Calculations"
+  description String? @db.Text // Longer description for admin reference
+
+  // Categorization
+  module FeatureModule // GENETICS, MARKETPLACE, etc.
+
+  // Access control - which entitlement key grants access to this feature
+  entitlementKey EntitlementKey
+
+  // Admin reference - where this feature appears in UI
+  uiHint String? @db.VarChar(200) // "Genetics Lab > Analysis Tools"
+
+  // Kill switch - allows disabling feature platform-wide
+  isActive Boolean @default(true)
+
+  // Soft delete
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([module])
+  @@index([entitlementKey])
+  @@index([isActive])
+}
+
+/**
+ * Feature check telemetry - logs when features are checked in the UI.
+ * Used for analytics: which features are used, denied access attempts, etc.
+ * Raw events - aggregated daily into FeatureCheckDaily for long-term storage.
+ */
+model FeatureCheck {
+  id BigInt @id @default(autoincrement())
+
+  featureKey String @db.VarChar(100) // "GENETICS_COI_CALCULATIONS"
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String? // Optional - which user triggered the check
+
+  granted Boolean // Did they have access?
+
+  // Where in UI this was checked (e.g., "genetics-lab", "dashboard")
+  context String? @db.VarChar(100)
+
+  timestamp DateTime @default(now())
+
+  @@index([featureKey, timestamp])
+  @@index([tenantId, timestamp])
+  @@index([timestamp])
+  @@index([granted, timestamp])
+}
+
+/**
+ * Aggregated daily feature check statistics.
+ * Raw FeatureCheck events older than 30 days should be aggregated here then deleted.
+ */
+model FeatureCheckDaily {
+  id Int @id @default(autoincrement())
+
+  date       DateTime @db.Date
+  featureKey String   @db.VarChar(100)
+  tenantId   Int
+
+  checkCount Int @default(0) // Total checks
+  grantCount Int @default(0) // Checks where granted=true
+  denyCount  Int @default(0) // Checks where granted=false
+
+  @@unique([date, featureKey, tenantId])
+  @@index([date])
+  @@index([featureKey])
   @@index([tenantId])
 }
 
@@ -2070,6 +2181,10 @@ model TagAssignment {
   draftId Int?
   draft   Draft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
+  // Breeding Plans
+  breedingPlanId Int?
+  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
 
   @@unique([tagId, taggedPartyId])
@@ -2079,6 +2194,7 @@ model TagAssignment {
   @@unique([tagId, offspringId])
   @@unique([tagId, messageThreadId])
   @@unique([tagId, draftId])
+  @@unique([tagId, breedingPlanId])
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
@@ -2086,6 +2202,7 @@ model TagAssignment {
   @@index([offspringId])
   @@index([messageThreadId])
   @@index([draftId])
+  @@index([breedingPlanId])
   @@index([tagId, taggedPartyId])
 }
 
@@ -2266,6 +2383,7 @@ model BreedingPlan {
   Parties          PlanParty[]
   Invoice          Invoice[]
   Expense          Expense[]
+  TagAssignments   TagAssignment[]
 
   archived  Boolean  @default(false)
   createdAt DateTime @default(now())
