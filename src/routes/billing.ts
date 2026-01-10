@@ -447,12 +447,134 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         switch (event.type) {
           case "checkout.session.completed": {
             const session = event.data.object as any;
+
+            // Handle subscription checkout
             if (session.mode === "subscription" && session.subscription) {
               await syncSubscriptionFromStripe(session.subscription);
               req.log.info(
                 { subscriptionId: session.subscription },
                 "Subscription created from checkout"
               );
+            }
+
+            // Handle deposit invoice payment
+            if (session.mode === "payment" && session.metadata?.type === "deposit_invoice") {
+              const invoiceId = parseInt(session.metadata.invoiceId || "0");
+              const waitlistEntryId = parseInt(session.metadata.waitlistEntryId || "0");
+              const tenantId = parseInt(session.metadata.tenantId || "0");
+
+              if (invoiceId) {
+                // Get the payment amount from the session
+                const amountPaid = session.amount_total || 0;
+
+                // Update invoice - record payment and mark as paid
+                const invoice = await prisma.invoice.findUnique({
+                  where: { id: invoiceId },
+                  select: { paidCents: true, totalCents: true },
+                });
+
+                if (invoice) {
+                  const newPaidCents = (invoice.paidCents || 0) + amountPaid;
+                  const newBalanceCents = invoice.totalCents - newPaidCents;
+                  const isPaid = newBalanceCents <= 0;
+
+                  await prisma.invoice.update({
+                    where: { id: invoiceId },
+                    data: {
+                      paidCents: newPaidCents,
+                      balanceCents: Math.max(0, newBalanceCents),
+                      status: isPaid ? "PAID" : "PARTIALLY_PAID",
+                      paidAt: isPaid ? new Date() : undefined,
+                    },
+                  });
+
+                  // If linked to waitlist entry and fully paid, update deposit tracking and notify breeder
+                  if (waitlistEntryId && isPaid) {
+                    // Get entry with client info
+                    const entry = await prisma.waitlistEntry.findUnique({
+                      where: { id: waitlistEntryId },
+                      include: {
+                        clientParty: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                          },
+                        },
+                      },
+                    });
+
+                    if (entry) {
+                      // Update waitlist entry: mark deposit paid, set status to DEPOSIT_PAID
+                      // Breeder must manually finalize approval to create Contact/Organization
+                      await prisma.waitlistEntry.update({
+                        where: { id: waitlistEntryId },
+                        data: {
+                          depositPaidCents: amountPaid,
+                          depositPaidAt: new Date(),
+                          status: "DEPOSIT_PAID",
+                        },
+                      });
+
+                      // Notify breeder that deposit was paid and they need to finalize approval
+                      if (tenantId) {
+                        try {
+                          // Get breeder org email
+                          const org = await prisma.organization.findFirst({
+                            where: { tenantId },
+                            select: {
+                              party: { select: { email: true } },
+                            },
+                          });
+
+                          const breederEmail = org?.party?.email;
+                          const applicantName = entry.clientParty?.name || "An applicant";
+                          const applicantEmail = entry.clientParty?.email || "";
+                          const amount = (amountPaid / 100).toFixed(2);
+
+                          if (breederEmail) {
+                            // Send notification email to breeder
+                            const { sendEmail } = await import("../services/email-service.js");
+                            await sendEmail({
+                              tenantId,
+                              to: breederEmail,
+                              subject: `Deposit Paid - ${applicantName} Ready for Approval`,
+                              html: `
+                                <h2>Waitlist Deposit Received</h2>
+                                <p><strong>${applicantName}</strong>${applicantEmail ? ` (${applicantEmail})` : ""} has paid their deposit of <strong>$${amount}</strong>.</p>
+                                <p><strong>Action Required:</strong> Please review and finalize their waitlist approval in your dashboard. You'll need to decide whether to create them as a Contact (individual) or Organization (business) in your CRM.</p>
+                                <p style="margin-top: 16px;">
+                                  <a href="${process.env.PLATFORM_URL || "https://app.breederhq.com"}/waitlist" style="display: inline-block; padding: 10px 20px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 500;">Review Waitlist</a>
+                                </p>
+                                <p style="margin-top: 24px; color: #666; font-size: 12px;">
+                                  This is an automated notification from BreederHQ.
+                                </p>
+                              `,
+                              text: `Waitlist Deposit Received\n\n${applicantName}${applicantEmail ? ` (${applicantEmail})` : ""} has paid their deposit of $${amount}.\n\nAction Required: Please review and finalize their waitlist approval in your dashboard. You'll need to decide whether to create them as a Contact (individual) or Organization (business) in your CRM.\n\nReview at: ${process.env.PLATFORM_URL || "https://app.breederhq.com"}/waitlist`,
+                              templateKey: "waitlist_deposit_paid",
+                              category: "transactional",
+                              metadata: { waitlistEntryId, invoiceId, amountPaid },
+                            });
+                          }
+
+                          req.log.info(
+                            { waitlistEntryId, applicantName, amountPaid, breederEmail },
+                            "Waitlist deposit paid - breeder notified to finalize approval"
+                          );
+                        } catch (notifyErr) {
+                          // Don't fail the webhook if notification fails
+                          req.log.error({ err: notifyErr }, "Failed to notify breeder of deposit payment");
+                        }
+                      }
+                    }
+                  }
+
+                  req.log.info(
+                    { invoiceId, amountPaid, isPaid, waitlistEntryId },
+                    "Deposit invoice payment processed"
+                  );
+                }
+              }
             }
             break;
           }

@@ -110,6 +110,7 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         verified: value?.verified || false,
         verifiedAt: value?.verifiedAt || null,
         marketplaceVisible: value?.marketplaceVisible || null,
+        networkVisible: value?.networkVisible || false,
         notes: value?.notes || null,
         traitValueId: value?.id || null,  // Always present, null if not yet created
         documents: value?.documents?.map(d => ({
@@ -173,6 +174,34 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const valueData: any = {};
+
+      // Check if this is a metadata-only update (only visibility fields, no value changes)
+      const isMetadataOnlyUpdate =
+        (upd.networkVisible !== undefined || upd.marketplaceVisible !== undefined) &&
+        upd.valueBoolean === undefined &&
+        upd.valueNumber === undefined &&
+        upd.valueText === undefined &&
+        upd.valueDate === undefined &&
+        upd.valueJson === undefined;
+
+      // For metadata-only updates on existing traits, skip value validation
+      if (isMetadataOnlyUpdate) {
+        const existingTrait = await prisma.animalTraitValue.findUnique({
+          where: { tenantId_animalId_traitDefinitionId: { tenantId, animalId, traitDefinitionId: def.id } },
+        });
+        if (existingTrait) {
+          // Just update metadata fields
+          await prisma.animalTraitValue.update({
+            where: { id: existingTrait.id },
+            data: {
+              ...(upd.networkVisible !== undefined && { networkVisible: Boolean(upd.networkVisible) }),
+              ...(upd.marketplaceVisible !== undefined && { marketplaceVisible: Boolean(upd.marketplaceVisible) }),
+            },
+          });
+          continue; // Skip to next update
+        }
+        // If trait doesn't exist, fall through to require value
+      }
 
       // HARDENED: Strict value type validation with clear error messages
       if (def.valueType === "BOOLEAN") {
@@ -252,6 +281,7 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           verified: upd.verified !== undefined ? Boolean(upd.verified) : undefined,
           verifiedAt: upd.verifiedAt ? new Date(upd.verifiedAt) : undefined,
           marketplaceVisible: upd.marketplaceVisible !== undefined ? Boolean(upd.marketplaceVisible) : undefined,
+          networkVisible: upd.networkVisible !== undefined ? Boolean(upd.networkVisible) : undefined,
           notes: upd.notes !== undefined ? upd.notes : undefined,
         },
         create: {
@@ -262,6 +292,7 @@ const animalTraitsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           verified: upd.verified || false,
           verifiedAt: upd.verifiedAt ? new Date(upd.verifiedAt) : null,
           marketplaceVisible: upd.marketplaceVisible !== undefined ? upd.marketplaceVisible : def.marketplaceVisibleDefault,
+          networkVisible: upd.networkVisible !== undefined ? upd.networkVisible : false,
           notes: upd.notes || null,
         },
       });

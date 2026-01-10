@@ -227,6 +227,7 @@ const titlesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       verified?: boolean;
       verifiedBy?: string;
       registryRef?: string;
+      isPublic?: boolean;
       notes?: string;
     };
 
@@ -270,6 +271,7 @@ const titlesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         verified: body.verified ?? false,
         verifiedBy: body.verifiedBy,
         registryRef: body.registryRef,
+        isPublic: body.isPublic ?? false,
         notes: body.notes,
       },
       include: {
@@ -314,6 +316,7 @@ const titlesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       verifiedAt?: string | null;
       verifiedBy?: string | null;
       registryRef?: string | null;
+      isPublic?: boolean;
       notes?: string | null;
     };
 
