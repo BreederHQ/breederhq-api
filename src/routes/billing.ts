@@ -470,20 +470,18 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 // Update invoice - record payment and mark as paid
                 const invoice = await prisma.invoice.findUnique({
                   where: { id: invoiceId },
-                  select: { paidCents: true, totalCents: true },
+                  select: { amountCents: true, balanceCents: true },
                 });
 
                 if (invoice) {
-                  const newPaidCents = (invoice.paidCents || 0) + amountPaid;
-                  const newBalanceCents = invoice.totalCents - newPaidCents;
+                  const newBalanceCents = Math.max(0, invoice.balanceCents - amountPaid);
                   const isPaid = newBalanceCents <= 0;
 
                   await prisma.invoice.update({
                     where: { id: invoiceId },
                     data: {
-                      paidCents: newPaidCents,
-                      balanceCents: Math.max(0, newBalanceCents),
-                      status: isPaid ? "PAID" : "PARTIALLY_PAID",
+                      balanceCents: newBalanceCents,
+                      status: isPaid ? "paid" : "partially_paid",
                       paidAt: isPaid ? new Date() : undefined,
                     },
                   });

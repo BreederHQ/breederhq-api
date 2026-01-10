@@ -2982,3 +2982,473 @@ export function generateCredentialsSummary(env: Environment): string {
 
   return lines.join('\n');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMMUNICATIONS HUB - CONTACT META DEFINITIONS
+// These define the enriched contact metadata for the Communications Hub
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type LeadStatus = 'new' | 'contacted' | 'qualified' | 'negotiating' | 'won' | 'lost' | 'inactive';
+
+export interface ContactMetaDefinition {
+  contactIndex: number;  // Index into tenant contacts array
+  leadStatus: LeadStatus;
+  // Waitlist info - if on waitlist
+  waitlistPlanIndex?: number;  // Index into tenant breeding plans
+  waitlistPosition?: number;
+  waitlistStatus?: 'INQUIRY' | 'APPROVED' | 'DEPOSIT_PAID' | 'ALLOCATED';
+  // Financial info
+  hasActiveDeposit: boolean;
+  depositAmountCents?: number;
+  depositPlanIndex?: number;  // Index into breeding plans for deposit
+  totalPurchasesCents: number;  // Lifetime value
+  animalsOwned: number;
+  // Communication tracking
+  lastContactedDaysAgo: number | null;
+}
+
+// DEV Contact Meta - Different scenarios for testing
+export const DEV_CONTACT_META: Record<string, ContactMetaDefinition[]> = {
+  rivendell: [
+    // Gandalf - VIP Repeat Buyer (high value customer)
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 0, totalPurchasesCents: 1250000, animalsOwned: 3, lastContactedDaysAgo: 2 },
+    // Aragorn - Active Waitlist Lead (on waitlist with deposit)
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 2, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 0, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 5 },
+    // Legolas - Fresh Prospect (new inquiry)
+    { contactIndex: 2, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Gimli - Waitlisted Without Deposit
+    { contactIndex: 3, leadStatus: 'contacted', waitlistPlanIndex: 1, waitlistPosition: 7, waitlistStatus: 'APPROVED', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 14 },
+    // Samwise - Past Customer (inactive)
+    { contactIndex: 4, leadStatus: 'inactive', hasActiveDeposit: false, totalPurchasesCents: 350000, animalsOwned: 1, lastContactedDaysAgo: 120 },
+  ],
+  hogwarts: [
+    // Dumbledore - VIP ($10k+ lifetime)
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 75000, depositPlanIndex: 0, totalPurchasesCents: 1500000, animalsOwned: 4, lastContactedDaysAgo: 1 },
+    // McGonagall - Qualified lead on waitlist
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 1, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 0, totalPurchasesCents: 500000, animalsOwned: 1, lastContactedDaysAgo: 3 },
+    // Newt - Contacted prospect
+    { contactIndex: 2, leadStatus: 'contacted', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 7 },
+    // Luna - New inquiry
+    { contactIndex: 3, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Charlie - Past customer checking in
+    { contactIndex: 4, leadStatus: 'won', hasActiveDeposit: false, totalPurchasesCents: 800000, animalsOwned: 2, lastContactedDaysAgo: 45 },
+  ],
+  winterfell: [
+    // Jon Snow - Active customer
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 100000, depositPlanIndex: 0, totalPurchasesCents: 600000, animalsOwned: 2, lastContactedDaysAgo: 4 },
+    // Sansa - Waitlist position 3
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 3, waitlistStatus: 'APPROVED', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 10 },
+    // Arya - Negotiating
+    { contactIndex: 2, leadStatus: 'negotiating', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 2 },
+    // Bran - New prospect
+    { contactIndex: 3, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Tormund - Lost lead
+    { contactIndex: 4, leadStatus: 'lost', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 60 },
+  ],
+  'stark-tower': [
+    // Steve Rogers - VIP repeat buyer
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 75000, depositPlanIndex: 0, totalPurchasesCents: 2000000, animalsOwned: 5, lastContactedDaysAgo: 1 },
+    // Natasha - On waitlist with deposit
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 1, waitlistPosition: 1, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 1, totalPurchasesCents: 350000, animalsOwned: 1, lastContactedDaysAgo: 6 },
+    // Bruce - Contacted prospect
+    { contactIndex: 2, leadStatus: 'contacted', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 8 },
+    // Thor - Inquiry stage on waitlist
+    { contactIndex: 3, leadStatus: 'contacted', waitlistPlanIndex: 0, waitlistPosition: 5, waitlistStatus: 'INQUIRY', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 12 },
+    // Clint - Past customer
+    { contactIndex: 4, leadStatus: 'won', hasActiveDeposit: false, totalPurchasesCents: 450000, animalsOwned: 1, lastContactedDaysAgo: 30 },
+  ],
+};
+
+// PROD Contact Meta
+export const PROD_CONTACT_META: Record<string, ContactMetaDefinition[]> = {
+  arrakis: [
+    // Duncan - VIP customer
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 100000, depositPlanIndex: 0, totalPurchasesCents: 1800000, animalsOwned: 4, lastContactedDaysAgo: 2 },
+    // Stilgar - Active waitlist
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 2, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 0, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 4 },
+    // Chani - New prospect
+    { contactIndex: 2, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Gurney - Waitlisted no deposit
+    { contactIndex: 3, leadStatus: 'contacted', waitlistPlanIndex: 1, waitlistPosition: 4, waitlistStatus: 'APPROVED', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 15 },
+    // Thufir - Past customer
+    { contactIndex: 4, leadStatus: 'inactive', hasActiveDeposit: false, totalPurchasesCents: 500000, animalsOwned: 1, lastContactedDaysAgo: 90 },
+  ],
+  starfleet: [
+    // Riker - VIP
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 60000, depositPlanIndex: 0, totalPurchasesCents: 1200000, animalsOwned: 3, lastContactedDaysAgo: 1 },
+    // Data - On waitlist
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 1, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 0, totalPurchasesCents: 400000, animalsOwned: 1, lastContactedDaysAgo: 5 },
+    // Beverly - Contacted
+    { contactIndex: 2, leadStatus: 'contacted', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 9 },
+    // Deanna - New inquiry
+    { contactIndex: 3, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Worf - Past customer
+    { contactIndex: 4, leadStatus: 'won', hasActiveDeposit: false, totalPurchasesCents: 700000, animalsOwned: 2, lastContactedDaysAgo: 40 },
+  ],
+  richmond: [
+    // Rebecca - VIP
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 80000, depositPlanIndex: 0, totalPurchasesCents: 1600000, animalsOwned: 4, lastContactedDaysAgo: 3 },
+    // Roy - On waitlist
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 0, waitlistPosition: 2, waitlistStatus: 'APPROVED', hasActiveDeposit: false, totalPurchasesCents: 250000, animalsOwned: 1, lastContactedDaysAgo: 7 },
+    // Keeley - Negotiating
+    { contactIndex: 2, leadStatus: 'negotiating', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 2 },
+    // Jamie - New
+    { contactIndex: 3, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Coach Beard - Inactive
+    { contactIndex: 4, leadStatus: 'inactive', hasActiveDeposit: false, totalPurchasesCents: 300000, animalsOwned: 1, lastContactedDaysAgo: 100 },
+  ],
+  zion: [
+    // Morpheus - VIP
+    { contactIndex: 0, leadStatus: 'won', hasActiveDeposit: true, depositAmountCents: 75000, depositPlanIndex: 0, totalPurchasesCents: 1400000, animalsOwned: 3, lastContactedDaysAgo: 2 },
+    // Trinity - Waitlist with deposit
+    { contactIndex: 1, leadStatus: 'qualified', waitlistPlanIndex: 1, waitlistPosition: 1, waitlistStatus: 'DEPOSIT_PAID', hasActiveDeposit: true, depositAmountCents: 50000, depositPlanIndex: 1, totalPurchasesCents: 350000, animalsOwned: 1, lastContactedDaysAgo: 4 },
+    // Tank - Contacted
+    { contactIndex: 2, leadStatus: 'contacted', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: 11 },
+    // Niobe - New
+    { contactIndex: 3, leadStatus: 'new', hasActiveDeposit: false, totalPurchasesCents: 0, animalsOwned: 0, lastContactedDaysAgo: null },
+    // Oracle - Past customer
+    { contactIndex: 4, leadStatus: 'won', hasActiveDeposit: false, totalPurchasesCents: 600000, animalsOwned: 2, lastContactedDaysAgo: 55 },
+  ],
+};
+
+export function getContactMeta(env: Environment): Record<string, ContactMetaDefinition[]> {
+  return env === 'prod' ? PROD_CONTACT_META : DEV_CONTACT_META;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMMUNICATIONS HUB - MESSAGE DEFINITIONS
+// Realistic email and DM conversations for the Communications Hub
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface EmailDefinition {
+  contactIndex: number;  // Index into tenant contacts array
+  direction: 'inbound' | 'outbound';
+  subject: string;
+  body: string;
+  status: 'sent' | 'delivered' | 'read' | 'unread';
+  isRead: boolean;
+  flagged: boolean;
+  archived: boolean;
+  daysAgo: number;  // How many days ago this email was sent
+  hasAttachment?: boolean;
+}
+
+export interface DMThreadDefinition {
+  // For marketplace DMs from shoppers
+  marketplaceUserIndex?: number;  // Index into MARKETPLACE_USERS
+  // Or for DMs from contacts
+  contactIndex?: number;  // Index into tenant contacts
+  subject: string;
+  inquiryType: 'MARKETPLACE' | 'WAITLIST' | 'GENERAL';
+  flagged: boolean;
+  archived: boolean;
+  messages: DMMessageDefinition[];
+}
+
+export interface DMMessageDefinition {
+  direction: 'inbound' | 'outbound';
+  body: string;
+  daysAgo: number;
+  hoursAgo?: number;  // For same-day messages
+}
+
+export interface DraftDefinition {
+  channel: 'email' | 'dm';
+  contactIndex?: number;
+  subject?: string;
+  body: string;
+  daysAgo: number;
+}
+
+// DEV Email Conversations
+export const DEV_EMAILS: Record<string, EmailDefinition[]> = {
+  rivendell: [
+    // Gandalf - VIP customer checking in
+    { contactIndex: 0, direction: 'inbound', subject: 'Update on Shadowmere', body: 'Elrond, I wanted to let you know Shadowmere is doing wonderfully. His coat is magnificent and his temperament is exactly as you described. I may be interested in another companion for him soon.', status: 'unread', isRead: false, flagged: true, archived: false, daysAgo: 0 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: Update on Shadowmere', body: 'Gandalf, wonderful to hear! I have a promising young filly from the Mearas line who would be perfect. She has excellent bloodlines and a calm disposition. Would you like me to send photos?', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 2 },
+    // Aragorn - Waitlist confirmation
+    { contactIndex: 1, direction: 'outbound', subject: 'Welcome to the Spring 2026 Waitlist!', body: 'Dear Aragorn, Great news - you\'re now #2 on our Spring 2026 Mearas litter waitlist! I\'ve attached our puppy contract for your review. Your deposit of $500 has been received. I\'ll send updates as we get closer to the expected date.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 5, hasAttachment: true },
+    { contactIndex: 1, direction: 'inbound', subject: 'RE: Welcome to the Spring 2026 Waitlist!', body: 'Thank you, Elrond. I am honored to be on your waitlist. Arwen speaks highly of your breeding program. Looking forward to updates.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 4 },
+    // Legolas - New inquiry (unread)
+    { contactIndex: 2, direction: 'inbound', subject: 'Inquiry about Elven Hounds', body: 'Greetings! I found your program through the marketplace and I\'m very interested in your Elven Hound breeding program. Do you have any puppies available or upcoming litters? I have extensive experience with hounds in Mirkwood.', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 0 },
+    // Gimli - Follow-up on waitlist
+    { contactIndex: 3, direction: 'outbound', subject: 'Waitlist Update - Position #7', body: 'Dear Gimli, Just a quick update on your waitlist position. You\'re currently #7 for our Fall litter. If you\'d like to secure your spot with a deposit, please let me know and I\'ll send the payment link.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 14 },
+    { contactIndex: 3, direction: 'inbound', subject: 'RE: Waitlist Update - Position #7', body: 'Elrond, I need to discuss this with my clan first. Mountain folk are particular about these things. I\'ll get back to you within the fortnight.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 12 },
+    // Samwise - Old conversation (archived)
+    { contactIndex: 4, direction: 'inbound', subject: 'Bill the Pony is doing great!', body: 'Mr. Elrond, Just wanted to send you an update. Bill is the best pony in the whole Shire! He loves apples and the gaffer says he\'s never seen such a well-mannered animal. Thank you again!', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 120 },
+    { contactIndex: 4, direction: 'outbound', subject: 'RE: Bill the Pony is doing great!', body: 'Sam, so wonderful to hear! Bill came from excellent stock. Please give him a carrot from me. Let me know if you ever need anything.', status: 'sent', isRead: true, flagged: false, archived: true, daysAgo: 118 },
+  ],
+  hogwarts: [
+    // Dumbledore - Health question (flagged, needs response)
+    { contactIndex: 0, direction: 'inbound', subject: 'Question about Phoenix', body: 'Hagrid, Phoenix has been a bit off his food lately. He\'s 2 years old now. Is this normal behavior? Should I be concerned? He seems otherwise healthy but I want to make sure.', status: 'unread', isRead: false, flagged: true, archived: false, daysAgo: 0 },
+    // McGonagall - Deposit received
+    { contactIndex: 1, direction: 'outbound', subject: 'Deposit Received - Next Steps', body: 'Dear Professor McGonagall, I\'ve received your £500 deposit - thank you! You\'re now confirmed for a kitten from our Spring litter. Expected birth date is around March 15th. I\'ll send weekly updates once the kittens arrive!', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 3 },
+    { contactIndex: 1, direction: 'inbound', subject: 'RE: Deposit Received - Next Steps', body: 'Excellent news, Hagrid. I look forward to the updates. I\'ve been preparing a space in my quarters. The students are quite excited as well.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 2 },
+    // Newt - Interest in magical creatures
+    { contactIndex: 2, direction: 'inbound', subject: 'Interest in your breeding program', body: 'Dear Hagrid, I\'ve heard wonderful things about your creature care program. I\'m particularly interested in any unusual specimens you might have. My research could benefit greatly from your expertise.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 7 },
+    { contactIndex: 2, direction: 'outbound', subject: 'RE: Interest in your breeding program', body: 'Newt! What an honor! I\'ve got some right interesting creatures here. Would you like to visit? I can show you our breeding program and discuss potential collaborations.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 6 },
+    // Luna - New inquiry
+    { contactIndex: 3, direction: 'inbound', subject: 'Do you have any Kneazles?', body: 'Hello! I\'m looking for a Kneazle companion. Daddy says they\'re excellent at detecting suspicious persons, which would be useful for our expeditions. Do you breed them?', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 1 },
+    // Charlie - Update on dragons (archived)
+    { contactIndex: 4, direction: 'inbound', subject: 'Norbert update from Romania', body: 'Hagrid! Norbert (well, Norberta actually) is doing brilliantly. She\'s one of our best mothers now. Thought you\'d like to know. The reserve is considering expanding our breeding program.', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 45 },
+  ],
+  winterfell: [
+    // Jon - Active customer communication
+    { contactIndex: 0, direction: 'outbound', subject: 'Ghost\'s sibling availability', body: 'Jon, I wanted to reach out about a new Direwolf litter expected this spring. Given how well Ghost has worked out, I thought you might be interested in another from the same line.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 4 },
+    { contactIndex: 0, direction: 'inbound', subject: 'RE: Ghost\'s sibling availability', body: 'Lord Stark, Ghost has been invaluable at the Wall. The men respect him greatly. I would be honored to have another of his line. What would the cost be?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 3 },
+    // Sansa - Waitlist inquiry
+    { contactIndex: 1, direction: 'inbound', subject: 'Question about my waitlist position', body: 'Father, I noticed I\'m #3 on the waitlist. When do you expect the litter? I\'ve been so eager since Lady... I\'d love to have another companion.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 10 },
+    { contactIndex: 1, direction: 'outbound', subject: 'RE: Question about my waitlist position', body: 'Sansa, the litter is expected in late spring. You\'ll have first choice of the females. I promise this one will stay with you.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 9 },
+    // Arya - Negotiating
+    { contactIndex: 2, direction: 'inbound', subject: 'I want a wolf like Nymeria', body: 'Can I have one? I don\'t have much gold but I can work for it. I\'m good at cleaning kennels. Please?', status: 'unread', isRead: false, flagged: true, archived: false, daysAgo: 2 },
+    // Bran - New inquiry
+    { contactIndex: 3, direction: 'inbound', subject: 'The wolves call to me', body: 'Father, in my dreams I see wolves. Many wolves. I believe one is meant for me. The three-eyed raven showed me.', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 0 },
+    // Tormund - Lost lead (archived)
+    { contactIndex: 4, direction: 'inbound', subject: 'HAR! Your wolves are too small!', body: 'STARK! I\'ve seen your wolves. Impressive to southerners maybe! But north of the Wall we have REAL beasts! HAR! Maybe I\'ll take one anyway. For a pet.', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 60 },
+    { contactIndex: 4, direction: 'outbound', subject: 'RE: HAR! Your wolves are too small!', body: 'Tormund, our Direwolves are the finest in all the Seven Kingdoms. Perhaps a demonstration would change your mind?', status: 'sent', isRead: true, flagged: false, archived: true, daysAgo: 58 },
+  ],
+  'stark-tower': [
+    // Steve - VIP follow-up
+    { contactIndex: 0, direction: 'inbound', subject: 'Request for puppy photos', body: 'Tony, could you send some photos of the current litter? I\'d like to share them with the team. Bucky is particularly interested.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 1 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: Request for puppy photos', body: 'Cap, attached are the latest photos from Week 4. The little guy with the blue collar reminds me of you - stubborn but loyal. JARVIS can set up a video call if you want to see them live.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 0, hasAttachment: true },
+    // Natasha - Waitlist update
+    { contactIndex: 1, direction: 'outbound', subject: 'Your Waitlist Position Update', body: 'Natasha, Good news - you\'ve moved to position #1 on the Asgardian Horse waitlist! The expected foaling date is June 20th. Let me know if you need anything.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 6 },
+    { contactIndex: 1, direction: 'inbound', subject: 'RE: Your Waitlist Position Update', body: 'Perfect timing. I\'ve been preparing the stable at the compound. Will you need help with transport?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 5 },
+    // Bruce - General inquiry
+    { contactIndex: 2, direction: 'inbound', subject: 'Calm temperament puppies?', body: 'Hi Tony, I\'m looking for a companion with a very calm temperament. Given my... condition... I need something that won\'t get too excited. Any recommendations?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 8 },
+    { contactIndex: 2, direction: 'outbound', subject: 'RE: Calm temperament puppies?', body: 'Bruce, I have just the thing. Our Cavaliers are bred specifically for calm, therapeutic temperaments. JARVIS has run the analysis - perfect match for your needs. Want to meet them?', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 7 },
+    // Thor - Inquiry about horses
+    { contactIndex: 3, direction: 'inbound', subject: 'A MIGHTY STEED FOR A MIGHTY WARRIOR', body: 'STARK! I require a steed worthy of the God of Thunder! Something that won\'t flee at the sound of Mjolnir! Can your program provide such a creature?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 12 },
+    { contactIndex: 3, direction: 'outbound', subject: 'RE: A MIGHTY STEED FOR A MIGHTY WARRIOR', body: 'Thor, funny you should ask. We\'ve been breeding Lipizzans that can handle... unusual circumstances. I\'ve added you to the waitlist at position #5. No deposit required from an Avenger.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 11 },
+    // Clint - Past customer update (archived)
+    { contactIndex: 4, direction: 'inbound', subject: 'Lucky loves the farm', body: 'Hey Tony, just wanted to let you know Lucky is living his best life on the farm. The kids adore him. Best decision I ever made. Thanks again.', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 30 },
+  ],
+};
+
+// DEV DM Threads (Marketplace conversations)
+export const DEV_DM_THREADS: Record<string, DMThreadDefinition[]> = {
+  rivendell: [
+    // Alice Shopper - New marketplace inquiry
+    {
+      marketplaceUserIndex: 0,
+      subject: 'Interested in Golden Retriever listing',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'Hi! I saw your Golden Retriever listing on the marketplace. Is the male puppy with the green collar still available? My family has been looking for the perfect addition!', daysAgo: 0, hoursAgo: 3 },
+        { direction: 'outbound', body: 'Hello Alice! Yes, he\'s still available. He\'s such a sweet boy - very calm temperament. Would you like to schedule a video call to meet him?', daysAgo: 0, hoursAgo: 1 },
+      ],
+    },
+    // Bob Buyer - Negotiation thread
+    {
+      marketplaceUserIndex: 1,
+      subject: 'Question about shipping',
+      inquiryType: 'MARKETPLACE',
+      flagged: true,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'Do you ship puppies? I\'m in Colorado.', daysAgo: 3 },
+        { direction: 'outbound', body: 'Yes, we offer flight nanny service for $400. We never cargo ship - the safety of our puppies is paramount.', daysAgo: 3 },
+        { direction: 'inbound', body: 'That sounds great. What\'s the total cost including the flight nanny?', daysAgo: 2 },
+        { direction: 'outbound', body: 'The puppy is $2,500 + $400 flight nanny = $2,900 total. I can send you a detailed breakdown if you\'d like.', daysAgo: 2 },
+        { direction: 'inbound', body: 'Yes please, and do you have references from previous out-of-state buyers?', daysAgo: 1 },
+      ],
+    },
+  ],
+  hogwarts: [
+    // Carol Collector - Rare breed inquiry
+    {
+      marketplaceUserIndex: 2,
+      subject: 'Rare Kneazle Mix inquiry',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'I\'m a collector of rare magical creature breeds. Your Kneazle mix program caught my eye. Are these purebred or crosses?', daysAgo: 5 },
+        { direction: 'outbound', body: 'Wonderful to hear from a fellow enthusiast! These are half-Kneazle, half-British Shorthair. They retain the Kneazle intelligence and suspicious person detection while being more family-friendly.', daysAgo: 4 },
+        { direction: 'inbound', body: 'Fascinating! What documentation do you provide regarding lineage?', daysAgo: 4 },
+      ],
+    },
+  ],
+  winterfell: [
+    // Dave Dealer - Professional breeder inquiry
+    {
+      marketplaceUserIndex: 3,
+      subject: 'Stud service inquiry',
+      inquiryType: 'MARKETPLACE',
+      flagged: true,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'I\'m a professional breeder looking for quality studs. I\'ve heard excellent things about your Direwolf line. Do you offer stud services?', daysAgo: 7 },
+        { direction: 'outbound', body: 'We do offer limited stud services for approved breeding programs. Could you tell me more about your program? We\'re selective about partnerships to maintain bloodline quality.', daysAgo: 6 },
+        { direction: 'inbound', body: 'Certainly. I run Northern Breeds Alliance based in Alaska. We\'ve been breeding Malamutes for 15 years with a focus on working dogs. I can send our health testing protocols.', daysAgo: 5 },
+      ],
+    },
+  ],
+  'stark-tower': [
+    // Alice - Casual inquiry
+    {
+      marketplaceUserIndex: 0,
+      subject: 'First time puppy owner question',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'Hi! I\'ve never owned a dog before. Are Cavaliers good for first-time owners?', daysAgo: 2 },
+        { direction: 'outbound', body: 'Cavaliers are excellent for first-time owners! They\'re gentle, adaptable, and love to cuddle. They do need regular grooming and companionship though - they don\'t like being left alone for long periods.', daysAgo: 2 },
+        { direction: 'inbound', body: 'I work from home so that should be perfect! What\'s the application process?', daysAgo: 1 },
+        { direction: 'outbound', body: 'Great to hear! I\'ll send you our application form. It includes questions about your home setup, experience, and what you\'re looking for. We typically schedule a video call after reviewing applications.', daysAgo: 1 },
+      ],
+    },
+    // Bob - Show quality inquiry
+    {
+      marketplaceUserIndex: 1,
+      subject: 'Show quality Ragdolls?',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: true,
+      messages: [
+        { direction: 'inbound', body: 'I\'m looking for show quality Ragdolls. Do you have any with championship potential?', daysAgo: 20 },
+        { direction: 'outbound', body: 'We do occasionally have show-quality kittens. Our last litter produced two that went on to earn titles. Are you an experienced exhibitor?', daysAgo: 19 },
+        { direction: 'inbound', body: 'Yes, I\'ve shown cats for 10 years. Currently looking to add a Ragdoll to my program.', daysAgo: 18 },
+        { direction: 'outbound', body: 'Excellent! I don\'t have any available right now but I\'ll add you to our show-quality notification list. Expected litter in 3 months.', daysAgo: 17 },
+      ],
+    },
+  ],
+};
+
+// DEV Drafts
+export const DEV_DRAFTS: Record<string, DraftDefinition[]> = {
+  rivendell: [
+    { channel: 'email', contactIndex: 2, subject: 'RE: Inquiry about Elven Hounds', body: 'Dear Legolas, Thank you for your interest in our Elven Hound program. We currently have...', daysAgo: 0 },
+  ],
+  hogwarts: [
+    { channel: 'email', contactIndex: 0, subject: 'RE: Question about Phoenix', body: 'Dear Professor Dumbledore, That\'s actually quite common for cats around that age. I\'d recommend trying...', daysAgo: 0 },
+  ],
+  winterfell: [
+    { channel: 'email', contactIndex: 2, subject: 'RE: I want a wolf like Nymeria', body: 'Arya, I understand how much you want a direwolf. Let\'s discuss this when...', daysAgo: 0 },
+  ],
+  'stark-tower': [
+    { channel: 'dm', contactIndex: 2, body: 'Bruce, I\'ve been thinking about your situation. There\'s actually a new therapy dog certification program that...', daysAgo: 1 },
+  ],
+};
+
+// PROD versions follow the same pattern
+export const PROD_EMAILS: Record<string, EmailDefinition[]> = {
+  arrakis: [
+    { contactIndex: 0, direction: 'inbound', subject: 'Shai-Hulud update', body: 'My Duke, the hound Shai-Hulud has adapted well to desert conditions. His training as a sandworm spotter has been invaluable. The Fremen are impressed.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 2 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: Shai-Hulud update', body: 'Duncan, excellent news. His bloodline carries the best traits for desert survival. I have a sibling from the same litter if you\'re interested in expanding the program.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 1 },
+    { contactIndex: 1, direction: 'outbound', subject: 'Waitlist Confirmation', body: 'Stilgar, You are now #2 on our Spring litter waitlist. Your deposit has been received. The spice must flow, and so shall quality breeding.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 4, hasAttachment: true },
+    { contactIndex: 2, direction: 'inbound', subject: 'Interest in desert breeds', body: 'Muad\'Dib, I seek a companion suited to the deep desert. What breeds do you recommend for a Fremen lifestyle?', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 0 },
+    { contactIndex: 3, direction: 'outbound', subject: 'Waitlist Position Update', body: 'Gurney, You\'re currently #4 on our waitlist. Let me know when you\'re ready to place a deposit to secure your position.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 15 },
+    { contactIndex: 4, direction: 'inbound', subject: 'Old friend checking in', body: 'My Lord, it has been too long. The mentat calculations suggest it\'s time for a new companion. What do you have available?', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 90 },
+  ],
+  starfleet: [
+    { contactIndex: 0, direction: 'inbound', subject: 'Number One needs a friend', body: 'Captain, my previous companion has retired to Risa. I\'m looking for a new shipboard pet. Any recommendations?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 1 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: Number One needs a friend', body: 'Will, I have just the thing. A new litter of station cats - bred for zero-G adaptability and calm temperament. Perfect for the Enterprise.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 0 },
+    { contactIndex: 1, direction: 'outbound', subject: 'Your Waitlist Position', body: 'Data, You\'re #1 on our waiting list. Fascinating that an android would want a pet, but Spot clearly changed that perspective.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 5 },
+    { contactIndex: 2, direction: 'inbound', subject: 'Medical question about cats', body: 'Jean-Luc, one of our crew members is interested in hypoallergenic breeds. Do you have any recommendations from your program?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 9 },
+    { contactIndex: 3, direction: 'inbound', subject: 'Empathic animals?', body: 'Captain, are there any breeds known for their empathic sensitivity? I feel it would be beneficial for counseling sessions.', status: 'unread', isRead: false, flagged: true, archived: false, daysAgo: 0 },
+    { contactIndex: 4, direction: 'inbound', subject: 'Klingon-compatible breeds?', body: 'Picard. Klingons do not keep pets. But... for my son Alexander, perhaps something fierce yet loyal?', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 40 },
+  ],
+  richmond: [
+    { contactIndex: 0, direction: 'inbound', subject: 'Another championship dog?', body: 'Ted, our last one was such a success for team morale. The boys are asking if we can get another mascot for the new season.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 3 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: Another championship dog?', body: 'Rebecca! Believe in yourself, believe in the team, believe in the puppy! I\'ve got a golden with the heart of a champion ready for you.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 2 },
+    { contactIndex: 1, direction: 'inbound', subject: 'Looking for something tough', body: 'Ted. Need a dog. Something that doesn\'t take any s***. Like me.', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 7 },
+    { contactIndex: 2, direction: 'inbound', subject: 'PR opportunity with puppies?', body: 'Hi Ted! Keeley here. I was thinking - puppy photoshoots with the players could be great for our social media. Do you have any cute puppies available for a session?', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 2 },
+    { contactIndex: 3, direction: 'inbound', subject: 'Oi Ted', body: 'Ted mate, me mum wants a dog. Something that looks good on Instagram yeah? What you got?', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 0 },
+    { contactIndex: 4, direction: 'inbound', subject: 'Chess partner needed', body: 'Ted. Looking for an intelligent companion. Preferably one that can appreciate strategic thinking. Do dogs play chess?', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 100 },
+  ],
+  zion: [
+    { contactIndex: 0, direction: 'inbound', subject: 'The One needs a companion', body: 'Neo requires a companion for his meditation sessions. Something calm, knowing. What do you recommend?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 2 },
+    { contactIndex: 0, direction: 'outbound', subject: 'RE: The One needs a companion', body: 'Morpheus, I have a black cat with an uncanny ability to sense the Matrix. Perfect for meditation. The Oracle has approved.', status: 'sent', isRead: true, flagged: false, archived: false, daysAgo: 1 },
+    { contactIndex: 1, direction: 'outbound', subject: 'Waitlist Position #1', body: 'Trinity, You\'ve reached the top of our waitlist. Your patience has paid off. The companion you seek is almost ready.', status: 'delivered', isRead: true, flagged: false, archived: false, daysAgo: 4 },
+    { contactIndex: 2, direction: 'inbound', subject: 'Need a ship cat', body: 'Neo, the Logos needs a ship cat for morale. The crew has been tense since the last EMP discharge. What can you provide?', status: 'read', isRead: true, flagged: false, archived: false, daysAgo: 11 },
+    { contactIndex: 3, direction: 'inbound', subject: 'My ship needs a companion', body: 'The Nebuchadnezzar II is in need of a ship\'s animal. Something that can handle the electrical systems without getting spooked.', status: 'unread', isRead: false, flagged: false, archived: false, daysAgo: 0 },
+    { contactIndex: 4, direction: 'inbound', subject: 'I foresaw this message', body: 'Neo, I knew you\'d start a breeding program. The cookies are ready, and so is my application for a companion.', status: 'read', isRead: true, flagged: false, archived: true, daysAgo: 55 },
+  ],
+};
+
+export const PROD_DM_THREADS: Record<string, DMThreadDefinition[]> = {
+  arrakis: [
+    {
+      marketplaceUserIndex: 0,
+      subject: 'Desert-adapted puppies?',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'Hello! I live in Arizona and I\'m looking for dogs that can handle extreme heat. I saw you specialize in desert breeds?', daysAgo: 2 },
+        { direction: 'outbound', body: 'Yes! Our Salukis are specifically bred for hot, arid climates. They\'ve been the dogs of desert peoples for thousands of years.', daysAgo: 1 },
+      ],
+    },
+  ],
+  starfleet: [
+    {
+      marketplaceUserIndex: 1,
+      subject: 'Exotic Shorthair availability',
+      inquiryType: 'MARKETPLACE',
+      flagged: true,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'I\'m a longtime Star Trek fan and I heard your cattery is themed after the show. Do you have any cats like Spot?', daysAgo: 4 },
+        { direction: 'outbound', body: 'You\'re in the right place! We breed Exotic Shorthairs just like Spot. Current litter has two orange tabbies available.', daysAgo: 3 },
+        { direction: 'inbound', body: 'Perfect! What\'s the adoption process?', daysAgo: 2 },
+      ],
+    },
+  ],
+  richmond: [
+    {
+      marketplaceUserIndex: 2,
+      subject: 'Football mascot dogs?',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'I run a small football club and we\'re looking for a mascot dog. Do you have any that are good with crowds?', daysAgo: 6 },
+        { direction: 'outbound', body: 'Absolutely! Our Goldens are trained to handle crowds and noise. They\'ve been to actual AFC Richmond matches!', daysAgo: 5 },
+      ],
+    },
+  ],
+  zion: [
+    {
+      marketplaceUserIndex: 3,
+      subject: 'Black cats for adoption',
+      inquiryType: 'MARKETPLACE',
+      flagged: false,
+      archived: false,
+      messages: [
+        { direction: 'inbound', body: 'I\'m specifically looking for solid black cats. Do you have any available or upcoming?', daysAgo: 3 },
+        { direction: 'outbound', body: 'We specialize in Bombay cats - the "parlor panthers". All black, golden eyes. We have a litter due next month.', daysAgo: 2 },
+        { direction: 'inbound', body: 'That sounds perfect! Can I get on the waitlist?', daysAgo: 1 },
+      ],
+    },
+  ],
+};
+
+export const PROD_DRAFTS: Record<string, DraftDefinition[]> = {
+  arrakis: [
+    { channel: 'email', contactIndex: 2, subject: 'RE: Interest in desert breeds', body: 'Chani, For the deep desert, I recommend our Saluki line. They\'ve been bred for...', daysAgo: 0 },
+  ],
+  starfleet: [
+    { channel: 'email', contactIndex: 3, subject: 'RE: Empathic animals?', body: 'Counselor Troi, There are some breeds known for emotional sensitivity. Cavalier King Charles Spaniels in particular...', daysAgo: 0 },
+  ],
+  richmond: [],
+  zion: [
+    { channel: 'dm', contactIndex: 3, body: 'Niobe, I understand the need for a reliable ship companion. Our cats are trained to handle...', daysAgo: 0 },
+  ],
+};
+
+// Helper functions
+export function getEmails(env: Environment): Record<string, EmailDefinition[]> {
+  return env === 'prod' ? PROD_EMAILS : DEV_EMAILS;
+}
+
+export function getDMThreads(env: Environment): Record<string, DMThreadDefinition[]> {
+  return env === 'prod' ? PROD_DM_THREADS : DEV_DM_THREADS;
+}
+
+export function getDrafts(env: Environment): Record<string, DraftDefinition[]> {
+  return env === 'prod' ? PROD_DRAFTS : DEV_DRAFTS;
+}

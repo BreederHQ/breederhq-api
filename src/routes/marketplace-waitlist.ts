@@ -349,16 +349,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           rejectedAt: true,
           rejectedReason: true,
           tenantId: true,
-          depositInvoice: {
-            select: {
-              id: true,
-              status: true,
-              totalCents: true,
-              paidCents: true,
-              balanceCents: true,
-              dueAt: true,
-            },
-          },
+          depositInvoiceId: true,
         },
         orderBy: { createdAt: "desc" },
       });
@@ -386,10 +377,29 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const tenantMap = new Map(tenants.map((t) => [t.id, t]));
       const orgMap = new Map(organizations.map((o) => [o.tenantId, o]));
 
+      // Get deposit invoices for entries that have them
+      const invoiceIds = entries
+        .map((e) => e.depositInvoiceId)
+        .filter((id): id is number => id != null);
+      const invoices = invoiceIds.length > 0
+        ? await prisma.invoice.findMany({
+            where: { id: { in: invoiceIds } },
+            select: {
+              id: true,
+              status: true,
+              amountCents: true,
+              balanceCents: true,
+              dueAt: true,
+            },
+          })
+        : [];
+      const invoiceMap = new Map(invoices.map((inv) => [inv.id, inv]));
+
       // 6) Extract program name from notes and build response
       const requests = entries.map((entry) => {
         const tenant = tenantMap.get(entry.tenantId);
         const org = orgMap.get(entry.tenantId);
+        const depositInvoice = entry.depositInvoiceId ? invoiceMap.get(entry.depositInvoiceId) : null;
 
         // Extract program name from notes (format: "Program: XYZ")
         let programName: string | null = null;
@@ -420,14 +430,14 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           approvedAt: entry.approvedAt,
           rejectedAt: entry.rejectedAt,
           rejectedReason: entry.rejectedReason,
-          invoice: entry.depositInvoice
+          invoice: depositInvoice
             ? {
-                id: entry.depositInvoice.id,
-                status: entry.depositInvoice.status,
-                totalCents: entry.depositInvoice.totalCents,
-                paidCents: entry.depositInvoice.paidCents,
-                balanceCents: entry.depositInvoice.balanceCents,
-                dueAt: entry.depositInvoice.dueAt,
+                id: depositInvoice.id,
+                status: depositInvoice.status,
+                totalCents: depositInvoice.amountCents,
+                paidCents: depositInvoice.amountCents - depositInvoice.balanceCents,
+                balanceCents: depositInvoice.balanceCents,
+                dueAt: depositInvoice.dueAt,
               }
             : null,
         };
@@ -473,7 +483,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         select: {
           id: true,
           status: true,
-          totalCents: true,
+          amountCents: true,
           balanceCents: true,
           tenantId: true,
           clientPartyId: true,
@@ -485,15 +495,18 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           tenant: {
             select: {
               name: true,
-              stripeCustomerId: true,
-              stripeAccountId: true,
+              billing: {
+                select: {
+                  stripeCustomerId: true,
+                },
+              },
             },
           },
-          lineItems: {
+          LineItems: {
             select: {
               description: true,
-              quantity: true,
-              unitPriceCents: true,
+              qty: true,
+              unitCents: true,
             },
           },
         },
@@ -509,35 +522,35 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       }
 
       // 4) Check invoice is in a payable state
-      if (invoice.status === "PAID") {
+      if (invoice.status === "paid") {
         return reply.code(400).send({ error: "already_paid" });
       }
 
-      if (invoice.status === "VOID" || invoice.status === "CANCELED") {
+      if (invoice.status === "void" || invoice.status === "cancelled") {
         return reply.code(400).send({ error: "invoice_canceled" });
       }
 
       // 5) Calculate amount to charge (balance remaining)
-      const amountCents = invoice.balanceCents > 0 ? invoice.balanceCents : invoice.totalCents;
+      const amountCents = invoice.balanceCents > 0 ? invoice.balanceCents : invoice.amountCents;
 
       if (amountCents <= 0) {
         return reply.code(400).send({ error: "nothing_to_pay" });
       }
 
       // 6) Build line items for Stripe checkout
-      const lineItems = invoice.lineItems.map((item) => ({
+      const lineItems = invoice.LineItems.map((item) => ({
         price_data: {
           currency: "usd",
           product_data: {
             name: item.description || "Invoice item",
           },
-          unit_amount: item.unitPriceCents,
+          unit_amount: item.unitCents,
         },
-        quantity: item.quantity,
+        quantity: item.qty,
       }));
 
       // If there's a partial payment, adjust or add a credit line
-      if (invoice.balanceCents !== invoice.totalCents && invoice.balanceCents > 0) {
+      if (invoice.balanceCents !== invoice.amountCents && invoice.balanceCents > 0) {
         // Simplify: just show balance as single line item
         lineItems.length = 0;
         lineItems.push({
@@ -579,13 +592,6 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           },
         },
       };
-
-      // If breeder has connected Stripe account, route payment to them
-      if ((invoice.tenant as any).stripeAccountId) {
-        checkoutConfig.payment_intent_data.transfer_data = {
-          destination: (invoice.tenant as any).stripeAccountId,
-        };
-      }
 
       const session = await stripe.checkout.sessions.create(checkoutConfig);
 

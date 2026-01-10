@@ -33,6 +33,10 @@ import {
   ListingStatus,
   TagModule,
   PortalAccessStatus,
+  WaitlistStatus,
+  InvoiceStatus,
+  PartyActivityKind,
+  FinanceScope,
 } from '@prisma/client';
 
 import {
@@ -47,6 +51,10 @@ import {
   getTenantMarketplaceListings,
   getPortalAccessDefinitions,
   getMarketplaceUsers,
+  getContactMeta,
+  getEmails,
+  getDMThreads,
+  getDrafts,
   getEnvName,
   getEnvSlug,
   getEnvEmail,
@@ -55,6 +63,11 @@ import {
   TenantDefinition,
   PortalAccessDefinition,
   MarketplaceUserDefinition,
+  ContactMetaDefinition,
+  EmailDefinition,
+  DMThreadDefinition,
+  DraftDefinition,
+  MARKETPLACE_USERS,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -475,20 +488,16 @@ async function seedAnimals(
         });
 
         // Create privacy settings based on tenant defaults + overrides
+        // Map old config field names to new schema field names
         const privacySettings = {
-          ...{
-            showName: defaultLineageVisibility.defaultShowName,
-            showPhoto: defaultLineageVisibility.defaultShowPhoto,
-            showFullDob: defaultLineageVisibility.defaultShowFullDob,
-            showRegistryFull: defaultLineageVisibility.defaultShowRegistryFull,
-            showHealthResults: defaultLineageVisibility.defaultShowHealthResults,
-            showGeneticData: defaultLineageVisibility.defaultShowGeneticData,
-            showBreeder: defaultLineageVisibility.defaultShowBreeder,
-            allowInfoRequests: defaultLineageVisibility.defaultAllowInfoRequests,
-            allowDirectContact: defaultLineageVisibility.defaultAllowDirectContact,
-            allowCrossTenantMatching: defaultLineageVisibility.allowCrossTenantMatching,
-          },
-          ...animalDef.privacyOverrides,
+          showName: defaultLineageVisibility.defaultShowName,
+          showPhoto: defaultLineageVisibility.defaultShowPhoto,
+          showFullDob: defaultLineageVisibility.defaultShowFullDob,
+          showRegistryFull: defaultLineageVisibility.defaultShowRegistryFull,
+          enableHealthSharing: defaultLineageVisibility.defaultShowHealthResults,
+          enableGeneticsSharing: defaultLineageVisibility.defaultShowGeneticData,
+          showBreeder: defaultLineageVisibility.defaultShowBreeder,
+          allowCrossTenantMatching: defaultLineageVisibility.allowCrossTenantMatching,
         };
 
         await tx.animalPrivacySettings.create({
@@ -1112,6 +1121,447 @@ async function seedMarketplaceUsers(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CONTACT META SEEDING (leadStatus, waitlist, invoices, etc.)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedContactMeta(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  contactMetaDefs: Record<string, ContactMetaDefinition[]>,
+  tenantContacts: Record<string, any[]>,
+  tenantBreedingPlans: Record<string, any[]>
+): Promise<{ waitlistEntries: number; invoices: number }> {
+  const metaDefs = contactMetaDefs[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  const planDefs = tenantBreedingPlans[tenantSlug] || [];
+  let waitlistEntriesCreated = 0;
+  let invoicesCreated = 0;
+
+  for (const metaDef of metaDefs) {
+    if (metaDef.contactIndex >= contactDefs.length) continue;
+
+    const contactDef = contactDefs[metaDef.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+      include: { party: true },
+    });
+
+    if (!contact || !contact.partyId) {
+      console.log(`  ! Contact not found or no partyId: ${contactEmail}`);
+      continue;
+    }
+
+    // Update Party with leadStatus
+    await prisma.party.update({
+      where: { id: contact.partyId },
+      data: {
+        // We'll store leadStatus in metadata since it's not a native field
+        // For now, we'll create the waitlist/invoice data which is more important
+      },
+    });
+
+    // Create waitlist entry if specified
+    if (metaDef.waitlistPlanIndex !== undefined && metaDef.waitlistPosition !== undefined) {
+      const planDef = planDefs[metaDef.waitlistPlanIndex];
+      if (planDef) {
+        const planEnvName = getEnvName(planDef.name, env);
+        const breedingPlan = await prisma.breedingPlan.findFirst({
+          where: { tenantId, name: planEnvName },
+        });
+
+        if (breedingPlan) {
+          // Check if waitlist entry already exists
+          const existingEntry = await prisma.waitlistEntry.findFirst({
+            where: { tenantId, clientPartyId: contact.partyId, planId: breedingPlan.id },
+          });
+
+          if (!existingEntry) {
+            const waitlistStatus = metaDef.waitlistStatus === 'DEPOSIT_PAID'
+              ? WaitlistStatus.DEPOSIT_PAID
+              : metaDef.waitlistStatus === 'APPROVED'
+              ? WaitlistStatus.APPROVED
+              : metaDef.waitlistStatus === 'ALLOCATED'
+              ? WaitlistStatus.ALLOCATED
+              : WaitlistStatus.INQUIRY;
+
+            await prisma.waitlistEntry.create({
+              data: {
+                tenantId,
+                planId: breedingPlan.id,
+                clientPartyId: contact.partyId,
+                priority: metaDef.waitlistPosition,
+                status: waitlistStatus,
+                depositRequiredCents: metaDef.depositAmountCents || 50000,
+                depositPaidCents: metaDef.waitlistStatus === 'DEPOSIT_PAID' ? (metaDef.depositAmountCents || 50000) : 0,
+                depositPaidAt: metaDef.waitlistStatus === 'DEPOSIT_PAID' ? new Date() : null,
+                notes: `Seeded waitlist entry - position ${metaDef.waitlistPosition}`,
+              },
+            });
+            waitlistEntriesCreated++;
+            console.log(`  + Created waitlist entry: ${contact.display_name} -> ${planEnvName} (#${metaDef.waitlistPosition})`);
+          } else {
+            console.log(`  = Waitlist entry exists: ${contact.display_name} -> ${planEnvName}`);
+          }
+        }
+      }
+    }
+
+    // Create invoice for deposit if specified
+    if (metaDef.hasActiveDeposit && metaDef.depositAmountCents) {
+      const existingDepositInvoice = await prisma.invoice.findFirst({
+        where: {
+          tenantId,
+          clientPartyId: contact.partyId,
+          category: 'DEPOSIT',
+          status: 'paid',
+        },
+      });
+
+      if (!existingDepositInvoice) {
+        const year = new Date().getFullYear();
+        const invoiceNum = `INV-${year}-DEP${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
+        await prisma.invoice.create({
+          data: {
+            tenantId,
+            clientPartyId: contact.partyId,
+            invoiceNumber: invoiceNum,
+            number: `DEP-${tenantSlug.toUpperCase()}-${metaDef.contactIndex + 1}`,
+            status: 'paid',
+            category: 'DEPOSIT',
+            scope: FinanceScope.waitlist,
+            amountCents: metaDef.depositAmountCents,
+            balanceCents: 0,
+            depositCents: metaDef.depositAmountCents,
+            issuedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+            dueAt: new Date(Date.now() - 23 * 24 * 60 * 60 * 1000), // 23 days ago
+            paidAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000), // 25 days ago
+            notes: 'Deposit for upcoming litter',
+          },
+        });
+        invoicesCreated++;
+        console.log(`  + Created deposit invoice: ${contact.display_name} ($${(metaDef.depositAmountCents / 100).toFixed(2)})`);
+      }
+    }
+
+    // Create past purchase invoices if totalPurchasesCents > 0
+    if (metaDef.totalPurchasesCents > 0 && metaDef.animalsOwned > 0) {
+      const existingPurchaseInvoice = await prisma.invoice.findFirst({
+        where: {
+          tenantId,
+          clientPartyId: contact.partyId,
+          category: 'GOODS',
+          status: 'paid',
+        },
+      });
+
+      if (!existingPurchaseInvoice) {
+        // Create a single invoice representing lifetime purchases
+        const year = new Date().getFullYear();
+        const invoiceNum = `INV-${year}-PUR${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
+        await prisma.invoice.create({
+          data: {
+            tenantId,
+            clientPartyId: contact.partyId,
+            invoiceNumber: invoiceNum,
+            number: `PUR-${tenantSlug.toUpperCase()}-${metaDef.contactIndex + 1}`,
+            status: 'paid',
+            category: 'GOODS',
+            scope: FinanceScope.contact,
+            amountCents: metaDef.totalPurchasesCents,
+            balanceCents: 0,
+            issuedAt: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000), // 6 months ago
+            dueAt: new Date(Date.now() - 173 * 24 * 60 * 60 * 1000),
+            paidAt: new Date(Date.now() - 175 * 24 * 60 * 60 * 1000),
+            notes: `Purchase of ${metaDef.animalsOwned} animal(s)`,
+          },
+        });
+        invoicesCreated++;
+        console.log(`  + Created purchase invoice: ${contact.display_name} ($${(metaDef.totalPurchasesCents / 100).toFixed(2)})`);
+      }
+    }
+  }
+
+  return { waitlistEntries: waitlistEntriesCreated, invoices: invoicesCreated };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMMUNICATIONS SEEDING (emails, DMs, drafts)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedEmails(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  emailDefs: Record<string, EmailDefinition[]>,
+  tenantContacts: Record<string, any[]>,
+  ownerUserId: string
+): Promise<number> {
+  const emails = emailDefs[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let emailsCreated = 0;
+
+  for (const emailDef of emails) {
+    if (emailDef.contactIndex >= contactDefs.length) continue;
+
+    const contactDef = contactDefs[emailDef.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+    });
+
+    if (!contact || !contact.partyId) continue;
+
+    // Calculate the sent date
+    const sentAt = new Date(Date.now() - emailDef.daysAgo * 24 * 60 * 60 * 1000);
+
+    // Check if email already exists (by subject and party)
+    const existingEmail = await prisma.partyEmail.findFirst({
+      where: {
+        tenantId,
+        partyId: contact.partyId,
+        subject: emailDef.subject,
+      },
+    });
+
+    if (!existingEmail) {
+      await prisma.partyEmail.create({
+        data: {
+          tenantId,
+          partyId: contact.partyId,
+          subject: emailDef.subject,
+          body: emailDef.body,
+          toEmail: emailDef.direction === 'outbound' ? contactEmail : 'breeder@tenant.local',
+          sentAt,
+          status: emailDef.status === 'unread' ? 'sent' : emailDef.status,
+          isRead: emailDef.isRead,
+          createdBy: emailDef.direction === 'outbound' ? parseInt(ownerUserId) || null : null,
+        },
+      });
+
+      // Also create a PartyActivity record for tracking
+      await prisma.partyActivity.create({
+        data: {
+          tenantId,
+          partyId: contact.partyId,
+          kind: emailDef.direction === 'outbound' ? PartyActivityKind.EMAIL_SENT : PartyActivityKind.EMAIL_SENT, // Use EMAIL_SENT for both since EMAIL_RECEIVED doesn't exist
+          title: emailDef.direction === 'outbound' ? `Sent: ${emailDef.subject}` : `Received: ${emailDef.subject}`,
+          detail: emailDef.body.substring(0, 200),
+          createdAt: sentAt,
+        },
+      });
+
+      emailsCreated++;
+      const direction = emailDef.direction === 'outbound' ? '→' : '←';
+      console.log(`  + Created email: ${direction} ${contact.display_name}: "${emailDef.subject.substring(0, 40)}..."`);
+    }
+  }
+
+  return emailsCreated;
+}
+
+async function seedDMThreads(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  dmThreadDefs: Record<string, DMThreadDefinition[]>,
+  tenantContacts: Record<string, any[]>
+): Promise<{ threads: number; messages: number }> {
+  const threads = dmThreadDefs[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let threadsCreated = 0;
+  let messagesCreated = 0;
+
+  // Get the tenant's organization party (breeder) for outbound messages
+  const tenantOrg = await prisma.organization.findFirst({
+    where: { tenantId },
+    include: { party: true },
+  });
+
+  if (!tenantOrg || !tenantOrg.partyId) {
+    console.log('  ! No organization found for DM threads');
+    return { threads: 0, messages: 0 };
+  }
+
+  for (const threadDef of threads) {
+    let clientPartyId: number | null = null;
+    let clientName: string = '';
+
+    // Determine the client party (either marketplace user or contact)
+    if (threadDef.marketplaceUserIndex !== undefined) {
+      // Get marketplace user's party
+      const marketplaceUser = MARKETPLACE_USERS[threadDef.marketplaceUserIndex];
+      if (marketplaceUser) {
+        const userEmail = getEnvEmail(marketplaceUser.emailBase, env);
+        const user = await prisma.user.findUnique({ where: { email: userEmail } });
+
+        if (user) {
+          // Check if this user has a party
+          let party = await prisma.party.findFirst({
+            where: { tenantId, email: userEmail },
+          });
+
+          if (!party) {
+            // Create a party for the marketplace user
+            party = await prisma.party.create({
+              data: {
+                tenantId,
+                type: 'CONTACT',
+                name: `${marketplaceUser.firstName} ${marketplaceUser.lastName}`,
+                email: userEmail,
+              },
+            });
+          }
+
+          clientPartyId = party.id;
+          clientName = `${marketplaceUser.firstName} ${marketplaceUser.lastName}`;
+        }
+      }
+    } else if (threadDef.contactIndex !== undefined && threadDef.contactIndex < contactDefs.length) {
+      const contactDef = contactDefs[threadDef.contactIndex];
+      const contactEmail = getEnvEmail(contactDef.emailBase, env);
+      const contact = await prisma.contact.findFirst({
+        where: { tenantId, email: contactEmail },
+      });
+
+      if (contact) {
+        clientPartyId = contact.partyId;
+        clientName = contact.display_name || `${contactDef.firstName} ${contactDef.lastName}`;
+      }
+    }
+
+    if (!clientPartyId) continue;
+
+    // Check if thread already exists
+    const existingThread = await prisma.messageThread.findFirst({
+      where: {
+        tenantId,
+        subject: threadDef.subject,
+        participants: { some: { partyId: clientPartyId } },
+      },
+    });
+
+    if (!existingThread) {
+      // Create the thread
+      const lastMessageDef = threadDef.messages[threadDef.messages.length - 1];
+      const lastMessageAt = new Date(
+        Date.now() - lastMessageDef.daysAgo * 24 * 60 * 60 * 1000 - (lastMessageDef.hoursAgo || 0) * 60 * 60 * 1000
+      );
+
+      const thread = await prisma.messageThread.create({
+        data: {
+          tenantId,
+          subject: threadDef.subject,
+          inquiryType: threadDef.inquiryType,
+          flagged: threadDef.flagged,
+          flaggedAt: threadDef.flagged ? new Date() : null,
+          archived: threadDef.archived,
+          lastMessageAt,
+        },
+      });
+
+      // Add participants
+      await prisma.messageParticipant.createMany({
+        data: [
+          { threadId: thread.id, partyId: clientPartyId },
+          { threadId: thread.id, partyId: tenantOrg.partyId },
+        ],
+      });
+
+      threadsCreated++;
+
+      // Create messages
+      for (const msgDef of threadDef.messages) {
+        const createdAt = new Date(
+          Date.now() - msgDef.daysAgo * 24 * 60 * 60 * 1000 - (msgDef.hoursAgo || 0) * 60 * 60 * 1000
+        );
+
+        const senderPartyId = msgDef.direction === 'inbound' ? clientPartyId : tenantOrg.partyId;
+
+        await prisma.message.create({
+          data: {
+            threadId: thread.id,
+            senderPartyId,
+            body: msgDef.body,
+            createdAt,
+          },
+        });
+        messagesCreated++;
+      }
+
+      console.log(`  + Created DM thread: "${threadDef.subject}" with ${clientName} (${threadDef.messages.length} messages)`);
+    }
+  }
+
+  return { threads: threadsCreated, messages: messagesCreated };
+}
+
+async function seedDrafts(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  draftDefs: Record<string, DraftDefinition[]>,
+  tenantContacts: Record<string, any[]>,
+  ownerUserId: string
+): Promise<number> {
+  const drafts = draftDefs[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let draftsCreated = 0;
+
+  for (const draftDef of drafts) {
+    let partyId: number | null = null;
+    let toAddresses: string[] = [];
+
+    if (draftDef.contactIndex !== undefined && draftDef.contactIndex < contactDefs.length) {
+      const contactDef = contactDefs[draftDef.contactIndex];
+      const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+      const contact = await prisma.contact.findFirst({
+        where: { tenantId, email: contactEmail },
+      });
+
+      if (contact) {
+        partyId = contact.partyId;
+        toAddresses = [contactEmail];
+      }
+    }
+
+    // Check if draft already exists
+    const existingDraft = await prisma.draft.findFirst({
+      where: {
+        tenantId,
+        subject: draftDef.subject || null,
+        bodyText: draftDef.body,
+      },
+    });
+
+    if (!existingDraft) {
+      await prisma.draft.create({
+        data: {
+          tenantId,
+          partyId,
+          channel: draftDef.channel,
+          subject: draftDef.subject || null,
+          toAddresses: toAddresses.length > 0 ? toAddresses : [],
+          bodyText: draftDef.body,
+          createdByUserId: ownerUserId,
+          createdAt: new Date(Date.now() - draftDef.daysAgo * 24 * 60 * 60 * 1000),
+        },
+      });
+      draftsCreated++;
+      console.log(`  + Created draft: "${draftDef.subject || '(DM draft)'}"`);
+    }
+  }
+
+  return draftsCreated;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1128,6 +1578,10 @@ async function main() {
   const tenantMarketplaceListings = getTenantMarketplaceListings(env);
   const portalAccessDefinitions = getPortalAccessDefinitions(env);
   const marketplaceUserDefs = getMarketplaceUsers();
+  const contactMetaDefs = getContactMeta(env);
+  const emailDefs = getEmails(env);
+  const dmThreadDefs = getDMThreads(env);
+  const draftDefs = getDrafts(env);
 
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════════');
@@ -1147,6 +1601,12 @@ async function main() {
     tagAssignments: 0,
     portalUsers: 0,
     marketplaceUsers: 0,
+    waitlistEntries: 0,
+    invoices: 0,
+    emails: 0,
+    dmThreads: 0,
+    dmMessages: 0,
+    drafts: 0,
   };
 
   for (const tenantDef of tenantDefinitions) {
@@ -1161,7 +1621,7 @@ async function main() {
 
     // 2. Create owner/admin user
     console.log('\n  [User]');
-    await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
+    const ownerUserId = await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
     stats.users++;
 
     // 3. Create organizations
@@ -1232,10 +1692,59 @@ async function main() {
       if (orgPortalUserId) stats.portalUsers++;
     }
 
+    // 10. Create contact meta (waitlist entries, invoices)
+    console.log('\n  [Contact Meta]');
+    const { waitlistEntries, invoices } = await seedContactMeta(
+      tenantDef.slug,
+      tenantId,
+      env,
+      contactMetaDefs,
+      tenantContacts,
+      tenantBreedingPlans
+    );
+    stats.waitlistEntries += waitlistEntries;
+    stats.invoices += invoices;
+
+    // 11. Create emails
+    console.log('\n  [Emails]');
+    const emailsCreated = await seedEmails(
+      tenantDef.slug,
+      tenantId,
+      env,
+      emailDefs,
+      tenantContacts
+    );
+    stats.emails += emailsCreated;
+
+    // 12. Create DM threads and messages
+    console.log('\n  [DM Threads]');
+    const { threads, messages } = await seedDMThreads(
+      tenantDef.slug,
+      tenantId,
+      env,
+      dmThreadDefs,
+      tenantContacts,
+      marketplaceUserDefs
+    );
+    stats.dmThreads += threads;
+    stats.dmMessages += messages;
+
+    // 13. Create drafts
+    console.log('\n  [Drafts]');
+    const draftsCreated = await seedDrafts(
+      tenantDef.slug,
+      tenantId,
+      env,
+      draftDefs,
+      tenantContacts,
+      ownerUserId
+    );
+    stats.drafts += draftsCreated;
+
     console.log('');
   }
 
-  // 10. Create marketplace shoppers (standalone users, no tenant membership)
+  // 14. Create marketplace shoppers (standalone users, no tenant membership)
   console.log('─────────────────────────────────────────────────────────────────────────────');
   console.log('  MARKETPLACE SHOPPERS');
   console.log('─────────────────────────────────────────────────────────────────────────────');
@@ -1260,6 +1769,12 @@ async function main() {
   console.log(`  Tag Assignments:      ${stats.tagAssignments}`);
   console.log(`  Portal Users:         ${stats.portalUsers}`);
   console.log(`  Marketplace Users:    ${stats.marketplaceUsers}`);
+  console.log(`  Waitlist Entries:     ${stats.waitlistEntries}`);
+  console.log(`  Invoices:             ${stats.invoices}`);
+  console.log(`  Emails:               ${stats.emails}`);
+  console.log(`  DM Threads:           ${stats.dmThreads}`);
+  console.log(`  DM Messages:          ${stats.dmMessages}`);
+  console.log(`  Drafts:               ${stats.drafts}`);
   console.log('');
 
   // Print credentials summary
