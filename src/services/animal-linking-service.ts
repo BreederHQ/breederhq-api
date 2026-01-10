@@ -53,7 +53,7 @@ export interface BreederSearchResult {
 
 export interface ShareableAnimal {
   id: number;
-  name: string;
+  name: string | null;
   species: Species;
   sex: Sex;
   breed: string | null;
