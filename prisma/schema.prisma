@@ -890,6 +890,7 @@ model Tenant {
   partyMilestones PartyMilestone[]
   partyEmails     PartyEmail[]
   partyActivity   PartyActivity[]
+  unlinkedEmails  UnlinkedEmail[]
 
   // Communications Hub
   drafts Draft[]
@@ -1520,6 +1521,9 @@ model Party {
   emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
   drafts        Draft[]        @relation("DraftParty")
 
+  // MessagingHub - unlinked emails that were later linked to this party
+  unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
+
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
@@ -1724,12 +1728,58 @@ model PartyEmail {
   toEmail   String   // recipient email at time of send
   sentAt    DateTime @default(now())
   status    String   @default("sent") // sent, delivered, bounced, failed
+  isRead    Boolean  @default(false)  // whether user has acknowledged this sent email
   messageId String?  // external mail provider message ID
   createdBy Int?     // userId who sent
   createdAt DateTime @default(now())
 
   @@index([tenantId, partyId])
   @@index([partyId, sentAt])
+}
+
+/// UnlinkedEmail - Emails sent to addresses not associated with a contact/org
+/// Used by MessagingHub to store emails that can later be linked when contacts are created
+model UnlinkedEmail {
+  id            Int       @id @default(autoincrement())
+  tenantId      Int
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Recipient info (no party association initially)
+  toAddresses   String[]  // array of email addresses
+  fromAddress   String    // sender email
+
+  // Email content
+  subject       String
+  bodyText      String?   @db.Text
+  bodyHtml      String?   @db.Text
+  bodyPreview   String?   // First ~200 chars for list display
+
+  // Status tracking
+  status        String    @default("sent") // queued, sent, delivered, bounced, failed
+  direction     String    @default("outbound") // outbound, inbound
+  isRead        Boolean   @default(false) // whether user has acknowledged this sent email
+
+  // Timestamps
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // For later reconciliation - link to party when contact is created
+  linkedPartyId Int?
+  linkedParty   Party?    @relation("UnlinkedEmailsLinked", fields: [linkedPartyId], references: [id], onDelete: SetNull)
+  linkedAt      DateTime?
+
+  // Metadata
+  messageId     String?   // external mail provider message ID
+  templateKey   String?   // template used if any
+  category      String    @default("transactional") // transactional, marketing
+  metadata      Json?     // flexible store for additional data
+  createdBy     Int?      // userId who sent
+
+  @@index([tenantId])
+  @@index([tenantId, linkedPartyId])
+  @@index([tenantId, createdAt])
+  @@index([toAddresses])
 }
 
 model PartyActivity {
@@ -2101,6 +2151,7 @@ model AnimalTraitValue {
   verified           Boolean                    @default(false)
   verifiedAt         DateTime?
   marketplaceVisible Boolean?
+  networkVisible     Boolean?                   // Cross-tenant sharing visibility (when enableHealthSharing is on)
   notes              String?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
@@ -2889,7 +2940,8 @@ model WaitlistEntry {
 
   status               WaitlistStatus @default(INQUIRY)
   priority             Int?
-  depositInvoiceId     String?
+  depositInvoiceId     Int?
+  depositInvoice       Invoice?       @relation("WaitlistDepositInvoice")
   balanceInvoiceId     String?
   depositPaidAt        DateTime?
   depositRequiredCents Int?
@@ -3126,6 +3178,7 @@ enum FinanceScope {
   contact
   organization
   general
+  waitlist
 }
 
 enum InvoiceStatus {
@@ -3318,6 +3371,10 @@ model Invoice {
   animal         Animal?       @relation(fields: [animalId], references: [id], onDelete: SetNull)
   breedingPlanId Int?
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Waitlist deposit invoice anchor
+  waitlistEntryId Int?           @unique
+  waitlistEntry   WaitlistEntry? @relation("WaitlistDepositInvoice", fields: [waitlistEntryId], references: [id], onDelete: SetNull)
 
   invoiceNumber String // Server-generated, format: INV-YYYY-NNNN
   number        String? // Legacy field, keep for compatibility
@@ -5026,9 +5083,16 @@ model AnimalPrivacySettings {
   showPhoto         Boolean @default(true)
   showFullDob       Boolean @default(true) // false = year only
   showRegistryFull  Boolean @default(false) // false = last 4 digits only
-  showHealthResults Boolean @default(false) // false = summary only (clear/carrier/affected)
-  showGeneticData   Boolean @default(false)
   showBreeder       Boolean @default(true) // Show tenant/breeder name
+
+  // Gate toggles for granular per-item sharing (enables networkVisible toggles in respective tabs)
+  enableHealthSharing   Boolean @default(false) // Gate for per-test visibility in Health tab
+  enableGeneticsSharing Boolean @default(false) // Gate for per-result visibility in Genetics tab
+  enableDocumentSharing Boolean @default(false) // Gate for per-document visibility in Documents tab
+  enableMediaSharing    Boolean @default(false) // Gate for per-item visibility in Media tab
+
+  // Breeding visibility
+  showBreedingHistory Boolean @default(false) // Show past matings, litter counts, offspring
 
   // Achievements visibility - controls what shows in cross-tenant pedigree views
   showTitles             Boolean @default(true) // Show title abbreviations (CH, GCH, etc.)

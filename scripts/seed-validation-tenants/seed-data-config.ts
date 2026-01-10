@@ -145,8 +145,10 @@ export interface TenantDefinition {
 }
 
 // Helper function to get environment-specific name
-export function getEnvName(baseName: string, env: Environment): string {
-  return `[${ENV_PREFIX[env]}] ${baseName}`;
+// No longer prefixing names - the different themes between DEV and PROD
+// are sufficient to distinguish environments. Slugs still have dev-/prod- prefix.
+export function getEnvName(baseName: string, _env: Environment): string {
+  return baseName;
 }
 
 // Helper function to get environment-specific slug
@@ -2689,12 +2691,229 @@ export function getTenantMarketplaceListings(env: Environment): Record<string, M
 export const TENANT_MARKETPLACE_LISTINGS = DEV_TENANT_MARKETPLACE_LISTINGS;
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PORTAL ACCESS DEFINITIONS
+// One contact and one organization per tenant get portal access
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PortalAccessDefinition {
+  // Which entity gets portal access (index into contacts/organizations array)
+  contactIndex: number;  // First contact gets portal access
+  organizationIndex: number;  // First organization gets portal access
+  // Portal user credentials (separate User account linked via PortalAccess)
+  contactPortalUser: {
+    emailBase: string;
+    firstName: string;
+    lastName: string;
+    password: string;
+  };
+  organizationPortalUser: {
+    emailBase: string;
+    firstName: string;
+    lastName: string;
+    password: string;
+  };
+}
+
+// DEV Portal Access - first contact and first org get access
+export const DEV_PORTAL_ACCESS: Record<string, PortalAccessDefinition> = {
+  rivendell: {
+    contactIndex: 0,  // Gandalf
+    organizationIndex: 0,  // House of Elrond
+    contactPortalUser: {
+      emailBase: 'gandalf.portal@middleearth.local',
+      firstName: 'Gandalf',
+      lastName: 'TheGrey',
+      password: 'Mithrandir123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'elrond.portal@rivendell.local',
+      firstName: 'Elrond',
+      lastName: 'HalfElven',
+      password: 'Vilya123!',
+    },
+  },
+  hogwarts: {
+    contactIndex: 0,  // Dumbledore
+    organizationIndex: 0,  // Hagrid's Hut
+    contactPortalUser: {
+      emailBase: 'dumbledore.portal@hogwarts.local',
+      firstName: 'Albus',
+      lastName: 'Dumbledore',
+      password: 'LemonDrop123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'hagrid.portal@hogwarts.local',
+      firstName: 'Rubeus',
+      lastName: 'Hagrid',
+      password: 'Norbert123!',
+    },
+  },
+  winterfell: {
+    contactIndex: 0,  // Jon Snow
+    organizationIndex: 0,  // Stark Kennels
+    contactPortalUser: {
+      emailBase: 'jon.portal@nightswatch.local',
+      firstName: 'Jon',
+      lastName: 'Snow',
+      password: 'GhostWolf123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'arya.portal@winterfell.local',
+      firstName: 'Arya',
+      lastName: 'Stark',
+      password: 'Needle123!',
+    },
+  },
+  'stark-tower': {
+    contactIndex: 0,  // Steve Rogers
+    organizationIndex: 0,  // Stark Industries K9
+    contactPortalUser: {
+      emailBase: 'steve.portal@avengers.local',
+      firstName: 'Steve',
+      lastName: 'Rogers',
+      password: 'Shield123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'pepper.portal@stark.local',
+      firstName: 'Pepper',
+      lastName: 'Potts',
+      password: 'StarkIndustries123!',
+    },
+  },
+};
+
+// PROD Portal Access
+export const PROD_PORTAL_ACCESS: Record<string, PortalAccessDefinition> = {
+  arrakis: {
+    contactIndex: 0,  // Duncan Idaho
+    organizationIndex: 0,  // House Atreides Stables
+    contactPortalUser: {
+      emailBase: 'duncan.portal@atreides.local',
+      firstName: 'Duncan',
+      lastName: 'Idaho',
+      password: 'Ginaz123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'jessica.portal@atreides.local',
+      firstName: 'Jessica',
+      lastName: 'Atreides',
+      password: 'BeneGesserit123!',
+    },
+  },
+  starfleet: {
+    contactIndex: 0,  // Riker
+    organizationIndex: 0,  // Starfleet Academy
+    contactPortalUser: {
+      emailBase: 'riker.portal@starfleet.local',
+      firstName: 'William',
+      lastName: 'Riker',
+      password: 'NumberOne123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'data.portal@starfleet.local',
+      firstName: 'Data',
+      lastName: 'Soong',
+      password: 'Android123!',
+    },
+  },
+  richmond: {
+    contactIndex: 0,  // Rebecca
+    organizationIndex: 0,  // AFC Richmond Kennels
+    contactPortalUser: {
+      emailBase: 'rebecca.portal@afcrichmond.local',
+      firstName: 'Rebecca',
+      lastName: 'Welton',
+      password: 'Boss123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'higgins.portal@afcrichmond.local',
+      firstName: 'Leslie',
+      lastName: 'Higgins',
+      password: 'DiamondDogs123!',
+    },
+  },
+  zion: {
+    contactIndex: 0,  // Morpheus
+    organizationIndex: 0,  // Zion Breeding Collective
+    contactPortalUser: {
+      emailBase: 'morpheus.portal@zion.local',
+      firstName: 'Morpheus',
+      lastName: 'Captain',
+      password: 'RedPill123!',
+    },
+    organizationPortalUser: {
+      emailBase: 'trinity.portal@zion.local',
+      firstName: 'Trinity',
+      lastName: 'Operator',
+      password: 'WhiteRabbit123!',
+    },
+  },
+};
+
+// Helper to get portal access definitions for an environment
+export function getPortalAccessDefinitions(env: Environment): Record<string, PortalAccessDefinition> {
+  return env === 'prod' ? PROD_PORTAL_ACCESS : DEV_PORTAL_ACCESS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE USER DEFINITIONS (standalone shoppers)
+// These users have no tenant membership - they simulate marketplace consumers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface MarketplaceUserDefinition {
+  emailBase: string;
+  firstName: string;
+  lastName: string;
+  password: string;
+  description: string;  // What this user persona represents for testing
+}
+
+// Marketplace users are the same for both DEV and PROD (different email prefixes)
+export const MARKETPLACE_USERS: MarketplaceUserDefinition[] = [
+  {
+    emailBase: 'shopper.alice@marketplace.local',
+    firstName: 'Alice',
+    lastName: 'Shopper',
+    password: 'MarketAlice123!',
+    description: 'New user browsing for first pet',
+  },
+  {
+    emailBase: 'shopper.bob@marketplace.local',
+    firstName: 'Bob',
+    lastName: 'Buyer',
+    password: 'MarketBob123!',
+    description: 'Experienced buyer looking for show quality',
+  },
+  {
+    emailBase: 'shopper.carol@marketplace.local',
+    firstName: 'Carol',
+    lastName: 'Collector',
+    password: 'MarketCarol123!',
+    description: 'Collector interested in rare breeds',
+  },
+  {
+    emailBase: 'shopper.dave@marketplace.local',
+    firstName: 'Dave',
+    lastName: 'Dealer',
+    password: 'MarketDave123!',
+    description: 'Professional breeder scouting studs',
+  },
+];
+
+// Helper to get marketplace users (same for both environments, but emails prefixed)
+export function getMarketplaceUsers(): MarketplaceUserDefinition[] {
+  return MARKETPLACE_USERS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CREDENTIAL SUMMARY (for password vault)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function generateCredentialsSummary(env: Environment): string {
   const tenantDefs = getTenantDefinitions(env);
   const tenantUsers = getTenantUsers(env);
+  const portalAccessDefs = getPortalAccessDefinitions(env);
+  const marketplaceUsers = getMarketplaceUsers();
 
   const lines: string[] = [
     `═══════════════════════════════════════════════════════════════════════════════`,
@@ -2705,6 +2924,7 @@ export function generateCredentialsSummary(env: Environment): string {
 
   for (const tenant of tenantDefs) {
     const user = tenantUsers[tenant.slug];
+    const portalAccess = portalAccessDefs[tenant.slug];
     const envSlug = getEnvSlug(tenant.slug, env);
     const envEmail = getEnvEmail(user.emailBase, env);
 
@@ -2720,6 +2940,20 @@ export function generateCredentialsSummary(env: Environment): string {
     lines.push(`    Email:    ${envEmail}`);
     lines.push(`    Password: ${user.password}`);
     lines.push(``);
+
+    if (portalAccess) {
+      lines.push(`  PORTAL ACCESS - CONTACT:`);
+      lines.push(`    Name:     ${portalAccess.contactPortalUser.firstName} ${portalAccess.contactPortalUser.lastName}`);
+      lines.push(`    Email:    ${getEnvEmail(portalAccess.contactPortalUser.emailBase, env)}`);
+      lines.push(`    Password: ${portalAccess.contactPortalUser.password}`);
+      lines.push(``);
+      lines.push(`  PORTAL ACCESS - ORGANIZATION:`);
+      lines.push(`    Name:     ${portalAccess.organizationPortalUser.firstName} ${portalAccess.organizationPortalUser.lastName}`);
+      lines.push(`    Email:    ${getEnvEmail(portalAccess.organizationPortalUser.emailBase, env)}`);
+      lines.push(`    Password: ${portalAccess.organizationPortalUser.password}`);
+      lines.push(``);
+    }
+
     lines.push(`  MARKETPLACE:`);
     lines.push(`    Public Program: ${tenant.marketplaceVisibility.isPublicProgram ? 'Yes' : 'No'}`);
     lines.push(`    Active Listings: ${tenant.marketplaceVisibility.hasActiveListings ? 'Yes' : 'No'}`);
@@ -2730,6 +2964,19 @@ export function generateCredentialsSummary(env: Environment): string {
     lines.push(`    Show Full DOB: ${tenant.lineageVisibility.defaultShowFullDob ? 'Yes' : 'No'}`);
     lines.push(`    Show Genetics: ${tenant.lineageVisibility.defaultShowGeneticData ? 'Yes' : 'No'}`);
     lines.push(`    Show Health: ${tenant.lineageVisibility.defaultShowHealthResults ? 'Yes' : 'No'}`);
+    lines.push(``);
+  }
+
+  // Add marketplace shoppers section
+  lines.push(`═══════════════════════════════════════════════════════════════════════════════`);
+  lines.push(`MARKETPLACE SHOPPERS (No tenant membership - consumer accounts)`);
+  lines.push(`═══════════════════════════════════════════════════════════════════════════════`);
+  lines.push(``);
+  for (const shopper of marketplaceUsers) {
+    lines.push(`  ${shopper.firstName} ${shopper.lastName}:`);
+    lines.push(`    Email:       ${getEnvEmail(shopper.emailBase, env)}`);
+    lines.push(`    Password:    ${shopper.password}`);
+    lines.push(`    Description: ${shopper.description}`);
     lines.push(``);
   }
 

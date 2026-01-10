@@ -2341,9 +2341,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         showPhoto: true,
         showFullDob: true,
         showRegistryFull: false,
-        showHealthResults: false,
-        showGeneticData: false,
         showBreeder: true,
+        enableHealthSharing: false,
+        enableGeneticsSharing: false,
+        enableDocumentSharing: false,
+        enableMediaSharing: false,
+        showBreedingHistory: false,
+        showTitles: true,
+        showTitleDetails: false,
+        showCompetitions: false,
+        showCompetitionDetails: false,
         allowInfoRequests: true,
         allowDirectContact: false,
       });
@@ -2379,9 +2386,20 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       showPhoto: boolean;
       showFullDob: boolean;
       showRegistryFull: boolean;
-      showHealthResults: boolean;
-      showGeneticData: boolean;
       showBreeder: boolean;
+      // Gate toggles for granular sharing
+      enableHealthSharing: boolean;
+      enableGeneticsSharing: boolean;
+      enableDocumentSharing: boolean;
+      enableMediaSharing: boolean;
+      // Breeding
+      showBreedingHistory: boolean;
+      // Achievements
+      showTitles: boolean;
+      showTitleDetails: boolean;
+      showCompetitions: boolean;
+      showCompetitionDetails: boolean;
+      // Contact
       allowInfoRequests: boolean;
       allowDirectContact: boolean;
     }>;
@@ -2396,9 +2414,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         showPhoto: body.showPhoto ?? true,
         showFullDob: body.showFullDob ?? true,
         showRegistryFull: body.showRegistryFull ?? false,
-        showHealthResults: body.showHealthResults ?? false,
-        showGeneticData: body.showGeneticData ?? false,
         showBreeder: body.showBreeder ?? true,
+        enableHealthSharing: body.enableHealthSharing ?? false,
+        enableGeneticsSharing: body.enableGeneticsSharing ?? false,
+        enableDocumentSharing: body.enableDocumentSharing ?? false,
+        enableMediaSharing: body.enableMediaSharing ?? false,
+        showBreedingHistory: body.showBreedingHistory ?? false,
+        showTitles: body.showTitles ?? true,
+        showTitleDetails: body.showTitleDetails ?? false,
+        showCompetitions: body.showCompetitions ?? false,
+        showCompetitionDetails: body.showCompetitionDetails ?? false,
         allowInfoRequests: body.allowInfoRequests ?? true,
         allowDirectContact: body.allowDirectContact ?? false,
       },
@@ -2408,9 +2433,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ...(body.showPhoto !== undefined && { showPhoto: body.showPhoto }),
         ...(body.showFullDob !== undefined && { showFullDob: body.showFullDob }),
         ...(body.showRegistryFull !== undefined && { showRegistryFull: body.showRegistryFull }),
-        ...(body.showHealthResults !== undefined && { showHealthResults: body.showHealthResults }),
-        ...(body.showGeneticData !== undefined && { showGeneticData: body.showGeneticData }),
         ...(body.showBreeder !== undefined && { showBreeder: body.showBreeder }),
+        ...(body.enableHealthSharing !== undefined && { enableHealthSharing: body.enableHealthSharing }),
+        ...(body.enableGeneticsSharing !== undefined && { enableGeneticsSharing: body.enableGeneticsSharing }),
+        ...(body.enableDocumentSharing !== undefined && { enableDocumentSharing: body.enableDocumentSharing }),
+        ...(body.enableMediaSharing !== undefined && { enableMediaSharing: body.enableMediaSharing }),
+        ...(body.showBreedingHistory !== undefined && { showBreedingHistory: body.showBreedingHistory }),
+        ...(body.showTitles !== undefined && { showTitles: body.showTitles }),
+        ...(body.showTitleDetails !== undefined && { showTitleDetails: body.showTitleDetails }),
+        ...(body.showCompetitions !== undefined && { showCompetitions: body.showCompetitions }),
+        ...(body.showCompetitionDetails !== undefined && { showCompetitionDetails: body.showCompetitionDetails }),
         ...(body.allowInfoRequests !== undefined && { allowInfoRequests: body.allowInfoRequests }),
         ...(body.allowDirectContact !== undefined && { allowDirectContact: body.allowDirectContact }),
       },
