@@ -1609,6 +1609,15 @@ async function main() {
     drafts: 0,
   };
 
+  // Seed marketplace shoppers FIRST so they exist for DM threads
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  MARKETPLACE SHOPPERS (seeding first for DM conversations)');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('\n  [Marketplace Users]');
+  await seedMarketplaceUsers(env, marketplaceUserDefs);
+  stats.marketplaceUsers = marketplaceUserDefs.length;
+  console.log('');
+
   for (const tenantDef of tenantDefinitions) {
     console.log('─────────────────────────────────────────────────────────────────────────────');
     console.log(`  TENANT: ${tenantDef.theme.name} (${tenantDef.slug})`);
@@ -1712,7 +1721,8 @@ async function main() {
       tenantId,
       env,
       emailDefs,
-      tenantContacts
+      tenantContacts,
+      ownerUserId
     );
     stats.emails += emailsCreated;
 
@@ -1723,8 +1733,7 @@ async function main() {
       tenantId,
       env,
       dmThreadDefs,
-      tenantContacts,
-      marketplaceUserDefs
+      tenantContacts
     );
     stats.dmThreads += threads;
     stats.dmMessages += messages;
@@ -1743,16 +1752,6 @@ async function main() {
 
     console.log('');
   }
-
-  // 14. Create marketplace shoppers (standalone users, no tenant membership)
-  console.log('─────────────────────────────────────────────────────────────────────────────');
-  console.log('  MARKETPLACE SHOPPERS');
-  console.log('─────────────────────────────────────────────────────────────────────────────');
-  console.log('\n  [Marketplace Users]');
-  const marketplaceUsersCreated = await seedMarketplaceUsers(env, marketplaceUserDefs);
-  stats.marketplaceUsers = marketplaceUserDefs.length;
-
-  console.log('');
 
   // Print summary
   console.log('═══════════════════════════════════════════════════════════════════════════════');
