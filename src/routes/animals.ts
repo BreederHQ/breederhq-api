@@ -328,6 +328,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           updatedAt: true,
           photoUrl: true,
           femaleCycleLenOverrideDays: true,
+          // Title display fields
+          titlePrefix: true,
+          titleSuffix: true,
+          // Achievement counts
+          _count: {
+            select: {
+              titles: true,
+              competitionEntries: true,
+            },
+          },
 
           reproductiveCycles: {
             select: { cycleStart: true },

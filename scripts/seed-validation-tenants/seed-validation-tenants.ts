@@ -36,18 +36,19 @@ import {
 import {
   Environment,
   ENV_PREFIX,
-  TENANT_DEFINITIONS,
-  TENANT_USERS,
-  TENANT_CONTACTS,
-  TENANT_ORGANIZATIONS,
-  TENANT_ANIMALS,
-  TENANT_BREEDING_PLANS,
-  TENANT_MARKETPLACE_LISTINGS,
+  getTenantDefinitions,
+  getTenantUsers,
+  getTenantContacts,
+  getTenantOrganizations,
+  getTenantAnimals,
+  getTenantBreedingPlans,
+  getTenantMarketplaceListings,
   getEnvName,
   getEnvSlug,
   getEnvEmail,
   generateCredentialsSummary,
   AnimalDefinition,
+  TenantDefinition,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -68,8 +69,12 @@ function getEnvironment(): Environment {
 // TENANT SEEDING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function seedTenant(tenantSlug: string, env: Environment): Promise<number> {
-  const definition = TENANT_DEFINITIONS.find((t) => t.slug === tenantSlug);
+async function seedTenant(
+  tenantSlug: string,
+  env: Environment,
+  tenantDefinitions: TenantDefinition[]
+): Promise<number> {
+  const definition = tenantDefinitions.find((t) => t.slug === tenantSlug);
   if (!definition) {
     throw new Error(`Tenant definition not found for slug: ${tenantSlug}`);
   }
@@ -144,9 +149,10 @@ async function seedTenant(tenantSlug: string, env: Environment): Promise<number>
 async function seedUser(
   tenantSlug: string,
   tenantId: number,
-  env: Environment
+  env: Environment,
+  tenantUsers: Record<string, { emailBase: string; firstName: string; lastName: string; password: string; isSuperAdmin: boolean }>
 ): Promise<string> {
-  const userDef = TENANT_USERS[tenantSlug];
+  const userDef = tenantUsers[tenantSlug];
   if (!userDef) {
     throw new Error(`User definition not found for tenant: ${tenantSlug}`);
   }
@@ -211,9 +217,10 @@ async function seedUser(
 async function seedOrganizations(
   tenantSlug: string,
   tenantId: number,
-  env: Environment
+  env: Environment,
+  tenantOrganizations: Record<string, any[]>
 ): Promise<Map<string, number>> {
-  const orgDefs = TENANT_ORGANIZATIONS[tenantSlug] || [];
+  const orgDefs = tenantOrganizations[tenantSlug] || [];
   const orgIdMap = new Map<string, number>();
 
   for (const orgDef of orgDefs) {
@@ -286,9 +293,10 @@ async function seedOrganizations(
 async function seedContacts(
   tenantSlug: string,
   tenantId: number,
-  env: Environment
+  env: Environment,
+  tenantContacts: Record<string, any[]>
 ): Promise<void> {
-  const contactDefs = TENANT_CONTACTS[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
 
   for (const contactDef of contactDefs) {
     const envEmail = getEnvEmail(contactDef.emailBase, env);
@@ -329,9 +337,10 @@ async function seedAnimals(
   tenantSlug: string,
   tenantId: number,
   env: Environment,
-  defaultLineageVisibility: typeof TENANT_DEFINITIONS[0]['lineageVisibility']
+  defaultLineageVisibility: TenantDefinition['lineageVisibility'],
+  tenantAnimals: Record<string, AnimalDefinition[]>
 ): Promise<Map<string, number>> {
-  const animalDefs = TENANT_ANIMALS[tenantSlug] || [];
+  const animalDefs = tenantAnimals[tenantSlug] || [];
   const animalIdMap = new Map<string, number>();
 
   // Sort by generation to ensure parents exist before children
@@ -462,9 +471,10 @@ async function seedBreedingPlans(
   tenantSlug: string,
   tenantId: number,
   env: Environment,
-  animalIdMap: Map<string, number>
+  animalIdMap: Map<string, number>,
+  tenantBreedingPlans: Record<string, any[]>
 ): Promise<void> {
-  const planDefs = TENANT_BREEDING_PLANS[tenantSlug] || [];
+  const planDefs = tenantBreedingPlans[tenantSlug] || [];
 
   for (const planDef of planDefs) {
     const envName = getEnvName(planDef.name, env);
@@ -531,9 +541,10 @@ async function seedBreedingPlans(
 async function seedMarketplaceListings(
   tenantSlug: string,
   tenantId: number,
-  env: Environment
+  env: Environment,
+  tenantMarketplaceListings: Record<string, any[]>
 ): Promise<void> {
-  const listingDefs = TENANT_MARKETPLACE_LISTINGS[tenantSlug] || [];
+  const listingDefs = tenantMarketplaceListings[tenantSlug] || [];
 
   for (const listingDef of listingDefs) {
     const envTitle = getEnvName(listingDef.title, env);
@@ -583,6 +594,15 @@ async function seedMarketplaceListings(
 async function main() {
   const env = getEnvironment();
 
+  // Load all environment-specific data
+  const tenantDefinitions = getTenantDefinitions(env);
+  const tenantUsers = getTenantUsers(env);
+  const tenantContacts = getTenantContacts(env);
+  const tenantOrganizations = getTenantOrganizations(env);
+  const tenantAnimals = getTenantAnimals(env);
+  const tenantBreedingPlans = getTenantBreedingPlans(env);
+  const tenantMarketplaceListings = getTenantMarketplaceListings(env);
+
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════════');
   console.log(`  BREEDERHQ VALIDATION TENANT SEEDER - ${ENV_PREFIX[env]} ENVIRONMENT`);
@@ -599,30 +619,30 @@ async function main() {
     marketplaceListings: 0,
   };
 
-  for (const tenantDef of TENANT_DEFINITIONS) {
+  for (const tenantDef of tenantDefinitions) {
     console.log('─────────────────────────────────────────────────────────────────────────────');
     console.log(`  TENANT: ${tenantDef.theme.name} (${tenantDef.slug})`);
     console.log('─────────────────────────────────────────────────────────────────────────────');
 
     // 1. Create tenant
     console.log('\n  [Tenant]');
-    const tenantId = await seedTenant(tenantDef.slug, env);
+    const tenantId = await seedTenant(tenantDef.slug, env, tenantDefinitions);
     stats.tenants++;
 
     // 2. Create owner/admin user
     console.log('\n  [User]');
-    await seedUser(tenantDef.slug, tenantId, env);
+    await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
     stats.users++;
 
     // 3. Create organizations
     console.log('\n  [Organizations]');
-    const orgIdMap = await seedOrganizations(tenantDef.slug, tenantId, env);
+    const orgIdMap = await seedOrganizations(tenantDef.slug, tenantId, env, tenantOrganizations);
     stats.organizations += orgIdMap.size;
 
     // 4. Create contacts (no portal access)
     console.log('\n  [Contacts]');
-    await seedContacts(tenantDef.slug, tenantId, env);
-    stats.contacts += (TENANT_CONTACTS[tenantDef.slug] || []).length;
+    await seedContacts(tenantDef.slug, tenantId, env, tenantContacts);
+    stats.contacts += (tenantContacts[tenantDef.slug] || []).length;
 
     // 5. Create animals with genetics and lineage
     console.log('\n  [Animals]');
@@ -630,20 +650,21 @@ async function main() {
       tenantDef.slug,
       tenantId,
       env,
-      tenantDef.lineageVisibility
+      tenantDef.lineageVisibility,
+      tenantAnimals
     );
     stats.animals += animalIdMap.size;
 
     // 6. Create breeding plans
     console.log('\n  [Breeding Plans]');
-    await seedBreedingPlans(tenantDef.slug, tenantId, env, animalIdMap);
-    stats.breedingPlans += (TENANT_BREEDING_PLANS[tenantDef.slug] || []).length;
+    await seedBreedingPlans(tenantDef.slug, tenantId, env, animalIdMap, tenantBreedingPlans);
+    stats.breedingPlans += (tenantBreedingPlans[tenantDef.slug] || []).length;
 
     // 7. Create marketplace listings
     console.log('\n  [Marketplace Listings]');
-    await seedMarketplaceListings(tenantDef.slug, tenantId, env);
+    await seedMarketplaceListings(tenantDef.slug, tenantId, env, tenantMarketplaceListings);
     stats.marketplaceListings += (
-      TENANT_MARKETPLACE_LISTINGS[tenantDef.slug] || []
+      tenantMarketplaceListings[tenantDef.slug] || []
     ).length;
 
     console.log('');

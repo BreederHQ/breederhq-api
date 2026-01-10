@@ -19,6 +19,10 @@ export interface PedigreeNode {
   coiPercent: number | null;
   titlePrefix: string | null;
   titleSuffix: string | null;
+  // Achievement stats
+  titleCount: number;
+  competitionCount: number;
+  hasVerifiedTitles: boolean;
   dam: PedigreeNode | null;
   sire: PedigreeNode | null;
 }
@@ -69,6 +73,12 @@ type AnimalRow = {
   titleSuffix: string | null;
   damId: number | null;
   sireId: number | null;
+  // Achievement stats
+  _count: {
+    titles: number;
+    competitionEntries: number;
+  };
+  hasVerifiedTitles: boolean;
 };
 
 const animalSelect = {
@@ -84,7 +94,24 @@ const animalSelect = {
   titleSuffix: true,
   damId: true,
   sireId: true,
+  _count: {
+    select: {
+      titles: true,
+      competitionEntries: true,
+    },
+  },
 } as const;
+
+/**
+ * Check if animal has any verified titles
+ */
+async function checkVerifiedTitles(animalId: number): Promise<boolean> {
+  const verified = await prisma.animalTitle.findFirst({
+    where: { animalId, verified: true },
+    select: { id: true },
+  });
+  return !!verified;
+}
 
 /**
  * Recursively build ancestor tree to specified depth
@@ -104,7 +131,14 @@ async function buildAncestorTree(
       select: animalSelect,
     });
     if (!row) return null;
-    animal = row as AnimalRow;
+
+    // Check for verified titles
+    const hasVerified = await checkVerifiedTitles(row.id);
+
+    animal = {
+      ...row,
+      hasVerifiedTitles: hasVerified,
+    } as AnimalRow;
     cache.set(animalId, animal);
   }
 
@@ -124,6 +158,9 @@ async function buildAncestorTree(
     coiPercent: animal.coiPercent,
     titlePrefix: animal.titlePrefix,
     titleSuffix: animal.titleSuffix,
+    titleCount: animal._count?.titles ?? 0,
+    competitionCount: animal._count?.competitionEntries ?? 0,
+    hasVerifiedTitles: animal.hasVerifiedTitles ?? false,
     dam,
     sire,
   };

@@ -6,5 +6,8 @@
 //   # or
 //   npm run db:seed:validation:dev
 
+// Set environment BEFORE importing (using dynamic import to avoid ESM hoisting)
 process.env.SEED_ENV = 'dev';
-import './seed-validation-tenants';
+
+// Use dynamic import to ensure SEED_ENV is set before the module loads
+import('./seed-validation-tenants.js');
