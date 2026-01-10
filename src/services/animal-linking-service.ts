@@ -276,32 +276,40 @@ export async function searchBreederByEmailOrPhone(
     select: {
       id: true,
       name: true,
-      // Count shareable animals
-      _count: {
-        select: {
-          animals: {
-            where: {
-              archived: false,
-              OR: [
-                { privacySettings: null }, // Default allows
-                { privacySettings: { allowCrossTenantMatching: true } },
-              ],
-            },
-          },
-        },
-      },
     },
     take: 20,
   });
 
-  return tenants.map((t) => ({
-    tenantId: t.id,
-    tenantName: t.name,
-    city: null, // TODO: Add tenant location fields
-    state: null,
-    country: null,
-    shareableAnimalCount: t._count.animals,
-  }));
+  // Count shareable animals for each tenant separately
+  // This handles the privacy settings check more reliably
+  const results: BreederSearchResult[] = [];
+
+  for (const t of tenants) {
+    // Count animals that are shareable:
+    // - Not archived
+    // - Either no privacy settings (defaults to shareable) OR explicitly allowed
+    const shareableCount = await prisma.animal.count({
+      where: {
+        tenantId: t.id,
+        archived: false,
+        OR: [
+          { privacySettings: { is: null } },
+          { privacySettings: { allowCrossTenantMatching: true } },
+        ],
+      },
+    });
+
+    results.push({
+      tenantId: t.id,
+      tenantName: t.name,
+      city: null, // TODO: Add tenant location fields
+      state: null,
+      country: null,
+      shareableAnimalCount: shareableCount,
+    });
+  }
+
+  return results;
 }
 
 /**
@@ -315,7 +323,7 @@ export async function getBreederShareableAnimals(
     tenantId,
     archived: false,
     OR: [
-      { privacySettings: null },
+      { privacySettings: { is: null } },
       { privacySettings: { allowCrossTenantMatching: true } },
     ],
   };
