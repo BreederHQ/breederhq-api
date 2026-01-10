@@ -652,7 +652,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   // ═══════════════════════════════════════════════════════════════════════════════
 
   // === HUAN LINE (Line A) - Generation 0 Founders ===
-  { name: 'Huan the Great', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
+  { name: 'Huan the Great (EIC Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
     notes: 'Legendary founder sire of Line A. DM Clear, EIC Carrier - WARNING: carrier status.',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -669,7 +669,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { eventName: 'Eriador National', eventDate: '2015-09-20', location: 'Grey Havens', organization: 'AKC', competitionType: 'BREED_SPECIALTY', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 5, isMajorWin: true },
     ]
   },
-  { name: 'Luthien Tinuviel', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
+  { name: 'Luthien Tinuviel (Clear Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
     notes: 'Founder dam Line A. DM Clear, EIC Clear.',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -682,7 +682,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === OROMË LINE (Line B) - Generation 0 Founders (unrelated to Huan) ===
-  { name: 'Oromë Hunter', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
+  { name: 'Oromë Hunter (DM Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 0, birthYear: 2012, testProvider: 'Embark',
     notes: 'Founder sire Line B. DM Carrier, EIC Carrier - WARNING: double carrier!',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -694,7 +694,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CD', dateEarned: '2015-03-10', eventName: 'Obedience Trial', eventLocation: 'Rivendell' },
     ]
   },
-  { name: 'Vána Evergreen', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 0, birthYear: 2013, testProvider: 'Embark',
+  { name: 'Vána Evergreen (DM Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 0, birthYear: 2013, testProvider: 'Embark',
     notes: 'Founder dam Line B. DM Carrier, EIC Clear.',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -704,7 +704,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 1 - Children of Founders ===
-  { name: 'Carcharoth', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 1, sireRef: 'Huan the Great', damRef: 'Luthien Tinuviel', birthYear: 2014, testProvider: 'Embark',
+  { name: 'Carcharoth (EIC Carrier Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 1, sireRef: 'Huan the Great (EIC Carrier Founder Male)', damRef: 'Luthien Tinuviel (Clear Founder Female)', birthYear: 2014, testProvider: 'Embark',
     notes: 'Son of Huan × Luthien (Line A). EIC Carrier inherited from sire.',
     coiTestScenario: 'Gen 1 Line A - COI ~0%',
     genetics: {
@@ -715,7 +715,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2016-04-15', eventName: 'Middle Earth Nationals', eventLocation: 'Minas Tirith', pointsEarned: 15, majorWins: 2 },
     ]
   },
-  { name: 'Tevildo', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 1, sireRef: 'Huan the Great', damRef: 'Luthien Tinuviel', birthYear: 2014, testProvider: 'Embark',
+  { name: 'Tevildo (Clear Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 1, sireRef: 'Huan the Great (EIC Carrier Founder Male)', damRef: 'Luthien Tinuviel (Clear Founder Female)', birthYear: 2014, testProvider: 'Embark',
     notes: 'Daughter of Huan × Luthien (Line A). Full sister to Carcharoth.',
     coiTestScenario: 'Gen 1 Line A - COI ~0%',
     genetics: {
@@ -723,7 +723,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'Clear'), healthLocus('EIC', 'Exercise-Induced Collapse', 'Clear')]
     }
   },
-  { name: 'Nahar Hound', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 1, sireRef: 'Oromë Hunter', damRef: 'Vána Evergreen', birthYear: 2015, testProvider: 'Embark',
+  { name: 'Nahar Hound (DM Carrier Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 1, sireRef: 'Oromë Hunter (DM Carrier Founder Male)', damRef: 'Vána Evergreen (DM Carrier Founder Female)', birthYear: 2015, testProvider: 'Embark',
     notes: 'Son of Oromë × Vána (Line B). DM Carrier.',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -731,7 +731,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('EIC', 'Exercise-Induced Collapse', 'N/m')]
     }
   },
-  { name: 'Tilion Moonhound', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 1, sireRef: 'Oromë Hunter', damRef: 'Vána Evergreen', birthYear: 2015, testProvider: 'Embark',
+  { name: 'Tilion Moonhound (DM Carrier Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 1, sireRef: 'Oromë Hunter (DM Carrier Founder Male)', damRef: 'Vána Evergreen (DM Carrier Founder Female)', birthYear: 2015, testProvider: 'Embark',
     notes: 'Daughter of Oromë × Vána (Line B). Full sister to Nahar Hound.',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -741,7 +741,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 2 - COUSIN MATING (Line A × Line B) ===
-  { name: 'Draugluin', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 2, sireRef: 'Carcharoth', damRef: 'Tilion Moonhound', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Draugluin (DM Carrier Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 2, sireRef: 'Carcharoth (EIC Carrier Male)', damRef: 'Tilion Moonhound (DM Carrier Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line A sire × Line B dam. First cross between lines. DM Carrier, EIC Carrier.',
     coiTestScenario: 'Gen 2 outcross - COI ~0% (unrelated lines)',
     genetics: {
@@ -754,7 +754,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'RA', dateEarned: '2020-02-10', eventName: 'Rally Trial', eventLocation: 'Rivendell' },
     ]
   },
-  { name: 'Thuringwethil', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 2, sireRef: 'Nahar Hound', damRef: 'Tevildo', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Thuringwethil (DM Carrier Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 2, sireRef: 'Nahar Hound (DM Carrier Male)', damRef: 'Tevildo (Clear Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line B sire × Line A dam. Cross between lines. DM Carrier, EIC Carrier - DOUBLE CARRIER WARNING!',
     coiTestScenario: 'Gen 2 outcross - COI ~0% (unrelated lines)',
     genetics: {
@@ -764,7 +764,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 3 - HALF-SIBLING MATING (shared grandparent Huan) ===
-  { name: 'Garm', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 3, sireRef: 'Draugluin', damRef: 'Thuringwethil', birthYear: 2019, testProvider: 'Embark',
+  { name: 'Garm (DM Carrier High COI Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 3, sireRef: 'Draugluin (DM Carrier Male)', damRef: 'Thuringwethil (DM Carrier Female)', birthYear: 2019, testProvider: 'Embark',
     notes: 'Both parents share Huan the Great as grandparent. MODERATE COI. DM Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 3 half-cousin mating - COI ~6.25% (shared great-grandparent)',
     genetics: {
@@ -772,7 +772,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('EIC', 'Exercise-Induced Collapse', 'N/m')]
     }
   },
-  { name: 'Werewolf of Tol Sirion', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 3, sireRef: 'Draugluin', damRef: 'Thuringwethil', birthYear: 2019, testProvider: 'Embark',
+  { name: 'Werewolf of Tol Sirion (Clear High COI Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 3, sireRef: 'Draugluin (DM Carrier Male)', damRef: 'Thuringwethil (DM Carrier Female)', birthYear: 2019, testProvider: 'Embark',
     notes: 'Full sister to Garm. MODERATE COI. Lucked out - DM Clear!',
     coiTestScenario: 'Gen 3 half-cousin mating - COI ~6.25% (shared great-grandparent)',
     genetics: {
@@ -782,7 +782,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 4 - FULL SIBLING MATING (Garm × Werewolf = HIGH COI) ===
-  { name: 'Fenrir', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 4, sireRef: 'Garm', damRef: 'Werewolf of Tol Sirion', birthYear: 2021, testProvider: 'Embark',
+  { name: 'Fenrir (DM Carrier Critical COI Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 4, sireRef: 'Garm (DM Carrier High COI Male)', damRef: 'Werewolf of Tol Sirion (Clear High COI Female)', birthYear: 2021, testProvider: 'Embark',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%. Watch for DM carrier from sire.',
     coiTestScenario: 'Gen 4 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -793,7 +793,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2023-06-15', eventName: 'Mordor Border Show', eventLocation: 'Ithilien', pointsEarned: 15, majorWins: 2 },
     ]
   },
-  { name: 'Sköll', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 4, sireRef: 'Garm', damRef: 'Werewolf of Tol Sirion', birthYear: 2021, testProvider: 'Embark',
+  { name: 'Sköll (Clear Critical COI Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 4, sireRef: 'Garm (DM Carrier High COI Male)', damRef: 'Werewolf of Tol Sirion (Clear High COI Female)', birthYear: 2021, testProvider: 'Embark',
     notes: 'Full sister to Fenrir. HIGH COI ~25%. DM Clear.',
     coiTestScenario: 'Gen 4 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -803,7 +803,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 5 - ANOTHER FULL SIBLING MATING (CRITICAL COI) ===
-  { name: 'Hati', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 5, sireRef: 'Fenrir', damRef: 'Sköll', birthYear: 2023, testProvider: 'Embark',
+  { name: 'Hati (DM Carrier Critical COI Male)', species: 'DOG', sex: 'MALE', breed: 'German Shepherd', generation: 5, sireRef: 'Fenrir (DM Carrier Critical COI Male)', damRef: 'Sköll (Clear Critical COI Female)', birthYear: 2023, testProvider: 'Embark',
     notes: 'PARENTS ARE FULL SIBLINGS! CRITICAL COI ~37.5%. This is a linebreeding test case.',
     coiTestScenario: 'Gen 5 consecutive sibling matings - COI ~37.5% (CRITICAL)',
     genetics: {
@@ -811,7 +811,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('EIC', 'Exercise-Induced Collapse', 'N/m')]
     }
   },
-  { name: 'Mánagarm', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 5, sireRef: 'Fenrir', damRef: 'Sköll', birthYear: 2023, testProvider: 'Embark',
+  { name: 'Mánagarm (Clear Critical COI Female)', species: 'DOG', sex: 'FEMALE', breed: 'German Shepherd', generation: 5, sireRef: 'Fenrir (DM Carrier Critical COI Male)', damRef: 'Sköll (Clear Critical COI Female)', birthYear: 2023, testProvider: 'Embark',
     notes: 'Full sister to Hati. CRITICAL COI. Test for inbreeding depression.',
     coiTestScenario: 'Gen 5 consecutive sibling matings - COI ~37.5% (CRITICAL)',
     genetics: {
@@ -823,7 +823,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   // ═══════════════════════════════════════════════════════════════════════════════
   // HORSES - Andalusian/Paint (Elven Steeds) with OLWS (Lethal White) testing
   // ═══════════════════════════════════════════════════════════════════════════════
-  { name: 'Shadowfax', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Shadowfax (Frame Overo Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: 'Lord of all horses. OLWS Carrier - WARNING for lethal white overo!',
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('G', 'Grey', 'G', 'g'), locus('Cr', 'Cream', 'n', 'n')],
@@ -834,21 +834,21 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'SCH', dateEarned: '2017-08-20', eventName: 'Middle Earth Nationals', eventLocation: 'Gondor' },
     ]
   },
-  { name: 'Nahar', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Nahar (Frame Overo Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: 'Steed of Oromë. OLWS Carrier - DO NOT BREED TO SHADOWFAX (25% lethal white)!',
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'A', 'A'), locus('G', 'Grey', 'G', 'g'), locus('Cr', 'Cream', 'n', 'n')],
       health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'O/n')]
     }
   },
-  { name: 'Asfaloth', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
+  { name: 'Asfaloth (Non-Overo Safe Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
     notes: "Glorfindel's white steed. OLWS Clear - safe to breed to carriers.",
     genetics: {
       coatColor: [locus('E', 'Extension', 'e', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'Cr', 'Cr')],
       health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
     }
   },
-  { name: 'Felaróf', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 1, sireRef: 'Shadowfax', damRef: 'Nahar', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Felaróf (Frame Overo Colt)', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 1, sireRef: 'Shadowfax (Frame Overo Stallion)', damRef: 'Nahar (Frame Overo Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'First Mearas. OLWS Carrier inherited. Moderate COI from carrier × carrier mating.',
     coiTestScenario: 'Carrier × Carrier warning test - 25% lethal outcome',
     genetics: {
@@ -856,7 +856,7 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'O/n')]
     }
   },
-  { name: 'Arod', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 1, sireRef: 'Asfaloth', damRef: 'Nahar', birthYear: 2017, testProvider: 'UC Davis VGL',
+  { name: 'Arod (Non-Overo Safe Colt)', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 1, sireRef: 'Asfaloth (Non-Overo Safe Stallion)', damRef: 'Nahar (Frame Overo Mare)', birthYear: 2017, testProvider: 'UC Davis VGL',
     notes: "Legolas's horse. Safe breeding - OLWS Clear.",
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'G', 'g'), locus('Cr', 'Cream', 'Cr', 'n')],
@@ -867,25 +867,25 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
   // ═══════════════════════════════════════════════════════════════════════════════
   // CATS - Maine Coon with HCM (Heart Disease) testing
   // ═══════════════════════════════════════════════════════════════════════════════
-  { name: 'Tevildo Prince of Cats', species: 'CAT', sex: 'MALE', breed: 'Maine Coon', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
-    notes: 'HCM Carrier - WARNING for hypertrophic cardiomyopathy!',
+  { name: 'Tevildo Prince of Cats (HCM Carrier Type A Male)', species: 'CAT', sex: 'MALE', breed: 'Maine Coon', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
+    notes: 'HCM Carrier - WARNING for hypertrophic cardiomyopathy! Blood Type A.',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'A', 'A'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'd'), locus('C', 'Colorpoint', 'C', 'cs')],
-      health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m'), healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N')]
+      health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m'), healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N'), healthLocus('BloodType', 'Blood Type', 'A')]
     },
     titles: [
       { titleAbbreviation: 'CH', dateEarned: '2017-03-15', eventName: 'TICA Regional', eventLocation: 'Mirkwood' },
       { titleAbbreviation: 'GC', dateEarned: '2018-06-20', eventName: 'TICA Supreme', eventLocation: 'Rivendell' },
     ]
   },
-  { name: 'Queen Beruthiel Cat I', species: 'CAT', sex: 'FEMALE', breed: 'Maine Coon', generation: 0, birthYear: 2016, testProvider: 'UC Davis VGL',
-    notes: 'HCM Carrier - DO NOT BREED TO TEVILDO (25% affected risk)!',
+  { name: 'Queen Beruthiel Cat I (HCM Carrier Type B Female)', species: 'CAT', sex: 'FEMALE', breed: 'Maine Coon', generation: 0, birthYear: 2016, testProvider: 'UC Davis VGL',
+    notes: 'HCM Carrier - DO NOT BREED TO TEVILDO (25% affected risk)! Blood Type B - WARNING for neonatal isoerythrolysis if bred to Type A sire!',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'B'), locus('D', 'Dilute', 'D', 'D'), locus('C', 'Colorpoint', 'C', 'C')],
-      health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m'), healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N')]
+      health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m'), healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N'), healthLocus('BloodType', 'Blood Type', 'B')]
     }
   },
-  { name: 'Shadow Cat of Mordor', species: 'CAT', sex: 'MALE', breed: 'Maine Coon', generation: 1, sireRef: 'Tevildo Prince of Cats', damRef: 'Queen Beruthiel Cat I', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Shadow Cat of Mordor (HCM Clear Male)', species: 'CAT', sex: 'MALE', breed: 'Maine Coon', generation: 1, sireRef: 'Tevildo Prince of Cats (HCM Carrier Type A Male)', damRef: 'Queen Beruthiel Cat I (HCM Carrier Type B Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'CARRIER × CARRIER offspring. Got lucky - HCM Clear!',
     coiTestScenario: 'Carrier × Carrier heart disease warning test',
     genetics: {
@@ -896,12 +896,29 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2020-05-10', eventName: 'Mordor Cat Fanciers', eventLocation: 'Barad-dûr' },
     ]
   },
-  { name: 'Mirkwood Prowler', species: 'CAT', sex: 'FEMALE', breed: 'Maine Coon', generation: 1, sireRef: 'Tevildo Prince of Cats', damRef: 'Queen Beruthiel Cat I', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Mirkwood Prowler (HCM Affected Female)', species: 'CAT', sex: 'FEMALE', breed: 'Maine Coon', generation: 1, sireRef: 'Tevildo Prince of Cats (HCM Carrier Type A Male)', damRef: 'Queen Beruthiel Cat I (HCM Carrier Type B Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'CARRIER × CARRIER offspring. HCM Affected - DO NOT BREED!',
     coiTestScenario: 'Carrier × Carrier - this one got the affected genotype',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'D'), locus('C', 'Colorpoint', 'C', 'cs')],
       health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'm/m'), healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N')]
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // INCOMPLETE GENETICS - What's Missing Analysis Test
+  // ═══════════════════════════════════════════════════════════════════════════════
+  { name: 'Gandalf\'s Rescue (Incomplete Genetics)', species: 'DOG', sex: 'MALE', breed: 'Mixed Breed', generation: 0, birthYear: 2022,
+    notes: 'INTENTIONALLY INCOMPLETE. Recently rescued from the Misty Mountains. Only has B locus. For testing What\'s Missing analysis.',
+    genetics: {
+      coatColor: [locus('B', 'Brown', 'B', 'b')]
+      // No health data - triggers suggestions
+    }
+  },
+  { name: 'Elrond\'s New Acquisition (Awaiting Test)', species: 'HORSE', sex: 'FEMALE', breed: 'Arabian', generation: 0, birthYear: 2024,
+    notes: 'NO GENETICS YET. Newly arrived from the East. For testing What\'s Missing analysis.',
+    genetics: {
+      // Completely empty - tests worst case
     }
   },
 ];
@@ -919,7 +936,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   // ═══════════════════════════════════════════════════════════════════════════════
 
   // === CROOKSHANKS LINE (Line A) - Generation 0 Founders ===
-  { name: 'Crookshanks', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 0, birthYear: 2010, testProvider: 'UC Davis VGL',
+  { name: 'Crookshanks (PKD Carrier Founder Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 0, birthYear: 2010, testProvider: 'UC Davis VGL',
     notes: "Hermione's half-Kneazle familiar. Founder Line A. PKD Carrier - WARNING!",
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -934,7 +951,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       { eventName: 'Diagon Alley Cat Show', eventDate: '2012-03-15', location: 'London', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Open', placement: 1, placementLabel: 'Best in Show', pointsEarned: 200, isMajorWin: true, judgeName: 'Minerva McGonagall' },
     ]
   },
-  { name: 'Kneazle Queen', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 0, birthYear: 2011, testProvider: 'UC Davis VGL',
+  { name: 'Kneazle Queen (Clear Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 0, birthYear: 2011, testProvider: 'UC Davis VGL',
     notes: "Crookshanks' mate. Founder dam Line A. PKD Clear.",
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -944,7 +961,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === MRS NORRIS LINE (Line B) - Generation 0 Founders (unrelated) ===
-  { name: 'Mrs Norris', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Mrs Norris (PKD Carrier Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: "Filch's loyal cat. Founder Line B. PKD Carrier - WARNING for kidney disease!",
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -955,7 +972,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2014-09-10', eventName: 'Hogwarts Familiar Show', eventLocation: 'Hogwarts', pointsEarned: 200 },
     ]
   },
-  { name: 'Argus Tom', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Argus Tom (HCM Carrier Founder Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: "Founder sire Line B. PKD Clear, HCM Carrier.",
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -965,7 +982,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 1 - Children of Founders ===
-  { name: 'Millicent Bulstrode Cat', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 1, sireRef: 'Crookshanks', damRef: 'Kneazle Queen', birthYear: 2014, testProvider: 'UC Davis VGL',
+  { name: 'Millicent Bulstrode Cat (PKD Carrier Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 1, sireRef: 'Crookshanks (PKD Carrier Founder Male)', damRef: 'Kneazle Queen (Clear Founder Female)', birthYear: 2014, testProvider: 'UC Davis VGL',
     notes: 'Daughter of Crookshanks × Kneazle Queen (Line A). PKD Carrier inherited from sire.',
     coiTestScenario: 'Gen 1 Line A - COI ~0%',
     genetics: {
@@ -973,7 +990,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/N')]
     }
   },
-  { name: 'Kneazle Son', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 1, sireRef: 'Crookshanks', damRef: 'Kneazle Queen', birthYear: 2014, testProvider: 'UC Davis VGL',
+  { name: 'Kneazle Son (Clear Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 1, sireRef: 'Crookshanks (PKD Carrier Founder Male)', damRef: 'Kneazle Queen (Clear Founder Female)', birthYear: 2014, testProvider: 'UC Davis VGL',
     notes: 'Son of Crookshanks × Kneazle Queen (Line A). PKD Clear.',
     coiTestScenario: 'Gen 1 Line A - COI ~0%',
     genetics: {
@@ -981,7 +998,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/N'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/N')]
     }
   },
-  { name: 'Filch Kitten I', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 1, sireRef: 'Argus Tom', damRef: 'Mrs Norris', birthYear: 2015, testProvider: 'UC Davis VGL',
+  { name: 'Filch Kitten I (Double Carrier Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 1, sireRef: 'Argus Tom (HCM Carrier Founder Male)', damRef: 'Mrs Norris (PKD Carrier Founder Female)', birthYear: 2015, testProvider: 'UC Davis VGL',
     notes: 'Son of Argus × Mrs Norris (Line B). PKD Carrier, HCM Carrier - DOUBLE WARNING!',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -989,7 +1006,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
     }
   },
-  { name: 'Filch Kitten II', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 1, sireRef: 'Argus Tom', damRef: 'Mrs Norris', birthYear: 2015, testProvider: 'UC Davis VGL',
+  { name: 'Filch Kitten II (PKD Carrier Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 1, sireRef: 'Argus Tom (HCM Carrier Founder Male)', damRef: 'Mrs Norris (PKD Carrier Founder Female)', birthYear: 2015, testProvider: 'UC Davis VGL',
     notes: 'Daughter of Argus × Mrs Norris (Line B). PKD Carrier.',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -999,7 +1016,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 2 - CROSS BETWEEN LINES (Line A × Line B) ===
-  { name: 'Magical Cross Cat', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 2, sireRef: 'Kneazle Son', damRef: 'Filch Kitten II', birthYear: 2017, testProvider: 'UC Davis VGL',
+  { name: 'Magical Cross Cat (PKD Carrier Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 2, sireRef: 'Kneazle Son (Clear Male)', damRef: 'Filch Kitten II (PKD Carrier Female)', birthYear: 2017, testProvider: 'UC Davis VGL',
     notes: 'Line A sire × Line B dam. First cross between lines. PKD Carrier.',
     coiTestScenario: 'Gen 2 outcross - COI ~0% (unrelated lines)',
     genetics: {
@@ -1010,7 +1027,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2019-05-15', eventName: 'Hogsmeade Show', eventLocation: 'Hogsmeade', pointsEarned: 200 },
     ]
   },
-  { name: 'Kneazle Descendant', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 2, sireRef: 'Filch Kitten I', damRef: 'Millicent Bulstrode Cat', birthYear: 2017, testProvider: 'UC Davis VGL',
+  { name: 'Kneazle Descendant (Double Carrier Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 2, sireRef: 'Filch Kitten I (Double Carrier Male)', damRef: 'Millicent Bulstrode Cat (PKD Carrier Female)', birthYear: 2017, testProvider: 'UC Davis VGL',
     notes: 'Line B sire × Line A dam. PKD Carrier × Carrier = 25% affected risk! HCM Carrier.',
     coiTestScenario: 'Gen 2 outcross - COI ~0% (unrelated lines) - PKD carrier warning',
     genetics: {
@@ -1020,7 +1037,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 3 - COUSIN MATING ===
-  { name: 'Hogwarts Inbred Cat', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 3, sireRef: 'Magical Cross Cat', damRef: 'Kneazle Descendant', birthYear: 2019, testProvider: 'UC Davis VGL',
+  { name: 'Hogwarts Inbred Cat (Double Carrier High COI Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 3, sireRef: 'Magical Cross Cat (PKD Carrier Male)', damRef: 'Kneazle Descendant (Double Carrier Female)', birthYear: 2019, testProvider: 'UC Davis VGL',
     notes: 'Parents share common ancestors. MODERATE COI. PKD Carrier × Carrier.',
     coiTestScenario: 'Gen 3 cousin mating - COI ~6.25% (shared great-grandparents)',
     genetics: {
@@ -1028,7 +1045,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
     }
   },
-  { name: 'Hogwarts Sister Cat', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 3, sireRef: 'Magical Cross Cat', damRef: 'Kneazle Descendant', birthYear: 2019, testProvider: 'UC Davis VGL',
+  { name: 'Hogwarts Sister Cat (Clear High COI Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 3, sireRef: 'Magical Cross Cat (PKD Carrier Male)', damRef: 'Kneazle Descendant (Double Carrier Female)', birthYear: 2019, testProvider: 'UC Davis VGL',
     notes: 'Full sister. MODERATE COI. Got lucky - PKD Clear!',
     coiTestScenario: 'Gen 3 cousin mating - COI ~6.25%',
     genetics: {
@@ -1038,7 +1055,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 4 - FULL SIBLING MATING (HIGH COI) ===
-  { name: 'Inbred Tom IV', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 4, sireRef: 'Hogwarts Inbred Cat', damRef: 'Hogwarts Sister Cat', birthYear: 2021, testProvider: 'UC Davis VGL',
+  { name: 'Inbred Tom IV (PKD Carrier Critical COI Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 4, sireRef: 'Hogwarts Inbred Cat (Double Carrier High COI Male)', damRef: 'Hogwarts Sister Cat (Clear High COI Female)', birthYear: 2021, testProvider: 'UC Davis VGL',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%. PKD Carrier.',
     coiTestScenario: 'Gen 4 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -1046,7 +1063,7 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
     }
   },
-  { name: 'Inbred Queen IV', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 4, sireRef: 'Hogwarts Inbred Cat', damRef: 'Hogwarts Sister Cat', birthYear: 2021, testProvider: 'UC Davis VGL',
+  { name: 'Inbred Queen IV (Clear Critical COI Female)', species: 'CAT', sex: 'FEMALE', breed: 'British Shorthair', generation: 4, sireRef: 'Hogwarts Inbred Cat (Double Carrier High COI Male)', damRef: 'Hogwarts Sister Cat (Clear High COI Female)', birthYear: 2021, testProvider: 'UC Davis VGL',
     notes: 'Full sister. HIGH COI ~25%. PKD Clear.',
     coiTestScenario: 'Gen 4 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -1056,12 +1073,44 @@ export const HOGWARTS_ANIMALS: AnimalDefinition[] = [
   },
 
   // === Generation 5 - ANOTHER SIBLING MATING (CRITICAL COI) ===
-  { name: 'Critical COI Tom', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 5, sireRef: 'Inbred Tom IV', damRef: 'Inbred Queen IV', birthYear: 2023, testProvider: 'UC Davis VGL',
+  { name: 'Critical COI Tom (PKD Carrier Critical COI Male)', species: 'CAT', sex: 'MALE', breed: 'British Shorthair', generation: 5, sireRef: 'Inbred Tom IV (PKD Carrier Critical COI Male)', damRef: 'Inbred Queen IV (Clear Critical COI Female)', birthYear: 2023, testProvider: 'UC Davis VGL',
     notes: 'PARENTS ARE FULL SIBLINGS! CRITICAL COI ~37.5%. Test for inbreeding depression.',
     coiTestScenario: 'Gen 5 consecutive sibling matings - COI ~37.5% (CRITICAL)',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'B'), locus('D', 'Dilute', 'D', 'd'), locus('C', 'Colorpoint', 'C', 'C')],
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m'), healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SCOTTISH FOLD CATS - Double Fold Warning Test (Osteochondrodysplasia)
+  // Testing Fd/fd × Fd/fd = 25% Fd/Fd (severe cartilage/bone issues)
+  // ═══════════════════════════════════════════════════════════════════════════════
+  { name: 'McGonagall\'s Cat (Fold Carrier Female)', species: 'CAT', sex: 'FEMALE', breed: 'Scottish Fold', generation: 0, birthYear: 2020, testProvider: 'UC Davis VGL',
+    notes: 'Named after Minerva. Fold carrier (Fd/fd). WARNING: Do not breed to another fold carrier!',
+    coiTestScenario: 'Founder - Fold carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Colorpoint', 'C', 'C'), locus('D', 'Dilute', 'D', 'd')],
+      physicalTraits: [locus('Fd', 'Fold', 'Fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'At Risk'), healthLocus('BloodType', 'Blood Type', 'A')]
+    }
+  },
+  { name: 'Dumbledore\'s Familiar (Fold Carrier Male)', species: 'CAT', sex: 'MALE', breed: 'Scottish Fold', generation: 0, birthYear: 2019, testProvider: 'UC Davis VGL',
+    notes: 'Named after Albus. Fold carrier. Pair with McGonagall\'s Cat for DOUBLE FOLD WARNING!',
+    coiTestScenario: 'Founder - Fold carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('C', 'Colorpoint', 'C', 'C'), locus('D', 'Dilute', 'd', 'd')],
+      physicalTraits: [locus('Fd', 'Fold', 'Fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'At Risk'), healthLocus('BloodType', 'Blood Type', 'B')]
+    }
+  },
+  { name: 'Sprout\'s Cat (Straight Eared Safe Female)', species: 'CAT', sex: 'FEMALE', breed: 'Scottish Straight', generation: 0, birthYear: 2021, testProvider: 'UC Davis VGL',
+    notes: 'Professor Sprout\'s cat with normal ears. Non-fold (fd/fd). Safe to breed with any fold carrier.',
+    coiTestScenario: 'Founder - Non-fold for safe pairing comparison',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'A', 'A'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Colorpoint', 'C', 'cs'), locus('D', 'Dilute', 'D', 'D')],
+      physicalTraits: [locus('Fd', 'Fold', 'fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'N/N'), healthLocus('BloodType', 'Blood Type', 'A')]
     }
   },
 
@@ -1445,12 +1494,41 @@ export const WINTERFELL_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('HYPP', 'Hyperkalemic Periodic Paralysis', 'H/N')]
     }
   },
-  { name: 'Night Watch Filly', species: 'HORSE', sex: 'FEMALE', breed: 'Friesian', generation: 2, sireRef: 'Stark Warhorse', damRef: 'Northern Filly', birthYear: 2019, testProvider: 'UC Davis VGL',
+  { name: 'Night Watch Filly (HYPP Carrier Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Friesian', generation: 2, sireRef: 'Stark Warhorse', damRef: 'Northern Filly', birthYear: 2019, testProvider: 'UC Davis VGL',
     notes: 'Line B cross. HYPP Carrier.',
     coiTestScenario: 'Gen 2 - COI ~25% (sibling cross)',
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'a', 'a')],
       health: [healthLocus('HYPP', 'Hyperkalemic Periodic Paralysis', 'H/N')]
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // APPALOOSA - LP/LP Vision Issues Warning (Double LP Night Blindness)
+  // Testing LP/lp × LP/lp = 25% LP/LP (congenital stationary night blindness)
+  // ═══════════════════════════════════════════════════════════════════════════════
+  { name: 'Winter Spots (LP Carrier Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Appaloosa', generation: 0, birthYear: 2018, testProvider: 'UC Davis VGL',
+    notes: 'North of the Wall mare with snow leopard spots. LP carrier (LP/lp). WARNING: LP/lp × LP/lp = vision issues!',
+    coiTestScenario: 'Founder - LP carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('LP', 'Leopard Complex', 'LP', 'lp'), locus('PATN1', 'Pattern 1', 'PATN1', 'N')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'At Risk')]
+    }
+  },
+  { name: 'Direwolf Stallion (LP Carrier Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Appaloosa', generation: 0, birthYear: 2017, testProvider: 'UC Davis VGL',
+    notes: 'Grey spotted stallion. LP carrier. Pair with Winter Spots for DOUBLE LP WARNING!',
+    coiTestScenario: 'Founder - LP carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'a', 'a'), locus('LP', 'Leopard Complex', 'LP', 'lp'), locus('PATN1', 'Pattern 1', 'N', 'N')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'At Risk')]
+    }
+  },
+  { name: 'Wildling Mare (LP Clear Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Appaloosa', generation: 0, birthYear: 2019, testProvider: 'UC Davis VGL',
+    notes: 'Non-LP mare (lp/lp). Safe to breed with any LP stallion.',
+    coiTestScenario: 'Founder - Non-LP for safe pairing comparison',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('LP', 'Leopard Complex', 'lp', 'lp'), locus('PATN1', 'Pattern 1', 'PATN1', 'PATN1')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'N/N')]
     }
   },
 ];
@@ -1911,7 +1989,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
   // Two founder lines for COI + DM carrier warnings
 
   // MUAD'DIB LINE (Line A)
-  { name: 'Muad\'Dib Hunter', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Muad\'Dib Hunter (DM Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Named for the desert mouse. Founder sire Line A. DM Carrier - WARNING!',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -1923,7 +2001,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'GCH', dateEarned: '2017-09-20', eventName: 'Atreides National', eventLocation: 'Caladan', pointsEarned: 25 },
     ]
   },
-  { name: 'Shai-Hulud Dame', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 0, birthYear: 2015, testProvider: 'Embark',
+  { name: 'Shai-Hulud Dame (DM Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 0, birthYear: 2015, testProvider: 'Embark',
     notes: 'Named for the great sandworms. Founder dam Line A. DM Carrier - DO NOT BREED TO MUAD\'DIB!',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -1933,7 +2011,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
   },
 
   // FREMEN LINE (Line B)
-  { name: 'Stilgar Hound', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Stilgar Hound (Clear Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Founder sire Line B. DM Clear.',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -1941,7 +2019,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'Clear'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'N/m')]
     }
   },
-  { name: 'Chani Huntress', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 0, birthYear: 2015, testProvider: 'Embark',
+  { name: 'Chani (DM Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 0, birthYear: 2015, testProvider: 'Embark',
     notes: 'Founder dam Line B. DM Carrier.',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -1951,7 +2029,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
   },
 
   // Generation 1
-  { name: 'Spice Runner', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 1, sireRef: 'Muad\'Dib Hunter', damRef: 'Shai-Hulud Dame', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Spice Runner (DM Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 1, sireRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)', damRef: 'Shai-Hulud Dame (DM Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line A. DM Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 Line A - DM carrier warning',
     genetics: {
@@ -1959,7 +2037,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'Clear')]
     }
   },
-  { name: 'Fremen Scout', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 1, sireRef: 'Muad\'Dib Hunter', damRef: 'Shai-Hulud Dame', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Fremen Scout (DM Affected Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 1, sireRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)', damRef: 'Shai-Hulud Dame (DM Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line A. DM Affected - DO NOT BREED!',
     coiTestScenario: 'Gen 1 Line A - got affected genotype',
     genetics: {
@@ -1967,7 +2045,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'm/m'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'Clear')]
     }
   },
-  { name: 'Sietch Pup', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 1, sireRef: 'Stilgar Hound', damRef: 'Chani Huntress', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Sietch Warrior (DM Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 1, sireRef: 'Stilgar Hound (Clear Founder Male)', damRef: 'Chani (DM Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line B. DM Carrier from dam.',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -1975,7 +2053,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'N/m')]
     }
   },
-  { name: 'Naib Huntress', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 1, sireRef: 'Stilgar Hound', damRef: 'Chani Huntress', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Naib Huntress (Clear Gen1 Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 1, sireRef: 'Stilgar Hound (Clear Founder Male)', damRef: 'Chani (DM Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line B. DM Clear.',
     coiTestScenario: 'Gen 1 Line B - COI ~0%',
     genetics: {
@@ -1985,7 +2063,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
   },
 
   // Generation 2 - CROSS
-  { name: 'Kwisatz Hound', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 2, sireRef: 'Spice Runner', damRef: 'Naib Huntress', birthYear: 2020, testProvider: 'Embark',
+  { name: 'Kwisatz Haderach (DM Carrier Gen2 Male)', species: 'DOG', sex: 'MALE', breed: 'Saluki', generation: 2, sireRef: 'Spice Runner (DM Carrier Gen1 Male)', damRef: 'Naib Huntress (Clear Gen1 Female)', birthYear: 2020, testProvider: 'Embark',
     notes: 'Line A sire × Line B dam outcross. DM Carrier.',
     coiTestScenario: 'Gen 2 outcross - COI ~0%',
     genetics: {
@@ -1993,7 +2071,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'Clear')]
     }
   },
-  { name: 'Sayyadina Dame', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 2, sireRef: 'Sietch Pup', damRef: 'Naib Huntress', birthYear: 2020, testProvider: 'Embark',
+  { name: 'Sayyadina (High COI DM Carrier Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 2, sireRef: 'Sietch Warrior (DM Carrier Gen1 Male)', damRef: 'Naib Huntress (Clear Gen1 Female)', birthYear: 2020, testProvider: 'Embark',
     notes: 'Line B × Line B sibling cross. HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2004,7 +2082,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
 
   // === HORSES - Arabian (Atreides Warhorses) ===
   // SCID (Severe Combined Immunodeficiency) carrier testing
-  { name: 'Duke Leto\'s Steed', species: 'HORSE', sex: 'MALE', breed: 'Arabian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Duke Leto (SCID Carrier Founder Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Arabian', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: 'Noble stallion of House Atreides. Founder sire. SCID Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2015,15 +2093,15 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2015-06-15', eventName: 'Caladan Royal', eventLocation: 'Caladan' },
     ]
   },
-  { name: 'Caladan Mare', species: 'HORSE', sex: 'FEMALE', breed: 'Arabian', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
-    notes: 'Brought from the ocean world. SCID Carrier - DO NOT BREED TO LETO\'S STEED!',
+  { name: 'Caladan Jewel (SCID Carrier Founder Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Arabian', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
+    notes: 'Brought from the ocean world. SCID Carrier - DO NOT BREED TO LETO!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'g', 'g')],
       health: [healthLocus('SCID', 'Severe Combined Immunodeficiency', 'N/m')]
     }
   },
-  { name: 'Sietch Warhorse', species: 'HORSE', sex: 'MALE', breed: 'Arabian', generation: 1, sireRef: 'Duke Leto\'s Steed', damRef: 'Caladan Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Sietch Warhorse (SCID Carrier Gen1 Colt)', species: 'HORSE', sex: 'MALE', breed: 'Arabian', generation: 1, sireRef: 'Duke Leto (SCID Carrier Founder Stallion)', damRef: 'Caladan Jewel (SCID Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'SCID Carrier × Carrier = 25% lethal!',
     coiTestScenario: 'Gen 1 - SCID carrier × carrier (lethal)',
     genetics: {
@@ -2031,7 +2109,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('SCID', 'Severe Combined Immunodeficiency', 'N/m')]
     }
   },
-  { name: 'Desert Wind', species: 'HORSE', sex: 'FEMALE', breed: 'Arabian', generation: 1, sireRef: 'Duke Leto\'s Steed', damRef: 'Caladan Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Desert Wind (SCID Clear Gen1 Filly)', species: 'HORSE', sex: 'FEMALE', breed: 'Arabian', generation: 1, sireRef: 'Duke Leto (SCID Carrier Founder Stallion)', damRef: 'Caladan Jewel (SCID Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'Got clear from carrier × carrier.',
     coiTestScenario: 'Gen 1 - got clear genotype',
     genetics: {
@@ -2045,26 +2123,26 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
 
   // === CATS - Abyssinian (Desert Cats) ===
   // PK Deficiency carrier testing
-  { name: 'Bene Gesserit Cat', species: 'CAT', sex: 'FEMALE', breed: 'Abyssinian', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
+  { name: 'Reverend Mother (PKDef Carrier Type A Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'Abyssinian', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
     notes: 'Cat with unusually perceptive abilities. Founder dam. PK Def Carrier!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'A', 'A'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'D'), locus('Ta', 'Tabby', 'Ta', 'Ta')],
-      health: [healthLocus('PK_Def', 'PK Deficiency', 'N/m')]
+      health: [healthLocus('PK_Def', 'PK Deficiency', 'N/m'), healthLocus('BloodType', 'Blood Type', 'A')]
     },
     titles: [
       { titleAbbreviation: 'CH', dateEarned: '2017-05-10', eventName: 'Sietch Cat Show', eventLocation: 'Arrakis' },
     ]
   },
-  { name: 'Mentat Companion', species: 'CAT', sex: 'MALE', breed: 'Abyssinian', generation: 0, birthYear: 2014, testProvider: 'UC Davis VGL',
-    notes: 'Founder sire. PK Def Carrier - DO NOT BREED TO BENE GESSERIT!',
+  { name: 'Mentat (PKDef Carrier Type B Founder Male)', species: 'CAT', sex: 'MALE', breed: 'Abyssinian', generation: 0, birthYear: 2014, testProvider: 'UC Davis VGL',
+    notes: 'Founder sire. PK Def Carrier - DO NOT BREED TO REVEREND MOTHER!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'A', 'A'), locus('B', 'Brown', 'b', 'b'), locus('D', 'Dilute', 'D', 'd'), locus('Ta', 'Tabby', 'Ta', 'Ta')],
-      health: [healthLocus('PK_Def', 'PK Deficiency', 'N/m')]
+      health: [healthLocus('PK_Def', 'PK Deficiency', 'N/m'), healthLocus('BloodType', 'Blood Type', 'B')]
     }
   },
-  { name: 'Sardaukar Shadow', species: 'CAT', sex: 'MALE', breed: 'Abyssinian', generation: 1, sireRef: 'Mentat Companion', damRef: 'Bene Gesserit Cat', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Sardaukar (PKDef Carrier Gen1 Male)', species: 'CAT', sex: 'MALE', breed: 'Abyssinian', generation: 1, sireRef: 'Mentat (PKDef Carrier Type B Founder Male)', damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'PK Def Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - PK carrier × carrier warning',
     genetics: {
@@ -2072,7 +2150,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PK_Def', 'PK Deficiency', 'N/m')]
     }
   },
-  { name: 'Kwisatz Kitten', species: 'CAT', sex: 'FEMALE', breed: 'Abyssinian', generation: 1, sireRef: 'Mentat Companion', damRef: 'Bene Gesserit Cat', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Alia (PKDef Affected Gen1 Female)', species: 'CAT', sex: 'FEMALE', breed: 'Abyssinian', generation: 1, sireRef: 'Mentat (PKDef Carrier Type B Founder Male)', damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'PK Def Affected from carrier × carrier - DO NOT BREED!',
     coiTestScenario: 'Gen 1 - got affected genotype',
     genetics: {
@@ -2089,7 +2167,7 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
 export const STARFLEET_ANIMALS: AnimalDefinition[] = [
   // === CATS - Exotic Shorthair (Ship's Cats) ===
   // PKD carrier testing
-  { name: 'Spot', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 0, birthYear: 2014, testProvider: 'UC Davis VGL',
+  { name: 'Spot (PKD Carrier Founder Male)', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 0, birthYear: 2014, testProvider: 'UC Davis VGL',
     notes: 'Data\'s beloved cat from the Enterprise. Founder sire. PKD Carrier!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2101,7 +2179,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'GC', dateEarned: '2017-08-20', eventName: 'Federation Championship', eventLocation: 'Earth', pointsEarned: 500 },
     ]
   },
-  { name: 'Enterprise Cat', species: 'CAT', sex: 'FEMALE', breed: 'Exotic Shorthair', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
+  { name: 'Enterprise (PKD Carrier Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'Exotic Shorthair', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
     notes: 'Founder dam. PKD Carrier - DO NOT BREED TO SPOT!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2109,7 +2187,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m')]
     }
   },
-  { name: 'Warp Drive Kitten', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 1, sireRef: 'Spot', damRef: 'Enterprise Cat', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Warp Core (PKD Carrier Gen1 Male)', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 1, sireRef: 'Spot (PKD Carrier Founder Male)', damRef: 'Enterprise (PKD Carrier Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'PKD Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - PKD carrier × carrier warning',
     genetics: {
@@ -2117,7 +2195,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PKD', 'Polycystic Kidney Disease', 'N/m')]
     }
   },
-  { name: 'Tribble Chaser', species: 'CAT', sex: 'FEMALE', breed: 'Exotic Shorthair', generation: 1, sireRef: 'Spot', damRef: 'Enterprise Cat', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Tribble Hunter (PKD Clear Gen1 Female)', species: 'CAT', sex: 'FEMALE', breed: 'Exotic Shorthair', generation: 1, sireRef: 'Spot (PKD Carrier Founder Male)', damRef: 'Enterprise (PKD Carrier Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'PKD Clear from carrier × carrier.',
     coiTestScenario: 'Gen 1 - got clear genotype',
     genetics: {
@@ -2126,7 +2204,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
     }
   },
   // Gen 2 sibling mating
-  { name: 'Captain Kitten', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 2, sireRef: 'Warp Drive Kitten', damRef: 'Tribble Chaser', birthYear: 2021, testProvider: 'UC Davis VGL',
+  { name: 'Captain Picard (High COI PKD Carrier Male)', species: 'CAT', sex: 'MALE', breed: 'Exotic Shorthair', generation: 2, sireRef: 'Warp Core (PKD Carrier Gen1 Male)', damRef: 'Tribble Hunter (PKD Clear Gen1 Female)', birthYear: 2021, testProvider: 'UC Davis VGL',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2136,7 +2214,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
   },
 
   // === RABBITS - Flemish Giant (Space Station Rabbits) ===
-  { name: 'Tribble Alternative', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 0, birthYear: 2016,
+  { name: 'Tribble Alternative (Founder Male)', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 0, birthYear: 2016,
     notes: 'Much easier to manage than tribbles. Founder sire.',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: { coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Color Series', 'C', 'C'), locus('D', 'Dilute', 'D', 'D'), locus('En', 'English Spotting', 'en', 'en')] },
@@ -2144,20 +2222,20 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'GC', dateEarned: '2018-05-10', eventName: 'Starbase Rabbit Show', eventLocation: 'Deep Space 9', pointsEarned: 5 },
     ]
   },
-  { name: 'Vulcan Lop', species: 'RABBIT', sex: 'FEMALE', breed: 'Flemish Giant', generation: 0, birthYear: 2016,
+  { name: 'T\'Pol (Founder Female)', species: 'RABBIT', sex: 'FEMALE', breed: 'Flemish Giant', generation: 0, birthYear: 2016,
     notes: 'Founder dam.',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: { coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('C', 'Color Series', 'C', 'cchd'), locus('D', 'Dilute', 'D', 'd'), locus('En', 'English Spotting', 'En', 'en')] }
   },
-  { name: 'Holodeck Bunny', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 1, sireRef: 'Tribble Alternative', damRef: 'Vulcan Lop', birthYear: 2019,
+  { name: 'Holodeck (Gen1 Male)', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 1, sireRef: 'Tribble Alternative (Founder Male)', damRef: 'T\'Pol (Founder Female)', birthYear: 2019,
     coiTestScenario: 'Gen 1 - COI ~0%',
     genetics: { coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Color Series', 'C', 'cchd'), locus('D', 'Dilute', 'D', 'd'), locus('En', 'English Spotting', 'En', 'en')] }
   },
-  { name: 'Transporter Bun', species: 'RABBIT', sex: 'FEMALE', breed: 'Flemish Giant', generation: 1, sireRef: 'Tribble Alternative', damRef: 'Vulcan Lop', birthYear: 2019,
+  { name: 'Transporter (Gen1 Female)', species: 'RABBIT', sex: 'FEMALE', breed: 'Flemish Giant', generation: 1, sireRef: 'Tribble Alternative (Founder Male)', damRef: 'T\'Pol (Founder Female)', birthYear: 2019,
     coiTestScenario: 'Gen 1 - COI ~0%',
     genetics: { coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('C', 'Color Series', 'C', 'C'), locus('D', 'Dilute', 'D', 'D'), locus('En', 'English Spotting', 'en', 'en')] }
   },
-  { name: 'High COI Trek Rabbit', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 2, sireRef: 'Holodeck Bunny', damRef: 'Transporter Bun', birthYear: 2022,
+  { name: 'Worf (High COI Gen2 Male)', species: 'RABBIT', sex: 'MALE', breed: 'Flemish Giant', generation: 2, sireRef: 'Holodeck (Gen1 Male)', damRef: 'Transporter (Gen1 Female)', birthYear: 2022,
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 full sibling mating - COI ~25% (HIGH)',
     genetics: { coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Color Series', 'C', 'cchd'), locus('D', 'Dilute', 'D', 'd'), locus('En', 'English Spotting', 'En', 'en')] }
@@ -2165,7 +2243,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
 
   // === DOGS - Border Collie (Starfleet Service Dogs) ===
   // CEA (Collie Eye Anomaly) carrier testing
-  { name: 'Number One Dog', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Number One (TNS Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Named after Riker\'s nickname. Founder sire. CEA Clear, TNS Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2176,7 +2254,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2016-06-20', eventName: 'Starfleet Academy Show', eventLocation: 'San Francisco', pointsEarned: 15, majorWins: 2 },
     ]
   },
-  { name: 'Ten Forward Lass', species: 'DOG', sex: 'FEMALE', breed: 'Border Collie', generation: 0, birthYear: 2015, testProvider: 'Embark',
+  { name: 'Ten Forward (CEA+TNS Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Border Collie', generation: 0, birthYear: 2015, testProvider: 'Embark',
     notes: 'Loves to greet visitors. Founder dam. CEA Carrier, TNS Carrier - DOUBLE WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2184,7 +2262,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('CEA', 'Collie Eye Anomaly', 'N/m'), healthLocus('TNS', 'Trapped Neutrophil Syndrome', 'N/m')]
     }
   },
-  { name: 'Phaser Pup', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 1, sireRef: 'Number One Dog', damRef: 'Ten Forward Lass', birthYear: 2018, testProvider: 'Embark',
+  { name: 'Phaser (CEA+TNS Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 1, sireRef: 'Number One (TNS Carrier Founder Male)', damRef: 'Ten Forward (CEA+TNS Carrier Founder Female)', birthYear: 2018, testProvider: 'Embark',
     notes: 'TNS Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - TNS carrier × carrier warning',
     genetics: {
@@ -2192,7 +2270,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('CEA', 'Collie Eye Anomaly', 'N/m'), healthLocus('TNS', 'Trapped Neutrophil Syndrome', 'N/m')]
     }
   },
-  { name: 'Comms Officer Collie', species: 'DOG', sex: 'FEMALE', breed: 'Border Collie', generation: 1, sireRef: 'Number One Dog', damRef: 'Ten Forward Lass', birthYear: 2018, testProvider: 'Embark',
+  { name: 'Uhura (Clear Gen1 Female)', species: 'DOG', sex: 'FEMALE', breed: 'Border Collie', generation: 1, sireRef: 'Number One (TNS Carrier Founder Male)', damRef: 'Ten Forward (CEA+TNS Carrier Founder Female)', birthYear: 2018, testProvider: 'Embark',
     notes: 'TNS Clear.',
     coiTestScenario: 'Gen 1 - got clear genotype',
     genetics: {
@@ -2200,7 +2278,7 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('CEA', 'Collie Eye Anomaly', 'Clear'), healthLocus('TNS', 'Trapped Neutrophil Syndrome', 'Clear')]
     }
   },
-  { name: 'High COI Trek Pup', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 2, sireRef: 'Phaser Pup', damRef: 'Comms Officer Collie', birthYear: 2021, testProvider: 'Embark',
+  { name: 'Data (High COI CEA+TNS Carrier Male)', species: 'DOG', sex: 'MALE', breed: 'Border Collie', generation: 2, sireRef: 'Phaser (CEA+TNS Carrier Gen1 Male)', damRef: 'Uhura (Clear Gen1 Female)', birthYear: 2021, testProvider: 'Embark',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2219,7 +2297,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
   // PRA and Ichthyosis carrier testing
 
   // BISCUITS LINE (Line A)
-  { name: 'Biscuits', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Ted Lasso (PRA+ICH Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Named after Ted\'s famous shortbread biscuits. Founder sire Line A. PRA Carrier, Ichthyosis Carrier!',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
@@ -2234,8 +2312,8 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       { eventName: 'Richmond Dog Show', eventDate: '2016-05-15', location: 'Nelson Road', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Dogs', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 5, isMajorWin: true, judgeName: 'Rebecca Welton' },
     ]
   },
-  { name: 'Diamond Dogs Dam', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 0, birthYear: 2015, testProvider: 'Embark',
-    notes: 'The Diamond Dogs are Ted\'s support group. Founder dam Line A. PRA Carrier - DO NOT BREED TO BISCUITS!',
+  { name: 'Rebecca (PRA Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 0, birthYear: 2015, testProvider: 'Embark',
+    notes: 'The Diamond Dogs are Ted\'s support group. Founder dam Line A. PRA Carrier - DO NOT BREED TO TED LASSO!',
     coiTestScenario: 'Founder Line A - no inbreeding',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'Ay', 'Ay'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'd'), locus('E', 'Extension', 'e', 'e')],
@@ -2244,7 +2322,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
   },
 
   // ROY KENT LINE (Line B)
-  { name: 'Roy Kent Hound', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Roy Kent (ICH Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Founder sire Line B. PRA Clear, Ichthyosis Carrier.',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -2252,7 +2330,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PRA', 'Progressive Retinal Atrophy', 'Clear'), healthLocus('ICH', 'Ichthyosis', 'N/m')]
     }
   },
-  { name: 'Keeley Dame', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 0, birthYear: 2015, testProvider: 'Embark',
+  { name: 'Keeley (PRA+ICH Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 0, birthYear: 2015, testProvider: 'Embark',
     notes: 'Founder dam Line B. PRA Carrier, Ichthyosis Carrier - DOUBLE WARNING!',
     coiTestScenario: 'Founder Line B - no inbreeding',
     genetics: {
@@ -2262,7 +2340,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
   },
 
   // Generation 1
-  { name: 'Believe Pup', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Biscuits', damRef: 'Diamond Dogs Dam', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Believe (PRA+ICH Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)', damRef: 'Rebecca (PRA Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Named after the iconic BELIEVE sign. Line A. PRA Carrier × Carrier = 25% affected!',
     coiTestScenario: 'Gen 1 Line A - PRA carrier × carrier warning',
     genetics: {
@@ -2270,7 +2348,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PRA', 'Progressive Retinal Atrophy', 'N/m'), healthLocus('ICH', 'Ichthyosis', 'N/m')]
     }
   },
-  { name: 'Barbecue Sauce', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Biscuits', damRef: 'Diamond Dogs Dam', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Biscuits (PRA Affected Gen1 Female)', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)', damRef: 'Rebecca (PRA Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Ted\'s second favorite condiment. Line A. PRA Affected - DO NOT BREED!',
     coiTestScenario: 'Gen 1 Line A - got affected genotype',
     genetics: {
@@ -2278,7 +2356,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PRA', 'Progressive Retinal Atrophy', 'm/m'), healthLocus('ICH', 'Ichthyosis', 'Clear')]
     }
   },
-  { name: 'Jamie Tartt Pup', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Roy Kent Hound', damRef: 'Keeley Dame', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Jamie Tartt (PRA+ICH Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Roy Kent (ICH Carrier Founder Male)', damRef: 'Keeley (PRA+ICH Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line B. Ichthyosis Carrier × Carrier = 25% affected!',
     coiTestScenario: 'Gen 1 Line B - Ichthyosis carrier warning',
     genetics: {
@@ -2286,7 +2364,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PRA', 'Progressive Retinal Atrophy', 'N/m'), healthLocus('ICH', 'Ichthyosis', 'N/m')]
     }
   },
-  { name: 'Nate Dame', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Roy Kent Hound', damRef: 'Keeley Dame', birthYear: 2017, testProvider: 'Embark',
+  { name: 'Nate (Clear Gen1 Female)', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 1, sireRef: 'Roy Kent (ICH Carrier Founder Male)', damRef: 'Keeley (PRA+ICH Carrier Founder Female)', birthYear: 2017, testProvider: 'Embark',
     notes: 'Line B. Clear for both.',
     coiTestScenario: 'Gen 1 Line B - got clear genotypes',
     genetics: {
@@ -2296,7 +2374,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
   },
 
   // Generation 2 - CROSS
-  { name: 'Richmond Champ', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 2, sireRef: 'Believe Pup', damRef: 'Nate Dame', birthYear: 2020, testProvider: 'Embark',
+  { name: 'Richmond (PRA+ICH Carrier Gen2 Male)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 2, sireRef: 'Believe (PRA+ICH Carrier Gen1 Male)', damRef: 'Nate (Clear Gen1 Female)', birthYear: 2020, testProvider: 'Embark',
     notes: 'Line A sire × Line B dam outcross. PRA Carrier.',
     coiTestScenario: 'Gen 2 outcross - COI ~0%',
     genetics: {
@@ -2304,7 +2382,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('PRA', 'Progressive Retinal Atrophy', 'N/m'), healthLocus('ICH', 'Ichthyosis', 'N/m')]
     }
   },
-  { name: 'High COI Richmond Dame', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 2, sireRef: 'Jamie Tartt Pup', damRef: 'Nate Dame', birthYear: 2020, testProvider: 'Embark',
+  { name: 'Diamond Dog (High COI PRA+ICH Carrier Female)', species: 'DOG', sex: 'FEMALE', breed: 'Golden Retriever', generation: 2, sireRef: 'Jamie Tartt (PRA+ICH Carrier Gen1 Male)', damRef: 'Nate (Clear Gen1 Female)', birthYear: 2020, testProvider: 'Embark',
     notes: 'Line B × Line B sibling cross. HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2315,7 +2393,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
 
   // === HORSES - Thoroughbred (English Football Club Horses) ===
   // GBED carrier testing
-  { name: 'Total Football', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Total Football (GBED Carrier Founder Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: 'Named after the playing style. Founder sire. GBED Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2326,7 +2404,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2015-06-20', eventName: 'Richmond Derby', eventLocation: 'Nelson Road' },
     ]
   },
-  { name: 'Nelson Road Mare', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
+  { name: 'Nelson Road (GBED Carrier Founder Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
     notes: 'Named after Richmond\'s stadium. GBED Carrier - DO NOT BREED TO TOTAL FOOTBALL!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2334,7 +2412,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/m')]
     }
   },
-  { name: 'Greyhound Colt', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 1, sireRef: 'Total Football', damRef: 'Nelson Road Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Greyhound (GBED Carrier Gen1 Colt)', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 1, sireRef: 'Total Football (GBED Carrier Founder Stallion)', damRef: 'Nelson Road (GBED Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'Named after the Richmond Greyhounds nickname. GBED Carrier × Carrier = 25% lethal!',
     coiTestScenario: 'Gen 1 - GBED carrier × carrier (lethal)',
     genetics: {
@@ -2342,7 +2420,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/m')]
     }
   },
-  { name: 'Wonder Kid Filly', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 1, sireRef: 'Total Football', damRef: 'Nelson Road Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Wonder Kid (GBED Clear Gen1 Filly)', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 1, sireRef: 'Total Football (GBED Carrier Founder Stallion)', damRef: 'Nelson Road (GBED Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'A filly with great potential. GBED Clear from carrier × carrier.',
     coiTestScenario: 'Gen 1 - got clear genotype',
     genetics: {
@@ -2353,6 +2431,41 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2019-09-15', eventName: 'FA Cup Derby', eventLocation: 'Wembley' },
     ]
   },
+
+  // === APPALOOSA - LP/LP Vision Issues Warning ===
+  // Testing LP/lp × LP/lp = 25% LP/LP (night blindness)
+  { name: 'Richmond Spots (Double LP Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Appaloosa', generation: 0, birthYear: 2018, testProvider: 'UC Davis VGL',
+    notes: 'Richmond mascot mare with spots. LP carrier (LP/lp). WARNING: LP/lp × LP/lp = vision issues!',
+    coiTestScenario: 'Founder - LP carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('LP', 'Leopard Complex', 'LP', 'lp'), locus('PATN1', 'Pattern 1', 'PATN1', 'N')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'At Risk')]
+    }
+  },
+  { name: 'Lasso Leopard (Double LP Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Appaloosa', generation: 0, birthYear: 2017, testProvider: 'UC Davis VGL',
+    notes: 'Spotted stallion with Ted\'s optimism. LP carrier. Pair with Richmond Spots for DOUBLE LP WARNING!',
+    coiTestScenario: 'Founder - LP carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'a', 'a'), locus('LP', 'Leopard Complex', 'LP', 'lp'), locus('PATN1', 'Pattern 1', 'N', 'N')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'At Risk')]
+    }
+  },
+  { name: 'Blanket (LP Clear Founder Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Appaloosa', generation: 0, birthYear: 2019, testProvider: 'UC Davis VGL',
+    notes: 'Non-LP mare (lp/lp). Safe to breed with any LP stallion.',
+    coiTestScenario: 'Founder - Non-LP for safe pairing comparison',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('LP', 'Leopard Complex', 'lp', 'lp'), locus('PATN1', 'Pattern 1', 'PATN1', 'PATN1')],
+      health: [healthLocus('CSNB', 'Congenital Stationary Night Blindness', 'N/N')]
+    }
+  },
+
+  // === INCOMPLETE GENETICS - What's Missing Analysis ===
+  { name: 'New Signing (Incomplete Genetics)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2024,
+    notes: 'NO GENETICS YET. New transfer, awaiting DNA test. For testing What\'s Missing analysis.',
+    genetics: {
+      // Completely empty - tests worst case
+    }
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2362,7 +2475,7 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
 export const ZION_ANIMALS: AnimalDefinition[] = [
   // === CATS - Bombay (Black Cats of Zion) ===
   // HCM carrier testing
-  { name: 'The One Cat', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
+  { name: 'Neo (HCM Carrier Founder Male)', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
     notes: 'There is no spoon, but there is a cat. Founder sire. HCM Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2374,15 +2487,15 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'GC', dateEarned: '2018-08-20', eventName: 'Matrix Championship', eventLocation: 'Zion', pointsEarned: 500 },
     ]
   },
-  { name: 'Matrix Queen', species: 'CAT', sex: 'FEMALE', breed: 'Bombay', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
-    notes: 'Founder dam. HCM Carrier - DO NOT BREED TO THE ONE CAT!',
+  { name: 'Trinity (HCM Carrier Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'Bombay', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
+    notes: 'Founder dam. HCM Carrier - DO NOT BREED TO NEO!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'd'), locus('C', 'Colorpoint', 'C', 'C')],
       health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
     }
   },
-  { name: 'Red Pill Kitten', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 1, sireRef: 'The One Cat', damRef: 'Matrix Queen', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Red Pill (HCM Carrier Gen1 Male)', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 1, sireRef: 'Neo (HCM Carrier Founder Male)', damRef: 'Trinity (HCM Carrier Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'HCM Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - HCM carrier × carrier warning',
     genetics: {
@@ -2390,7 +2503,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'N/m')]
     }
   },
-  { name: 'Blue Pill Kitten', species: 'CAT', sex: 'FEMALE', breed: 'Bombay', generation: 1, sireRef: 'The One Cat', damRef: 'Matrix Queen', birthYear: 2018, testProvider: 'UC Davis VGL',
+  { name: 'Blue Pill (HCM Affected Gen1 Female)', species: 'CAT', sex: 'FEMALE', breed: 'Bombay', generation: 1, sireRef: 'Neo (HCM Carrier Founder Male)', damRef: 'Trinity (HCM Carrier Founder Female)', birthYear: 2018, testProvider: 'UC Davis VGL',
     notes: 'HCM Affected from carrier × carrier - DO NOT BREED!',
     coiTestScenario: 'Gen 1 - got affected genotype',
     genetics: {
@@ -2398,7 +2511,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('HCM', 'Hypertrophic Cardiomyopathy', 'm/m')]
     }
   },
-  { name: 'High COI Matrix Cat', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 2, sireRef: 'Red Pill Kitten', damRef: 'Blue Pill Kitten', birthYear: 2021, testProvider: 'UC Davis VGL',
+  { name: 'Morpheus (High COI HCM Carrier Male)', species: 'CAT', sex: 'MALE', breed: 'Bombay', generation: 2, sireRef: 'Red Pill (HCM Carrier Gen1 Male)', damRef: 'Blue Pill (HCM Affected Gen1 Female)', birthYear: 2021, testProvider: 'UC Davis VGL',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2407,9 +2520,48 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
     }
   },
 
+  // === SCOTTISH FOLD CATS - Reality Benders (Double Fold Warning) ===
+  // Testing Fd/fd × Fd/fd = 25% Fd/Fd (severe cartilage issues)
+  { name: 'Glitch (Double Fold Type A Female)', species: 'CAT', sex: 'FEMALE', breed: 'Scottish Fold', generation: 0, birthYear: 2020, testProvider: 'UC Davis VGL',
+    notes: 'A glitch in the Matrix. Fold carrier (Fd/fd). WARNING: Do not breed to another fold carrier!',
+    coiTestScenario: 'Founder - Fold carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Colorpoint', 'C', 'C'), locus('D', 'Dilute', 'D', 'd')],
+      physicalTraits: [locus('Fd', 'Fold', 'Fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'At Risk'), healthLocus('BloodType', 'Blood Type', 'A')]
+    }
+  },
+  { name: 'Déjà Vu (Double Fold Type B Male)', species: 'CAT', sex: 'MALE', breed: 'Scottish Fold', generation: 0, birthYear: 2019, testProvider: 'UC Davis VGL',
+    notes: 'When you see the same cat twice. Fold carrier. Pair with Glitch for DOUBLE FOLD WARNING!',
+    coiTestScenario: 'Founder - Fold carrier for dangerous pairing test',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'a', 'a'), locus('B', 'Brown', 'B', 'b'), locus('C', 'Colorpoint', 'C', 'C'), locus('D', 'Dilute', 'd', 'd')],
+      physicalTraits: [locus('Fd', 'Fold', 'Fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'At Risk'), healthLocus('BloodType', 'Blood Type', 'B')]
+    }
+  },
+  { name: 'Agent Smith (Straight Ear Safe Female)', species: 'CAT', sex: 'FEMALE', breed: 'Scottish Straight', generation: 0, birthYear: 2021, testProvider: 'UC Davis VGL',
+    notes: 'Agent with normal ears. Non-fold (fd/fd). Safe to breed with any fold carrier.',
+    coiTestScenario: 'Founder - Non-fold for safe pairing comparison',
+    genetics: {
+      coatColor: [locus('A', 'Agouti', 'A', 'A'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Colorpoint', 'C', 'cs'), locus('D', 'Dilute', 'D', 'D')],
+      physicalTraits: [locus('Fd', 'Fold', 'fd', 'fd')],
+      health: [healthLocus('OCD', 'Osteochondrodysplasia', 'N/N'), healthLocus('BloodType', 'Blood Type', 'A')]
+    }
+  },
+
+  // === INCOMPLETE GENETICS - What's Missing Analysis ===
+  { name: 'Rescued (Incomplete Genetics)', species: 'DOG', sex: 'MALE', breed: 'Mixed Breed', generation: 0, birthYear: 2022,
+    notes: 'INTENTIONALLY INCOMPLETE. Recently unplugged rescue. Only has B locus. For testing What\'s Missing analysis.',
+    genetics: {
+      coatColor: [locus('B', 'Brown', 'B', 'b')]
+      // No health data - triggers suggestions
+    }
+  },
+
   // === GOATS - La Mancha (Zion Farm) ===
   // G6S carrier testing
-  { name: 'Architect\'s Goat', species: 'GOAT', sex: 'MALE', breed: 'La Mancha', generation: 0, birthYear: 2016,
+  { name: 'The Architect (G6S Carrier Founder Male)', species: 'GOAT', sex: 'MALE', breed: 'La Mancha', generation: 0, birthYear: 2016,
     notes: 'Providing milk for Zion. Founder sire. G6S Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2421,8 +2573,8 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'GCH', dateEarned: '2018-06-15', eventName: 'Zion Farm Show', eventLocation: 'Zion', pointsEarned: 10 },
     ]
   },
-  { name: 'Resistance Nanny', species: 'GOAT', sex: 'FEMALE', breed: 'La Mancha', generation: 0, birthYear: 2016,
-    notes: 'Founder dam. G6S Carrier - DO NOT BREED TO ARCHITECT\'S GOAT!',
+  { name: 'The Oracle (G6S Carrier Founder Female)', species: 'GOAT', sex: 'FEMALE', breed: 'La Mancha', generation: 0, birthYear: 2016,
+    notes: 'Founder dam. G6S Carrier - DO NOT BREED TO THE ARCHITECT!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('A', 'Agouti Pattern', 'Awt', 'Ab')],
@@ -2430,7 +2582,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('G6S', 'G6S', 'N/m')]
     }
   },
-  { name: 'Freedom Kid', species: 'GOAT', sex: 'MALE', breed: 'La Mancha', generation: 1, sireRef: 'Architect\'s Goat', damRef: 'Resistance Nanny', birthYear: 2019,
+  { name: 'Freedom (G6S Carrier Gen1 Kid)', species: 'GOAT', sex: 'MALE', breed: 'La Mancha', generation: 1, sireRef: 'The Architect (G6S Carrier Founder Male)', damRef: 'The Oracle (G6S Carrier Founder Female)', birthYear: 2019,
     notes: 'G6S Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - G6S carrier × carrier warning',
     genetics: {
@@ -2439,7 +2591,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('G6S', 'G6S', 'N/m')]
     }
   },
-  { name: 'Awakened Doeling', species: 'GOAT', sex: 'FEMALE', breed: 'La Mancha', generation: 1, sireRef: 'Architect\'s Goat', damRef: 'Resistance Nanny', birthYear: 2019,
+  { name: 'Awakened (G6S Affected Gen1 Doeling)', species: 'GOAT', sex: 'FEMALE', breed: 'La Mancha', generation: 1, sireRef: 'The Architect (G6S Carrier Founder Male)', damRef: 'The Oracle (G6S Carrier Founder Female)', birthYear: 2019,
     notes: 'G6S Affected - DO NOT BREED!',
     coiTestScenario: 'Gen 1 - got affected genotype',
     genetics: {
@@ -2451,7 +2603,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
 
   // === HORSES - Mustang (Free Horses) ===
   // HERDA carrier testing
-  { name: 'Nebuchadnezzar Horse', species: 'HORSE', sex: 'MALE', breed: 'Mustang', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
+  { name: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', species: 'HORSE', sex: 'MALE', breed: 'Mustang', generation: 0, birthYear: 2012, testProvider: 'UC Davis VGL',
     notes: 'Named after Morpheus\' ship. Founder sire. HERDA Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2462,15 +2614,15 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2015-07-20', eventName: 'Zion Freedom Run', eventLocation: 'Zion' },
     ]
   },
-  { name: 'Zion Mare', species: 'HORSE', sex: 'FEMALE', breed: 'Mustang', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
-    notes: 'Founder dam. HERDA Carrier - DO NOT BREED TO NEB HORSE!',
+  { name: 'Zion (HERDA Carrier Founder Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Mustang', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
+    notes: 'Founder dam. HERDA Carrier - DO NOT BREED TO NEBUCHADNEZZAR!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('D', 'Dilute', 'D', 'd')],
       health: [healthLocus('HERDA', 'Hereditary Equine Regional Dermal Asthenia', 'N/m')]
     }
   },
-  { name: 'Sentinel Runner', species: 'HORSE', sex: 'MALE', breed: 'Mustang', generation: 1, sireRef: 'Nebuchadnezzar Horse', damRef: 'Zion Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Sentinel (HERDA Carrier Gen1 Colt)', species: 'HORSE', sex: 'MALE', breed: 'Mustang', generation: 1, sireRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', damRef: 'Zion (HERDA Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'HERDA Carrier × Carrier = 25% affected!',
     coiTestScenario: 'Gen 1 - HERDA carrier × carrier warning',
     genetics: {
@@ -2478,7 +2630,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('HERDA', 'Hereditary Equine Regional Dermal Asthenia', 'N/m')]
     }
   },
-  { name: 'Oracle\'s Filly', species: 'HORSE', sex: 'FEMALE', breed: 'Mustang', generation: 1, sireRef: 'Nebuchadnezzar Horse', damRef: 'Zion Mare', birthYear: 2016, testProvider: 'UC Davis VGL',
+  { name: 'Oracle (HERDA Clear Gen1 Filly)', species: 'HORSE', sex: 'FEMALE', breed: 'Mustang', generation: 1, sireRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', damRef: 'Zion (HERDA Carrier Founder Mare)', birthYear: 2016, testProvider: 'UC Davis VGL',
     notes: 'HERDA Clear from carrier × carrier.',
     coiTestScenario: 'Gen 1 - got clear genotype',
     genetics: {
@@ -2489,7 +2641,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
 
   // === DOGS - Belgian Malinois (Resistance Dogs) ===
   // DM carrier testing
-  { name: 'Agent Hunter', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 0, birthYear: 2014, testProvider: 'Embark',
+  { name: 'Agent Hunter (DM Carrier Founder Male)', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 0, birthYear: 2014, testProvider: 'Embark',
     notes: 'Trained to detect Agents. Founder sire. DM Carrier - WARNING!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2500,7 +2652,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       { titleAbbreviation: 'CH', dateEarned: '2016-05-15', eventName: 'Zion Guard Dog Trials', eventLocation: 'Zion', pointsEarned: 15, majorWins: 2 },
     ]
   },
-  { name: 'Operator\'s Companion', species: 'DOG', sex: 'FEMALE', breed: 'Belgian Malinois', generation: 0, birthYear: 2015, testProvider: 'Embark',
+  { name: 'Tank (DM Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Belgian Malinois', generation: 0, birthYear: 2015, testProvider: 'Embark',
     notes: 'Founder dam. DM Carrier - DO NOT BREED TO AGENT HUNTER!',
     coiTestScenario: 'Founder - no inbreeding',
     genetics: {
@@ -2508,7 +2660,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m')]
     }
   },
-  { name: 'Unplugged Pup', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 1, sireRef: 'Agent Hunter', damRef: 'Operator\'s Companion', birthYear: 2018, testProvider: 'Embark',
+  { name: 'Unplugged (DM Carrier Gen1 Male)', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 1, sireRef: 'Agent Hunter (DM Carrier Founder Male)', damRef: 'Tank (DM Carrier Founder Female)', birthYear: 2018, testProvider: 'Embark',
     notes: 'DM Carrier × Carrier = 25% affected risk!',
     coiTestScenario: 'Gen 1 - DM carrier × carrier warning',
     genetics: {
@@ -2516,7 +2668,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m')]
     }
   },
-  { name: 'Kung Fu Pup', species: 'DOG', sex: 'FEMALE', breed: 'Belgian Malinois', generation: 1, sireRef: 'Agent Hunter', damRef: 'Operator\'s Companion', birthYear: 2018, testProvider: 'Embark',
+  { name: 'Kung Fu (DM Affected Gen1 Female)', species: 'DOG', sex: 'FEMALE', breed: 'Belgian Malinois', generation: 1, sireRef: 'Agent Hunter (DM Carrier Founder Male)', damRef: 'Tank (DM Carrier Founder Female)', birthYear: 2018, testProvider: 'Embark',
     notes: 'DM Affected from carrier × carrier - DO NOT BREED!',
     coiTestScenario: 'Gen 1 - got affected genotype',
     genetics: {
@@ -2524,7 +2676,7 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'm/m')]
     }
   },
-  { name: 'High COI Matrix Pup', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 2, sireRef: 'Unplugged Pup', damRef: 'Kung Fu Pup', birthYear: 2021, testProvider: 'Embark',
+  { name: 'Resistance (High COI DM Carrier Male)', species: 'DOG', sex: 'MALE', breed: 'Belgian Malinois', generation: 2, sireRef: 'Unplugged (DM Carrier Gen1 Male)', damRef: 'Kung Fu (DM Affected Gen1 Female)', birthYear: 2021, testProvider: 'Embark',
     notes: 'FULL SIBLING PARENTS! HIGH COI ~25%.',
     coiTestScenario: 'Gen 2 full sibling mating - COI ~25% (HIGH)',
     genetics: {
@@ -2594,26 +2746,26 @@ export const DEV_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]>
 // PROD Breeding Plans
 export const PROD_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]> = {
   arrakis: [
-    { name: 'Atreides Hound Program 2026', nickname: 'Spice Dogs', species: 'DOG', breedText: 'Saluki', damRef: 'Shai-Hulud Dame', sireRef: 'Muad\'Dib Hunter', status: 'PLANNING', notes: 'Desert-adapted hunting dogs for House Atreides.', expectedCycleStart: new Date('2026-03-01') },
-    { name: 'Caladan Legacy', species: 'HORSE', breedText: 'Arabian', damRef: 'Caladan Mare', sireRef: 'Duke Leto\'s Steed', status: 'COMMITTED', notes: 'Preserving the Atreides equine bloodline.' },
-    { name: 'Bene Gesserit Companions', species: 'CAT', breedText: 'Abyssinian', damRef: 'Bene Gesserit Cat', sireRef: 'Mentat Companion', status: 'PLANNING', notes: 'Breeding perceptive feline companions.' },
-    { name: 'Fremen Pack', species: 'DOG', breedText: 'Saluki', damRef: 'Fremen Scout', sireRef: 'Spice Runner', status: 'COMMITTED', notes: 'Sietch guard dogs.' },
+    { name: 'Atreides Hound Program 2026', nickname: 'Spice Dogs', species: 'DOG', breedText: 'Saluki', damRef: 'Shai-Hulud Dame (DM Carrier Founder Female)', sireRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)', status: 'PLANNING', notes: 'Desert-adapted hunting dogs for House Atreides.', expectedCycleStart: new Date('2026-03-01') },
+    { name: 'Caladan Legacy', species: 'HORSE', breedText: 'Arabian', damRef: 'Caladan Jewel (SCID Carrier Founder Mare)', sireRef: 'Duke Leto (SCID Carrier Founder Stallion)', status: 'COMMITTED', notes: 'Preserving the Atreides equine bloodline.' },
+    { name: 'Bene Gesserit Companions', species: 'CAT', breedText: 'Abyssinian', damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', sireRef: 'Mentat (PKDef Carrier Type B Founder Male)', status: 'PLANNING', notes: 'Breeding perceptive feline companions.' },
+    { name: 'Fremen Pack', species: 'DOG', breedText: 'Saluki', damRef: 'Fremen Scout (DM Affected Female)', sireRef: 'Spice Runner (DM Carrier Gen1 Male)', status: 'COMMITTED', notes: 'Sietch guard dogs.' },
   ],
   starfleet: [
-    { name: 'Enterprise Cats 2026', species: 'CAT', breedText: 'Exotic Shorthair', damRef: 'Enterprise Cat', sireRef: 'Spot', status: 'PLANNING', notes: 'Ship cat breeding program for starships.' },
-    { name: 'Academy Service Dogs', species: 'DOG', breedText: 'Border Collie', damRef: 'Ten Forward Lass', sireRef: 'Number One Dog', status: 'COMMITTED', notes: 'Service dogs for Starfleet Academy.' },
-    { name: 'Station Rabbits', species: 'RABBIT', breedText: 'Flemish Giant', damRef: 'Vulcan Lop', sireRef: 'Tribble Alternative', status: 'PLANNING', notes: 'Alternative to tribbles for station morale.' },
+    { name: 'Enterprise Cats 2026', species: 'CAT', breedText: 'Exotic Shorthair', damRef: 'Enterprise (PKD Carrier Founder Female)', sireRef: 'Spot (PKD Carrier Founder Male)', status: 'PLANNING', notes: 'Ship cat breeding program for starships.' },
+    { name: 'Academy Service Dogs', species: 'DOG', breedText: 'Border Collie', damRef: 'Ten Forward (CEA+TNS Carrier Founder Female)', sireRef: 'Number One (TNS Carrier Founder Male)', status: 'COMMITTED', notes: 'Service dogs for Starfleet Academy.' },
+    { name: 'Station Rabbits', species: 'RABBIT', breedText: 'Flemish Giant', damRef: 'T\'Pol (Founder Female)', sireRef: 'Tribble Alternative (Founder Male)', status: 'PLANNING', notes: 'Alternative to tribbles for station morale.' },
   ],
   richmond: [
-    { name: 'Diamond Dogs Breeding', nickname: 'Believe Litter', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Diamond Dogs Dam', sireRef: 'Biscuits', status: 'COMMITTED', notes: 'Breeding the next generation of AFC Richmond mascots.' },
-    { name: 'Nelson Road Horses', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Nelson Road Mare', sireRef: 'Total Football', status: 'PLANNING', notes: 'Horses for club promotional events.' },
-    { name: 'Wonder Kids Program', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Barbecue Sauce', sireRef: 'Believe Pup', status: 'PLANNING', notes: 'Youth development breeding program.' },
+    { name: 'Diamond Dogs Breeding', nickname: 'Believe Litter', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Rebecca (PRA Carrier Founder Female)', sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)', status: 'COMMITTED', notes: 'Breeding the next generation of AFC Richmond mascots.' },
+    { name: 'Nelson Road Horses', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Nelson Road (GBED Carrier Founder Mare)', sireRef: 'Total Football (GBED Carrier Founder Stallion)', status: 'PLANNING', notes: 'Horses for club promotional events.' },
+    { name: 'Wonder Kids Program', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Biscuits (PRA Affected Gen1 Female)', sireRef: 'Believe (PRA+ICH Carrier Gen1 Male)', status: 'PLANNING', notes: 'Youth development breeding program.' },
   ],
   zion: [
-    { name: 'Resistance Cat Program', species: 'CAT', breedText: 'Bombay', damRef: 'Matrix Queen', sireRef: 'The One Cat', status: 'COMMITTED', notes: 'Black cats of Zion breeding program.' },
-    { name: 'Free Horse Initiative', species: 'HORSE', breedText: 'Mustang', damRef: 'Zion Mare', sireRef: 'Nebuchadnezzar Horse', status: 'PLANNING', notes: 'Wild horse breeding for freedom.' },
-    { name: 'Zion Farm Goats', species: 'GOAT', breedText: 'La Mancha', damRef: 'Resistance Nanny', sireRef: 'Architect\'s Goat', status: 'COMMITTED', notes: 'Sustenance for Zion.' },
-    { name: 'Agent Tracker Dogs', species: 'DOG', breedText: 'Belgian Malinois', damRef: 'Operator\'s Companion', sireRef: 'Agent Hunter', status: 'PLANNING', notes: 'Training dogs to detect Agents.' },
+    { name: 'Resistance Cat Program', species: 'CAT', breedText: 'Bombay', damRef: 'Trinity (HCM Carrier Founder Female)', sireRef: 'Neo (HCM Carrier Founder Male)', status: 'COMMITTED', notes: 'Black cats of Zion breeding program.' },
+    { name: 'Free Horse Initiative', species: 'HORSE', breedText: 'Mustang', damRef: 'Zion (HERDA Carrier Founder Mare)', sireRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', status: 'PLANNING', notes: 'Wild horse breeding for freedom.' },
+    { name: 'Zion Farm Goats', species: 'GOAT', breedText: 'La Mancha', damRef: 'The Oracle (G6S Carrier Founder Female)', sireRef: 'The Architect (G6S Carrier Founder Male)', status: 'COMMITTED', notes: 'Sustenance for Zion.' },
+    { name: 'Agent Tracker Dogs', species: 'DOG', breedText: 'Belgian Malinois', damRef: 'Tank (DM Carrier Founder Female)', sireRef: 'Agent Hunter (DM Carrier Founder Male)', status: 'PLANNING', notes: 'Training dogs to detect Agents.' },
   ],
 };
 
