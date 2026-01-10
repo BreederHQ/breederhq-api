@@ -467,6 +467,7 @@ import businessHoursRoutes from "./routes/business-hours.js"; // Business hours 
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
 import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Admin breeder reports
 import adminSubscriptionRoutes from "./routes/admin-subscriptions.js"; // Admin subscription management
+import adminFeatureRoutes from "./routes/admin-features.js"; // Admin feature registry & analytics
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
 import usageRoutes from "./routes/usage.js"; // Usage and quota dashboard
 import billingRoutes from "./routes/billing.js"; // Billing and Stripe integration
@@ -796,6 +797,7 @@ app.register(
     api.register(adminMarketplaceRoutes); // /api/v1/admin/marketplace/* Admin marketplace management
     api.register(adminBreederReportsRoutes); // /api/v1/admin/breeder-reports/* Admin breeder reports
     api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
+    api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
