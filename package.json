@@ -42,6 +42,8 @@
     "test:quota": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/test-quota-enforcement.ts",
     "test:usage": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/test-usage-api.ts",
     "test:genetics": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/test-genetics-lab.ts",
+    "db:dev:seed:validation": "node scripts/run-with-env.js .env.dev.migrate npx tsx scripts/seed-validation-tenants/seed-dev.ts",
+    "db:prod:seed:validation": "node scripts/run-with-env.js .env.prod.migrate npx tsx scripts/seed-validation-tenants/seed-prod.ts",
     "db:prod:seed:traits": "node scripts/run-with-env.js .env.prod.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:prod:status": "node scripts/run-with-env.js .env.prod.migrate prisma migrate status --schema=prisma/schema.prisma",
     "db:prod:deploy": "node scripts/run-with-env.js .env.prod.migrate prisma migrate deploy --schema=prisma/schema.prisma",
