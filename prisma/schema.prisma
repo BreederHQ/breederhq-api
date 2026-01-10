@@ -375,6 +375,40 @@ enum WaitlistStatus {
 }
 
 /**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Cross-tenant animal linking enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum ParentType {
+  SIRE
+  DAM
+}
+
+enum LinkRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
+enum LinkMethod {
+  GAID
+  EXCHANGE_CODE
+  REGISTRY_MATCH
+  MICROCHIP_MATCH
+  BREEDER_REQUEST
+  OFFSPRING_DERIVED
+}
+
+enum RevokedBy {
+  CHILD_OWNER
+  PARENT_OWNER
+  SYSTEM
+}
+
+/**
  * Offspring Group linking state
  */
 enum OffspringLinkState {
@@ -556,6 +590,9 @@ model User {
 
   // Cross-tenant lineage
   lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
+
+  // Cross-tenant animal linking
+  animalLinkRequestsSent AnimalLinkRequest[] @relation("LinkRequestFromUser")
 
   // Communications Hub
   drafts Draft[] @relation("DraftCreatedBy")
@@ -814,6 +851,12 @@ model Tenant {
   contributedIdentifiers  GlobalAnimalIdentifier[]
   lineageRequestsSent     LineageInfoRequest[]     @relation("LineageRequestFrom")
   lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
+
+  // Cross-tenant animal linking
+  linkRequestsFrom          AnimalLinkRequest[]     @relation("LinkRequestFrom")
+  linkRequestsTo            AnimalLinkRequest[]     @relation("LinkRequestTo")
+  crossTenantLinksAsChild   CrossTenantAnimalLink[] @relation("LinkChildTenant")
+  crossTenantLinksAsParent  CrossTenantAnimalLink[] @relation("LinkParentTenant")
 
   // Title & Competition tracking
   titleDefinitions   TitleDefinition[]
@@ -1680,6 +1723,12 @@ model Animal {
   coiGenerations  Int? // number of generations used in calculation
   coiCalculatedAt DateTime? // when COI was last computed
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-tenant linking: Exchange codes for quick breeder-to-breeder sharing
+  // ─────────────────────────────────────────────────────────────────────────────
+  exchangeCode          String?   @unique // Short-lived shareable code (e.g., "DUKE-8472")
+  exchangeCodeExpiresAt DateTime? // When the code expires (7 days from generation)
+
   // Cross-tenant lineage identity link
   identityLink    AnimalIdentityLink?
   privacySettings AnimalPrivacySettings?
@@ -1733,6 +1782,14 @@ model Animal {
   // Cached title strings for display (computed and stored on title changes)
   titlePrefix String? // "GCH CH" - prefix titles in display order
   titleSuffix String? // "CD CGC" - suffix titles in display order
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-tenant animal linking relations
+  // ─────────────────────────────────────────────────────────────────────────────
+  linkRequestsAsSource AnimalLinkRequest[]    @relation("LinkSource")
+  linkRequestsAsTarget AnimalLinkRequest[]    @relation("LinkTarget")
+  crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkedChild")
+  crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkedParent")
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -4744,6 +4801,9 @@ model GlobalAnimalIdentity {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Global Animal ID - human-readable unique identifier (e.g., "DOG-7X4K-9M2P-QR8T")
+  gaid String? @unique
+
   // Denormalized core identity (from highest-confidence source)
   species   Species
   sex       Sex?
@@ -4852,6 +4912,12 @@ model AnimalPrivacySettings {
   showGeneticData   Boolean @default(false)
   showBreeder       Boolean @default(true) // Show tenant/breeder name
 
+  // Achievements visibility - controls what shows in cross-tenant pedigree views
+  showTitles             Boolean @default(true) // Show title abbreviations (CH, GCH, etc.)
+  showTitleDetails       Boolean @default(false) // Show event name, location, date where earned
+  showCompetitions       Boolean @default(false) // Show competition entry count and placements
+  showCompetitionDetails Boolean @default(false) // Show individual competition results
+
   // Contact preferences
   allowInfoRequests  Boolean @default(true) // Can others request more info?
   allowDirectContact Boolean @default(false) // Show contact info directly?
@@ -4911,6 +4977,102 @@ enum LineageAccessLevel {
   BASIC // Name, breed, DOB year
   STANDARD // Name, breed, full DOB, registry (partial)
   FULL // Everything the owner has made shareable
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Cross-Tenant Animal Linking
+ * Enables breeders to link their animals' pedigrees with animals owned by other breeders
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * AnimalLinkRequest - Request from one breeder to link their animal's parent to another breeder's animal
+ * Workflow: Create Request → Target Breeder Approves/Denies → Active Link Created
+ */
+model AnimalLinkRequest {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Requesting party (the breeder who wants to link a parent)
+  requestingTenantId Int
+  requestingTenant   Tenant @relation("LinkRequestFrom", fields: [requestingTenantId], references: [id], onDelete: Cascade)
+  requestingUserId   String
+  requestingUser     User   @relation("LinkRequestFromUser", fields: [requestingUserId], references: [id], onDelete: Cascade)
+
+  // Source animal (the animal that needs a parent linked)
+  sourceAnimalId   Int
+  sourceAnimal     Animal     @relation("LinkSource", fields: [sourceAnimalId], references: [id], onDelete: Cascade)
+  relationshipType ParentType // SIRE or DAM
+
+  // Target discovery - how the target animal was found (at least one populated)
+  targetAnimalId     Int? // Direct animal ID if known
+  targetAnimal       Animal?  @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
+  targetGaid         String? // GAID if searched by global ID
+  targetExchangeCode String? // Exchange code if shared directly
+  targetRegistryId   Int? // Registry ID if searched by registry number
+  targetRegistryNum  String? // Registry number
+  targetTenantId     Int? // Target breeder if found via breeder search
+  targetTenant       Tenant?  @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
+
+  // Request details
+  message String? @db.Text // Message from requester
+
+  // Response
+  status                  LinkRequestStatus @default(PENDING)
+  respondedAt             DateTime?
+  responseMessage         String?           @db.Text
+  denialReason            String? // Reason if denied
+  confirmedTargetAnimalId Int? // The actual animal ID selected by target breeder on approval
+
+  // Link created from this request (if approved)
+  resultingLink CrossTenantAnimalLink?
+
+  @@index([requestingTenantId])
+  @@index([targetTenantId])
+  @@index([targetAnimalId])
+  @@index([sourceAnimalId])
+  @@index([status])
+}
+
+/**
+ * CrossTenantAnimalLink - An active link between a child animal and a parent animal across tenants
+ * Created when a link request is approved
+ */
+model CrossTenantAnimalLink {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Child animal (the animal with the linked parent)
+  childAnimalId Int
+  childAnimal   Animal @relation("LinkedChild", fields: [childAnimalId], references: [id], onDelete: Cascade)
+  childTenantId Int
+  childTenant   Tenant @relation("LinkChildTenant", fields: [childTenantId], references: [id], onDelete: Cascade)
+
+  // Parent animal (the animal being linked as parent)
+  parentAnimalId Int
+  parentAnimal   Animal     @relation("LinkedParent", fields: [parentAnimalId], references: [id], onDelete: Cascade)
+  parentTenantId Int
+  parentTenant   Tenant     @relation("LinkParentTenant", fields: [parentTenantId], references: [id], onDelete: Cascade)
+  parentType     ParentType // SIRE or DAM
+
+  // Provenance
+  linkRequestId Int?               @unique
+  linkRequest   AnimalLinkRequest? @relation(fields: [linkRequestId], references: [id], onDelete: SetNull)
+  linkMethod    LinkMethod // How the link was established
+
+  // Status
+  active           Boolean    @default(true)
+  revokedAt        DateTime?
+  revokedBy        RevokedBy?
+  revocationReason String?
+
+  @@unique([childAnimalId, parentType]) // Each animal can have only one sire and one dam linked cross-tenant
+  @@index([parentAnimalId])
+  @@index([childTenantId])
+  @@index([parentTenantId])
+  @@index([active])
 }
 
 /**
@@ -5029,6 +5191,9 @@ model AnimalTitle {
   verifiedBy  String? // User ID or "AKC Registry"
   registryRef String? // External reference number
 
+  // Public visibility for cross-tenant pedigree views
+  isPublic Boolean @default(false)
+
   notes     String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5040,6 +5205,7 @@ model AnimalTitle {
   @@index([tenantId])
   @@index([animalId])
   @@index([status])
+  @@index([isPublic])
 }
 
 /**
@@ -5104,6 +5270,9 @@ model CompetitionEntry {
   // Judge
   judgeName String?
 
+  // Public visibility for cross-tenant pedigree views
+  isPublic Boolean @default(false)
+
   notes     String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5115,6 +5284,7 @@ model CompetitionEntry {
   @@index([animalId])
   @@index([eventDate])
   @@index([competitionType])
+  @@index([isPublic])
 }
 
 /**

@@ -478,6 +478,7 @@ import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events,
 import templatesRoutes from "./routes/templates.js"; // Email/message templates
 import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
+import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -785,6 +786,7 @@ app.register(
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(communicationsRoutes); // /api/v1/communications/* Communications Hub
     api.register(draftsRoutes);         // /api/v1/drafts/* Draft messages/emails
+    api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
