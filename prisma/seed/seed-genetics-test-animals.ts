@@ -393,6 +393,55 @@ const DOG_TEST_ANIMALS: TestAnimal[] = [
       ],
     },
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // INCOMPLETE GENETICS TESTING - For "What's Missing" Analysis Feature
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Mystery Mutt (Incomplete Genetics)",
+    species: "DOG",
+    sex: "MALE",
+    breed: "Mixed Breed",
+    birthDate: new Date("2022-09-10"),
+    notes: "INTENTIONALLY INCOMPLETE GENETICS. Only has B locus. For testing 'What's Missing' analysis feature.",
+    testProvider: "Unknown",
+    genetics: {
+      coatColor: [
+        locus("B", "Brown", "B", "b"),          // Only 1 locus - missing A, D, E, K, M, S
+      ],
+      // No coat type data
+      // No health data - should trigger suggestions for common tests
+    },
+  },
+  {
+    name: "Rescue Rover (Partial Panel)",
+    species: "DOG",
+    sex: "FEMALE",
+    breed: "German Shepherd Mix",
+    birthDate: new Date("2021-03-25"),
+    notes: "PARTIAL GENETICS. Has color but no health testing. Tests 'What's Missing' for health recommendations.",
+    testProvider: "Basic Pet Store Test",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "at", "at"),
+        locus("B", "Brown", "B", "B"),
+        // Missing D, E, K, M, S loci
+      ],
+      // No health testing at all
+    },
+  },
+  {
+    name: "New Puppy (Awaiting Test)",
+    species: "DOG",
+    sex: "MALE",
+    breed: "Labrador Retriever",
+    birthDate: new Date("2024-01-05"),
+    notes: "NO GENETICS YET. Brand new puppy awaiting DNA test. Should show all categories as missing.",
+    // No testProvider - not tested yet
+    genetics: {
+      // Completely empty - tests worst case scenario
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -503,6 +552,79 @@ const HORSE_TEST_ANIMALS: TestAnimal[] = [
       ],
     },
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // APPALOOSA TESTING - Double LP (LP/LP) Vision Issues Warning
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Spots Galore (LP Carrier Mare)",
+    species: "HORSE",
+    sex: "FEMALE",
+    breed: "Appaloosa",
+    birthDate: new Date("2019-07-14"),
+    notes: "Leopard Complex carrier (LP/lp). WARNING: LP/lp × LP/lp = 25% homozygous with night blindness/vision issues!",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("E", "Extension", "E", "e"),      // Black-based, carries red
+        locus("A", "Agouti", "A", "a"),         // Bay
+        locus("LP", "Leopard Complex", "LP", "lp"),  // LP CARRIER - VISION WARNING!
+        locus("PATN1", "Pattern 1", "PATN1", "N"),   // Pattern modifier
+        locus("Cr", "Cream", "n", "n"),
+        locus("G", "Gray", "n", "n"),
+      ],
+      health: [
+        healthLocus("CSNB", "Congenital Stationary Night Blindness", "At Risk"),  // Linked to LP
+        healthLocus("GBED", "Glycogen Branching Enzyme Deficiency", "N/N"),
+        healthLocus("HERDA", "Hereditary Equine Regional Dermal Asthenia", "N/N"),
+      ],
+    },
+  },
+  {
+    name: "Appaloosa King (LP Carrier Stallion)",
+    species: "HORSE",
+    sex: "MALE",
+    breed: "Appaloosa",
+    birthDate: new Date("2018-04-20"),
+    notes: "Leopard Complex carrier. Pair with Spots Galore for DOUBLE LP WARNING - vision issues in homozygotes!",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("E", "Extension", "E", "E"),
+        locus("A", "Agouti", "a", "a"),         // Black
+        locus("LP", "Leopard Complex", "LP", "lp"),  // LP CARRIER - VISION WARNING!
+        locus("PATN1", "Pattern 1", "N", "N"),  // No pattern modifier
+        locus("Cr", "Cream", "Cr", "n"),        // Single cream = palomino/buckskin base
+      ],
+      health: [
+        healthLocus("CSNB", "Congenital Stationary Night Blindness", "At Risk"),
+        healthLocus("HYPP", "Hyperkalemic Periodic Paralysis", "N/N"),
+        healthLocus("PSSM", "Polysaccharide Storage Myopathy", "N/N"),
+      ],
+    },
+  },
+  {
+    name: "Blanket Beauty (LP Clear Mare)",
+    species: "HORSE",
+    sex: "FEMALE",
+    breed: "Appaloosa",
+    birthDate: new Date("2020-05-30"),
+    notes: "Non-LP mare (lp/lp). Safe to breed with any LP stallion - offspring will be carriers at most.",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("E", "Extension", "E", "e"),
+        locus("A", "Agouti", "A", "A"),
+        locus("LP", "Leopard Complex", "lp", "lp"),  // NO LP - safe
+        locus("PATN1", "Pattern 1", "PATN1", "PATN1"),  // Homozygous pattern
+        locus("Cr", "Cream", "n", "n"),
+      ],
+      health: [
+        healthLocus("CSNB", "Congenital Stationary Night Blindness", "N/N"),  // Clear
+        healthLocus("GBED", "Glycogen Branching Enzyme Deficiency", "N/N"),
+      ],
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -510,6 +632,100 @@ const HORSE_TEST_ANIMALS: TestAnimal[] = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const CAT_TEST_ANIMALS: TestAnimal[] = [
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SCOTTISH FOLD TESTING - Double Fold (Fd/Fd) Warning Scenario
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    name: "Nessie (Scottish Fold Carrier)",
+    species: "CAT",
+    sex: "FEMALE",
+    breed: "Scottish Fold",
+    birthDate: new Date("2022-05-18"),
+    notes: "Fold carrier (Fd/fd). WARNING: Do not breed to another fold carrier! Pair with Haggis to see warning.",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "A", "a"),         // Tabby, carries solid
+        locus("B", "Brown", "B", "B"),          // Black
+        locus("C", "Colorpoint", "C", "C"),     // Full color
+        locus("D", "Dilute", "D", "d"),         // Full color, carries blue
+        locus("O", "Orange", "o", "o"),         // Non-orange
+        locus("S", "White Spotting", "s", "s"), // No white
+      ],
+      coatType: [
+        locus("L", "Long Hair", "L", "l"),      // Short, carries long
+      ],
+      physicalTraits: [
+        locus("Fd", "Fold", "Fd", "fd"),        // FOLD CARRIER - WARNING!
+      ],
+      health: [
+        healthLocus("OCD", "Osteochondrodysplasia", "At Risk"),  // Linked to fold gene
+        healthLocus("PKD", "Polycystic Kidney Disease", "N/N"),
+        healthLocus("HCM", "Hypertrophic Cardiomyopathy", "N/N"),
+        healthLocus("BloodType", "Blood Type", "A"),  // Type A blood
+      ],
+    },
+  },
+  {
+    name: "Haggis (Scottish Fold Male)",
+    species: "CAT",
+    sex: "MALE",
+    breed: "Scottish Fold",
+    birthDate: new Date("2021-11-08"),
+    notes: "Fold carrier male. Pair with Nessie to see DOUBLE FOLD WARNING - severe cartilage issues!",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "a", "a"),         // Solid
+        locus("B", "Brown", "B", "b"),          // Black, carries chocolate
+        locus("C", "Colorpoint", "C", "C"),
+        locus("D", "Dilute", "d", "d"),         // Blue/dilute
+        locus("O", "Orange", "o", "Y"),         // Non-orange male
+        locus("S", "White Spotting", "S", "s"), // Some white
+      ],
+      coatType: [
+        locus("L", "Long Hair", "L", "L"),      // Short hair
+      ],
+      physicalTraits: [
+        locus("Fd", "Fold", "Fd", "fd"),        // FOLD CARRIER - WARNING!
+      ],
+      health: [
+        healthLocus("OCD", "Osteochondrodysplasia", "At Risk"),
+        healthLocus("PKD", "Polycystic Kidney Disease", "N/N"),
+        healthLocus("BloodType", "Blood Type", "B"),  // Type B blood - incompatible with Type A!
+      ],
+    },
+  },
+  {
+    name: "Bonnie (Scottish Straight)",
+    species: "CAT",
+    sex: "FEMALE",
+    breed: "Scottish Straight",
+    birthDate: new Date("2023-02-25"),
+    notes: "Scottish Straight (fd/fd) - non-fold. Safe to breed with any Scottish Fold.",
+    testProvider: "UC Davis VGL",
+    genetics: {
+      coatColor: [
+        locus("A", "Agouti", "A", "A"),
+        locus("B", "Brown", "B", "B"),
+        locus("C", "Colorpoint", "C", "cs"),    // Carries pointed
+        locus("D", "Dilute", "D", "D"),
+        locus("O", "Orange", "o", "o"),
+        locus("S", "White Spotting", "s", "s"),
+      ],
+      physicalTraits: [
+        locus("Fd", "Fold", "fd", "fd"),        // NON-FOLD - safe to breed with folds
+      ],
+      health: [
+        healthLocus("OCD", "Osteochondrodysplasia", "N/N"),  // Clear
+        healthLocus("BloodType", "Blood Type", "A"),
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // EXISTING CAT TESTS
+  // ─────────────────────────────────────────────────────────────────────────────
   {
     name: "Whiskers (Pointed Carrier)",
     species: "CAT",
@@ -534,6 +750,7 @@ const CAT_TEST_ANIMALS: TestAnimal[] = [
         healthLocus("HCM_RD", "HCM (Ragdoll MYBPC3)", "N/m"),  // CARRIER
         healthLocus("PKD", "Polycystic Kidney Disease", "N/N"),
         healthLocus("PK_Def", "Pyruvate Kinase Deficiency", "N/N"),
+        healthLocus("BloodType", "Blood Type", "A"),  // Type A blood
       ],
     },
   },
@@ -596,7 +813,7 @@ const CAT_TEST_ANIMALS: TestAnimal[] = [
 
 const RABBIT_TEST_ANIMALS: TestAnimal[] = [
   {
-    name: "Patches (Broken Pattern Carrier)",
+    name: "Patches (Broken Pattern Doe)",
     species: "RABBIT",
     sex: "FEMALE",
     breed: "Holland Lop",
@@ -618,12 +835,12 @@ const RABBIT_TEST_ANIMALS: TestAnimal[] = [
     },
   },
   {
-    name: "Oreo (Broken Pattern Male)",
+    name: "Oreo (Broken Pattern Buck)",
     species: "RABBIT",
     sex: "MALE",
     breed: "Holland Lop",
     birthDate: new Date("2023-01-08"),
-    notes: "Broken pattern male. Pair with Patches for 25% Charlie warning.",
+    notes: "Broken pattern buck. Pair with Patches for 25% Charlie warning.",
     genetics: {
       coatColor: [
         locus("A", "Agouti", "a", "a"),         // Self/solid
@@ -640,7 +857,7 @@ const RABBIT_TEST_ANIMALS: TestAnimal[] = [
     },
   },
   {
-    name: "Snowball (BEW)",
+    name: "Snowball (BEW Doe)",
     species: "RABBIT",
     sex: "FEMALE",
     breed: "Netherland Dwarf",
@@ -1446,7 +1663,7 @@ async function main() {
 
   console.log('📋 TEST SCENARIOS:');
   console.log('─'.repeat(70));
-  console.log('🐕 DOGS - Genetics:');
+  console.log('🐕 DOGS - Dangerous Pairings & Health:');
   console.log('   • Luna × Maverick = DOUBLE MERLE WARNING (M/m × M/m)');
   console.log('   • Luna × Shadow = Safe merle breeding');
   console.log('   • Bella × Cooper = Doodle furnishings test');
@@ -1461,22 +1678,42 @@ async function main() {
   console.log('   • Enhanced Clone Sire × any = HIGH COI (father-daughter origin)');
   console.log('   • Jango Fett × Kamino Clone Dam Alpha = CRITICAL (father-daughter)');
   console.log('');
-  console.log('🐴 HORSES:');
+  console.log('📊 DOGS - What\'s Missing Analysis:');
+  console.log('   • Mystery Mutt = Only has B locus, missing all other coat color');
+  console.log('   • Rescue Rover = Has color but NO health testing');
+  console.log('   • New Puppy = COMPLETELY EMPTY genetics (worst case)');
+  console.log('');
+  console.log('🐴 HORSES - Dangerous Pairings:');
   console.log('   • Painted Lady × Storm Chaser = LETHAL WHITE OVERO WARNING');
   console.log('   • Painted Lady × Midnight Run = Safe paint breeding');
   console.log('   • Impressive Legacy = HYPP carrier testing');
+  console.log('   • Spots Galore × Appaloosa King = DOUBLE LP WARNING (vision issues)');
+  console.log('   • Spots Galore × Blanket Beauty = Safe LP breeding');
   console.log('');
-  console.log('🐱 CATS:');
+  console.log('🐱 CATS - Dangerous Pairings & Blood Types:');
+  console.log('   • Nessie × Haggis = DOUBLE FOLD WARNING (Fd/fd × Fd/fd)');
+  console.log('   • Nessie × Bonnie = Safe fold breeding (Fd/fd × fd/fd)');
+  console.log('   • Nessie (Type A) × Haggis (Type B) = Neonatal Isoerythrolysis risk');
   console.log('   • Whiskers × Shadow = Colorpoint genetics test');
   console.log('   • Luna (Tortie) = Orange gene sex-linkage');
   console.log('');
   console.log('🐰 RABBITS:');
-  console.log('   • Patches × Oreo = CHARLIE WARNING (En/en × En/en)');
-  console.log('   • Snowball = Vienna/BEW genetics');
+  console.log('   • Patches (Doe) × Oreo (Buck) = CHARLIE WARNING (En/en × En/en)');
+  console.log('   • Snowball (BEW Doe) = Vienna/BEW genetics');
   console.log('');
   console.log('🐐 GOATS:');
   console.log('   • Buttercup × Thunder = POLLED × POLLED WARNING (intersex)');
   console.log('   • Buttercup × (horned) or Clover × Thunder = Safe breeding');
+  console.log('─'.repeat(70));
+  console.log('');
+  console.log('✅ ALL 7 DANGEROUS PAIRING TYPES TESTABLE:');
+  console.log('   1. Double Merle (Dog): Luna × Maverick');
+  console.log('   2. Lethal White Overo (Horse): Painted Lady × Storm Chaser');
+  console.log('   3. Charlie (Rabbit): Patches × Oreo');
+  console.log('   4. Polled × Polled (Goat): Buttercup × Thunder');
+  console.log('   5. Double Fold (Cat): Nessie × Haggis');
+  console.log('   6. Double LP (Horse): Spots Galore × Appaloosa King');
+  console.log('   7. Blood Type Incompatibility (Cat): Nessie × Haggis');
   console.log('─'.repeat(70));
   console.log('\n💡 Login as luke.skywalker@tester.local to test in Genetics Lab\n');
 }
