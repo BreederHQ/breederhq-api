@@ -505,8 +505,8 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           LineItems: {
             select: {
               description: true,
-              quantity: true,
-              unitPriceCents: true,
+              qty: true,
+              unitCents: true,
             },
           },
         },
@@ -544,9 +544,9 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           product_data: {
             name: item.description || "Invoice item",
           },
-          unit_amount: item.unitPriceCents,
+          unit_amount: item.unitCents,
         },
-        quantity: item.quantity,
+        quantity: item.qty,
       }));
 
       // If there's a partial payment, adjust or add a credit line

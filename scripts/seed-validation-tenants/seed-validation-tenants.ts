@@ -488,20 +488,16 @@ async function seedAnimals(
         });
 
         // Create privacy settings based on tenant defaults + overrides
+        // Map old config field names to new schema field names
         const privacySettings = {
-          ...{
-            showName: defaultLineageVisibility.defaultShowName,
-            showPhoto: defaultLineageVisibility.defaultShowPhoto,
-            showFullDob: defaultLineageVisibility.defaultShowFullDob,
-            showRegistryFull: defaultLineageVisibility.defaultShowRegistryFull,
-            showHealthResults: defaultLineageVisibility.defaultShowHealthResults,
-            showGeneticData: defaultLineageVisibility.defaultShowGeneticData,
-            showBreeder: defaultLineageVisibility.defaultShowBreeder,
-            allowInfoRequests: defaultLineageVisibility.defaultAllowInfoRequests,
-            allowDirectContact: defaultLineageVisibility.defaultAllowDirectContact,
-            allowCrossTenantMatching: defaultLineageVisibility.allowCrossTenantMatching,
-          },
-          ...animalDef.privacyOverrides,
+          showName: defaultLineageVisibility.defaultShowName,
+          showPhoto: defaultLineageVisibility.defaultShowPhoto,
+          showFullDob: defaultLineageVisibility.defaultShowFullDob,
+          showRegistryFull: defaultLineageVisibility.defaultShowRegistryFull,
+          enableHealthSharing: defaultLineageVisibility.defaultShowHealthResults,
+          enableGeneticsSharing: defaultLineageVisibility.defaultShowGeneticData,
+          showBreeder: defaultLineageVisibility.defaultShowBreeder,
+          allowCrossTenantMatching: defaultLineageVisibility.allowCrossTenantMatching,
         };
 
         await tx.animalPrivacySettings.create({
@@ -1625,7 +1621,7 @@ async function main() {
 
     // 2. Create owner/admin user
     console.log('\n  [User]');
-    await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
+    const ownerUserId = await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
     stats.users++;
 
     // 3. Create organizations
@@ -1741,7 +1737,7 @@ async function main() {
       env,
       draftDefs,
       tenantContacts,
-      marketplaceUserDefs
+      ownerUserId
     );
     stats.drafts += draftsCreated;
 
