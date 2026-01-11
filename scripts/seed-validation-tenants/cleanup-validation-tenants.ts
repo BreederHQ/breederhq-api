@@ -74,6 +74,18 @@ async function cleanupTenant(slug: string): Promise<void> {
   });
   console.log(`  - Deleted ${privacySettings.count} animal privacy settings`);
 
+  // 5b. Delete animal trait values (health traits)
+  const traitValues = await prisma.animalTraitValue.deleteMany({
+    where: { tenantId: tenant.id },
+  });
+  console.log(`  - Deleted ${traitValues.count} animal trait values`);
+
+  // 5c. Delete vaccination records
+  const vaccinations = await prisma.vaccinationRecord.deleteMany({
+    where: { tenantId: tenant.id },
+  });
+  console.log(`  - Deleted ${vaccinations.count} vaccination records`);
+
   // 6. Delete animals
   const animals = await prisma.animal.deleteMany({
     where: { tenantId: tenant.id },
@@ -98,11 +110,17 @@ async function cleanupTenant(slug: string): Promise<void> {
   });
   console.log(`  - Deleted ${waitlist.count} waitlist entries`);
 
-  // 10. Delete offspring
+  // 10. Delete offspring (individual offspring records)
   const offspring = await prisma.offspring.deleteMany({
     where: { tenantId: tenant.id },
   });
   console.log(`  - Deleted ${offspring.count} offspring`);
+
+  // 10b. Delete offspring groups (must be after offspring due to FK)
+  const offspringGroups = await prisma.offspringGroup.deleteMany({
+    where: { tenantId: tenant.id },
+  });
+  console.log(`  - Deleted ${offspringGroups.count} offspring groups`);
 
   // 11. Delete drafts
   const drafts = await prisma.draft.deleteMany({

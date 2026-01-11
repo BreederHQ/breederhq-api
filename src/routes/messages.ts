@@ -10,6 +10,7 @@ import {
   updateRunningAverage,
   type BusinessHoursSchedule,
 } from "../utils/business-hours.js";
+import { broadcastNewMessage } from "../services/websocket-service.js";
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
@@ -88,7 +89,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               recipientParty.email,
               recipientParty.name || "there",
               senderParty?.name || "Your breeder",
-              initialMessage
+              initialMessage,
+              thread.id // Pass threadId for reply-to address generation
             );
           } catch (notifErr) {
             // Don't fail the thread creation if notification fails
@@ -119,6 +121,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             console.error("Failed to log auto-reply error:", logErr);
           });
         }
+      }
+
+      // Broadcast new thread/message via WebSocket for real-time updates
+      const firstMessage = thread.messages[0];
+      if (firstMessage) {
+        broadcastNewMessage(tenantId, thread.id, {
+          id: firstMessage.id,
+          body: firstMessage.body,
+          senderPartyId: firstMessage.senderPartyId,
+          createdAt: firstMessage.createdAt.toISOString(),
+        }, [senderPartyId, recipientPartyId]);
       }
 
       return reply.send({ ok: true, thread });
@@ -379,6 +392,59 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           }).catch((logErr) => {
             console.error("Failed to log auto-reply error:", logErr);
           });
+        }
+      }
+
+      // Broadcast new message via WebSocket for real-time updates
+      const participantPartyIds = thread.participants.map((p) => p.partyId);
+      broadcastNewMessage(tenantId, threadId, {
+        id: message.id,
+        body: message.body,
+        senderPartyId: message.senderPartyId,
+        createdAt: message.createdAt.toISOString(),
+      }, participantPartyIds);
+
+      // Send email notification to recipient(s) when breeder/org sends a reply
+      if (isOrgSending) {
+        // Find recipients (participants who are not the sender)
+        const recipientPartyIds = participantPartyIds.filter(id => id !== userPartyId);
+
+        // Get recipient party info for notifications
+        for (const recipientPartyId of recipientPartyIds) {
+          try {
+            const recipientParty = await prisma.party.findFirst({
+              where: { id: recipientPartyId, tenantId },
+              select: { id: true, name: true, email: true },
+            });
+
+            if (recipientParty?.email) {
+              // Check if recipient has active portal access
+              const portalAccess = await prisma.portalAccess.findFirst({
+                where: { partyId: recipientPartyId, tenantId, status: "ACTIVE" },
+              });
+
+              // Only send notification if they have active portal access
+              // (otherwise they can't view the message anyway)
+              if (portalAccess) {
+                const senderParty = await prisma.party.findFirst({
+                  where: { id: userPartyId, tenantId },
+                  select: { name: true },
+                });
+
+                await sendNewMessageNotification(
+                  tenantId,
+                  recipientParty.email,
+                  recipientParty.name || "there",
+                  senderParty?.name || "Your breeder",
+                  messageBody,
+                  threadId // Pass threadId for reply-to address generation
+                );
+              }
+            }
+          } catch (notifErr) {
+            // Don't fail the message send if notification fails
+            console.error("Failed to send reply notification:", notifErr);
+          }
         }
       }
 

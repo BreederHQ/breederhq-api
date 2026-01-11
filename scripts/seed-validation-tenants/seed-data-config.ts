@@ -2793,6 +2793,795 @@ export function getTenantAnimals(env: Environment): Record<string, AnimalDefinit
 export const TENANT_ANIMALS = DEV_TENANT_ANIMALS;
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ANIMAL HEALTH TRAIT DEFINITIONS (Health tab data)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type TraitStatus = 'NOT_PROVIDED' | 'PROVIDED' | 'PENDING' | 'PASS' | 'FAIL';
+export type TraitSource = 'SELF_REPORTED' | 'VET' | 'LAB' | 'REGISTRY';
+
+export interface HealthTraitValue {
+  traitKey: string;            // e.g. "dog.hips.ofa", "cat.cardiac.hcmScreen"
+  valueBoolean?: boolean;
+  valueNumber?: number;
+  valueText?: string;
+  valueDate?: string;          // ISO date string
+  valueJson?: Record<string, unknown>;
+  status?: TraitStatus;
+  source?: TraitSource;
+  performedAt?: string;        // ISO date string when test was performed
+  notes?: string;
+  verified?: boolean;
+  marketplaceVisible?: boolean;
+  networkVisible?: boolean;
+}
+
+export interface AnimalHealthDefinition {
+  animalRef: string;           // Reference to animal by name
+  traits: HealthTraitValue[];
+}
+
+// Species-specific trait keys for reference
+export const HEALTH_TRAIT_KEYS = {
+  DOG: {
+    // Orthopedic
+    hipsOfa: 'dog.hips.ofa',
+    hipsPennhip: 'dog.hips.pennhip',
+    elbowsOfa: 'dog.elbows.ofa',
+    patellaLuxation: 'dog.patella.luxation',
+    // Eyes
+    eyesCaer: 'dog.eyes.caer',
+    // Cardiac
+    cardiacExam: 'dog.cardiac.exam',
+    cardiacMethod: 'dog.cardiac.method',
+    // Genetic
+    geneticsPanelCompleted: 'dog.genetics.panelCompleted',
+    geneticsSummary: 'dog.genetics.summary',
+    // Infectious
+    brucellosis: 'dog.infectious.brucellosis',
+    // Preventative
+    heartworm: 'dog.preventative.heartworm',
+    // Reproductive
+    reproProven: 'dog.repro.proven',
+    semenAnalysis: 'dog.repro.semenAnalysis',
+    // General
+    vaccinationsUpToDate: 'dog.general.vaccinationsUpToDate',
+    dewormingCurrent: 'dog.general.dewormingCurrent',
+    microchipped: 'dog.id.microchip',
+    akcNumber: 'dog.registry.akcNumber',
+  },
+  CAT: {
+    // Genetic
+    geneticsPanelCompleted: 'cat.genetics.panelCompleted',
+    pkd: 'cat.genetics.pkd',
+    // Cardiac
+    hcmScreen: 'cat.cardiac.hcmScreen',
+    // Infectious
+    felv: 'cat.infectious.felv',
+    fiv: 'cat.infectious.fiv',
+    // Eyes
+    eyeExam: 'cat.eyes.exam',
+    // General
+    vaccinationsUpToDate: 'cat.general.vaccinationsUpToDate',
+  },
+  HORSE: {
+    // Orthopedic
+    lamenessExam: 'horse.soundness.lamenessExam',
+    flexionTest: 'horse.soundness.flexionTest',
+    // Infectious
+    cogginsStatus: 'horse.infectious.cogginsStatus',
+    cogginsDate: 'horse.infectious.cogginsDate',
+    // Reproductive
+    breedingSoundness: 'horse.repro.breedingSoundness',
+    semenEvaluation: 'horse.repro.semenEvaluation',
+    // General
+    ppePerformed: 'horse.general.ppePerformed',
+    ppeOutcome: 'horse.general.ppeOutcome',
+    healthCertCurrent: 'horse.general.healthCertCurrent',
+    vaccinationsUpToDate: 'horse.general.vaccinationsUpToDate',
+  },
+  GOAT: {
+    // Infectious
+    cae: 'goat.infectious.cae',
+    cl: 'goat.infectious.cl',
+    johnes: 'goat.infectious.johnes',
+    // Reproductive
+    reproProven: 'goat.repro.proven',
+    // General
+    famacha: 'goat.general.famacha',
+    vaccinationsUpToDate: 'goat.general.vaccinationsUpToDate',
+    dewormingCurrent: 'goat.general.dewormingCurrent',
+  },
+  SHEEP: {
+    // Infectious
+    opp: 'sheep.infectious.opp',
+    johnes: 'sheep.infectious.johnes',
+    // Reproductive
+    reproProven: 'sheep.repro.proven',
+    // General
+    famacha: 'sheep.general.famacha',
+    vaccinationsUpToDate: 'sheep.general.vaccinationsUpToDate',
+    dewormingCurrent: 'sheep.general.dewormingCurrent',
+  },
+  RABBIT: {
+    // Reproductive
+    reproProven: 'rabbit.repro.proven',
+    // General
+    vetHealthCheck: 'rabbit.general.vetHealthCheck',
+    vaccinationsUpToDate: 'rabbit.general.vaccinationsUpToDate',
+    spayNeuter: 'rabbit.general.spayNeuter',
+  },
+};
+
+// PROD Animal Health Data - Comprehensive health records for key animals
+export const PROD_TENANT_HEALTH: Record<string, AnimalHealthDefinition[]> = {
+  arrakis: [
+    // Muad'Dib Hunter - Champion Saluki with excellent health
+    {
+      animalRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Excellent', status: 'PASS', source: 'VET', performedAt: '2022-06-15', verified: true, marketplaceVisible: true, networkVisible: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-06-15', verified: true, marketplaceVisible: true },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-01-20', verified: true },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-06-15' },
+        { traitKey: 'dog.cardiac.method', valueText: 'Auscultation', status: 'PROVIDED', source: 'VET' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2021-03-10' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-01-15', verified: true },
+        { traitKey: 'dog.preventative.heartworm', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2024-06-01' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED', source: 'SELF_REPORTED', notes: 'Sire of 3 successful litters' },
+        { traitKey: 'dog.repro.semenAnalysis', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-11-01' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Shai-Hulud Dame - Foundation female
+    {
+      animalRef: 'Shai-Hulud Dame (DM Carrier Founder Female)',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Good', status: 'PASS', source: 'VET', performedAt: '2022-05-20', verified: true, marketplaceVisible: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-05-20', verified: true },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-02-10' },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-05-20' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-01-15' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED', notes: 'Dam of 2 successful litters' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Reverend Mother - Abyssinian with health clearances
+    {
+      animalRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2021-08-15' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2021-08-15', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-04-10', verified: true },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-04-10' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-04-10' },
+        { traitKey: 'cat.eyes.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-04-10' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Duke Leto - Arabian stallion
+    {
+      animalRef: 'Duke Leto (SCID Carrier Founder Stallion)',
+      traits: [
+        { traitKey: 'horse.soundness.lamenessExam', valueText: 'Sound', status: 'PASS', source: 'VET', performedAt: '2023-03-15' },
+        { traitKey: 'horse.soundness.flexionTest', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2023-03-15' },
+        { traitKey: 'horse.infectious.cogginsStatus', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-02-01', verified: true },
+        { traitKey: 'horse.infectious.cogginsDate', valueDate: '2024-02-01', status: 'PROVIDED' },
+        { traitKey: 'horse.repro.breedingSoundness', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2023-03-15' },
+        { traitKey: 'horse.repro.semenEvaluation', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-03-15' },
+        { traitKey: 'horse.general.ppePerformed', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'horse.general.ppeOutcome', valueText: 'Pass', status: 'PASS', source: 'VET' },
+        { traitKey: 'horse.general.healthCertCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'horse.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+  starfleet: [
+    // Spot - Champion Exotic Shorthair
+    {
+      animalRef: 'Spot (PKD Carrier Founder Male)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2020-05-10' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2020-05-10', verified: true, marketplaceVisible: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-09-20', verified: true },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.eyes.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Enterprise - PKD Carrier female
+    {
+      animalRef: 'Enterprise (PKD Carrier Founder Female)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2021-02-15' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2021-02-15', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-09-20' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Tribble Alternative - Flemish Giant
+    {
+      animalRef: 'Tribble Alternative (Founder Male)',
+      traits: [
+        { traitKey: 'rabbit.repro.proven', valueBoolean: true, status: 'PROVIDED', notes: 'Proven sire of multiple litters' },
+        { traitKey: 'rabbit.general.vetHealthCheck', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2024-01-10' },
+        { traitKey: 'rabbit.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'rabbit.general.spayNeuter', valueText: 'Intact', status: 'PROVIDED' },
+      ],
+    },
+  ],
+  richmond: [
+    // Ted Lasso - Golden Retriever champion
+    {
+      animalRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Good', status: 'PASS', source: 'VET', performedAt: '2021-08-10', verified: true, marketplaceVisible: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2021-08-10', verified: true },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-08-15' },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2021-08-10' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2023-12-01' },
+        { traitKey: 'dog.preventative.heartworm', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2024-05-01' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Total Football - Thoroughbred with racing history
+    {
+      animalRef: 'Total Football (GBED Carrier Founder Stallion)',
+      traits: [
+        { traitKey: 'horse.soundness.lamenessExam', valueText: 'Sound', status: 'PASS', source: 'VET', performedAt: '2023-01-20' },
+        { traitKey: 'horse.soundness.flexionTest', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2023-01-20' },
+        { traitKey: 'horse.infectious.cogginsStatus', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-01-15', verified: true },
+        { traitKey: 'horse.infectious.cogginsDate', valueDate: '2024-01-15', status: 'PROVIDED' },
+        { traitKey: 'horse.repro.breedingSoundness', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2022-11-10' },
+        { traitKey: 'horse.general.ppePerformed', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'horse.general.ppeOutcome', valueText: 'Pass', status: 'PASS', source: 'VET' },
+        { traitKey: 'horse.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+  zion: [
+    // Neo - Bombay champion
+    {
+      animalRef: 'Neo (HCM Carrier Founder Male)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2020-11-20' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2020-11-20', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-06-15', verified: true, marketplaceVisible: true },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-06-15' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-06-15' },
+        { traitKey: 'cat.eyes.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-06-15' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // The Architect - La Mancha goat
+    {
+      animalRef: 'The Architect (G6S Carrier Founder Male)',
+      traits: [
+        { traitKey: 'goat.infectious.cae', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.infectious.cl', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.infectious.johnes', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.repro.proven', valueText: 'Proven', status: 'PROVIDED', notes: 'Proven sire with multiple kids' },
+        { traitKey: 'goat.general.famacha', valueText: '1', status: 'PASS', source: 'VET', performedAt: '2024-03-01' },
+        { traitKey: 'goat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'goat.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // The Oracle - La Mancha doe
+    {
+      animalRef: 'The Oracle (G6S Carrier Founder Female)',
+      traits: [
+        { traitKey: 'goat.infectious.cae', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.infectious.cl', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.infectious.johnes', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-04-10', verified: true },
+        { traitKey: 'goat.repro.proven', valueText: 'Proven', status: 'PROVIDED', notes: 'Proven dam with multiple successful kiddings' },
+        { traitKey: 'goat.general.famacha', valueText: '2', status: 'PASS', source: 'VET', performedAt: '2024-03-01' },
+        { traitKey: 'goat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'goat.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+};
+
+// DEV Animal Health Data - Middle Earth/Hogwarts/Westeros/Marvel themed
+export const DEV_TENANT_HEALTH: Record<string, AnimalHealthDefinition[]> = {
+  rivendell: [
+    // Fenrir - German Shepherd with full health clearances
+    {
+      animalRef: 'Fenrir',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Excellent', status: 'PASS', source: 'VET', performedAt: '2023-02-15', verified: true, marketplaceVisible: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-02-15', verified: true },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-06-10' },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-02-15' },
+        { traitKey: 'dog.cardiac.method', valueText: 'Echo', status: 'PROVIDED', source: 'VET' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-01-05' },
+        { traitKey: 'dog.preventative.heartworm', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2024-04-01' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.repro.semenAnalysis', valueText: 'Normal', status: 'PASS', source: 'VET' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Sköll - Foundation female
+    {
+      animalRef: 'Sköll',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Good', status: 'PASS', source: 'VET', performedAt: '2023-01-20', verified: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-01-20' },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-06-10' },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-01-05' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED', notes: 'Dam of award-winning litter' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Shadowfax - Andalusian stallion
+    {
+      animalRef: 'Shadowfax',
+      traits: [
+        { traitKey: 'horse.soundness.lamenessExam', valueText: 'Sound', status: 'PASS', source: 'VET', performedAt: '2023-05-20' },
+        { traitKey: 'horse.soundness.flexionTest', valueText: 'Pass', status: 'PASS', source: 'VET', performedAt: '2023-05-20' },
+        { traitKey: 'horse.infectious.cogginsStatus', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2024-03-01', verified: true },
+        { traitKey: 'horse.infectious.cogginsDate', valueDate: '2024-03-01', status: 'PROVIDED' },
+        { traitKey: 'horse.repro.breedingSoundness', valueText: 'Pass', status: 'PASS', source: 'VET' },
+        { traitKey: 'horse.general.ppePerformed', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'horse.general.ppeOutcome', valueText: 'Pass', status: 'PASS', source: 'VET' },
+        { traitKey: 'horse.general.healthCertCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'horse.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+  hogwarts: [
+    // Crookshanks - British Shorthair
+    {
+      animalRef: 'Crookshanks (PKD Carrier Founder Male)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2021-09-15' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2021-09-15', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-07-20' },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-07-20' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-07-20' },
+        { traitKey: 'cat.eyes.exam', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-07-20' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Kneazle Queen
+    {
+      animalRef: 'Kneazle Queen (Clear Founder Female)',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-07-20' },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+  winterfell: [
+    // Winter Pup Alpha - Alaskan Malamute
+    {
+      animalRef: 'Winter Pup Alpha',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Good', status: 'PASS', source: 'VET', performedAt: '2022-11-10', verified: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-11-10' },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-05-15' },
+        { traitKey: 'dog.cardiac.exam', valueText: 'Normal', status: 'PASS', source: 'VET' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2023-10-01' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.id.microchip', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Winter Pup Beta
+    {
+      animalRef: 'Winter Pup Beta',
+      traits: [
+        { traitKey: 'dog.hips.ofa', valueText: 'Excellent', status: 'PASS', source: 'VET', performedAt: '2022-11-10', verified: true },
+        { traitKey: 'dog.elbows.ofa', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2022-11-10' },
+        { traitKey: 'dog.eyes.caer', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-05-15' },
+        { traitKey: 'dog.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB' },
+        { traitKey: 'dog.infectious.brucellosis', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2023-10-01' },
+        { traitKey: 'dog.repro.proven', valueBoolean: true, status: 'PROVIDED', notes: 'Excellent maternal instincts' },
+        { traitKey: 'dog.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'dog.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+  'stark-tower': [
+    // Goose the Flerken - Ragdoll
+    {
+      animalRef: 'Goose the Flerken',
+      traits: [
+        { traitKey: 'cat.genetics.panelCompleted', valueBoolean: true, status: 'PROVIDED', source: 'LAB', performedAt: '2020-03-15', notes: 'SHIELD lab analysis complete - no Flerken DNA detected' },
+        { traitKey: 'cat.genetics.pkd', valueText: 'Negative', status: 'PASS', source: 'LAB', verified: true },
+        { traitKey: 'cat.cardiac.hcmScreen', valueText: 'Normal', status: 'PASS', source: 'VET', performedAt: '2023-08-10' },
+        { traitKey: 'cat.infectious.felv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-08-10' },
+        { traitKey: 'cat.infectious.fiv', valueText: 'Negative', status: 'PASS', source: 'VET', performedAt: '2023-08-10' },
+        { traitKey: 'cat.eyes.exam', valueText: 'Normal', status: 'PASS', source: 'VET' },
+        { traitKey: 'cat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Thanos Bane - Nigerian Dwarf goat
+    {
+      animalRef: 'Thanos Bane',
+      traits: [
+        { traitKey: 'goat.infectious.cae', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15', verified: true },
+        { traitKey: 'goat.infectious.cl', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15', verified: true },
+        { traitKey: 'goat.infectious.johnes', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15', verified: true },
+        { traitKey: 'goat.repro.proven', valueText: 'Proven', status: 'PROVIDED', notes: 'Sire of Avengers Farm program' },
+        { traitKey: 'goat.general.famacha', valueText: '1', status: 'PASS', source: 'VET', performedAt: '2024-02-15' },
+        { traitKey: 'goat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'goat.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+    // Infinity Nanny - Nigerian Dwarf doe
+    {
+      animalRef: 'Infinity Nanny',
+      traits: [
+        { traitKey: 'goat.infectious.cae', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15', verified: true },
+        { traitKey: 'goat.infectious.cl', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15' },
+        { traitKey: 'goat.infectious.johnes', valueText: 'Negative', status: 'PASS', source: 'LAB', performedAt: '2022-06-15' },
+        { traitKey: 'goat.repro.proven', valueText: 'Proven', status: 'PROVIDED' },
+        { traitKey: 'goat.general.famacha', valueText: '2', status: 'PASS', source: 'VET', performedAt: '2024-02-15' },
+        { traitKey: 'goat.general.vaccinationsUpToDate', valueBoolean: true, status: 'PROVIDED' },
+        { traitKey: 'goat.general.dewormingCurrent', valueBoolean: true, status: 'PROVIDED' },
+      ],
+    },
+  ],
+};
+
+// Helper to get health data for an environment
+export function getTenantHealth(env: Environment): Record<string, AnimalHealthDefinition[]> {
+  return env === 'prod' ? PROD_TENANT_HEALTH : DEV_TENANT_HEALTH;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VACCINATION RECORD DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface VaccinationRecordDefinition {
+  animalRef: string;           // Reference to animal by name
+  protocolKey: string;         // e.g. "dog.rabies", "cat.fvrcp"
+  administeredAt: string;      // ISO date string
+  expiresAt?: string;          // Optional override, otherwise calculated
+  veterinarian?: string;
+  clinic?: string;
+  batchLotNumber?: string;
+  notes?: string;
+}
+
+export interface AnimalVaccinationsDefinition {
+  animalRef: string;
+  vaccinations: Omit<VaccinationRecordDefinition, 'animalRef'>[];
+}
+
+// Vaccination protocol keys (must match API definitions in animal-vaccinations.ts)
+export const VACCINATION_PROTOCOL_KEYS = {
+  DOG: {
+    rabies: 'dog.rabies',
+    dhpp: 'dog.dhpp',
+    bordetella: 'dog.bordetella',
+    leptospirosis: 'dog.leptospirosis',
+    lyme: 'dog.lyme',
+    canineInfluenza: 'dog.canine_influenza',
+  },
+  CAT: {
+    rabies: 'cat.rabies',
+    fvrcp: 'cat.fvrcp',
+    felv: 'cat.felv',
+  },
+  HORSE: {
+    rabies: 'horse.rabies',
+    tetanus: 'horse.tetanus',
+    ewt: 'horse.ewt',
+    westNile: 'horse.west_nile',
+    influenza: 'horse.influenza',
+    rhinopneumonitis: 'horse.rhinopneumonitis',
+    strangles: 'horse.strangles',
+  },
+  GOAT: {
+    cdt: 'goat.cdt',
+    rabies: 'goat.rabies',
+  },
+  SHEEP: {
+    cdt: 'sheep.cdt',
+  },
+};
+
+// Helper to generate past dates
+function daysAgoISO(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().split('T')[0];
+}
+
+// PROD Vaccination Records
+export const PROD_TENANT_VACCINATIONS: Record<string, AnimalVaccinationsDefinition[]> = {
+  arrakis: [
+    // Muad'Dib Hunter - fully vaccinated champion
+    {
+      animalRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital', batchLotNumber: 'RAB-2025-1234' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(120), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(180), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital' },
+        { protocolKey: 'dog.leptospirosis', administeredAt: daysAgoISO(120), notes: 'Important for desert wildlife exposure' },
+      ],
+    },
+    // Shai-Hulud Dame - some vaccines expiring soon
+    {
+      animalRef: 'Shai-Hulud Dame (DM Carrier Founder Female)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(1000), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital', notes: '3-year vaccine - expires soon' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(340), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(300), veterinarian: 'Dr. Yueh', clinic: 'Arrakeen Animal Hospital' },
+      ],
+    },
+    // Duke Leto - Horse with complete vaccinations
+    {
+      animalRef: 'Duke Leto (SCID Carrier Founder Stallion)',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(60), veterinarian: 'Dr. Kynes', clinic: 'Sietch Equine Center', batchLotNumber: 'EQ-RAB-2025-789' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(60), veterinarian: 'Dr. Kynes', clinic: 'Sietch Equine Center' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Kynes', clinic: 'Sietch Equine Center' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Kynes', clinic: 'Sietch Equine Center', notes: 'Mosquito season protection' },
+        { protocolKey: 'horse.influenza', administeredAt: daysAgoISO(120), veterinarian: 'Dr. Kynes', clinic: 'Sietch Equine Center' },
+      ],
+    },
+    // Reverend Mother - Cat with full vaccinations
+    {
+      animalRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Gaius', clinic: 'Bene Gesserit Veterinary', batchLotNumber: 'CAT-RAB-2025-456' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Gaius', clinic: 'Bene Gesserit Veterinary' },
+        { protocolKey: 'cat.felv', administeredAt: daysAgoISO(300), veterinarian: 'Dr. Gaius', clinic: 'Bene Gesserit Veterinary', notes: 'Indoor cat but multi-cat household' },
+      ],
+    },
+  ],
+  starfleet: [
+    // Spot - flagship cat
+    {
+      animalRef: 'Spot (PKD Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(150), veterinarian: 'Dr. Crusher', clinic: 'USS Enterprise Sickbay', batchLotNumber: 'SB-RAB-2371-001' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(150), veterinarian: 'Dr. Crusher', clinic: 'USS Enterprise Sickbay' },
+      ],
+    },
+    // Number One - Dog with all core vaccines
+    {
+      animalRef: 'Number One (TNS Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(45), veterinarian: 'Dr. Pulaski', clinic: 'Starfleet Medical', batchLotNumber: 'SF-DOG-2025-101' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(45), veterinarian: 'Dr. Pulaski', clinic: 'Starfleet Medical' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Pulaski', clinic: 'Starfleet Medical', notes: 'Kennel cough protection for ship living' },
+      ],
+    },
+    // Tribble Alternative - Rabbit (no vaccines defined for rabbits)
+    {
+      animalRef: 'Tribble Alternative (Founder Male)',
+      vaccinations: [], // No standard rabbit vaccinations in protocol
+    },
+  ],
+  richmond: [
+    // Ted Lasso - Team mascot dog
+    {
+      animalRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(30), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic', batchLotNumber: 'AFC-RAB-2025-001' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(60), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic', notes: 'Required for stadium access' },
+        { protocolKey: 'dog.canine_influenza', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic', notes: 'Recommended for team environments' },
+      ],
+    },
+    // Total Football - Horse mascot
+    {
+      animalRef: 'Total Football (GBED Carrier Founder Stallion)',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Higgins', clinic: 'Nelson Road Equine', batchLotNumber: 'NR-EQ-2024-789' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Higgins', clinic: 'Nelson Road Equine' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Higgins', clinic: 'Nelson Road Equine' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Higgins', clinic: 'Nelson Road Equine' },
+      ],
+    },
+    // Rebecca - Dog with expired vaccines (testing scenario)
+    {
+      animalRef: 'Rebecca (PRA Carrier Founder Female)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(400), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic', notes: 'EXPIRED - needs update' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(400), veterinarian: 'Dr. Sharon', clinic: 'Richmond Veterinary Clinic' },
+      ],
+    },
+  ],
+  zion: [
+    // Neo - Cat with full vaccinations
+    {
+      animalRef: 'Neo (HCM Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Matrix', clinic: 'Zion Medical Bay', batchLotNumber: 'ZN-CAT-2025-NEO' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Matrix', clinic: 'Zion Medical Bay' },
+      ],
+    },
+    // The Architect - Goat with CDT
+    {
+      animalRef: 'The Architect (G6S Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'goat.cdt', administeredAt: daysAgoISO(180), veterinarian: 'Dr. Oracle', clinic: 'Machine City Vet', batchLotNumber: 'MC-GOAT-2025-001' },
+      ],
+    },
+    // Nebuchadnezzar - Horse with core vaccines
+    {
+      animalRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(250), veterinarian: 'Dr. Lock', clinic: 'Zion Stables', batchLotNumber: 'ZN-EQ-2024-NEB' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(250), veterinarian: 'Dr. Lock', clinic: 'Zion Stables' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(250), veterinarian: 'Dr. Lock', clinic: 'Zion Stables' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(250), veterinarian: 'Dr. Lock', clinic: 'Zion Stables' },
+      ],
+    },
+    // Agent Hunter - Dog with vaccines due soon
+    {
+      animalRef: 'Agent Hunter (DM Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(350), veterinarian: 'Dr. Matrix', clinic: 'Zion Medical Bay', notes: 'Due soon - schedule renewal' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(350), veterinarian: 'Dr. Matrix', clinic: 'Zion Medical Bay' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(330), veterinarian: 'Dr. Matrix', clinic: 'Zion Medical Bay' },
+      ],
+    },
+  ],
+};
+
+// DEV Vaccination Records
+export const DEV_TENANT_VACCINATIONS: Record<string, AnimalVaccinationsDefinition[]> = {
+  rivendell: [
+    // Huan the Great - Elven hound champion
+    {
+      animalRef: 'Huan the Great (EIC Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(60), veterinarian: 'Dr. Elrond', clinic: 'Rivendell Healing House', batchLotNumber: 'RV-RAB-2025-001' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Elrond', clinic: 'Rivendell Healing House' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(150), veterinarian: 'Dr. Elrond', clinic: 'Rivendell Healing House' },
+        { protocolKey: 'dog.leptospirosis', administeredAt: daysAgoISO(90), notes: 'River valley exposure risk' },
+      ],
+    },
+    // Shadowfax - Legendary horse
+    {
+      animalRef: 'Shadowfax (Frame Overo Stallion)',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Gandalf', clinic: 'Grey Havens Stables', batchLotNumber: 'GH-EQ-2025-SHD' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Gandalf', clinic: 'Grey Havens Stables' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Gandalf', clinic: 'Grey Havens Stables' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Gandalf', clinic: 'Grey Havens Stables' },
+        { protocolKey: 'horse.influenza', administeredAt: daysAgoISO(150), veterinarian: 'Dr. Gandalf', clinic: 'Grey Havens Stables', notes: 'For competition travel' },
+      ],
+    },
+    // Tevildo Prince of Cats - Elven cat
+    {
+      animalRef: 'Tevildo Prince of Cats (HCM Carrier Type A Male)',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Elrond', clinic: 'Rivendell Healing House', batchLotNumber: 'RV-CAT-2025-TEV' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Elrond', clinic: 'Rivendell Healing House' },
+      ],
+    },
+  ],
+  hogwarts: [
+    // Crookshanks - Magical cat
+    {
+      animalRef: 'Crookshanks (PKD Carrier Founder Male)',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(180), veterinarian: 'Madam Pomfrey', clinic: 'Hogwarts Hospital Wing', batchLotNumber: 'HW-CAT-2025-CRK' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(180), veterinarian: 'Madam Pomfrey', clinic: 'Hogwarts Hospital Wing' },
+        { protocolKey: 'cat.felv', administeredAt: daysAgoISO(250), veterinarian: 'Madam Pomfrey', clinic: 'Hogwarts Hospital Wing', notes: 'Multi-cat dormitory environment' },
+      ],
+    },
+    // Fang - Hagrid's dog
+    {
+      animalRef: 'Fang',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(45), veterinarian: 'Hagrid', clinic: 'Hagrid\'s Hut', batchLotNumber: 'HH-DOG-2025-FNG', notes: 'Administered by Hagrid with vet supervision' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(120), veterinarian: 'Dr. Silvanus', clinic: 'Hogsmeade Veterinary' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Silvanus', clinic: 'Hogsmeade Veterinary' },
+      ],
+    },
+    // Binky the First - Rabbit (minimal vaccines)
+    {
+      animalRef: 'Binky the First',
+      vaccinations: [], // No standard rabbit vaccinations
+    },
+  ],
+  winterfell: [
+    // Grey Wind - Direwolf
+    {
+      animalRef: 'Grey Wind',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(30), veterinarian: 'Maester Luwin', clinic: 'Winterfell Kennels', batchLotNumber: 'WF-DOG-2025-GRY' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(60), veterinarian: 'Maester Luwin', clinic: 'Winterfell Kennels' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(90), veterinarian: 'Maester Luwin', clinic: 'Winterfell Kennels' },
+        { protocolKey: 'dog.lyme', administeredAt: daysAgoISO(60), veterinarian: 'Maester Luwin', clinic: 'Winterfell Kennels', notes: 'Endemic tick area in Wolfswood' },
+      ],
+    },
+    // Ghost - Jon's direwolf
+    {
+      animalRef: 'Ghost',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(120), veterinarian: 'Castle Black Medic', clinic: 'Night\'s Watch Infirmary', batchLotNumber: 'NW-DOG-2025-GHT' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(180), veterinarian: 'Castle Black Medic', clinic: 'Night\'s Watch Infirmary' },
+      ],
+    },
+    // Stranger - The Hound's horse
+    {
+      animalRef: 'Stranger',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(150), veterinarian: 'Maester Luwin', clinic: 'Winterfell Stables', batchLotNumber: 'WF-EQ-2025-STR' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(150), veterinarian: 'Maester Luwin', clinic: 'Winterfell Stables' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(150), veterinarian: 'Maester Luwin', clinic: 'Winterfell Stables' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(150), veterinarian: 'Maester Luwin', clinic: 'Winterfell Stables' },
+      ],
+    },
+  ],
+  'stark-tower': [
+    // Goose the Flerken - Captain Marvel's cat
+    {
+      animalRef: 'Goose the Flerken',
+      vaccinations: [
+        { protocolKey: 'cat.rabies', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Strange', clinic: 'Avengers Medical', batchLotNumber: 'AV-CAT-2025-GSE' },
+        { protocolKey: 'cat.fvrcp', administeredAt: daysAgoISO(100), veterinarian: 'Dr. Strange', clinic: 'Avengers Medical' },
+      ],
+    },
+    // Lucky Pizza Dog - Hawkeye's dog
+    {
+      animalRef: 'Lucky Pizza Dog',
+      vaccinations: [
+        { protocolKey: 'dog.rabies', administeredAt: daysAgoISO(60), veterinarian: 'Dr. Cho', clinic: 'Avengers Tower Medical', batchLotNumber: 'AV-DOG-2025-LCK' },
+        { protocolKey: 'dog.dhpp', administeredAt: daysAgoISO(90), veterinarian: 'Dr. Cho', clinic: 'Avengers Tower Medical' },
+        { protocolKey: 'dog.bordetella', administeredAt: daysAgoISO(120), veterinarian: 'Dr. Cho', clinic: 'Avengers Tower Medical' },
+      ],
+    },
+    // Thanos Bane - Goat
+    {
+      animalRef: 'Thanos Bane',
+      vaccinations: [
+        { protocolKey: 'goat.cdt', administeredAt: daysAgoISO(200), veterinarian: 'Dr. Banner', clinic: 'Avengers Farm', batchLotNumber: 'AF-GOAT-2025-THN' },
+      ],
+    },
+    // Sleipnir - Thor's horse
+    {
+      animalRef: 'Sleipnir',
+      vaccinations: [
+        { protocolKey: 'horse.rabies', administeredAt: daysAgoISO(80), veterinarian: 'Asgardian Healer', clinic: 'New Asgard Stables', batchLotNumber: 'NA-EQ-2025-SLP' },
+        { protocolKey: 'horse.tetanus', administeredAt: daysAgoISO(80), veterinarian: 'Asgardian Healer', clinic: 'New Asgard Stables' },
+        { protocolKey: 'horse.ewt', administeredAt: daysAgoISO(80), veterinarian: 'Asgardian Healer', clinic: 'New Asgard Stables' },
+        { protocolKey: 'horse.west_nile', administeredAt: daysAgoISO(80), veterinarian: 'Asgardian Healer', clinic: 'New Asgard Stables' },
+        { protocolKey: 'horse.influenza', administeredAt: daysAgoISO(140), veterinarian: 'Asgardian Healer', clinic: 'New Asgard Stables', notes: 'For Bifrost travel' },
+      ],
+    },
+  ],
+};
+
+// Helper to get vaccination data for an environment
+export function getTenantVaccinations(env: Environment): Record<string, AnimalVaccinationsDefinition[]> {
+  return env === 'prod' ? PROD_TENANT_VACCINATIONS : DEV_TENANT_VACCINATIONS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // BREEDING PLAN DEFINITIONS (per tenant)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2866,6 +3655,402 @@ export function getTenantBreedingPlans(env: Environment): Record<string, Breedin
 
 // Legacy export - defaults to DEV
 export const TENANT_BREEDING_PLANS = DEV_TENANT_BREEDING_PLANS;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OFFSPRING GROUP AND OFFSPRING DEFINITIONS (historical litters/groups)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type OffspringLifeState = 'ALIVE' | 'DECEASED';
+export type OffspringPlacementState = 'UNASSIGNED' | 'OPTION_HOLD' | 'RESERVED' | 'PLACED' | 'RETURNED' | 'TRANSFERRED';
+export type OffspringKeeperIntent = 'AVAILABLE' | 'UNDER_EVALUATION' | 'WITHHELD' | 'KEEP';
+export type OffspringFinancialState = 'NONE' | 'DEPOSIT_PENDING' | 'DEPOSIT_PAID' | 'PAID_IN_FULL' | 'REFUNDED' | 'CHARGEBACK';
+export type OffspringPaperworkState = 'NONE' | 'SENT' | 'SIGNED' | 'COMPLETE';
+
+export interface OffspringDefinition {
+  name: string;
+  sex: Sex;
+  breed?: string;
+  lifeState: OffspringLifeState;
+  placementState: OffspringPlacementState;
+  keeperIntent: OffspringKeeperIntent;
+  financialState: OffspringFinancialState;
+  paperworkState: OffspringPaperworkState;
+  collarColorName?: string;
+  collarColorHex?: string;
+  priceCents?: number;
+  depositCents?: number;
+  notes?: string;
+}
+
+export interface OffspringGroupDefinition {
+  name: string;
+  species: Species;
+  damRef: string;        // Reference to dam animal by name
+  sireRef: string;       // Reference to sire animal by name
+  actualBirthOn: string; // ISO date string
+  countBorn: number;
+  countLive: number;
+  countStillborn: number;
+  countMale: number;
+  countFemale: number;
+  countWeaned: number;
+  countPlaced: number;
+  weanedAt?: string;
+  placementCompletedAt?: string;
+  notes?: string;
+  offspring: OffspringDefinition[];
+}
+
+// PROD Offspring Groups - Historical litters linked to existing animals
+export const PROD_TENANT_OFFSPRING_GROUPS: Record<string, OffspringGroupDefinition[]> = {
+  arrakis: [
+    // Saluki litter from 2022
+    {
+      name: 'Spice Runners 2022',
+      species: 'DOG',
+      damRef: 'Shai-Hulud Dame (DM Carrier Founder Female)',
+      sireRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)',
+      actualBirthOn: '2022-04-15',
+      countBorn: 6,
+      countLive: 6,
+      countStillborn: 0,
+      countMale: 3,
+      countFemale: 3,
+      countWeaned: 6,
+      countPlaced: 6,
+      weanedAt: '2022-06-15',
+      placementCompletedAt: '2022-08-20',
+      notes: 'Exceptional litter - all pups placed with Fremen families.',
+      offspring: [
+        { name: 'Sandstorm', sex: 'MALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Red', collarColorHex: '#FF0000', priceCents: 200000, depositCents: 50000 },
+        { name: 'Sirocco', sex: 'MALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Blue', collarColorHex: '#0000FF', priceCents: 200000, depositCents: 50000 },
+        { name: 'Shaitan', sex: 'MALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Green', collarColorHex: '#00FF00', priceCents: 200000, depositCents: 50000 },
+        { name: 'Sayyadina Jr', sex: 'FEMALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Purple', collarColorHex: '#800080', priceCents: 220000, depositCents: 50000 },
+        { name: 'Sihaya', sex: 'FEMALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Pink', collarColorHex: '#FFC0CB', priceCents: 220000, depositCents: 50000 },
+        { name: 'Sardaukar Bane', sex: 'FEMALE', breed: 'Saluki', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Orange', collarColorHex: '#FFA500', priceCents: 220000, depositCents: 50000 },
+      ],
+    },
+    // Abyssinian litter from 2021
+    {
+      name: 'Bene Gesserit Kittens 2021',
+      species: 'CAT',
+      damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)',
+      sireRef: 'Mentat (PKDef Carrier Type B Founder Male)',
+      actualBirthOn: '2021-08-10',
+      countBorn: 4,
+      countLive: 4,
+      countStillborn: 0,
+      countMale: 2,
+      countFemale: 2,
+      countWeaned: 4,
+      countPlaced: 4,
+      weanedAt: '2021-10-10',
+      placementCompletedAt: '2021-11-15',
+      notes: 'First litter from our Abyssinian program. All tested for PK Deficiency.',
+      offspring: [
+        { name: 'Prescient', sex: 'MALE', breed: 'Abyssinian', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gold', collarColorHex: '#FFD700', priceCents: 150000, depositCents: 50000 },
+        { name: 'Voice', sex: 'MALE', breed: 'Abyssinian', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Silver', collarColorHex: '#C0C0C0', priceCents: 150000, depositCents: 50000 },
+        { name: 'Truthsayer', sex: 'FEMALE', breed: 'Abyssinian', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Bronze', collarColorHex: '#CD7F32', priceCents: 160000, depositCents: 50000 },
+        { name: 'Weirding', sex: 'FEMALE', breed: 'Abyssinian', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Copper', collarColorHex: '#B87333', priceCents: 160000, depositCents: 50000 },
+      ],
+    },
+  ],
+  starfleet: [
+    // Exotic Shorthair litter from 2023
+    {
+      name: 'Enterprise Kittens Alpha',
+      species: 'CAT',
+      damRef: 'Enterprise (PKD Carrier Founder Female)',
+      sireRef: 'Spot (PKD Carrier Founder Male)',
+      actualBirthOn: '2023-02-14',
+      countBorn: 5,
+      countLive: 5,
+      countStillborn: 0,
+      countMale: 3,
+      countFemale: 2,
+      countWeaned: 5,
+      countPlaced: 5,
+      weanedAt: '2023-04-14',
+      placementCompletedAt: '2023-05-30',
+      notes: 'Valentine\'s Day litter! All placed with Starfleet officers.',
+      offspring: [
+        { name: 'Shuttle', sex: 'MALE', breed: 'Exotic Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Command Gold', collarColorHex: '#FFD700', priceCents: 180000, depositCents: 50000 },
+        { name: 'Photon', sex: 'MALE', breed: 'Exotic Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Science Blue', collarColorHex: '#0000FF', priceCents: 180000, depositCents: 50000 },
+        { name: 'Tractor', sex: 'MALE', breed: 'Exotic Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Engineering Red', collarColorHex: '#FF0000', priceCents: 180000, depositCents: 50000 },
+        { name: 'Deflector', sex: 'FEMALE', breed: 'Exotic Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Medical Teal', collarColorHex: '#008080', priceCents: 190000, depositCents: 50000 },
+        { name: 'Impulse', sex: 'FEMALE', breed: 'Exotic Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Operations Yellow', collarColorHex: '#FFFF00', priceCents: 190000, depositCents: 50000 },
+      ],
+    },
+    // Flemish Giant litter from 2022
+    {
+      name: 'Station Bunnies 2022',
+      species: 'RABBIT',
+      damRef: 'T\'Pol (Founder Female)',
+      sireRef: 'Tribble Alternative (Founder Male)',
+      actualBirthOn: '2022-07-04',
+      countBorn: 8,
+      countLive: 7,
+      countStillborn: 1,
+      countMale: 4,
+      countFemale: 3,
+      countWeaned: 7,
+      countPlaced: 7,
+      weanedAt: '2022-08-15',
+      placementCompletedAt: '2022-09-30',
+      notes: 'Independence Day litter. Large litter typical of Flemish Giants.',
+      offspring: [
+        { name: 'Replicator', sex: 'MALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gray', collarColorHex: '#808080', priceCents: 75000, depositCents: 25000 },
+        { name: 'Communicator', sex: 'MALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Navy', collarColorHex: '#000080', priceCents: 75000, depositCents: 25000 },
+        { name: 'Tricorder', sex: 'MALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Teal', collarColorHex: '#008080', priceCents: 75000, depositCents: 25000 },
+        { name: 'Hypospray', sex: 'MALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Maroon', collarColorHex: '#800000', priceCents: 75000, depositCents: 25000 },
+        { name: 'Phaser Jr', sex: 'FEMALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Lavender', collarColorHex: '#E6E6FA', priceCents: 80000, depositCents: 25000 },
+        { name: 'Viewscreen', sex: 'FEMALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Mint', collarColorHex: '#98FF98', priceCents: 80000, depositCents: 25000 },
+        { name: 'Transporter Jr', sex: 'FEMALE', breed: 'Flemish Giant', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Peach', collarColorHex: '#FFDAB9', priceCents: 80000, depositCents: 25000 },
+      ],
+    },
+  ],
+  richmond: [
+    // Golden Retriever litter from 2022
+    {
+      name: 'Diamond Dogs Litter 2022',
+      species: 'DOG',
+      damRef: 'Rebecca (PRA Carrier Founder Female)',
+      sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)',
+      actualBirthOn: '2022-03-15',
+      countBorn: 7,
+      countLive: 7,
+      countStillborn: 0,
+      countMale: 4,
+      countFemale: 3,
+      countWeaned: 7,
+      countPlaced: 6,
+      weanedAt: '2022-05-15',
+      placementCompletedAt: '2022-07-01',
+      notes: 'The original Diamond Dogs litter. One kept as team mascot.',
+      offspring: [
+        { name: 'Barbecue Sauce', sex: 'MALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Red', collarColorHex: '#FF0000', priceCents: 250000, depositCents: 50000 },
+        { name: 'Shortbread', sex: 'MALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Blue', collarColorHex: '#0000FF', priceCents: 250000, depositCents: 50000 },
+        { name: 'Football Is Life', sex: 'MALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Green', collarColorHex: '#00FF00', priceCents: 250000, depositCents: 50000 },
+        { name: 'Be A Goldfish', sex: 'MALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'KEEP', financialState: 'NONE', paperworkState: 'COMPLETE', collarColorName: 'Gold', collarColorHex: '#FFD700', notes: 'Kept as AFC Richmond mascot' },
+        { name: 'Tea With Earl Grey', sex: 'FEMALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Purple', collarColorHex: '#800080', priceCents: 275000, depositCents: 50000 },
+        { name: 'Hope', sex: 'FEMALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Pink', collarColorHex: '#FFC0CB', priceCents: 275000, depositCents: 50000 },
+        { name: 'Wonder', sex: 'FEMALE', breed: 'Golden Retriever', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Teal', collarColorHex: '#008080', priceCents: 275000, depositCents: 50000 },
+      ],
+    },
+    // Thoroughbred foal from 2021
+    {
+      name: 'Nelson Road Foals 2021',
+      species: 'HORSE',
+      damRef: 'Nelson Road (GBED Carrier Founder Mare)',
+      sireRef: 'Total Football (GBED Carrier Founder Stallion)',
+      actualBirthOn: '2021-04-01',
+      countBorn: 1,
+      countLive: 1,
+      countStillborn: 0,
+      countMale: 1,
+      countFemale: 0,
+      countWeaned: 1,
+      countPlaced: 1,
+      weanedAt: '2021-10-01',
+      placementCompletedAt: '2022-01-15',
+      notes: 'Single foal - exceptional movement. Sold to racing syndicate.',
+      offspring: [
+        { name: 'Promotion', sex: 'MALE', breed: 'Thoroughbred', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Racing Blue', collarColorHex: '#00529F', priceCents: 5000000, depositCents: 1000000, notes: 'Sold to West Ham United racing syndicate' },
+      ],
+    },
+  ],
+  zion: [
+    // Bombay litter from 2022
+    {
+      name: 'Resistance Kittens 2022',
+      species: 'CAT',
+      damRef: 'Trinity (HCM Carrier Founder Female)',
+      sireRef: 'Neo (HCM Carrier Founder Male)',
+      actualBirthOn: '2022-11-11',
+      countBorn: 4,
+      countLive: 4,
+      countStillborn: 0,
+      countMale: 2,
+      countFemale: 2,
+      countWeaned: 4,
+      countPlaced: 4,
+      weanedAt: '2023-01-11',
+      placementCompletedAt: '2023-02-28',
+      notes: 'All black, all beautiful. Perfect parlor panthers.',
+      offspring: [
+        { name: 'Sentinel', sex: 'MALE', breed: 'Bombay', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Matrix Green', collarColorHex: '#00FF00', priceCents: 160000, depositCents: 50000 },
+        { name: 'Smith', sex: 'MALE', breed: 'Bombay', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Agent Black', collarColorHex: '#000000', priceCents: 160000, depositCents: 50000 },
+        { name: 'Switch', sex: 'FEMALE', breed: 'Bombay', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'White', collarColorHex: '#FFFFFF', priceCents: 170000, depositCents: 50000 },
+        { name: 'Apoc', sex: 'FEMALE', breed: 'Bombay', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gray', collarColorHex: '#808080', priceCents: 170000, depositCents: 50000 },
+      ],
+    },
+    // La Mancha goat kids from 2023
+    {
+      name: 'Zion Farm Kids 2023',
+      species: 'GOAT',
+      damRef: 'The Oracle (G6S Carrier Founder Female)',
+      sireRef: 'The Architect (G6S Carrier Founder Male)',
+      actualBirthOn: '2023-03-20',
+      countBorn: 3,
+      countLive: 3,
+      countStillborn: 0,
+      countMale: 1,
+      countFemale: 2,
+      countWeaned: 3,
+      countPlaced: 3,
+      weanedAt: '2023-05-20',
+      placementCompletedAt: '2023-06-30',
+      notes: 'Healthy kids from our La Mancha program. All G6S tested.',
+      offspring: [
+        { name: 'Cookie', sex: 'MALE', breed: 'La Mancha', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Brown', collarColorHex: '#8B4513', priceCents: 50000, depositCents: 15000, notes: 'Named after The Oracle\'s cookies' },
+        { name: 'Déjà Vu', sex: 'FEMALE', breed: 'La Mancha', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Black', collarColorHex: '#000000', priceCents: 55000, depositCents: 15000 },
+        { name: 'Glitch', sex: 'FEMALE', breed: 'La Mancha', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'White', collarColorHex: '#FFFFFF', priceCents: 55000, depositCents: 15000 },
+      ],
+    },
+  ],
+};
+
+// DEV Offspring Groups - Same structure with Middle Earth/Hogwarts/Westeros/Marvel themes
+export const DEV_TENANT_OFFSPRING_GROUPS: Record<string, OffspringGroupDefinition[]> = {
+  rivendell: [
+    // German Shepherd litter from 2022
+    {
+      name: 'Huan\'s Legacy 2022',
+      species: 'DOG',
+      damRef: 'Sköll',
+      sireRef: 'Fenrir',
+      actualBirthOn: '2022-05-20',
+      countBorn: 8,
+      countLive: 8,
+      countStillborn: 0,
+      countMale: 5,
+      countFemale: 3,
+      countWeaned: 8,
+      countPlaced: 8,
+      weanedAt: '2022-07-20',
+      placementCompletedAt: '2022-09-15',
+      notes: 'Named after the legendary hound Huan. All pups placed with elven families.',
+      offspring: [
+        { name: 'Carcharoth Jr', sex: 'MALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Mithril', collarColorHex: '#C0C0C0', priceCents: 200000, depositCents: 50000 },
+        { name: 'Draugluin', sex: 'MALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gold', collarColorHex: '#FFD700', priceCents: 200000, depositCents: 50000 },
+        { name: 'Orome\'s Hunter', sex: 'MALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Forest Green', collarColorHex: '#228B22', priceCents: 200000, depositCents: 50000 },
+        { name: 'Telperion', sex: 'MALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Silver', collarColorHex: '#C0C0C0', priceCents: 200000, depositCents: 50000 },
+        { name: 'Laurelin', sex: 'MALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gold Leaf', collarColorHex: '#DAA520', priceCents: 200000, depositCents: 50000 },
+        { name: 'Tinuviel', sex: 'FEMALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Starlight', collarColorHex: '#E6E6FA', priceCents: 220000, depositCents: 50000 },
+        { name: 'Aredhel', sex: 'FEMALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'White', collarColorHex: '#FFFFFF', priceCents: 220000, depositCents: 50000 },
+        { name: 'Idril', sex: 'FEMALE', breed: 'German Shepherd', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Celebrian', collarColorHex: '#F5F5DC', priceCents: 220000, depositCents: 50000 },
+      ],
+    },
+  ],
+  hogwarts: [
+    // British Shorthair litter from 2023
+    {
+      name: 'Magical Menagerie Kittens',
+      species: 'CAT',
+      damRef: 'Millicent Bulstrode Cat',
+      sireRef: 'Kneazle Descendant',
+      actualBirthOn: '2023-01-15',
+      countBorn: 5,
+      countLive: 5,
+      countStillborn: 0,
+      countMale: 2,
+      countFemale: 3,
+      countWeaned: 5,
+      countPlaced: 5,
+      weanedAt: '2023-03-15',
+      placementCompletedAt: '2023-04-30',
+      notes: 'All kittens showed above-average intelligence. Two went to Aurors.',
+      offspring: [
+        { name: 'Patronus', sex: 'MALE', breed: 'British Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gryffindor Red', collarColorHex: '#740001', priceCents: 150000, depositCents: 40000 },
+        { name: 'Expecto', sex: 'MALE', breed: 'British Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Slytherin Green', collarColorHex: '#1A472A', priceCents: 150000, depositCents: 40000 },
+        { name: 'Lumos', sex: 'FEMALE', breed: 'British Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Ravenclaw Blue', collarColorHex: '#0E1A40', priceCents: 160000, depositCents: 40000 },
+        { name: 'Nox', sex: 'FEMALE', breed: 'British Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Hufflepuff Yellow', collarColorHex: '#EEBA30', priceCents: 160000, depositCents: 40000 },
+        { name: 'Accio', sex: 'FEMALE', breed: 'British Shorthair', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Purple', collarColorHex: '#800080', priceCents: 160000, depositCents: 40000 },
+      ],
+    },
+  ],
+  winterfell: [
+    // Alaskan Malamute litter from 2021
+    {
+      name: 'Direwolf Pack 2021',
+      species: 'DOG',
+      damRef: 'Winter Pup Beta',
+      sireRef: 'Winter Pup Alpha',
+      actualBirthOn: '2021-12-21',
+      countBorn: 6,
+      countLive: 6,
+      countStillborn: 0,
+      countMale: 3,
+      countFemale: 3,
+      countWeaned: 6,
+      countPlaced: 5,
+      weanedAt: '2022-02-21',
+      placementCompletedAt: '2022-04-15',
+      notes: 'Winter Solstice litter. One kept for the Stark pack.',
+      offspring: [
+        { name: 'Grey Wind Jr', sex: 'MALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Stark Gray', collarColorHex: '#808080', priceCents: 300000, depositCents: 75000 },
+        { name: 'Summer', sex: 'MALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Warm Gray', collarColorHex: '#A9A9A9', priceCents: 300000, depositCents: 75000 },
+        { name: 'Shaggydog', sex: 'MALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'KEEP', financialState: 'NONE', paperworkState: 'COMPLETE', collarColorName: 'Black', collarColorHex: '#000000', notes: 'Kept for Stark pack' },
+        { name: 'Lady Jr', sex: 'FEMALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Snow White', collarColorHex: '#FFFAFA', priceCents: 325000, depositCents: 75000 },
+        { name: 'Nymeria Jr', sex: 'FEMALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Silver', collarColorHex: '#C0C0C0', priceCents: 325000, depositCents: 75000 },
+        { name: 'Ghost Jr', sex: 'FEMALE', breed: 'Alaskan Malamute', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Pure White', collarColorHex: '#FFFFFF', priceCents: 325000, depositCents: 75000 },
+      ],
+    },
+  ],
+  'stark-tower': [
+    // Ragdoll litter from 2022
+    {
+      name: 'Flerken Investigation Unit',
+      species: 'CAT',
+      damRef: 'Wakandan Temple Cat',
+      sireRef: 'Goose the Flerken',
+      actualBirthOn: '2022-08-15',
+      countBorn: 4,
+      countLive: 4,
+      countStillborn: 0,
+      countMale: 2,
+      countFemale: 2,
+      countWeaned: 4,
+      countPlaced: 4,
+      weanedAt: '2022-10-15',
+      placementCompletedAt: '2022-12-01',
+      notes: 'SHIELD monitored litter. All tested for Flerken DNA (inconclusive).',
+      offspring: [
+        { name: 'Captain Marvel Jr', sex: 'MALE', breed: 'Ragdoll', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Captain Red', collarColorHex: '#ED1D24', priceCents: 200000, depositCents: 50000 },
+        { name: 'Nick Furry', sex: 'MALE', breed: 'Ragdoll', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Black', collarColorHex: '#000000', priceCents: 200000, depositCents: 50000 },
+        { name: 'Monica', sex: 'FEMALE', breed: 'Ragdoll', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Purple', collarColorHex: '#800080', priceCents: 210000, depositCents: 50000 },
+        { name: 'Chewie', sex: 'FEMALE', breed: 'Ragdoll', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Orange', collarColorHex: '#FFA500', priceCents: 210000, depositCents: 50000 },
+      ],
+    },
+    // Nigerian Dwarf goat kids from 2023
+    {
+      name: 'Avengers Farm Kids',
+      species: 'GOAT',
+      damRef: 'Infinity Nanny',
+      sireRef: 'Thanos Bane',
+      actualBirthOn: '2023-04-10',
+      countBorn: 2,
+      countLive: 2,
+      countStillborn: 0,
+      countMale: 1,
+      countFemale: 1,
+      countWeaned: 2,
+      countPlaced: 2,
+      weanedAt: '2023-06-10',
+      placementCompletedAt: '2023-07-15',
+      notes: 'Part of the Avengers Compound sustainability initiative.',
+      offspring: [
+        { name: 'Rocket Jr', sex: 'MALE', breed: 'Nigerian Dwarf', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Guardians Orange', collarColorHex: '#FF4500', priceCents: 40000, depositCents: 10000 },
+        { name: 'Gamora Jr', sex: 'FEMALE', breed: 'Nigerian Dwarf', lifeState: 'ALIVE', placementState: 'PLACED', keeperIntent: 'AVAILABLE', financialState: 'PAID_IN_FULL', paperworkState: 'COMPLETE', collarColorName: 'Gamora Green', collarColorHex: '#228B22', priceCents: 45000, depositCents: 10000 },
+      ],
+    },
+  ],
+};
+
+// Helper to get offspring groups for an environment
+export function getTenantOffspringGroups(env: Environment): Record<string, OffspringGroupDefinition[]> {
+  return env === 'prod' ? PROD_TENANT_OFFSPRING_GROUPS : DEV_TENANT_OFFSPRING_GROUPS;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MARKETPLACE LISTING DEFINITIONS (per tenant)

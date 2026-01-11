@@ -503,7 +503,11 @@ enum AnimalListingIntent {
   STUD
   BROOD_PLACEMENT
   REHOME
-  SHOWCASE
+  GUARDIAN
+  TRAINED
+  WORKING
+  STARTED
+  CO_OWNERSHIP
 }
 
 enum AnimalListingStatus {
@@ -794,6 +798,10 @@ model Tenant {
 
   programBreeds TenantProgramBreed[]
 
+  // Breeding Programs (marketplace)
+  breedingPrograms     BreedingProgram[]
+  breedingProgramMedia BreedingProgramMedia[]
+
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   LitterEvent            LitterEvent[]
@@ -812,6 +820,7 @@ model Tenant {
   MessageThread          MessageThread[]
   Task                   Task[]
   HealthEvent            HealthEvent[]
+  VaccinationRecord      VaccinationRecord[]
   Document               Document[]
   ContractTemplate       ContractTemplate[]
   Contract               Contract[]
@@ -894,6 +903,9 @@ model Tenant {
 
   // Communications Hub
   drafts Draft[]
+
+  // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
+  inboundEmailSlug String? @unique
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1930,9 +1942,10 @@ model Animal {
   Attachment       Attachment[]
   Offspring        Offspring[]                @relation("PromotedAnimal")
   PaymentIntent    PaymentIntent[]
-  AnimalTraitValue AnimalTraitValue[]
-  Document         Document[]
-  Invoice          Invoice[]
+  AnimalTraitValue    AnimalTraitValue[]
+  VaccinationRecord   VaccinationRecord[]
+  Document            Document[]
+  Invoice             Invoice[]
   Expense          Expense[]
   genetics         AnimalGenetics?
 
@@ -2182,6 +2195,40 @@ model AnimalTraitValueDocument {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Vaccination Records
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model VaccinationRecord {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  protocolKey    String    @db.VarChar(100) // "rabies", "dhpp", "bordetella", etc.
+  administeredAt DateTime
+  expiresAt      DateTime? // Calculated or manual override
+
+  veterinarian   String? @db.VarChar(255)
+  clinic         String? @db.VarChar(255)
+  batchLotNumber String? @db.VarChar(100)
+  notes          String? @db.Text
+
+  documentId Int?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, animalId])
+  @@index([tenantId, protocolKey])
+  @@index([animalId, protocolKey])
+  @@index([administeredAt])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Tags
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -2365,6 +2412,69 @@ model TenantProgramBreed {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Breeding Programs (Marketplace)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model BreedingProgram {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Identity
+  slug        String  // URL-friendly identifier, unique per tenant
+  name        String  // "Goldendoodle Program"
+  description String? @db.Text
+  species     Species
+  breedText   String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
+
+  // Marketplace Settings
+  listed             Boolean @default(false)
+  acceptInquiries    Boolean @default(true)
+  openWaitlist       Boolean @default(false)
+  acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
+
+  // Pricing & Details
+  pricingTiers    Json?   // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
+  whatsIncluded   String? @db.Text // What comes with each animal
+  typicalWaitTime String? // "3-6 months"
+
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  // Relations
+  breedingPlans BreedingPlan[]
+  media         BreedingProgramMedia[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([listed])
+  @@index([species])
+}
+
+model BreedingProgramMedia {
+  id        Int             @id @default(autoincrement())
+  programId Int
+  program   BreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  tenantId  Int
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assetUrl  String
+  caption   String?
+  sortOrder Int     @default(0)
+  isPublic  Boolean @default(true) // Visibility toggle
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId])
+  @@index([tenantId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Breeding core
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -2376,6 +2486,10 @@ model BreedingPlan {
 
   organizationId Int?
   organization   Organization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  // Breeding Program linkage (for marketplace)
+  programId Int?
+  program   BreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
 
   code      String?
   name      String
@@ -2443,6 +2557,7 @@ model BreedingPlan {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([organizationId])
+  @@index([programId])
   @@index([damId])
   @@index([sireId])
   @@index([status])
@@ -2967,6 +3082,16 @@ model WaitlistEntry {
   rejectedReason String?
 
   notes         String?
+
+  // Origin tracking for conversion attribution
+  originSource      String? // "direct" | "utm" | "referrer" | "embed" | "social"
+  originReferrer    String? // Full referrer URL or source name
+  originUtmSource   String? // utm_source parameter
+  originUtmMedium   String? // utm_medium parameter
+  originUtmCampaign String? // utm_campaign parameter
+  originPagePath    String? // Page path where conversion occurred
+  originProgramSlug String? // Breeding program slug if applicable
+
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   TagAssignment TagAssignment[]
@@ -3862,10 +3987,18 @@ model MessageThread {
   flaggedAt DateTime?
 
   // Marketplace MVP: inquiry context fields
-  inquiryType       String? // "MARKETPLACE" | "WAITLIST" | "GENERAL" | null
+  inquiryType       String? // "MARKETPLACE" | "WAITLIST" | "GENERAL" | "ANIMAL_LISTING" | null
   sourceListingSlug String?
   guestEmail        String?
   guestName         String?
+
+  // Origin tracking for conversion attribution
+  originSource      String? // "direct" | "utm" | "referrer" | "embed" | "social"
+  originReferrer    String? // Full referrer URL or source name
+  originUtmSource   String? // utm_source parameter
+  originUtmMedium   String? // utm_medium parameter
+  originUtmCampaign String? // utm_campaign parameter
+  originPagePath    String? // Page path where conversion occurred
 
   participants  MessageParticipant[]
   messages      Message[]
@@ -4092,6 +4225,9 @@ model Document {
   // Title & Competition document links
   titleLinks       AnimalTitleDocument[]
   competitionLinks CompetitionEntryDocument[]
+
+  // Vaccination record links
+  vaccinationRecords VaccinationRecord[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

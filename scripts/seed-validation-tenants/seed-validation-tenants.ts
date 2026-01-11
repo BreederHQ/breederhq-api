@@ -39,6 +39,13 @@ import {
   FinanceScope,
   TitleStatus,
   CompetitionType,
+  OffspringLifeState,
+  OffspringPlacementState,
+  OffspringKeeperIntent,
+  OffspringFinancialState,
+  OffspringPaperworkState,
+  TraitStatus,
+  TraitSource,
 } from '@prisma/client';
 
 import { seedTitleDefinitions } from './seed-title-definitions';
@@ -53,6 +60,9 @@ import {
   getTenantAnimals,
   getTenantBreedingPlans,
   getTenantMarketplaceListings,
+  getTenantOffspringGroups,
+  getTenantHealth,
+  getTenantVaccinations,
   getPortalAccessDefinitions,
   getMarketplaceUsers,
   getContactMeta,
@@ -71,6 +81,9 @@ import {
   EmailDefinition,
   DMThreadDefinition,
   DraftDefinition,
+  OffspringGroupDefinition,
+  AnimalHealthDefinition,
+  AnimalVaccinationsDefinition,
   MARKETPLACE_USERS,
   AnimalTitleDefinition,
   CompetitionEntryDefinition,
@@ -728,6 +741,308 @@ async function seedBreedingPlans(
       console.log(`  = Plan exists: ${envName}`);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OFFSPRING GROUP AND OFFSPRING SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedOffspringGroups(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  tenantOffspringGroups: Record<string, OffspringGroupDefinition[]>
+): Promise<{ groups: number; offspring: number }> {
+  const groupDefs = tenantOffspringGroups[tenantSlug] || [];
+  let groupsCreated = 0;
+  let offspringCreated = 0;
+
+  for (const groupDef of groupDefs) {
+    const envGroupName = getEnvName(groupDef.name, env);
+
+    // Check if group already exists
+    let group = await prisma.offspringGroup.findFirst({
+      where: { tenantId, name: envGroupName },
+    });
+
+    if (!group) {
+      // Look up dam and sire by name
+      const damEnvName = getEnvName(groupDef.damRef, env);
+      const sireEnvName = getEnvName(groupDef.sireRef, env);
+
+      const dam = await prisma.animal.findFirst({
+        where: { tenantId, name: damEnvName, species: groupDef.species },
+      });
+      const sire = await prisma.animal.findFirst({
+        where: { tenantId, name: sireEnvName, species: groupDef.species },
+      });
+
+      if (!dam) {
+        console.log(`  ! Dam not found: ${damEnvName} - skipping group ${envGroupName}`);
+        continue;
+      }
+      if (!sire) {
+        console.log(`  ! Sire not found: ${sireEnvName} - skipping group ${envGroupName}`);
+        continue;
+      }
+
+      // Create the offspring group
+      group = await prisma.offspringGroup.create({
+        data: {
+          tenantId,
+          name: envGroupName,
+          species: groupDef.species,
+          damId: dam.id,
+          sireId: sire.id,
+          actualBirthOn: new Date(groupDef.actualBirthOn),
+          countBorn: groupDef.countBorn,
+          countLive: groupDef.countLive,
+          countStillborn: groupDef.countStillborn,
+          countMale: groupDef.countMale,
+          countFemale: groupDef.countFemale,
+          countWeaned: groupDef.countWeaned,
+          countPlaced: groupDef.countPlaced,
+          weanedAt: groupDef.weanedAt ? new Date(groupDef.weanedAt) : null,
+          placementCompletedAt: groupDef.placementCompletedAt ? new Date(groupDef.placementCompletedAt) : null,
+          notes: groupDef.notes,
+        },
+      });
+      groupsCreated++;
+
+      console.log(`  + Created offspring group: ${envGroupName} (Dam: ${groupDef.damRef}, Sire: ${groupDef.sireRef})`);
+
+      // Create offspring within this group
+      for (const offspringDef of groupDef.offspring) {
+        const envOffspringName = getEnvName(offspringDef.name, env);
+
+        // Check if offspring already exists
+        const existingOffspring = await prisma.offspring.findFirst({
+          where: { tenantId, groupId: group.id, name: envOffspringName },
+        });
+
+        if (!existingOffspring) {
+          const bornAt = new Date(groupDef.actualBirthOn);
+
+          await prisma.offspring.create({
+            data: {
+              tenantId,
+              groupId: group.id,
+              name: envOffspringName,
+              species: groupDef.species,
+              breed: offspringDef.breed,
+              sex: offspringDef.sex,
+              bornAt,
+              damId: dam.id,
+              sireId: sire.id,
+              lifeState: offspringDef.lifeState as OffspringLifeState,
+              placementState: offspringDef.placementState as OffspringPlacementState,
+              keeperIntent: offspringDef.keeperIntent as OffspringKeeperIntent,
+              financialState: offspringDef.financialState as OffspringFinancialState,
+              paperworkState: offspringDef.paperworkState as OffspringPaperworkState,
+              collarColorName: offspringDef.collarColorName,
+              collarColorHex: offspringDef.collarColorHex,
+              collarAssignedAt: offspringDef.collarColorName ? bornAt : null,
+              priceCents: offspringDef.priceCents,
+              depositCents: offspringDef.depositCents,
+              notes: offspringDef.notes,
+              // If placed and paid, set placement date
+              placedAt: offspringDef.placementState === 'PLACED' && groupDef.placementCompletedAt
+                ? new Date(groupDef.placementCompletedAt)
+                : null,
+              paidInFullAt: offspringDef.financialState === 'PAID_IN_FULL' && groupDef.placementCompletedAt
+                ? new Date(groupDef.placementCompletedAt)
+                : null,
+            },
+          });
+          offspringCreated++;
+        }
+      }
+
+      console.log(`    + Created ${groupDef.offspring.length} offspring in group`);
+    } else {
+      console.log(`  = Offspring group exists: ${envGroupName}`);
+    }
+  }
+
+  return { groups: groupsCreated, offspring: offspringCreated };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANIMAL HEALTH TRAITS SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedAnimalHealthTraits(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  tenantHealth: Record<string, AnimalHealthDefinition[]>
+): Promise<number> {
+  const healthDefs = tenantHealth[tenantSlug] || [];
+  let traitsCreated = 0;
+
+  for (const healthDef of healthDefs) {
+    // Look up animal by name (use env-prefixed name for DEV)
+    const animalName = getEnvName(healthDef.animalRef, env);
+
+    const animal = await prisma.animal.findFirst({
+      where: { tenantId, name: animalName },
+    });
+
+    if (!animal) {
+      // Try without prefix (some animal names don't get prefixed)
+      const unprefixedAnimal = await prisma.animal.findFirst({
+        where: { tenantId, name: healthDef.animalRef },
+      });
+
+      if (!unprefixedAnimal) {
+        console.log(`  ! Animal not found: ${animalName} - skipping health traits`);
+        continue;
+      }
+
+      // Use unprefixed animal
+      for (const trait of healthDef.traits) {
+        const created = await seedSingleHealthTrait(tenantId, unprefixedAnimal.id, trait);
+        if (created) traitsCreated++;
+      }
+    } else {
+      for (const trait of healthDef.traits) {
+        const created = await seedSingleHealthTrait(tenantId, animal.id, trait);
+        if (created) traitsCreated++;
+      }
+    }
+  }
+
+  return traitsCreated;
+}
+
+async function seedSingleHealthTrait(
+  tenantId: number,
+  animalId: number,
+  trait: AnimalHealthDefinition['traits'][0]
+): Promise<boolean> {
+  // Look up the trait definition by key
+  const traitDef = await prisma.traitDefinition.findFirst({
+    where: {
+      key: trait.traitKey,
+      tenantId: null, // Global trait definitions
+    },
+  });
+
+  if (!traitDef) {
+    console.log(`    ! Trait definition not found: ${trait.traitKey}`);
+    return false;
+  }
+
+  // Check if trait value already exists
+  const existing = await prisma.animalTraitValue.findFirst({
+    where: {
+      tenantId,
+      animalId,
+      traitDefinitionId: traitDef.id,
+    },
+  });
+
+  if (existing) {
+    return false; // Already exists
+  }
+
+  // Create the trait value
+  await prisma.animalTraitValue.create({
+    data: {
+      tenantId,
+      animalId,
+      traitDefinitionId: traitDef.id,
+      valueBoolean: trait.valueBoolean ?? null,
+      valueNumber: trait.valueNumber ?? null,
+      valueText: trait.valueText ?? null,
+      valueDate: trait.valueDate ? new Date(trait.valueDate) : null,
+      valueJson: trait.valueJson ?? null,
+      status: trait.status ? (trait.status as TraitStatus) : null,
+      source: trait.source ? (trait.source as TraitSource) : null,
+      performedAt: trait.performedAt ? new Date(trait.performedAt) : null,
+      notes: trait.notes ?? null,
+      verified: trait.verified ?? false,
+      marketplaceVisible: trait.marketplaceVisible ?? null,
+      networkVisible: trait.networkVisible ?? null,
+    },
+  });
+
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VACCINATION RECORD SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedVaccinationRecords(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  tenantVaccinations: Record<string, AnimalVaccinationsDefinition[]>
+): Promise<number> {
+  const vaccinationDefs = tenantVaccinations[tenantSlug] || [];
+  let recordsCreated = 0;
+
+  for (const vacDef of vaccinationDefs) {
+    // Skip animals with no vaccinations
+    if (!vacDef.vaccinations || vacDef.vaccinations.length === 0) {
+      continue;
+    }
+
+    // Look up animal by name (use env-prefixed name for DEV)
+    const animalName = getEnvName(vacDef.animalRef, env);
+
+    let animal = await prisma.animal.findFirst({
+      where: { tenantId, name: animalName },
+    });
+
+    if (!animal) {
+      // Try without prefix (some animal names don't get prefixed)
+      animal = await prisma.animal.findFirst({
+        where: { tenantId, name: vacDef.animalRef },
+      });
+
+      if (!animal) {
+        console.log(`  ! Animal not found: ${vacDef.animalRef} - skipping vaccinations`);
+        continue;
+      }
+    }
+
+    // Create vaccination records for this animal
+    for (const vac of vacDef.vaccinations) {
+      // Check if vaccination record already exists for this animal + protocol
+      const existing = await prisma.vaccinationRecord.findFirst({
+        where: {
+          tenantId,
+          animalId: animal.id,
+          protocolKey: vac.protocolKey,
+        },
+      });
+
+      if (existing) {
+        continue; // Already exists
+      }
+
+      // Create the vaccination record
+      await prisma.vaccinationRecord.create({
+        data: {
+          tenantId,
+          animalId: animal.id,
+          protocolKey: vac.protocolKey,
+          administeredAt: new Date(vac.administeredAt),
+          expiresAt: vac.expiresAt ? new Date(vac.expiresAt) : null,
+          veterinarian: vac.veterinarian ?? null,
+          clinic: vac.clinic ?? null,
+          batchLotNumber: vac.batchLotNumber ?? null,
+          notes: vac.notes ?? null,
+        },
+      });
+
+      recordsCreated++;
+    }
+  }
+
+  return recordsCreated;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1706,6 +2021,9 @@ async function main() {
   const tenantOrganizations = getTenantOrganizations(env);
   const tenantAnimals = getTenantAnimals(env);
   const tenantBreedingPlans = getTenantBreedingPlans(env);
+  const tenantOffspringGroups = getTenantOffspringGroups(env);
+  const tenantHealth = getTenantHealth(env);
+  const tenantVaccinations = getTenantVaccinations(env);
   const tenantMarketplaceListings = getTenantMarketplaceListings(env);
   const portalAccessDefinitions = getPortalAccessDefinitions(env);
   const marketplaceUserDefs = getMarketplaceUsers();
@@ -1729,6 +2047,10 @@ async function main() {
     animalTitles: 0,
     competitionEntries: 0,
     breedingPlans: 0,
+    offspringGroups: 0,
+    offspring: 0,
+    healthTraits: 0,
+    vaccinations: 0,
     marketplaceListings: 0,
     tags: 0,
     tagAssignments: 0,
@@ -1811,6 +2133,43 @@ async function main() {
     console.log('\n  [Breeding Plans]');
     await seedBreedingPlans(tenantDef.slug, tenantId, env, animalIdMap, tenantBreedingPlans);
     stats.breedingPlans += (tenantBreedingPlans[tenantDef.slug] || []).length;
+
+    // 6b. Create historical offspring groups and offspring
+    console.log('\n  [Offspring Groups & Offspring]');
+    const { groups: groupsCreated, offspring: offspringCreated } = await seedOffspringGroups(
+      tenantDef.slug,
+      tenantId,
+      env,
+      tenantOffspringGroups
+    );
+    stats.offspringGroups += groupsCreated;
+    stats.offspring += offspringCreated;
+
+    // 6c. Create animal health traits
+    console.log('\n  [Animal Health Traits]');
+    const healthTraitsCreated = await seedAnimalHealthTraits(
+      tenantDef.slug,
+      tenantId,
+      env,
+      tenantHealth
+    );
+    stats.healthTraits += healthTraitsCreated;
+    if (healthTraitsCreated > 0) {
+      console.log(`  + Created ${healthTraitsCreated} health trait values`);
+    }
+
+    // 6b. Create vaccination records
+    console.log('\n  [Vaccination Records]');
+    const vaccinationsCreated = await seedVaccinationRecords(
+      tenantDef.slug,
+      tenantId,
+      env,
+      tenantVaccinations
+    );
+    stats.vaccinations += vaccinationsCreated;
+    if (vaccinationsCreated > 0) {
+      console.log(`  + Created ${vaccinationsCreated} vaccination records`);
+    }
 
     // 7. Create marketplace listings
     console.log('\n  [Marketplace Listings]');
@@ -1918,6 +2277,10 @@ async function main() {
   console.log(`  Animal Titles:        ${stats.animalTitles}`);
   console.log(`  Competition Entries:  ${stats.competitionEntries}`);
   console.log(`  Breeding Plans:       ${stats.breedingPlans}`);
+  console.log(`  Offspring Groups:     ${stats.offspringGroups}`);
+  console.log(`  Offspring:            ${stats.offspring}`);
+  console.log(`  Health Traits:        ${stats.healthTraits}`);
+  console.log(`  Vaccinations:         ${stats.vaccinations}`);
   console.log(`  Marketplace Listings: ${stats.marketplaceListings}`);
   console.log(`  Tags:                 ${stats.tags}`);
   console.log(`  Tag Assignments:      ${stats.tagAssignments}`);
