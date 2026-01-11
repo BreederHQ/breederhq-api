@@ -3,7 +3,8 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
-import { sendEmail } from "./email-service.js";
+import { sendEmail, buildFromAddress } from "./email-service.js";
+import { generateReplyToAddress } from "./inbound-email-service.js";
 
 const PORTAL_DOMAIN = process.env.PORTAL_DOMAIN || "http://localhost:6170";
 const INVITE_TTL_HOURS = 72; // 3 days
@@ -239,15 +240,29 @@ If you did not expect this invitation, you can safely ignore this email.
 
 /**
  * Send a notification email about a new message (after portal access is set up)
+ *
+ * @param tenantId - The tenant ID
+ * @param toEmail - Recipient email address
+ * @param partyName - Recipient's name
+ * @param senderName - Sender's name (shown in email)
+ * @param messagePreview - Preview of the message body
+ * @param threadId - Optional thread ID for generating reply-to address
  */
 export async function sendNewMessageNotification(
   tenantId: number,
   toEmail: string,
   partyName: string,
   senderName: string,
-  messagePreview: string
+  messagePreview: string,
+  threadId?: number
 ): Promise<{ ok: boolean; error?: string }> {
   const portalUrl = `${PORTAL_DOMAIN}/messages`;
+
+  // Generate reply-to address if thread ID provided
+  const replyTo = threadId ? generateReplyToAddress(threadId) : undefined;
+
+  // Build custom from address with sender name
+  const from = buildFromAddress(`${senderName} via BreederHQ`, "notifications");
 
   const html = `
     <h2>You have a new message</h2>
@@ -256,6 +271,7 @@ export async function sendNewMessageNotification(
     <blockquote style="margin:16px 0;padding:12px 16px;background:#f5f5f5;border-left:4px solid #2563eb;border-radius:4px;">
       ${messagePreview.substring(0, 200)}${messagePreview.length > 200 ? '...' : ''}
     </blockquote>
+    <p><strong>Reply directly to this email</strong> or <a href="${portalUrl}" style="color:#2563eb;">view in your portal</a>.</p>
     <p><a href="${portalUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">View Message</a></p>
   `;
 
@@ -268,7 +284,7 @@ ${senderName} sent you a message:
 
 "${messagePreview.substring(0, 200)}${messagePreview.length > 200 ? '...' : ''}"
 
-Log in to the client portal to read and reply:
+Reply directly to this email, or log in to the client portal:
 ${portalUrl}
   `.trim();
 
@@ -280,5 +296,7 @@ ${portalUrl}
     text,
     templateKey: "new_message_notification",
     category: "transactional",
+    from,
+    replyTo,
   });
 }

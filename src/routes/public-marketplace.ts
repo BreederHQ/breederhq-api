@@ -888,12 +888,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       // Guest fields - not implemented for MVP (auth required)
       guestName?: string;
       guestEmail?: string;
+      // Origin tracking for conversion attribution
+      origin?: {
+        source?: string; // "direct" | "utm" | "referrer" | "embed" | "social"
+        referrer?: string;
+        utmSource?: string;
+        utmMedium?: string;
+        utmCampaign?: string;
+        pagePath?: string;
+      };
     };
   }>("/inquiries", async (req, reply) => {
     // SECURITY: Require entitlement before creating any inquiry
     if (!(await requireMarketplaceEntitlement(req, reply))) return;
 
-    const { programSlug, listingSlug, listingType, message, offspringId } = req.body;
+    const { programSlug, listingSlug, listingType, message, offspringId, origin } = req.body;
 
     // Validate required fields
     if (!programSlug || !message) {
@@ -1002,6 +1011,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           inquiryType,
           sourceListingSlug: listingSlug || null,
           lastMessageAt: now,
+          // Origin tracking
+          originSource: origin?.source || null,
+          originReferrer: origin?.referrer || null,
+          originUtmSource: origin?.utmSource || null,
+          originUtmMedium: origin?.utmMedium || null,
+          originUtmCampaign: origin?.utmCampaign || null,
+          originPagePath: origin?.pagePath || null,
           participants: {
             create: [
               { partyId: user.partyId, lastReadAt: now },
@@ -1022,6 +1038,215 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /programs/:programSlug/breeding-programs - List breeding programs for a breeder - REQUIRES ENTITLEMENT
+  // --------------------------------------------------------------------------
+  app.get<{
+    Params: { programSlug: string };
+    Querystring: { species?: string; page?: string; limit?: string };
+  }>("/programs/:programSlug/breeding-programs", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
+    const { programSlug } = req.params;
+    const { species } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    if (!isValidSlug(programSlug)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const resolved = await resolveTenantFromProgramSlug(prisma, programSlug);
+    if (!resolved) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Build where clause - only listed programs
+    const where: any = {
+      tenantId: resolved.tenantId,
+      listed: true,
+    };
+
+    if (species) {
+      where.species = species.toUpperCase();
+    }
+
+    const [items, total] = await prisma.$transaction([
+      prisma.breedingProgram.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          description: true,
+          species: true,
+          breedText: true,
+          acceptInquiries: true,
+          openWaitlist: true,
+          acceptReservations: true,
+          pricingTiers: true,
+          whatsIncluded: true,
+          typicalWaitTime: true,
+          publishedAt: true,
+          _count: {
+            select: {
+              breedingPlans: {
+                where: {
+                  status: { in: ["COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.breedingProgram.count({ where }),
+    ]);
+
+    return reply.send({
+      items: items.map((p) => ({
+        id: p.id,
+        slug: p.slug,
+        name: p.name,
+        description: p.description,
+        species: p.species,
+        breedText: p.breedText,
+        acceptInquiries: p.acceptInquiries,
+        openWaitlist: p.openWaitlist,
+        acceptReservations: p.acceptReservations,
+        pricingTiers: p.pricingTiers,
+        whatsIncluded: p.whatsIncluded,
+        typicalWaitTime: p.typicalWaitTime,
+        publishedAt: p.publishedAt,
+        activePlansCount: p._count.breedingPlans,
+      })),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /breeding-programs - Browse all listed breeding programs - REQUIRES ENTITLEMENT
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/breeding-programs", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
+    const { search, species, breed } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    // Build where clause - only listed programs from published breeders
+    const where: any = {
+      listed: true,
+      tenant: {
+        organizations: {
+          some: {
+            isPublicProgram: true,
+          },
+        },
+      },
+    };
+
+    if (search && search.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: "insensitive" } },
+        { breedText: { contains: search.trim(), mode: "insensitive" } },
+        { description: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    if (species) {
+      where.species = species.toUpperCase();
+    }
+
+    if (breed && breed.trim()) {
+      where.breedText = { contains: breed.trim(), mode: "insensitive" };
+    }
+
+    const [items, total] = await prisma.$transaction([
+      prisma.breedingProgram.findMany({
+        where,
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          description: true,
+          species: true,
+          breedText: true,
+          acceptInquiries: true,
+          openWaitlist: true,
+          acceptReservations: true,
+          typicalWaitTime: true,
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                  city: true,
+                  state: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              breedingPlans: {
+                where: {
+                  status: { in: ["COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.breedingProgram.count({ where }),
+    ]);
+
+    return reply.send({
+      items: items.map((p) => {
+        const org = p.tenant?.organizations?.[0];
+        return {
+          id: p.id,
+          slug: p.slug,
+          name: p.name,
+          description: p.description,
+          species: p.species,
+          breedText: p.breedText,
+          acceptInquiries: p.acceptInquiries,
+          openWaitlist: p.openWaitlist,
+          acceptReservations: p.acceptReservations,
+          typicalWaitTime: p.typicalWaitTime,
+          activePlansCount: p._count.breedingPlans,
+          breeder: org ? {
+            slug: org.programSlug,
+            name: org.name,
+            location: [org.city, org.state].filter(Boolean).join(", ") || null,
+          } : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+    });
   });
 };
 

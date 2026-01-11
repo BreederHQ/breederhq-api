@@ -811,6 +811,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Validate programId if provided (links plan to a BreedingProgram for marketplace)
+      if (b.programId) {
+        const program = await prisma.breedingProgram.findFirst({
+          where: { id: Number(b.programId), tenantId },
+          select: { id: true },
+        });
+        if (!program) return reply.code(400).send({ error: "program_not_found" });
+      }
+
       const normalizedStatus = normalizePlanStatus(b.status ?? "PLANNING");
       if (!normalizedStatus) return reply.code(400).send({ error: "bad_status" });
 
@@ -841,6 +850,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         species: b.species,
         damId: damId ?? null,
         sireId: b.sireId ?? null,
+        programId: b.programId ? Number(b.programId) : null, // Breeding Program (marketplace)
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
         expectedBreedDate: b.expectedBreedDate ? new Date(b.expectedBreedDate) : null,

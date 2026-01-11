@@ -11,10 +11,23 @@ import { renderTemplate } from "./template-renderer.js";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PRODUCTION = NODE_ENV === "production";
 
-// From address configuration
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@breederhq.com";
-const FROM_NAME = process.env.RESEND_FROM_NAME || "BreederHQ";
-const FROM = `${FROM_NAME} <${FROM_EMAIL}>`;
+// From address configuration (defaults)
+const DEFAULT_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@mail.breederhq.com";
+const DEFAULT_FROM_NAME = process.env.RESEND_FROM_NAME || "BreederHQ";
+const DEFAULT_FROM = `${DEFAULT_FROM_NAME} <${DEFAULT_FROM_EMAIL}>`;
+
+// Inbound email domain (for reply-to addresses)
+export const INBOUND_DOMAIN = process.env.RESEND_INBOUND_DOMAIN || "mail.breederhq.com";
+
+/**
+ * Build a formatted from address
+ * @param name Display name (e.g., "Sunny Acres Farm")
+ * @param localPart Local part of email (e.g., "notifications") - defaults to "noreply"
+ * @returns Formatted from address (e.g., "Sunny Acres Farm" <notifications@mail.breederhq.com>)
+ */
+export function buildFromAddress(name: string, localPart: string = "noreply"): string {
+  return `"${name}" <${localPart}@${INBOUND_DOMAIN}>`;
+}
 
 // Development mode settings
 // In dev mode, emails can be:
@@ -87,6 +100,10 @@ export interface SendEmailParams {
   metadata?: Record<string, any>;
   relatedInvoiceId?: number;
   category: "transactional" | "marketing";
+  /** Optional custom from address. Must be on verified domain (e.g., "Farm Name" <farm@mail.breederhq.com>) */
+  from?: string;
+  /** Optional reply-to address for threading (e.g., reply+t_123_abc@mail.breederhq.com) */
+  replyTo?: string;
 }
 
 export interface SendTemplatedEmailParams {
@@ -97,6 +114,10 @@ export interface SendTemplatedEmailParams {
   category: "transactional" | "marketing";
   relatedInvoiceId?: number;
   metadata?: Record<string, any>;
+  /** Optional custom from address */
+  from?: string;
+  /** Optional reply-to address */
+  replyTo?: string;
 }
 
 export interface SendEmailResult {
@@ -112,7 +133,7 @@ export interface SendEmailResult {
 export async function sendTemplatedEmail(
   params: SendTemplatedEmailParams
 ): Promise<SendEmailResult> {
-  const { tenantId, to, templateId, context, category, relatedInvoiceId, metadata } = params;
+  const { tenantId, to, templateId, context, category, relatedInvoiceId, metadata, from, replyTo } = params;
 
   const template = await prisma.template.findFirst({
     where: { id: templateId, tenantId },
@@ -132,13 +153,15 @@ export async function sendTemplatedEmail(
   return sendEmail({
     tenantId,
     to,
-    subject: rendered.subject || `Message from ${FROM_NAME}`,
+    subject: rendered.subject || `Message from ${DEFAULT_FROM_NAME}`,
     html: rendered.bodyHtml,
     text: rendered.bodyText,
     templateKey: template.key || undefined,
     metadata,
     relatedInvoiceId,
     category,
+    from,
+    replyTo,
   });
 }
 
@@ -149,7 +172,10 @@ export async function sendTemplatedEmail(
  * - Invoice emails are idempotent via unique constraint on (tenantId, templateKey, relatedInvoiceId).
  */
 export async function sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-  const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category } = params;
+  const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category, from, replyTo } = params;
+
+  // Use custom from or default
+  const fromAddress = from || DEFAULT_FROM;
 
   // Idempotency check for invoice emails
   if (templateKey === "invoice_issued" && relatedInvoiceId) {
@@ -182,7 +208,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
           data: {
             tenantId,
             to,
-            from: FROM,
+            from: fromAddress,
             subject,
             templateKey,
             provider: "resend",
@@ -212,14 +238,14 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
       data: {
         tenantId,
         to,
-        from: FROM,
+        from: fromAddress,
         subject,
         templateKey,
         category,
         provider: "resend",
         relatedInvoiceId,
         status: "sent", // Mark as sent since it's intentionally blocked
-        metadata: { ...metadata, devMode: "log_only", originalTo: to },
+        metadata: { ...metadata, devMode: "log_only", originalTo: to, replyTo },
       },
     });
 
@@ -241,11 +267,12 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
       : subject;
 
     const { data, error } = await resendClient.emails.send({
-      from: FROM,
+      from: fromAddress,
       to: actualRecipient,
       subject: actualSubject,
       html: html || text || "",
       text,
+      ...(replyTo && { reply_to: replyTo }),
     });
 
     if (error) {
@@ -253,14 +280,14 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         data: {
           tenantId,
           to,
-          from: FROM,
+          from: fromAddress,
           subject,
           templateKey,
           provider: "resend",
           relatedInvoiceId,
           status: "failed",
           error: { resendError: error },
-          metadata,
+          metadata: { ...metadata, replyTo },
         },
       });
       return { ok: false, error: error.message || "resend_error" };
@@ -271,7 +298,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
       data: {
         tenantId,
         to: devMode.redirected ? to : actualRecipient, // Log original recipient
-        from: FROM,
+        from: fromAddress,
         subject,
         templateKey,
         category,
@@ -280,8 +307,8 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         relatedInvoiceId,
         status: "sent",
         metadata: devMode.redirected
-          ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to }
-          : metadata,
+          ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to, replyTo }
+          : { ...metadata, replyTo },
       },
     });
 
@@ -291,7 +318,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
       data: {
         tenantId,
         to,
-        from: FROM,
+        from: fromAddress,
         subject,
         templateKey,
         category,
@@ -299,7 +326,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         relatedInvoiceId,
         status: "failed",
         error: { exception: err.message },
-        metadata,
+        metadata: { ...metadata, replyTo },
       },
     });
     return { ok: false, error: err.message || "unknown_error" };

@@ -1584,7 +1584,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const body = req.body as {
       urlSlug?: string;
-      intent?: "STUD" | "BROOD_PLACEMENT" | "REHOME" | "SHOWCASE";
+      intent?: "STUD" | "BROOD_PLACEMENT" | "REHOME" | "GUARDIAN" | "TRAINED" | "WORKING" | "STARTED" | "CO_OWNERSHIP";
       headline?: string;
       title?: string;
       summary?: string;
@@ -1601,7 +1601,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
 
     // Validate intent if provided
-    const validIntents = ["STUD", "BROOD_PLACEMENT", "REHOME", "SHOWCASE"];
+    const validIntents = ["STUD", "BROOD_PLACEMENT", "REHOME", "GUARDIAN", "TRAINED", "WORKING", "STARTED", "CO_OWNERSHIP"];
     if (body.intent && !validIntents.includes(body.intent)) {
       return reply.code(400).send({ error: "invalid_intent", validIntents });
     }
@@ -2107,6 +2107,85 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const result = await lineageService.getPedigree(animalId, tenantId, gen);
     reply.send(result);
+  });
+
+  /**
+   * GET /animals/:id/offspring
+   * Get offspring (from Offspring table) where this animal is the dam or sire
+   * Returns offspring records, not Animal records
+   */
+  app.get("/animals/:id/offspring", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
+      select: { id: true, name: true, sex: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    // Query Offspring table where this animal is dam or sire
+    const offspring = await prisma.offspring.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { damId: animalId },
+          { sireId: animalId },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        sex: true,
+        species: true,
+        breed: true,
+        bornAt: true,
+        lifeState: true,
+        placementState: true,
+        keeperIntent: true,
+        damId: true,
+        sireId: true,
+        dam: { select: { id: true, name: true } },
+        sire: { select: { id: true, name: true } },
+        group: {
+          select: {
+            id: true,
+            name: true,
+            actualBirthOn: true,
+            expectedBirthOn: true,
+          },
+        },
+        collarColorName: true,
+        collarColorHex: true,
+      },
+      orderBy: { bornAt: "desc" },
+    });
+
+    reply.send({
+      animal: { id: animal.id, name: animal.name, sex: animal.sex },
+      offspring: offspring.map((o) => ({
+        id: o.id,
+        name: o.name,
+        sex: o.sex,
+        species: o.species,
+        breed: o.breed,
+        birthDate: o.bornAt?.toISOString() ?? null,
+        lifeState: o.lifeState,
+        placementState: o.placementState,
+        keeperIntent: o.keeperIntent,
+        otherParent: animal.sex === "FEMALE"
+          ? (o.sire ? { id: o.sire.id, name: o.sire.name } : null)
+          : (o.dam ? { id: o.dam.id, name: o.dam.name } : null),
+        group: o.group ? {
+          id: o.group.id,
+          name: o.group.name,
+          birthDate: o.group.actualBirthOn?.toISOString() ?? o.group.expectedBirthOn?.toISOString() ?? null,
+        } : null,
+        collarColor: o.collarColorName || o.collarColorHex || null,
+      })),
+    });
   });
 
   /**

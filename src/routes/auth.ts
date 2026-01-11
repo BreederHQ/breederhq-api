@@ -721,7 +721,25 @@ If you didn't request this, you can safely ignore this email.
     await ensureDefaultTenant(user.id);
     const tenantId = await pickTenantIdForUser(user.id);
     const surface = deriveSurface(req) as Surface;
+
+    // Note: For PORTAL logins, we allow authentication to succeed even if suspended.
+    // The AuthGate will detect the blocked status and redirect to /blocked page,
+    // where the user can see the breeder's contact info to resolve the issue.
+    // This is better UX than blocking at login with a generic error.
+
     setSessionCookies(reply, { userId: String(user.id), tenantId }, surface);
+
+    // Update PortalAccess.lastLoginAt for portal logins
+    if (surface === "PORTAL" && tenantId) {
+      try {
+        await prisma.portalAccess.updateMany({
+          where: { userId: user.id, tenantId },
+          data: { lastLoginAt: new Date() },
+        });
+      } catch {
+        // Ignore if PortalAccess doesn't exist
+      }
+    }
 
     // Audit successful login
     await auditSuccess(req, "AUTH_LOGIN_SUCCESS", {

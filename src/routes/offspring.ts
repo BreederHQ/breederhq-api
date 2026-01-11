@@ -1899,9 +1899,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         breed: derivedBreed,
         bornAt,
 
-        // Auto-link parents from the offspring group (lineage tracking)
-        damId: group.damId ?? null,
-        sireId: group.sireId ?? null,
+        // Auto-link parents from the offspring group (fallback to plan if group doesn't have it)
+        damId: group.damId ?? group.plan?.damId ?? null,
+        sireId: group.sireId ?? group.plan?.sireId ?? null,
 
         // new: core identity fields
         notes: body.notes ?? null,
@@ -2349,7 +2349,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const G = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
-      include: { plan: { select: { species: true } } },
+      include: { plan: { select: { species: true, damId: true, sireId: true } } },
     });
     if (!G) return reply.code(404).send({ error: "group not found" });
 
@@ -2370,6 +2370,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         notes: body.notes ?? null,
         breed: body.breed ?? null,
         offspringGroupId: G.id,
+        // parent lineage from offspring group (fallback to plan if group doesn't have it)
+        damId: G.damId ?? G.plan?.damId ?? null,
+        sireId: G.sireId ?? G.plan?.sireId ?? null,
         // collar fields
         collarColorId: body.collarColorId ?? null,
         collarColorName: body.collarColorName ?? null,
