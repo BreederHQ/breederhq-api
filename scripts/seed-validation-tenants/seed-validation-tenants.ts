@@ -37,7 +37,11 @@ import {
   InvoiceStatus,
   PartyActivityKind,
   FinanceScope,
+  TitleStatus,
+  CompetitionType,
 } from '@prisma/client';
+
+import { seedTitleDefinitions } from './seed-title-definitions';
 
 import {
   Environment,
@@ -68,6 +72,8 @@ import {
   DMThreadDefinition,
   DraftDefinition,
   MARKETPLACE_USERS,
+  AnimalTitleDefinition,
+  CompetitionEntryDefinition,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -526,6 +532,131 @@ async function seedAnimals(
   }
 
   return animalIdMap;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANIMAL TITLES AND COMPETITIONS SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedAnimalTitlesAndCompetitions(
+  tenantId: number,
+  env: Environment,
+  tenantAnimals: Record<string, AnimalDefinition[]>,
+  tenantSlug: string
+): Promise<{ titles: number; competitions: number }> {
+  const animalDefs = tenantAnimals[tenantSlug] || [];
+  let titlesCreated = 0;
+  let competitionsCreated = 0;
+
+  for (const animalDef of animalDefs) {
+    const envName = getEnvName(animalDef.name, env);
+
+    // Find the animal
+    const animal = await prisma.animal.findFirst({
+      where: { tenantId, name: envName, species: animalDef.species },
+    });
+
+    if (!animal) {
+      continue;
+    }
+
+    // Seed titles for this animal
+    if (animalDef.titles && animalDef.titles.length > 0) {
+      for (const titleDef of animalDef.titles) {
+        // Find the title definition
+        const titleDefinition = await prisma.titleDefinition.findFirst({
+          where: {
+            species: animalDef.species,
+            abbreviation: titleDef.titleAbbreviation,
+            tenantId: null, // Global definitions only
+          },
+        });
+
+        if (!titleDefinition) {
+          console.log(`  ! Title definition not found: ${titleDef.titleAbbreviation} for ${animalDef.species}`);
+          continue;
+        }
+
+        // Check if this animal already has this title
+        const existingTitle = await prisma.animalTitle.findFirst({
+          where: {
+            animalId: animal.id,
+            titleDefinitionId: titleDefinition.id,
+          },
+        });
+
+        if (!existingTitle) {
+          await prisma.animalTitle.create({
+            data: {
+              tenantId,
+              animalId: animal.id,
+              titleDefinitionId: titleDefinition.id,
+              dateEarned: titleDef.dateEarned ? new Date(titleDef.dateEarned) : null,
+              status: TitleStatus.VERIFIED,
+              pointsEarned: titleDef.pointsEarned || null,
+              majorWins: titleDef.majorWins || null,
+              eventName: titleDef.eventName || null,
+              eventLocation: titleDef.eventLocation || null,
+              handlerName: titleDef.handlerName || null,
+              verified: true,
+              verifiedAt: new Date(),
+              verifiedBy: 'Seed Data',
+              isPublic: true,
+            },
+          });
+          titlesCreated++;
+        }
+      }
+    }
+
+    // Seed competition entries for this animal
+    if (animalDef.competitions && animalDef.competitions.length > 0) {
+      for (const compDef of animalDef.competitions) {
+        // Check if this competition entry already exists
+        const existingComp = await prisma.competitionEntry.findFirst({
+          where: {
+            animalId: animal.id,
+            eventName: compDef.eventName,
+            eventDate: new Date(compDef.eventDate),
+          },
+        });
+
+        if (!existingComp) {
+          await prisma.competitionEntry.create({
+            data: {
+              tenantId,
+              animalId: animal.id,
+              eventName: compDef.eventName,
+              eventDate: new Date(compDef.eventDate),
+              location: compDef.location || null,
+              organization: compDef.organization || null,
+              competitionType: compDef.competitionType as CompetitionType,
+              className: compDef.className || null,
+              placement: compDef.placement || null,
+              placementLabel: compDef.placementLabel || null,
+              pointsEarned: compDef.pointsEarned || null,
+              isMajorWin: compDef.isMajorWin || false,
+              qualifyingScore: false,
+              judgeName: compDef.judgeName || null,
+              // Racing-specific fields
+              prizeMoneyCents: compDef.prizeMoneyCents || null,
+              trackName: compDef.trackName || null,
+              trackSurface: compDef.trackSurface || null,
+              distanceFurlongs: compDef.distanceFurlongs || null,
+              raceGrade: compDef.raceGrade || null,
+              finishTime: compDef.finishTime || null,
+              speedFigure: compDef.speedFigure || null,
+              handlerName: compDef.handlerName || null,
+              isPublic: true,
+            },
+          });
+          competitionsCreated++;
+        }
+      }
+    }
+  }
+
+  return { titles: titlesCreated, competitions: competitionsCreated };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1595,6 +1726,8 @@ async function main() {
     organizations: 0,
     contacts: 0,
     animals: 0,
+    animalTitles: 0,
+    competitionEntries: 0,
     breedingPlans: 0,
     marketplaceListings: 0,
     tags: 0,
@@ -1608,6 +1741,12 @@ async function main() {
     dmMessages: 0,
     drafts: 0,
   };
+
+  // Seed global title definitions FIRST (before any tenant-specific titles)
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  GLOBAL TITLE DEFINITIONS');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  await seedTitleDefinitions();
 
   // Seed marketplace shoppers FIRST so they exist for DM threads
   console.log('─────────────────────────────────────────────────────────────────────────────');
@@ -1653,6 +1792,20 @@ async function main() {
       tenantAnimals
     );
     stats.animals += animalIdMap.size;
+
+    // 5b. Create animal titles and competition entries
+    console.log('\n  [Animal Titles & Competitions]');
+    const { titles, competitions } = await seedAnimalTitlesAndCompetitions(
+      tenantId,
+      env,
+      tenantAnimals,
+      tenantDef.slug
+    );
+    stats.animalTitles += titles;
+    stats.competitionEntries += competitions;
+    if (titles > 0 || competitions > 0) {
+      console.log(`  + Created ${titles} titles and ${competitions} competition entries`);
+    }
 
     // 6. Create breeding plans
     console.log('\n  [Breeding Plans]');
@@ -1762,6 +1915,8 @@ async function main() {
   console.log(`  Organizations:        ${stats.organizations}`);
   console.log(`  Contacts:             ${stats.contacts}`);
   console.log(`  Animals:              ${stats.animals}`);
+  console.log(`  Animal Titles:        ${stats.animalTitles}`);
+  console.log(`  Competition Entries:  ${stats.competitionEntries}`);
   console.log(`  Breeding Plans:       ${stats.breedingPlans}`);
   console.log(`  Marketplace Listings: ${stats.marketplaceListings}`);
   console.log(`  Tags:                 ${stats.tags}`);
