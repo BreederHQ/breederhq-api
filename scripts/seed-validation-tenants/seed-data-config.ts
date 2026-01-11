@@ -1999,6 +1999,27 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
     titles: [
       { titleAbbreviation: 'CH', dateEarned: '2016-05-15', eventName: 'Arrakis Desert Classic', eventLocation: 'Arrakeen', pointsEarned: 15, majorWins: 2 },
       { titleAbbreviation: 'GCH', dateEarned: '2017-09-20', eventName: 'Atreides National', eventLocation: 'Caladan', pointsEarned: 25 },
+      { titleAbbreviation: 'GCHB', dateEarned: '2019-03-10', eventName: 'Fremen Open', eventLocation: 'Sietch Tabr', pointsEarned: 100 },
+      { titleAbbreviation: 'CD', dateEarned: '2016-09-05', eventName: 'Caladan Obedience Club', eventLocation: 'Caladan' },
+      { titleAbbreviation: 'RN', dateEarned: '2017-02-18', eventName: 'Arrakis Rally Trial', eventLocation: 'Arrakeen' },
+    ],
+    competitions: [
+      // 2015 - First shows as puppy
+      { eventName: 'Arrakis Puppy Match', eventDate: '2015-06-20', location: 'Arrakeen', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Puppy 6-9 Months', placement: 1, placementLabel: 'Best Puppy', judgeName: 'Mr. Stilgar Naib' },
+      { eventName: 'Desert Sighthound Specialty', eventDate: '2015-09-12', location: 'Sietch Tabr', organization: 'AKC', competitionType: 'BREED_SPECIALTY', className: 'Puppy 9-12 Months', placement: 2, judgeName: 'Mrs. Chani Kynes' },
+      // 2016 - Championship year
+      { eventName: 'Caladan Winter Classic', eventDate: '2016-01-15', location: 'Caladan', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Dogs', placement: 1, placementLabel: 'Winners Dog', pointsEarned: 2, isMajorWin: false, judgeName: 'Dr. Yueh Suk' },
+      { eventName: 'Fremen Desert Show', eventDate: '2016-02-20', location: 'Sietch Tabr', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Dogs', placement: 1, placementLabel: 'Winners Dog', pointsEarned: 3, isMajorWin: true, judgeName: 'Mr. Duncan Idaho' },
+      { eventName: 'Arrakis Desert Classic', eventDate: '2016-05-14', location: 'Arrakeen', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Dogs', placement: 1, placementLabel: 'Winners Dog', pointsEarned: 4, isMajorWin: true, judgeName: 'Mrs. Jessica Atreides' },
+      { eventName: 'Arrakis Desert Classic', eventDate: '2016-05-15', location: 'Arrakeen', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 5, isMajorWin: true, judgeName: 'Dr. Liet Kynes' },
+      { eventName: 'Caladan Obedience Club', eventDate: '2016-09-05', location: 'Caladan', organization: 'AKC', competitionType: 'OBEDIENCE_TRIAL', className: 'Novice B', placement: 2, pointsEarned: 195, judgeName: 'Mrs. Margot Fenring' },
+      // 2017 - GCH and performance titles
+      { eventName: 'Atreides National', eventDate: '2017-09-20', location: 'Caladan', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 5, isMajorWin: true, judgeName: 'Mr. Gurney Halleck' },
+      { eventName: 'Arrakis Rally Trial', eventDate: '2017-02-18', location: 'Arrakeen', organization: 'AKC', competitionType: 'RALLY_TRIAL', className: 'Rally Novice', placement: 1, pointsEarned: 98, judgeName: 'Mrs. Harah' },
+      // 2018-2019 - GCHB points accumulation
+      { eventName: 'Spice Harvest Show', eventDate: '2018-04-10', location: 'Arrakeen', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 3, judgeName: 'Dr. Wellington Yueh' },
+      { eventName: 'Sietch Tabr Classic', eventDate: '2018-08-15', location: 'Sietch Tabr', organization: 'AKC', competitionType: 'BREED_SPECIALTY', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 5, isMajorWin: true, judgeName: 'Mr. Jamis' },
+      { eventName: 'Fremen Open', eventDate: '2019-03-10', location: 'Sietch Tabr', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Best of Breed', placement: 1, placementLabel: 'Best of Breed', pointsEarned: 4, isMajorWin: true, judgeName: 'Mrs. Ramallo' },
     ]
   },
   { name: 'Shai-Hulud Dame (DM Carrier Founder Female)', species: 'DOG', sex: 'FEMALE', breed: 'Saluki', generation: 0, birthYear: 2015, testProvider: 'Embark',
@@ -2007,7 +2028,16 @@ export const ARRAKIS_ANIMALS: AnimalDefinition[] = [
     genetics: {
       coatColor: [locus('A', 'Agouti', 'Ay', 'at'), locus('B', 'Brown', 'B', 'b'), locus('D', 'Dilute', 'D', 'd'), locus('E', 'Extension', 'E', 'E')],
       health: [healthLocus('DM', 'Degenerative Myelopathy', 'N/m'), healthLocus('CMR', 'Canine Multifocal Retinopathy', 'Clear')]
-    }
+    },
+    titles: [
+      { titleAbbreviation: 'CH', dateEarned: '2017-06-20', eventName: 'Caladan Summer Show', eventLocation: 'Caladan', pointsEarned: 15, majorWins: 2 },
+    ],
+    competitions: [
+      { eventName: 'Arrakis Puppy Match', eventDate: '2016-01-15', location: 'Arrakeen', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Puppy 6-9 Months', placement: 1, placementLabel: 'Best Puppy', judgeName: 'Mr. Stilgar Naib' },
+      { eventName: 'Caladan Kennel Club', eventDate: '2016-09-10', location: 'Caladan', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Bitches', placement: 1, placementLabel: 'Winners Bitch', pointsEarned: 2, judgeName: 'Mrs. Jessica Atreides' },
+      { eventName: 'Fremen Desert Show', eventDate: '2017-02-20', location: 'Sietch Tabr', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Bitches', placement: 1, placementLabel: 'Winners Bitch', pointsEarned: 4, isMajorWin: true, judgeName: 'Mr. Duncan Idaho' },
+      { eventName: 'Caladan Summer Show', eventDate: '2017-06-20', location: 'Caladan', organization: 'AKC', competitionType: 'CONFORMATION_SHOW', className: 'Open Bitches', placement: 1, placementLabel: 'Winners Bitch', pointsEarned: 5, isMajorWin: true, judgeName: 'Dr. Liet Kynes' },
+    ]
   },
 
   // FREMEN LINE (Line B)
@@ -2176,7 +2206,23 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
     },
     titles: [
       { titleAbbreviation: 'CH', dateEarned: '2016-04-15', eventName: 'Enterprise Cat Show', eventLocation: 'Starbase 1', pointsEarned: 200 },
-      { titleAbbreviation: 'GC', dateEarned: '2017-08-20', eventName: 'Federation Championship', eventLocation: 'Earth', pointsEarned: 500 },
+      { titleAbbreviation: 'GC', dateEarned: '2017-08-20', eventName: 'Federation Championship', eventLocation: 'Earth', pointsEarned: 1000 },
+      { titleAbbreviation: 'DGC', dateEarned: '2019-05-10', eventName: 'Alpha Quadrant Finals', eventLocation: 'Vulcan', pointsEarned: 2000 },
+    ],
+    competitions: [
+      // 2015 - Kitten class
+      { eventName: 'Starbase 1 Cat Show', eventDate: '2015-03-15', location: 'Starbase 1', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Kitten', placement: 1, placementLabel: 'Best Kitten', judgeName: 'Dr. Beverly Crusher' },
+      { eventName: 'Deep Space 9 Feline Expo', eventDate: '2015-09-20', location: 'DS9', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Kitten', placement: 2, judgeName: 'Major Kira Nerys' },
+      // 2016 - Championship year
+      { eventName: 'Enterprise Cat Show', eventDate: '2016-04-15', location: 'Starbase 1', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Championship', placement: 1, placementLabel: 'Best Cat', pointsEarned: 200, judgeName: 'Counselor Deanna Troi' },
+      { eventName: 'Federation Regional', eventDate: '2016-08-10', location: 'Earth', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Championship', placement: 1, pointsEarned: 150, judgeName: 'Admiral Janeway' },
+      // 2017 - Grand Champion year
+      { eventName: 'Vulcan Logic Cat Show', eventDate: '2017-03-22', location: 'Vulcan', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, pointsEarned: 300, judgeName: 'Ambassador Sarek' },
+      { eventName: 'Federation Championship', eventDate: '2017-08-20', location: 'Earth', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, placementLabel: 'Best Grand Champion', pointsEarned: 500, judgeName: 'Captain Jean-Luc Picard' },
+      // 2018-2019 - DGC accumulation
+      { eventName: 'Risa Cat Festival', eventDate: '2018-06-15', location: 'Risa', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, pointsEarned: 400, judgeName: 'Dr. Julian Bashir' },
+      { eventName: 'Bajoran Heritage Show', eventDate: '2018-11-08', location: 'Bajor', organization: 'TICA', competitionType: 'BREED_SPECIALTY', className: 'Grand Championship', placement: 2, pointsEarned: 250, judgeName: 'Vedek Bareil' },
+      { eventName: 'Alpha Quadrant Finals', eventDate: '2019-05-10', location: 'Vulcan', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, placementLabel: 'Best Double Grand Champion', pointsEarned: 600, judgeName: "T'Pau" },
     ]
   },
   { name: 'Enterprise (PKD Carrier Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'Exotic Shorthair', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
@@ -2220,6 +2266,13 @@ export const STARFLEET_ANIMALS: AnimalDefinition[] = [
     genetics: { coatColor: [locus('A', 'Agouti', 'A', 'a'), locus('B', 'Brown', 'B', 'B'), locus('C', 'Color Series', 'C', 'C'), locus('D', 'Dilute', 'D', 'D'), locus('En', 'English Spotting', 'en', 'en')] },
     titles: [
       { titleAbbreviation: 'GC', dateEarned: '2018-05-10', eventName: 'Starbase Rabbit Show', eventLocation: 'Deep Space 9', pointsEarned: 5 },
+      { titleAbbreviation: 'BIS', dateEarned: '2019-09-15', eventName: 'Federation Rabbit Championship', eventLocation: 'Earth' },
+    ],
+    competitions: [
+      { eventName: 'Enterprise Rabbit Show', eventDate: '2017-03-15', location: 'USS Enterprise', organization: 'ARBA', competitionType: 'CONFORMATION_SHOW', className: 'Senior Buck', placement: 1, placementLabel: 'Best of Breed', judgeName: 'Lt. Commander Data' },
+      { eventName: 'Starbase Rabbit Show', eventDate: '2018-05-10', location: 'Deep Space 9', organization: 'ARBA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Champion', placement: 1, placementLabel: 'Grand Champion', pointsEarned: 5, judgeName: 'Dr. Bashir' },
+      { eventName: 'Vulcan Logic Show', eventDate: '2018-11-20', location: 'Vulcan', organization: 'ARBA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Champion', placement: 2, judgeName: "T'Pring" },
+      { eventName: 'Federation Rabbit Championship', eventDate: '2019-09-15', location: 'Earth', organization: 'ARBA', competitionType: 'CONFORMATION_SHOW', className: 'Best in Show', placement: 1, placementLabel: 'Best in Show', judgeName: 'Admiral Picard' },
     ]
   },
   { name: 'T\'Pol (Founder Female)', species: 'RABBIT', sex: 'FEMALE', breed: 'Flemish Giant', generation: 0, birthYear: 2016,
@@ -2401,7 +2454,19 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/m')]
     },
     titles: [
-      { titleAbbreviation: 'CH', dateEarned: '2015-06-20', eventName: 'Richmond Derby', eventLocation: 'Nelson Road' },
+      { titleAbbreviation: 'ROM', dateEarned: '2015-06-20', eventName: 'Richmond Derby', eventLocation: 'Nelson Road', pointsEarned: 15 },
+      { titleAbbreviation: 'SP', dateEarned: '2017-09-10', eventName: 'English Championship', eventLocation: 'Newmarket', pointsEarned: 50 },
+    ],
+    competitions: [
+      // Racing career 2014-2018
+      { eventName: 'Richmond Derby', eventDate: '2014-05-15', location: 'Nelson Road', organization: 'BHA', competitionType: 'RACE', className: 'Maiden', placement: 1, placementLabel: 'Winner', prizeMoneyCents: 1500000, trackName: 'Nelson Road Downs', trackSurface: 'Turf', distanceFurlongs: 8, finishTime: '1:38.45', speedFigure: 85, handlerName: 'Jamie Tartt' },
+      { eventName: 'AFC Richmond Stakes', eventDate: '2014-08-20', location: 'Nelson Road', organization: 'BHA', competitionType: 'RACE', className: 'Allowance', placement: 2, prizeMoneyCents: 500000, trackName: 'Nelson Road Downs', trackSurface: 'Turf', distanceFurlongs: 10, finishTime: '2:05.12', speedFigure: 88 },
+      { eventName: 'Believe Stakes', eventDate: '2015-03-10', location: 'Richmond', organization: 'BHA', competitionType: 'RACE', className: 'Stakes', placement: 1, placementLabel: 'Winner', prizeMoneyCents: 5000000, trackName: 'Richmond Park', trackSurface: 'Turf', distanceFurlongs: 10, raceGrade: 'G3', finishTime: '2:02.88', speedFigure: 92, handlerName: 'Roy Kent' },
+      { eventName: 'Richmond Derby', eventDate: '2015-06-20', location: 'Nelson Road', organization: 'BHA', competitionType: 'RACE', className: 'Stakes', placement: 1, placementLabel: 'Winner', prizeMoneyCents: 10000000, trackName: 'Nelson Road Downs', trackSurface: 'Turf', distanceFurlongs: 12, raceGrade: 'G2', finishTime: '2:28.15', speedFigure: 95, handlerName: 'Roy Kent' },
+      { eventName: 'Diamond Dogs Handicap', eventDate: '2016-04-15', location: 'Newmarket', organization: 'BHA', competitionType: 'RACE', className: 'Stakes', placement: 3, prizeMoneyCents: 2000000, trackName: 'Newmarket', trackSurface: 'Turf', distanceFurlongs: 12, raceGrade: 'G1', finishTime: '2:26.44', speedFigure: 97, handlerName: 'Dani Rojas' },
+      { eventName: 'English Championship', eventDate: '2017-09-10', location: 'Newmarket', organization: 'BHA', competitionType: 'RACE', className: 'Stakes', placement: 1, placementLabel: 'Winner', prizeMoneyCents: 25000000, trackName: 'Newmarket', trackSurface: 'Turf', distanceFurlongs: 12, raceGrade: 'G1', finishTime: '2:25.01', speedFigure: 102, handlerName: 'Sam Obisanya' },
+      // Halter career post-racing
+      { eventName: 'AFC Richmond Halter Show', eventDate: '2018-05-20', location: 'Nelson Road', organization: 'AQHA', competitionType: 'CONFORMATION_SHOW', className: 'Stallion', placement: 1, placementLabel: 'Grand Champion Stallion', pointsEarned: 10, judgeName: 'Ted Lasso' },
     ]
   },
   { name: 'Nelson Road (GBED Carrier Founder Mare)', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2013, testProvider: 'UC Davis VGL',
@@ -2484,7 +2549,24 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
     },
     titles: [
       { titleAbbreviation: 'CH', dateEarned: '2017-04-15', eventName: 'Zion Cat Show', eventLocation: 'Zion', pointsEarned: 200 },
-      { titleAbbreviation: 'GC', dateEarned: '2018-08-20', eventName: 'Matrix Championship', eventLocation: 'Zion', pointsEarned: 500 },
+      { titleAbbreviation: 'GC', dateEarned: '2018-08-20', eventName: 'Matrix Championship', eventLocation: 'Zion', pointsEarned: 1000 },
+      { titleAbbreviation: 'TGC', dateEarned: '2021-06-12', eventName: 'Resistance Championship', eventLocation: 'Zion', pointsEarned: 3000 },
+    ],
+    competitions: [
+      // 2016 - Kitten class
+      { eventName: 'Zion Underground Show', eventDate: '2016-02-20', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Kitten', placement: 1, placementLabel: 'Best Kitten', judgeName: 'The Oracle' },
+      { eventName: 'Nebuchadnezzar Cat Show', eventDate: '2016-06-15', location: 'Nebuchadnezzar', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Kitten', placement: 1, pointsEarned: 50, judgeName: 'Morpheus' },
+      // 2017 - Championship year
+      { eventName: 'Zion Cat Show', eventDate: '2017-04-15', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Championship', placement: 1, placementLabel: 'Best Championship Cat', pointsEarned: 200, judgeName: 'Councillor Hamann' },
+      { eventName: 'Resistance Regional', eventDate: '2017-09-10', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Championship', placement: 1, pointsEarned: 175, judgeName: 'Commander Lock' },
+      // 2018 - Grand Champion year
+      { eventName: 'Matrix Championship', eventDate: '2018-08-20', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, placementLabel: 'Best Grand Champion', pointsEarned: 500, judgeName: 'The Keymaker' },
+      { eventName: 'Machine City Invitational', eventDate: '2018-11-05', location: 'Machine City', organization: 'TICA', competitionType: 'BREED_SPECIALTY', className: 'Grand Championship', placement: 1, pointsEarned: 400, judgeName: 'Deus Ex Machina' },
+      // 2019-2021 - Working toward TGC
+      { eventName: 'Zion Liberation Show', eventDate: '2019-04-20', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, pointsEarned: 350, judgeName: 'Niobe' },
+      { eventName: 'Free Minds Cat Show', eventDate: '2020-02-14', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, pointsEarned: 400, judgeName: 'Ghost' },
+      { eventName: 'Nebuchadnezzar Memorial', eventDate: '2020-09-10', location: 'Zion', organization: 'TICA', competitionType: 'BREED_SPECIALTY', className: 'Grand Championship', placement: 1, pointsEarned: 350, judgeName: 'Tank' },
+      { eventName: 'Resistance Championship', eventDate: '2021-06-12', location: 'Zion', organization: 'TICA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Championship', placement: 1, placementLabel: 'Best Triple Grand Champion', pointsEarned: 500, judgeName: 'Seraph' },
     ]
   },
   { name: 'Trinity (HCM Carrier Founder Female)', species: 'CAT', sex: 'FEMALE', breed: 'Bombay', generation: 0, birthYear: 2015, testProvider: 'UC Davis VGL',
@@ -2570,7 +2652,15 @@ export const ZION_ANIMALS: AnimalDefinition[] = [
       health: [healthLocus('G6S', 'G6S', 'N/m')]
     },
     titles: [
+      { titleAbbreviation: 'CH', dateEarned: '2017-04-10', eventName: 'Underground Farm Show', eventLocation: 'Zion', pointsEarned: 5 },
       { titleAbbreviation: 'GCH', dateEarned: '2018-06-15', eventName: 'Zion Farm Show', eventLocation: 'Zion', pointsEarned: 10 },
+      { titleAbbreviation: '*M', dateEarned: '2019-09-20', eventName: 'ADGA Milk Test', eventLocation: 'Zion' },
+    ],
+    competitions: [
+      { eventName: 'Underground Farm Show', eventDate: '2017-04-10', location: 'Zion', organization: 'ADGA', competitionType: 'CONFORMATION_SHOW', className: 'Senior Buck', placement: 1, placementLabel: 'Grand Champion Buck', pointsEarned: 5, judgeName: 'The Merovingian' },
+      { eventName: 'Nebuchadnezzar Dairy Show', eventDate: '2017-09-15', location: 'Nebuchadnezzar', organization: 'ADGA', competitionType: 'CONFORMATION_SHOW', className: 'Senior Buck', placement: 1, pointsEarned: 3, judgeName: 'Persephone' },
+      { eventName: 'Zion Farm Show', eventDate: '2018-06-15', location: 'Zion', organization: 'ADGA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Champion', placement: 1, placementLabel: 'Best in Show', pointsEarned: 10, judgeName: 'Councillor West' },
+      { eventName: 'Machine City Open', eventDate: '2019-03-20', location: 'Machine City', organization: 'ADGA', competitionType: 'CONFORMATION_SHOW', className: 'Grand Champion', placement: 2, pointsEarned: 5, judgeName: 'The Trainman' },
     ]
   },
   { name: 'The Oracle (G6S Carrier Founder Female)', species: 'GOAT', sex: 'FEMALE', breed: 'La Mancha', generation: 0, birthYear: 2016,
