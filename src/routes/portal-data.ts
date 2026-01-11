@@ -626,7 +626,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const result = invoices.map((inv) => {
         // Determine status for frontend
         let status: string = inv.status;
-        if (inv.status === "sent" || inv.status === "viewed") {
+        if (inv.status === "issued" || inv.status === "partially_paid") {
           const now = new Date();
           if (inv.dueAt && new Date(inv.dueAt) < now) {
             status = "overdue";
