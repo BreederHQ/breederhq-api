@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import prisma from "../prisma.js";
-import { setSessionCookies, Surface } from "../utils/session.js";
+import { setSessionCookies, parseVerifiedSession, Surface } from "../utils/session.js";
 import { auditSuccess, auditFailure } from "../services/audit.js";
 import {
   validateTosAcceptancePayload,
@@ -316,6 +316,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 userId,
                 membershipUserId: userId,
                 activatedAt: now,
+                lastLoginAt: now, // Activation counts as first login
               },
             });
           }
@@ -547,6 +548,7 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 userId,
                 membershipUserId: userId,
                 activatedAt: now,
+                lastLoginAt: now, // Activation counts as first login
               },
             });
           }
@@ -603,6 +605,76 @@ const portalRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
   );
+
+  /**
+   * GET /api/v1/portal/org/:slug
+   *
+   * Get tenant info for blocked page contact display.
+   *
+   * SECURITY: Only returns contactEmail if user has a TenantMembership
+   * for this tenant (even if suspended). This prevents leaking breeder
+   * contact info to users who never had legitimate access.
+   *
+   * - Unauthenticated users: get name only (no email)
+   * - Users without membership to this tenant: get name only (no email)
+   * - Users with membership (active or suspended): get name + contactEmail
+   */
+  app.get<{ Params: { slug: string } }>("/portal/org/:slug", async (req, reply) => {
+    const { slug } = req.params;
+
+    if (!slug || typeof slug !== "string") {
+      return reply.code(400).send({ error: "invalid_slug" });
+    }
+
+    // Get tenant with organization's email for contact info
+    const tenant = await prisma.tenant.findFirst({
+      where: { slug: slug.toLowerCase() },
+      select: {
+        id: true,
+        name: true,
+        primaryEmail: true,
+        organizations: {
+          select: {
+            email: true,
+            publicContactEmail: true,
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!tenant) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Prefer organization's publicContactEmail, then email, then tenant's primaryEmail
+    const org = tenant.organizations?.[0];
+    const contactEmail = org?.publicContactEmail || org?.email || tenant.primaryEmail || null;
+
+    // Check if user is authenticated and has membership to this tenant
+    let showContactEmail = false;
+    const session = parseVerifiedSession(req, "PORTAL");
+
+    if (session?.userId) {
+      // Check if user has ANY membership to this tenant (active or suspended)
+      // This means they were granted access at some point by the breeder
+      try {
+        const membership = await (prisma as any).tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: session.userId, tenantId: tenant.id } },
+          select: { tenantId: true },
+        });
+        showContactEmail = !!membership;
+      } catch {
+        // Membership lookup failed - don't show email
+      }
+    }
+
+    return reply.send({
+      name: tenant.name,
+      contactEmail: showContactEmail ? contactEmail : null,
+      logoUrl: null, // TODO: Add logo field to Tenant/Organization model when needed
+    });
+  });
 };
 
 export default portalRoutes;

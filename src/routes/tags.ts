@@ -345,7 +345,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? }
+  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? }
   // Exactly one target; target must be in the same tenant; tag.module must match target type.
   // Step 6B: Party-only writes - resolves contactId/organizationId to taggedPartyId
   app.post("/tags/:id/assign", async (req, reply) => {
@@ -365,8 +365,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "tag_archived", detail: "Cannot assign archived tag" });
       }
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number };
-      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       try {
@@ -438,7 +438,35 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           await prisma.tagAssignment.create({
             data: { tagId: tag.id, breedingPlanId: plan.id },
           });
-        } else {
+        } else if (body.offspringGroupId != null) {
+          if (tag.module !== "OFFSPRING_GROUP") return reply.code(400).send({ error: "module_mismatch" });
+          const groupId = parseIntOrNull(body.offspringGroupId);
+          if (!groupId) return reply.code(400).send({ error: "offspringGroupId_invalid" });
+          const group = await prisma.offspringGroup.findUnique({
+            where: { id: groupId },
+            select: { id: true, tenantId: true },
+          });
+          if (!group) return reply.code(404).send({ error: "offspring_group_not_found" });
+          if (group.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+          await prisma.tagAssignment.create({
+            data: { tagId: tag.id, offspringGroupId: group.id },
+          });
+        } else if (body.offspringId != null) {
+          if (tag.module !== "OFFSPRING") return reply.code(400).send({ error: "module_mismatch" });
+          const offspringId = parseIntOrNull(body.offspringId);
+          if (!offspringId) return reply.code(400).send({ error: "offspringId_invalid" });
+          const offspring = await prisma.offspring.findUnique({
+            where: { id: offspringId },
+            select: { id: true, tenantId: true },
+          });
+          if (!offspring) return reply.code(404).send({ error: "offspring_not_found" });
+          if (offspring.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+          await prisma.tagAssignment.create({
+            data: { tagId: tag.id, offspringId: offspring.id },
+          });
+        } else if (body.animalId != null) {
           if (tag.module !== "ANIMAL") return reply.code(400).send({ error: "module_mismatch" });
           const animalId = parseIntOrNull(body.animalId);
           if (!animalId) return reply.code(400).send({ error: "animalId_invalid" });
@@ -451,6 +479,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           // Animal assignment (not party-like, no dual-write needed)
           await createTagAssignment({ tagId: tag.id, animalId: a.id });
+        } else {
+          return reply.code(400).send({ error: "one_target_required" });
         }
       } catch (e: any) {
         if (e?.code === "P2002") {
@@ -467,7 +497,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? }
+  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? }
   // Step 6B: Resolves contactId/organizationId to taggedPartyId before deletion
   app.post("/tags/:id/unassign", async (req, reply) => {
     try {
@@ -478,8 +508,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true } });
       if (!tag) return reply.code(404).send({ error: "not_found" });
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number };
-      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       if (body.organizationId != null) {
@@ -522,7 +552,15 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const planId = parseIntOrNull(body.breedingPlanId);
         if (!planId) return reply.code(400).send({ error: "breedingPlanId_invalid" });
         await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, breedingPlanId: planId } });
-      } else {
+      } else if (body.offspringGroupId != null) {
+        const groupId = parseIntOrNull(body.offspringGroupId);
+        if (!groupId) return reply.code(400).send({ error: "offspringGroupId_invalid" });
+        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, offspringGroupId: groupId } });
+      } else if (body.offspringId != null) {
+        const offspringId = parseIntOrNull(body.offspringId);
+        if (!offspringId) return reply.code(400).send({ error: "offspringId_invalid" });
+        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, offspringId } });
+      } else if (body.animalId != null) {
         const animalId = parseIntOrNull(body.animalId);
         if (!animalId) return reply.code(400).send({ error: "animalId_invalid" });
         await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, animalId } });
@@ -625,6 +663,76 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const assignments = await prisma.tagAssignment.findMany({
         where: { breedingPlanId: planId },
+        include: {
+          tag: {
+            select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const items = assignments.map((a) => tagDTO(a.tag));
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /offspring/:id/tags - Get tags for an offspring group
+  app.get("/offspring/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { id } = req.params as { id: string };
+      const groupId = Number(id);
+      if (!Number.isInteger(groupId) || groupId <= 0) {
+        return reply.code(400).send({ error: "invalid_group_id" });
+      }
+
+      const group = await prisma.offspringGroup.findFirst({
+        where: { id: groupId, tenantId },
+        select: { id: true },
+      });
+      if (!group) return reply.code(404).send({ error: "offspring_group_not_found" });
+
+      const assignments = await prisma.tagAssignment.findMany({
+        where: { offspringGroupId: groupId },
+        include: {
+          tag: {
+            select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const items = assignments.map((a) => tagDTO(a.tag));
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /offspring/individuals/:id/tags - Get tags for an individual offspring
+  app.get("/offspring/individuals/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { id } = req.params as { id: string };
+      const offspringId = Number(id);
+      if (!Number.isInteger(offspringId) || offspringId <= 0) {
+        return reply.code(400).send({ error: "invalid_offspring_id" });
+      }
+
+      const offspring = await prisma.offspring.findFirst({
+        where: { id: offspringId, tenantId },
+        select: { id: true },
+      });
+      if (!offspring) return reply.code(404).send({ error: "offspring_not_found" });
+
+      const assignments = await prisma.tagAssignment.findMany({
+        where: { offspringId },
         include: {
           tag: {
             select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },

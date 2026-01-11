@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import websocket from "@fastify/websocket";
 import prisma from "./prisma.js";
 import {
   getCookieSecret,
@@ -66,6 +67,9 @@ await app.register(rateLimit, {
   ban: 2,
   errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
 });
+
+// ---------- WebSocket ----------
+await app.register(websocket);
 
 // ---------- CORS ----------
 // Production: always allow these origins for breederhq.com subdomains
@@ -190,9 +194,13 @@ function isCsrfExempt(pathname: string, method: string): boolean {
 
   // Portal activation - user may not have CSRF token for portal surface yet
   if (pathname === "/api/v1/portal/activate") return true;
+  if (pathname.startsWith("/api/v1/portal/invites/") && pathname.endsWith("/accept")) return true;
 
   // Stripe webhook - verified by Stripe signature, not CSRF
   if (pathname === "/api/v1/billing/webhooks/stripe") return true;
+
+  // Resend inbound email webhook - verified by Resend signature, not CSRF
+  if (pathname === "/api/v1/webhooks/resend/inbound") return true;
 
   return false;
 }
@@ -325,8 +333,8 @@ app.addContentTypeParser(/^application\/json($|;)/i, { parseAs: "string" }, (req
   try {
     const raw = typeof body === 'string' ? body : body.toString('utf8');
 
-    // Save raw body for Stripe webhook signature verification
-    if (req.url?.includes('/billing/webhooks/stripe')) {
+    // Save raw body for webhook signature verification (Stripe, Resend)
+    if (req.url?.includes('/billing/webhooks/stripe') || req.url?.includes('/webhooks/resend/')) {
       (req as any).rawBody = Buffer.from(raw, 'utf8');
     }
 
@@ -481,6 +489,12 @@ import communicationsRoutes from "./routes/communications.js"; // Communications
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
+import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
+import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
+import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Services (marketplace)
+import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
+import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
+import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -507,6 +521,8 @@ app.register(
     api.register(portalRoutes);                    // /api/v1/portal/* (activation - no auth)
     api.register(billingRoutes, { prefix: "/billing" }); // /api/v1/billing/webhooks/* (Stripe webhooks - no auth)
     api.register(settingsRoutes); // /api/v1/settings/* (user settings)
+    api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
+    api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -613,7 +629,7 @@ app.register(
       let tenantId: number | null = null;
 
       if (surface === "PORTAL") {
-        // PORTAL: tenant ONLY from URL slug - no headers, no session
+        // PORTAL: tenant from URL slug preferred, but allow X-Tenant-Id header for authenticated data routes
         const tenantSlug = extractPortalTenantSlug(req);
 
         if (tenantSlug) {
@@ -633,8 +649,18 @@ app.register(
           }
           tenantId = tenant.id;
           (req as any).tenantSlug = tenant.slug;
+        } else {
+          // No slug in URL - check for X-Tenant-Id header (authenticated data routes)
+          // This allows portal frontend to call /api/v1/portal/* without slug in path
+          const headerTenantId = req.headers["x-tenant-id"];
+          if (headerTenantId) {
+            const parsed = Number(headerTenantId);
+            if (Number.isInteger(parsed) && parsed > 0) {
+              tenantId = parsed;
+            }
+          }
         }
-        // If no slug, tenantId stays null (tenantless route or missing slug)
+        // If still no tenant, tenantId stays null (tenantless route or missing context)
 
       } else if (surface === "PLATFORM") {
         // PLATFORM: tenant from X-Tenant-Id header or session
@@ -771,10 +797,13 @@ app.register(
     api.register(templatesRoutes);     // /api/v1/templates/* Email/message templates
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
+    api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
+    api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
+    api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
@@ -793,6 +822,13 @@ app.register(
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
+
+    // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
+    // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs
+    // The middleware extracts tenant from the :slug param and sets req.tenantId
+    api.register(portalDataRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/*
+    api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
+    api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
     api.register(usageRoutes, { prefix: "/usage" }); // /api/v1/usage/* Usage and quota dashboard
@@ -809,6 +845,7 @@ app.register(
     api.register(marketplaceWaitlistRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/waitlist/* (auth required)
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
+    api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
   },
   { prefix: "/api/v1" }
 );

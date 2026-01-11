@@ -34,6 +34,16 @@ interface WaitlistRequestBody {
   name: string;
   email: string;
   phone?: string;
+  // Origin tracking for conversion attribution
+  origin?: {
+    source?: string; // "direct" | "utm" | "referrer" | "embed" | "social"
+    referrer?: string;
+    utmSource?: string;
+    utmMedium?: string;
+    utmCampaign?: string;
+    pagePath?: string;
+    programSlug?: string;
+  };
 }
 
 interface WaitlistRequestResponse {
@@ -238,6 +248,14 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         status: "INQUIRY",
         notes,
         clientPartyId,
+        // Origin tracking
+        originSource: body.origin?.source || null,
+        originReferrer: body.origin?.referrer || null,
+        originUtmSource: body.origin?.utmSource || null,
+        originUtmMedium: body.origin?.utmMedium || null,
+        originUtmCampaign: body.origin?.utmCampaign || null,
+        originPagePath: body.origin?.pagePath || null,
+        originProgramSlug: body.origin?.programSlug || null,
       },
       select: { id: true },
     });
