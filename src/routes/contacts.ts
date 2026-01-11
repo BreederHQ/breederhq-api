@@ -299,6 +299,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           select: {
             id: true,
             tenantId: true,
+            partyId: true,
             organizationId: true,
             display_name: true,
             first_name: true,   // ← added
@@ -348,6 +349,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         select: {
           id: true,
           tenantId: true,
+          partyId: true,
           organizationId: true,
           display_name: true,
           first_name: true,   // ← added
@@ -493,6 +495,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           select: {
             id: true,
             tenantId: true,
+            partyId: true,
             organizationId: true,
             display_name: true,
             first_name: true,   //   added
@@ -985,6 +988,84 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
 
     return reply.send(org ? [org] : []);
+  });
+
+  // GET /contacts/:id/can-delete
+  // Check if a contact can be safely deleted and return any blockers
+  app.get("/contacts/:id/can-delete", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const contactId = idNum((req.params as any).id);
+    if (!contactId) return reply.code(400).send({ error: "bad_id" });
+
+    // Verify contact exists in tenant
+    const contact = await prisma.contact.findFirst({
+      where: { id: contactId, tenantId },
+      select: { id: true, partyId: true },
+    });
+    if (!contact) return reply.code(404).send({ error: "contact_not_found" });
+
+    const blockers: Record<string, boolean> = {};
+    const details: Record<string, number> = {};
+
+    // Check for animals owned by this contact
+    if (contact.partyId) {
+      const animalCount = await prisma.animalOwner.count({
+        where: { partyId: contact.partyId },
+      });
+      if (animalCount > 0) {
+        blockers.hasAnimals = true;
+        details.animalCount = animalCount;
+      }
+
+      // Check for invoices linked to this party (Invoice uses clientPartyId, not partyId)
+      const invoiceCount = await prisma.invoice.count({
+        where: { clientPartyId: contact.partyId, tenantId },
+      });
+      if (invoiceCount > 0) {
+        blockers.hasInvoices = true;
+        details.invoiceCount = invoiceCount;
+      }
+
+      // Check for payments via invoices linked to this party
+      // Payment doesn't have partyId - it's linked through Invoice
+      const paymentCount = await prisma.payment.count({
+        where: {
+          tenantId,
+          invoice: { clientPartyId: contact.partyId },
+        },
+      });
+      if (paymentCount > 0) {
+        blockers.hasPayments = true;
+        details.paymentCount = paymentCount;
+      }
+
+      // Check for waitlist entries (WaitlistEntry uses clientPartyId, not partyId)
+      const waitlistCount = await prisma.waitlistEntry.count({
+        where: { clientPartyId: contact.partyId, tenantId },
+      });
+      if (waitlistCount > 0) {
+        blockers.hasWaitlistEntries = true;
+        details.waitlistCount = waitlistCount;
+      }
+
+      // Check for portal access
+      const portalAccessCount = await prisma.portalAccess.count({
+        where: { partyId: contact.partyId, tenantId },
+      });
+      if (portalAccessCount > 0) {
+        blockers.hasPortalAccess = true;
+      }
+    }
+
+    const canDelete = Object.keys(blockers).length === 0;
+
+    return reply.send({
+      canDelete,
+      blockers,
+      details: Object.keys(details).length > 0 ? details : undefined,
+    });
   });
 
   // GET /contacts/:id/animals

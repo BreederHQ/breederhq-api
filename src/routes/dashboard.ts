@@ -70,6 +70,12 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+function addMonths(date: Date, months: number): Date {
+  const result = new Date(date);
+  result.setMonth(result.getMonth() + months);
+  return result;
+}
+
 // ───────────────────────── Routes ─────────────────────────
 
 const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -340,6 +346,68 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           completed: false,
           severity: "important",
         });
+      }
+
+      // Get vaccination records that are expired or due soon (within 30 days)
+      // We need to check against protocol intervals since expiresAt may not be set
+      const thirtyDaysFromNow = addDays(new Date(), 30);
+      const vaccinationRecords = await (prisma as any).vaccinationRecord?.findMany?.({
+        where: {
+          tenantId,
+          animal: { archived: false },
+        },
+        include: {
+          animal: { select: { id: true, name: true, nickname: true } },
+        },
+        orderBy: { administeredAt: "desc" },
+      }).catch(() => []) || [];
+
+      // Process vaccination records - find expired or due soon
+      // Group by animal + protocolKey to get the latest record for each
+      const latestByAnimalProtocol = new Map<string, any>();
+      for (const rec of vaccinationRecords) {
+        const key = `${rec.animalId}-${rec.protocolKey}`;
+        if (!latestByAnimalProtocol.has(key)) {
+          latestByAnimalProtocol.set(key, rec);
+        }
+      }
+
+      // Protocol intervals (simplified - matches static data in animal-vaccinations.ts)
+      const PROTOCOL_INTERVALS: Record<string, number> = {
+        "dog.rabies": 36, "dog.dhpp": 12, "dog.bordetella": 12, "dog.leptospirosis": 12,
+        "dog.lyme": 12, "dog.canine_influenza": 12,
+        "cat.rabies": 36, "cat.fvrcp": 36, "cat.felv": 12,
+        "horse.rabies": 12, "horse.tetanus": 12, "horse.ewt": 12, "horse.west_nile": 12,
+        "horse.influenza": 6, "horse.rhinopneumonitis": 6, "horse.strangles": 12,
+        "goat.cdt": 12, "goat.rabies": 12, "sheep.cdt": 12,
+      };
+
+      for (const [_key, rec] of latestByAnimalProtocol) {
+        const intervalMonths = PROTOCOL_INTERVALS[rec.protocolKey] || 12;
+        const administeredAt = new Date(rec.administeredAt);
+        const expiresAt = rec.expiresAt ? new Date(rec.expiresAt) : addMonths(administeredAt, intervalMonths);
+        const now = new Date();
+        const daysRemaining = Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Only show expired or due within 30 days
+        if (daysRemaining <= 30) {
+          const animalName = rec.animal?.nickname || rec.animal?.name || "Animal";
+          const protocolName = rec.protocolKey.split(".").pop()?.replace(/_/g, " ") || rec.protocolKey;
+          const isExpired = daysRemaining < 0;
+
+          agenda.push({
+            id: `vaccination-${rec.id}`,
+            kind: "vaccination",
+            title: isExpired
+              ? `${animalName}: ${protocolName} vaccine expired`
+              : `${animalName}: ${protocolName} vaccine due in ${daysRemaining} days`,
+            scheduledAt: expiresAt.toISOString(),
+            entityType: "animal",
+            entityId: String(rec.animalId),
+            completed: false,
+            severity: isExpired ? "critical" : daysRemaining < 7 ? "important" : "normal",
+          });
+        }
       }
 
       // Sort by scheduled time

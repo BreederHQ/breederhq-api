@@ -56,7 +56,9 @@ const PORTAL_TENANTLESS_PREFIXES = [
   "/auth/",      // /api/v1/auth/*
   "/session",    // /api/v1/session, /api/v1/session/*
   "/account",    // /api/v1/account, /api/v1/account/*
-  "/portal/",    // /api/v1/portal/* (activation - no auth required)
+  "/portal/invites/",  // /api/v1/portal/invites/* (activation - no auth required)
+  "/portal/activate",  // /api/v1/portal/activate (legacy activation)
+  "/portal/org/",      // /api/v1/portal/org/:slug (public tenant info)
 ];
 
 /**

@@ -574,6 +574,119 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 }
               }
             }
+
+            // Handle portal invoice payment (client paying invoice via portal)
+            if (session.mode === "payment" && session.metadata?.type === "portal_invoice_payment") {
+              const invoiceId = parseInt(session.metadata.invoiceId || "0");
+              const tenantId = parseInt(session.metadata.tenantId || "0");
+              const clientPartyId = parseInt(session.metadata.clientPartyId || "0");
+              const invoiceNumber = session.metadata.invoiceNumber || "";
+
+              if (invoiceId && tenantId) {
+                const amountPaid = session.amount_total || 0;
+
+                // Fetch invoice
+                const invoice = await prisma.invoice.findFirst({
+                  where: {
+                    id: invoiceId,
+                    tenantId,
+                  },
+                  select: {
+                    amountCents: true,
+                    balanceCents: true,
+                    invoiceNumber: true,
+                  },
+                });
+
+                if (invoice) {
+                  // Create payment record
+                  await prisma.payment.create({
+                    data: {
+                      tenantId,
+                      invoiceId,
+                      amountCents: amountPaid,
+                      receivedAt: new Date(),
+                      methodType: "card",
+                      processor: "stripe",
+                      processorRef: session.payment_intent as string,
+                      status: "succeeded",
+                      notes: `Stripe Checkout: ${session.id}`,
+                    },
+                  });
+
+                  // Update invoice
+                  const newBalanceCents = Math.max(0, invoice.balanceCents - amountPaid);
+                  const isPaid = newBalanceCents <= 0;
+
+                  await prisma.invoice.update({
+                    where: { id: invoiceId },
+                    data: {
+                      balanceCents: newBalanceCents,
+                      status: isPaid ? "paid" : "partially_paid",
+                      paidAt: isPaid ? new Date() : undefined,
+                    },
+                  });
+
+                  // Notify breeder of payment received
+                  try {
+                    const org = await prisma.organization.findFirst({
+                      where: { tenantId },
+                      select: {
+                        party: { select: { email: true } },
+                      },
+                    });
+
+                    const clientParty = clientPartyId
+                      ? await prisma.party.findUnique({
+                          where: { id: clientPartyId },
+                          select: { name: true, email: true },
+                        })
+                      : null;
+
+                    const breederEmail = org?.party?.email;
+                    const clientName = clientParty?.name || "A client";
+                    const amount = (amountPaid / 100).toFixed(2);
+
+                    if (breederEmail) {
+                      const { sendEmail } = await import("../services/email-service.js");
+                      await sendEmail({
+                        tenantId,
+                        to: breederEmail,
+                        subject: `Payment Received - Invoice #${invoiceNumber || invoiceId}`,
+                        html: `
+                          <h2>Payment Received</h2>
+                          <p><strong>${clientName}</strong> has paid <strong>$${amount}</strong> for Invoice #${invoiceNumber || invoiceId}.</p>
+                          <p>Invoice Status: ${isPaid ? "Paid in Full" : "Partially Paid"}</p>
+                          ${!isPaid ? `<p>Remaining Balance: $${(newBalanceCents / 100).toFixed(2)}</p>` : ""}
+                          <p style="margin-top: 16px;">
+                            <a href="${process.env.PLATFORM_URL || "https://app.breederhq.com"}/finance/invoices/${invoiceId}" style="display: inline-block; padding: 10px 20px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 500;">View Invoice</a>
+                          </p>
+                          <p style="margin-top: 24px; color: #666; font-size: 12px;">
+                            This is an automated notification from BreederHQ.
+                          </p>
+                        `,
+                        text: `Payment Received\n\n${clientName} has paid $${amount} for Invoice #${invoiceNumber || invoiceId}.\n\nInvoice Status: ${isPaid ? "Paid in Full" : "Partially Paid"}${!isPaid ? `\nRemaining Balance: $${(newBalanceCents / 100).toFixed(2)}` : ""}\n\nView at: ${process.env.PLATFORM_URL || "https://app.breederhq.com"}/finance/invoices/${invoiceId}`,
+                        templateKey: "portal_invoice_payment_received",
+                        category: "transactional",
+                        metadata: { invoiceId, amountPaid, clientPartyId },
+                      });
+                    }
+                  } catch (notifyErr) {
+                    req.log.error({ err: notifyErr }, "Failed to notify breeder of portal invoice payment");
+                  }
+
+                  req.log.info(
+                    { invoiceId, invoiceNumber, amountPaid, isPaid, clientPartyId },
+                    "Portal invoice payment processed"
+                  );
+                } else {
+                  req.log.error(
+                    { invoiceId, tenantId },
+                    "Invoice not found for portal payment webhook"
+                  );
+                }
+              }
+            }
             break;
           }
 
