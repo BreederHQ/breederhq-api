@@ -539,8 +539,8 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let nextPaymentDueAt: string | null = null;
 
       for (const inv of invoices) {
-        const amountCents = inv.amountCents || 0;
-        const balanceCents = inv.balanceCents || 0;
+        const amountCents = Number(inv.amountCents || 0);
+        const balanceCents = Number(inv.balanceCents || 0);
         const paidCents = amountCents - balanceCents;
 
         totalPaidCents += paidCents;
@@ -636,9 +636,9 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
 
         // Calculate amounts from cents
-        const total = inv.amountCents / 100;
-        const amountDue = inv.balanceCents / 100;
-        const amountPaid = (inv.amountCents - inv.balanceCents) / 100;
+        const total = Number(inv.amountCents) / 100;
+        const amountDue = Number(inv.balanceCents) / 100;
+        const amountPaid = (Number(inv.amountCents) - Number(inv.balanceCents)) / 100;
 
         // Build description from line items or notes
         const description = inv.notes || (inv.LineItems.length > 0 ? inv.LineItems[0].description : "Invoice");
@@ -860,7 +860,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Calculate amount due
-      const amountDue = invoice.balanceCents;
+      const amountDue = Number(invoice.balanceCents);
       if (amountDue <= 0) {
         return reply.code(400).send({ error: "Invoice has no balance due" });
       }
