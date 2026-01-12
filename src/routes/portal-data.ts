@@ -965,6 +965,48 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "checkout_failed", detail: err.message });
     }
   });
+
+  /**
+   * GET /api/v1/portal/breeder
+   * Returns basic breeder/organization info for the portal context
+   * Primarily used for messaging - returns the org party ID needed to create threads
+   */
+  app.get("/portal/breeder", async (req, reply) => {
+    try {
+      const { tenantId } = await requireClientPartyScope(req);
+
+      // Get the tenant's organization (breeder) with their party ID
+      const org = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: {
+          id: true,
+          name: true,
+          partyId: true,
+          party: {
+            select: {
+              email: true,
+            },
+          },
+        },
+      });
+
+      if (!org) {
+        return reply.code(404).send({ error: "breeder_not_found" });
+      }
+
+      return reply.send({
+        breeder: {
+          orgId: org.id,
+          partyId: org.partyId,
+          name: org.name,
+          email: org.party?.email || null,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal breeder info");
+      return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
 };
 
 export default portalDataRoutes;

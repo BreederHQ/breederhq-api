@@ -883,10 +883,10 @@ model Tenant {
   lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
 
   // Cross-tenant animal linking
-  linkRequestsFrom          AnimalLinkRequest[]     @relation("LinkRequestFrom")
-  linkRequestsTo            AnimalLinkRequest[]     @relation("LinkRequestTo")
-  crossTenantLinksAsChild   CrossTenantAnimalLink[] @relation("LinkChildTenant")
-  crossTenantLinksAsParent  CrossTenantAnimalLink[] @relation("LinkParentTenant")
+  linkRequestsFrom         AnimalLinkRequest[]     @relation("LinkRequestFrom")
+  linkRequestsTo           AnimalLinkRequest[]     @relation("LinkRequestTo")
+  crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkChildTenant")
+  crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkParentTenant")
 
   // Title & Competition tracking
   titleDefinitions   TitleDefinition[]
@@ -900,6 +900,10 @@ model Tenant {
   partyEmails     PartyEmail[]
   partyActivity   PartyActivity[]
   unlinkedEmails  UnlinkedEmail[]
+
+  // Client profile change requests
+  contactChangeRequests ContactChangeRequest[]
+  emailChangeRequests   EmailChangeRequest[]
 
   // Communications Hub
   drafts Draft[]
@@ -1523,11 +1527,11 @@ model Party {
   marketplaceBlocksLifted  MarketplaceUserBlock[] @relation("MarketplaceBlockLifter")
 
   // CRM relations
-  notes       PartyNote[]      @relation("PartyNotes")
-  events      PartyEvent[]     @relation("PartyEvents")
-  milestones  PartyMilestone[] @relation("PartyMilestones")
-  emails      PartyEmail[]     @relation("PartyEmails")
-  activity    PartyActivity[]  @relation("PartyActivity")
+  notes      PartyNote[]      @relation("PartyNotes")
+  events     PartyEvent[]     @relation("PartyEvents")
+  milestones PartyMilestone[] @relation("PartyMilestones")
+  emails     PartyEmail[]     @relation("PartyEmails")
+  activity   PartyActivity[]  @relation("PartyActivity")
 
   // Communications Hub relations
   emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
@@ -1614,6 +1618,10 @@ model Contact {
   externalProvider String?
   externalId       String?
 
+  // Profile change requests from client portal
+  changeRequests      ContactChangeRequest[]
+  emailChangeRequests EmailChangeRequest[]
+
   @@unique([tenantId, email])
   @@index([organizationId])
   @@index([tenantId])
@@ -1666,18 +1674,26 @@ enum PartyActivityKind {
   PAYMENT_RECEIVED
   MESSAGE_SENT
   MESSAGE_RECEIVED
+  // Client profile changes
+  PROFILE_UPDATED_BY_CLIENT // Client self-updated address/phone
+  NAME_CHANGE_REQUESTED // Client requested name change
+  NAME_CHANGE_APPROVED // Breeder approved name change
+  NAME_CHANGE_REJECTED // Breeder rejected name change
+  EMAIL_CHANGE_REQUESTED // Client requested email change
+  EMAIL_CHANGE_VERIFIED // Client verified new email
+  EMAIL_CHANGE_EXPIRED // Email change request expired
 }
 
 model PartyNote {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party    @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
 
   content   String   @db.Text
   pinned    Boolean  @default(false)
-  createdBy Int?     // userId who created
+  createdBy Int? // userId who created
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1686,21 +1702,21 @@ model PartyNote {
 }
 
 model PartyEvent {
-  id        Int              @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party            @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
 
-  kind      PartyEventKind   @default(FOLLOW_UP)
-  title     String
-  notes     String?          @db.Text
+  kind        PartyEventKind   @default(FOLLOW_UP)
+  title       String
+  notes       String?          @db.Text
   scheduledAt DateTime
-  status    PartyEventStatus @default(SCHEDULED)
+  status      PartyEventStatus @default(SCHEDULED)
   completedAt DateTime?
-  createdBy Int?             // userId who created
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  createdBy   Int? // userId who created
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   @@index([tenantId, partyId])
   @@index([partyId, scheduledAt])
@@ -1708,20 +1724,20 @@ model PartyEvent {
 }
 
 model PartyMilestone {
-  id        Int                 @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party               @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
 
-  kind      PartyMilestoneKind  @default(CUSTOM)
-  label     String              // e.g., "Birthday", "1st Placement Anniversary"
-  date      DateTime            @db.Date  // The actual date (month/day matters for annual)
-  annual    Boolean             @default(true) // If true, recurs yearly
-  notes     String?             @db.Text
-  createdBy Int?                // userId who created
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
+  kind      PartyMilestoneKind @default(CUSTOM)
+  label     String // e.g., "Birthday", "1st Placement Anniversary"
+  date      DateTime           @db.Date // The actual date (month/day matters for annual)
+  annual    Boolean            @default(true) // If true, recurs yearly
+  notes     String?            @db.Text
+  createdBy Int? // userId who created
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
   @@index([tenantId, partyId])
   @@index([partyId, date])
@@ -1729,20 +1745,20 @@ model PartyMilestone {
 }
 
 model PartyEmail {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party    @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
 
   subject   String
   body      String   @db.Text
-  toEmail   String   // recipient email at time of send
+  toEmail   String // recipient email at time of send
   sentAt    DateTime @default(now())
   status    String   @default("sent") // sent, delivered, bounced, failed
-  isRead    Boolean  @default(false)  // whether user has acknowledged this sent email
-  messageId String?  // external mail provider message ID
-  createdBy Int?     // userId who sent
+  isRead    Boolean  @default(false) // whether user has acknowledged this sent email
+  messageId String? // external mail provider message ID
+  createdBy Int? // userId who sent
   createdAt DateTime @default(now())
 
   @@index([tenantId, partyId])
@@ -1752,29 +1768,29 @@ model PartyEmail {
 /// UnlinkedEmail - Emails sent to addresses not associated with a contact/org
 /// Used by MessagingHub to store emails that can later be linked when contacts are created
 model UnlinkedEmail {
-  id            Int       @id @default(autoincrement())
-  tenantId      Int
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Recipient info (no party association initially)
-  toAddresses   String[]  // array of email addresses
-  fromAddress   String    // sender email
+  toAddresses String[] // array of email addresses
+  fromAddress String // sender email
 
   // Email content
-  subject       String
-  bodyText      String?   @db.Text
-  bodyHtml      String?   @db.Text
-  bodyPreview   String?   // First ~200 chars for list display
+  subject     String
+  bodyText    String? @db.Text
+  bodyHtml    String? @db.Text
+  bodyPreview String? // First ~200 chars for list display
 
   // Status tracking
-  status        String    @default("sent") // queued, sent, delivered, bounced, failed
-  direction     String    @default("outbound") // outbound, inbound
-  isRead        Boolean   @default(false) // whether user has acknowledged this sent email
+  status    String  @default("sent") // queued, sent, delivered, bounced, failed
+  direction String  @default("outbound") // outbound, inbound
+  isRead    Boolean @default(false) // whether user has acknowledged this sent email
 
   // Timestamps
-  sentAt        DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   // For later reconciliation - link to party when contact is created
   linkedPartyId Int?
@@ -1782,11 +1798,11 @@ model UnlinkedEmail {
   linkedAt      DateTime?
 
   // Metadata
-  messageId     String?   // external mail provider message ID
-  templateKey   String?   // template used if any
-  category      String    @default("transactional") // transactional, marketing
-  metadata      Json?     // flexible store for additional data
-  createdBy     Int?      // userId who sent
+  messageId   String? // external mail provider message ID
+  templateKey String? // template used if any
+  category    String  @default("transactional") // transactional, marketing
+  metadata    Json? // flexible store for additional data
+  createdBy   Int? // userId who sent
 
   @@index([tenantId])
   @@index([tenantId, linkedPartyId])
@@ -1795,17 +1811,17 @@ model UnlinkedEmail {
 }
 
 model PartyActivity {
-  id        Int               @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party             @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
 
   kind      PartyActivityKind
   title     String
   detail    String?           @db.Text
-  metadata  Json?             // flexible store for entity IDs, etc.
-  actorId   Int?              // userId who performed action
+  metadata  Json? // flexible store for entity IDs, etc.
+  actorId   Int? // userId who performed action
   createdAt DateTime          @default(now())
 
   @@index([tenantId, partyId])
@@ -1930,24 +1946,24 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments   TagAssignment[]
-  owners           AnimalOwner[]
-  registryIds      AnimalRegistryIdentifier[]
-  shares           AnimalShare[]              @relation("ShareAnimal")
-  publicListing    AnimalPublicListing?
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
-  archived         Boolean                    @default(false)
-  TestResult       TestResult[]
-  Attachment       Attachment[]
-  Offspring        Offspring[]                @relation("PromotedAnimal")
-  PaymentIntent    PaymentIntent[]
-  AnimalTraitValue    AnimalTraitValue[]
-  VaccinationRecord   VaccinationRecord[]
-  Document            Document[]
-  Invoice             Invoice[]
-  Expense          Expense[]
-  genetics         AnimalGenetics?
+  tagAssignments    TagAssignment[]
+  owners            AnimalOwner[]
+  registryIds       AnimalRegistryIdentifier[]
+  shares            AnimalShare[]              @relation("ShareAnimal")
+  publicListing     AnimalPublicListing?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  archived          Boolean                    @default(false)
+  TestResult        TestResult[]
+  Attachment        Attachment[]
+  Offspring         Offspring[]                @relation("PromotedAnimal")
+  PaymentIntent     PaymentIntent[]
+  AnimalTraitValue  AnimalTraitValue[]
+  VaccinationRecord VaccinationRecord[]
+  Document          Document[]
+  Invoice           Invoice[]
+  Expense           Expense[]
+  genetics          AnimalGenetics?
 
   // Title & Competition tracking
   titles             AnimalTitle[]
@@ -1960,8 +1976,8 @@ model Animal {
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
   // ─────────────────────────────────────────────────────────────────────────────
-  linkRequestsAsSource AnimalLinkRequest[]    @relation("LinkSource")
-  linkRequestsAsTarget AnimalLinkRequest[]    @relation("LinkTarget")
+  linkRequestsAsSource     AnimalLinkRequest[]     @relation("LinkSource")
+  linkRequestsAsTarget     AnimalLinkRequest[]     @relation("LinkTarget")
   crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkedChild")
   crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkedParent")
 
@@ -2164,7 +2180,7 @@ model AnimalTraitValue {
   verified           Boolean                    @default(false)
   verifiedAt         DateTime?
   marketplaceVisible Boolean?
-  networkVisible     Boolean?                   // Cross-tenant sharing visibility (when enableHealthSharing is on)
+  networkVisible     Boolean? // Cross-tenant sharing visibility (when enableHealthSharing is on)
   notes              String?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
@@ -2422,8 +2438,8 @@ model BreedingProgram {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Identity
-  slug        String  // URL-friendly identifier, unique per tenant
-  name        String  // "Goldendoodle Program"
+  slug        String // URL-friendly identifier, unique per tenant
+  name        String // "Goldendoodle Program"
   description String? @db.Text
   species     Species
   breedText   String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
@@ -2435,7 +2451,7 @@ model BreedingProgram {
   acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
 
   // Pricing & Details
-  pricingTiers    Json?   // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
+  pricingTiers    Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
   whatsIncluded   String? @db.Text // What comes with each animal
   typicalWaitTime String? // "3-6 months"
 
@@ -3081,7 +3097,7 @@ model WaitlistEntry {
   rejectedAt     DateTime?
   rejectedReason String?
 
-  notes         String?
+  notes String?
 
   // Origin tracking for conversion attribution
   originSource      String? // "direct" | "utm" | "referrer" | "embed" | "social"
@@ -3847,7 +3863,7 @@ model Template {
 
   content        TemplateContent[]
   autoReplyRules AutoReplyRule[]
-  drafts         Draft[]          @relation("DraftTemplate")
+  drafts         Draft[]           @relation("DraftTemplate")
 
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -4000,9 +4016,9 @@ model MessageThread {
   originUtmCampaign String? // utm_campaign parameter
   originPagePath    String? // Page path where conversion occurred
 
-  participants  MessageParticipant[]
-  messages      Message[]
-  autoReplyLogs AutoReplyLog[]
+  participants   MessageParticipant[]
+  messages       Message[]
+  autoReplyLogs  AutoReplyLog[]
   tagAssignments TagAssignment[]
 
   lastMessageAt DateTime?
@@ -4056,6 +4072,12 @@ model Message {
   senderParty   Party @relation("MessageSenderParty", fields: [senderPartyId], references: [id], onDelete: Cascade)
 
   body String @db.Text
+
+  // Attachment fields (optional - null means text-only message)
+  attachmentFilename String? // Original filename (e.g., "contract.pdf")
+  attachmentMime     String? // MIME type (e.g., "application/pdf")
+  attachmentBytes    Int? // File size in bytes
+  attachmentKey      String? // Storage key/path (e.g., "messages/4/12345-contract.pdf")
 
   isAutomated      Boolean @default(false)
   automationRuleId Int?
@@ -5215,11 +5237,11 @@ model AnimalPrivacySettings {
   allowCrossTenantMatching Boolean @default(true)
 
   // Field-level visibility controls
-  showName          Boolean @default(true)
-  showPhoto         Boolean @default(true)
-  showFullDob       Boolean @default(true) // false = year only
-  showRegistryFull  Boolean @default(false) // false = last 4 digits only
-  showBreeder       Boolean @default(true) // Show tenant/breeder name
+  showName         Boolean @default(true)
+  showPhoto        Boolean @default(true)
+  showFullDob      Boolean @default(true) // false = year only
+  showRegistryFull Boolean @default(false) // false = last 4 digits only
+  showBreeder      Boolean @default(true) // Show tenant/breeder name
 
   // Gate toggles for granular per-item sharing (enables networkVisible toggles in respective tabs)
   enableHealthSharing   Boolean @default(false) // Gate for per-test visibility in Health tab
@@ -5326,13 +5348,13 @@ model AnimalLinkRequest {
 
   // Target discovery - how the target animal was found (at least one populated)
   targetAnimalId     Int? // Direct animal ID if known
-  targetAnimal       Animal?  @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
+  targetAnimal       Animal? @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
   targetGaid         String? // GAID if searched by global ID
   targetExchangeCode String? // Exchange code if shared directly
   targetRegistryId   Int? // Registry ID if searched by registry number
   targetRegistryNum  String? // Registry number
   targetTenantId     Int? // Target breeder if found via breeder search
-  targetTenant       Tenant?  @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
+  targetTenant       Tenant? @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
 
   // Request details
   message String? @db.Text // Message from requester
@@ -5499,9 +5521,9 @@ model AnimalTitle {
   majorWins    Int? // For conformation titles
 
   // Where the title was earned (event info)
-  eventName    String? // "Westminster Kennel Club 2024"
+  eventName     String? // "Westminster Kennel Club 2024"
   eventLocation String? // "New York, NY"
-  handlerName  String? // Person who handled/showed the animal
+  handlerName   String? // Person who handled/showed the animal
 
   // Verification
   verified    Boolean   @default(false)
@@ -5572,14 +5594,14 @@ model CompetitionEntry {
   scoreMax Float? // Max possible score
 
   // Racing-specific fields
-  prizeMoneyCents  Int?     // Prize/purse won in cents (e.g., 100000 = $1,000.00)
-  trackName        String?  // "Churchill Downs", "Santa Anita", "Shelbourne Park"
-  trackSurface     String?  // "dirt", "turf", "synthetic", "sand"
-  distanceFurlongs Float?   // Race distance in furlongs (1 furlong = 1/8 mile)
-  distanceMeters   Int?     // Race distance in meters (for greyhounds/international)
-  raceGrade        String?  // "G1", "G2", "G3", "Listed", "A", "B", "Open"
-  finishTime       String?  // "1:59.40" or "29.45" - stored as string for display
-  speedFigure      Int?     // Beyer speed figure, Timeform, etc.
+  prizeMoneyCents  Int? // Prize/purse won in cents (e.g., 100000 = $1,000.00)
+  trackName        String? // "Churchill Downs", "Santa Anita", "Shelbourne Park"
+  trackSurface     String? // "dirt", "turf", "synthetic", "sand"
+  distanceFurlongs Float? // Race distance in furlongs (1 furlong = 1/8 mile)
+  distanceMeters   Int? // Race distance in meters (for greyhounds/international)
+  raceGrade        String? // "G1", "G2", "G3", "Listed", "A", "B", "Open"
+  finishTime       String? // "1:59.40" or "29.45" - stored as string for display
+  speedFigure      Int? // Beyer speed figure, Timeform, etc.
 
   // Handler/rider info
   handlerName String? // Jockey, driver, handler (person who competed with animal)
@@ -5616,4 +5638,90 @@ model CompetitionEntryDocument {
   document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([competitionEntryId, documentId])
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Client Profile Change Requests
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED // Client withdrew request
+}
+
+/**
+ * ContactChangeRequest - Tracks name change requests from clients
+ * (firstName, lastName, nickname require breeder approval)
+ */
+model ContactChangeRequest {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  contactId Int
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  // What changed
+  fieldName String // "firstName" | "lastName" | "nickname"
+  oldValue  String? // Previous value (null if was empty)
+  newValue  String // Requested new value
+
+  // Request metadata
+  status      ChangeRequestStatus @default(PENDING)
+  requestedAt DateTime            @default(now())
+  requestedBy String? // User ID of client who requested
+
+  // Resolution
+  resolvedAt     DateTime?
+  resolvedBy     String? // User ID of breeder who resolved
+  resolutionNote String? // Optional note from breeder (e.g., rejection reason)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([contactId])
+}
+
+enum EmailChangeStatus {
+  PENDING_VERIFICATION // Waiting for email verification
+  VERIFIED // Email verified, change applied
+  EXPIRED // Verification token expired
+  CANCELLED // Client cancelled
+}
+
+/**
+ * EmailChangeRequest - Tracks email change requests with verification
+ */
+model EmailChangeRequest {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  contactId Int
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  // Email change
+  oldEmail String?
+  newEmail String
+
+  // Verification
+  verificationToken String    @unique @default(cuid())
+  verifiedAt        DateTime?
+
+  // Status
+  status      EmailChangeStatus @default(PENDING_VERIFICATION)
+  requestedAt DateTime          @default(now())
+  expiresAt   DateTime // Token expiry (e.g., 24 hours)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([verificationToken])
 }

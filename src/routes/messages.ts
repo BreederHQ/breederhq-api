@@ -11,6 +11,62 @@ import {
   type BusinessHoursSchedule,
 } from "../utils/business-hours.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
+import path from "path";
+import fs from "fs/promises";
+
+// Allowed MIME types for message attachments
+const ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+  "text/csv",
+];
+
+// Max file size: 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+// Helper to save uploaded file and return attachment metadata
+async function saveMessageAttachment(
+  tenantId: number,
+  threadId: number,
+  file: { filename: string; mimetype: string; toBuffer: () => Promise<Buffer> }
+): Promise<{ filename: string; mime: string; bytes: number; key: string } | null> {
+  const buffer = await file.toBuffer();
+
+  if (buffer.length > MAX_FILE_SIZE) {
+    return null;
+  }
+
+  if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+    return null;
+  }
+
+  // Create directory structure: uploads/messages/{tenantId}/{threadId}/
+  const uploadDir = path.join(process.cwd(), "uploads", "messages", String(tenantId), String(threadId));
+  await fs.mkdir(uploadDir, { recursive: true });
+
+  // Generate unique filename with timestamp
+  const timestamp = Date.now();
+  const sanitizedFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const storedFilename = `${timestamp}-${sanitizedFilename}`;
+  const filepath = path.join(uploadDir, storedFilename);
+
+  await fs.writeFile(filepath, buffer);
+
+  return {
+    filename: file.filename,
+    mime: file.mimetype,
+    bytes: buffer.length,
+    key: `messages/${tenantId}/${threadId}/${storedFilename}`,
+  };
+}
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
@@ -243,7 +299,25 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: { lastReadAt: new Date() },
       });
 
-      return reply.send({ thread });
+      // Transform messages to include attachment URLs
+      const messagesWithUrls = thread.messages.map((msg) => ({
+        ...msg,
+        attachment: msg.attachmentKey
+          ? {
+              filename: msg.attachmentFilename,
+              mime: msg.attachmentMime,
+              bytes: msg.attachmentBytes,
+              url: `/api/v1/messages/attachments/${msg.id}`,
+            }
+          : null,
+      }));
+
+      return reply.send({
+        thread: {
+          ...thread,
+          messages: messagesWithUrls,
+        },
+      });
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
@@ -449,6 +523,180 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       return reply.send({ ok: true, message });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // POST /messages/threads/:id/messages/upload - Send message with file attachment (multipart)
+  app.post("/messages/threads/:id/messages/upload", async (req, reply) => {
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
+
+    const threadId = Number((req.params as any).id);
+
+    try {
+      const thread = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+        select: {
+          id: true,
+          firstInboundAt: true,
+          firstOrgReplyAt: true,
+          participants: { select: { partyId: true } },
+        },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const isParticipant = thread.participants.some((p) => p.partyId === userPartyId);
+      if (!isParticipant) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+
+      // Parse multipart form data
+      const mpReq = req as any;
+      const data = await mpReq.file();
+
+      if (!data) {
+        return reply.code(400).send({ error: "file_required" });
+      }
+
+      // Get message body from form fields
+      const fields: Record<string, string> = {};
+      for await (const part of mpReq.parts()) {
+        if (part.type === "field") {
+          fields[part.fieldname] = part.value;
+        }
+      }
+
+      const messageBody = fields.body || "";
+
+      // Save the file
+      const attachment = await saveMessageAttachment(tenantId, threadId, data);
+
+      if (!attachment) {
+        return reply.code(400).send({
+          error: "invalid_file",
+          detail: "File too large (max 10MB) or unsupported type",
+        });
+      }
+
+      const now = new Date();
+
+      // Create message with attachment
+      const message = await prisma.message.create({
+        data: {
+          threadId,
+          senderPartyId: userPartyId,
+          body: messageBody,
+          attachmentFilename: attachment.filename,
+          attachmentMime: attachment.mime,
+          attachmentBytes: attachment.bytes,
+          attachmentKey: attachment.key,
+        },
+        include: {
+          senderParty: { select: { id: true, name: true } },
+        },
+      });
+
+      // Update thread timestamps
+      await prisma.messageThread.update({
+        where: { id: threadId },
+        data: { lastMessageAt: now, updatedAt: now },
+      });
+
+      // Update sender's lastReadAt
+      await prisma.messageParticipant.updateMany({
+        where: { threadId, partyId: userPartyId },
+        data: { lastReadAt: now },
+      });
+
+      // Broadcast new message via WebSocket
+      const participantPartyIds = thread.participants.map((p) => p.partyId);
+      broadcastNewMessage(tenantId, threadId, {
+        id: message.id,
+        body: message.body,
+        senderPartyId: message.senderPartyId,
+        createdAt: message.createdAt.toISOString(),
+        attachmentFilename: message.attachmentFilename,
+        attachmentMime: message.attachmentMime,
+        attachmentBytes: message.attachmentBytes,
+      }, participantPartyIds);
+
+      return reply.send({
+        ok: true,
+        message: {
+          ...message,
+          attachment: attachment ? {
+            filename: attachment.filename,
+            mime: attachment.mime,
+            bytes: attachment.bytes,
+            url: `/api/v1/messages/attachments/${message.id}`,
+          } : null,
+        },
+      });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // GET /messages/attachments/:messageId - Download/serve attachment
+  app.get("/messages/attachments/:messageId", async (req, reply) => {
+    // Enforce messaging party scope (supports both STAFF and CLIENT)
+    const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
+
+    const messageId = Number((req.params as any).messageId);
+
+    try {
+      const message = await prisma.message.findFirst({
+        where: { id: messageId },
+        select: {
+          id: true,
+          threadId: true,
+          attachmentFilename: true,
+          attachmentMime: true,
+          attachmentKey: true,
+          thread: {
+            select: {
+              tenantId: true,
+              participants: { select: { partyId: true } },
+            },
+          },
+        },
+      });
+
+      if (!message || message.thread.tenantId !== tenantId) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Verify user is a participant
+      const isParticipant = message.thread.participants.some((p) => p.partyId === userPartyId);
+      if (!isParticipant) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+
+      if (!message.attachmentKey) {
+        return reply.code(404).send({ error: "no_attachment" });
+      }
+
+      // Resolve file path
+      const filepath = path.join(process.cwd(), "uploads", message.attachmentKey);
+
+      try {
+        await fs.access(filepath);
+      } catch {
+        return reply.code(404).send({ error: "file_not_found" });
+      }
+
+      const fileBuffer = await fs.readFile(filepath);
+
+      reply.header("Content-Type", message.attachmentMime || "application/octet-stream");
+      reply.header("Content-Disposition", `inline; filename="${message.attachmentFilename || "attachment"}"`);
+      reply.header("Content-Length", fileBuffer.length);
+
+      return reply.send(fileBuffer);
     } catch (err: any) {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }

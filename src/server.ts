@@ -469,6 +469,7 @@ import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Mar
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
+import portalProfileRoutes from "./routes/portal-profile.js"; // Portal profile self-service
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
@@ -821,12 +822,14 @@ app.register(
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
+    api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
     // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs
     // The middleware extracts tenant from the :slug param and sets req.tenantId
     api.register(portalDataRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/*
+    api.register(portalProfileRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/profile/*
     api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
