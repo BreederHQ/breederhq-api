@@ -192,7 +192,7 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/auth/dev-login") return true;
   // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
 
-  // Marketplace auth bootstrap routes - JWT-based, no CSRF required
+  // Marketplace auth bootstrap routes - session-based with MARKETPLACE surface
   if (pathname === "/api/v1/marketplace/auth/login") return true;
   if (pathname === "/api/v1/marketplace/auth/register") return true;
   if (pathname === "/api/v1/marketplace/auth/logout") return true;
@@ -475,6 +475,10 @@ import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Pub
 import marketplaceWaitlistRoutes from "./routes/marketplace-waitlist.js"; // Marketplace waitlist requests
 import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Marketplace messaging (buyer-to-breeder)
 import marketplaceAuthRoutes from "./routes/marketplace-auth.js"; // Marketplace authentication (JWT-based)
+import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // Marketplace provider registration
+import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
+import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
+import marketplaceTransactionMessagesRoutes from "./routes/marketplace-transaction-messages.js"; // Marketplace transaction messaging
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -534,6 +538,10 @@ app.register(
     api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
     api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
     api.register(marketplaceAuthRoutes, { prefix: "/marketplace/auth" }); // /api/v1/marketplace/auth/* (JWT-based auth for marketplace)
+    api.register(marketplaceProvidersRoutes, { prefix: "/marketplace/providers" }); // /api/v1/marketplace/providers/* (Provider registration & management)
+    api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
+    api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
+    api.register(marketplaceTransactionMessagesRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transaction messaging)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },

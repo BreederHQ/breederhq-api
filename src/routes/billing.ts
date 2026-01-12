@@ -457,6 +457,76 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               );
             }
 
+            // Handle marketplace transaction payment
+            if (session.mode === "payment" && session.metadata?.transactionId) {
+              const transactionId = parseInt(session.metadata.transactionId);
+
+              if (!isNaN(transactionId)) {
+                // Update transaction to paid
+                const transaction = await prisma.marketplaceTransaction.update({
+                  where: { id: transactionId },
+                  data: {
+                    status: "paid",
+                    paidAt: new Date(),
+                  },
+                  include: {
+                    client: true,
+                    provider: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                    listing: true,
+                  },
+                });
+
+                // Update invoice to paid
+                await prisma.marketplaceInvoice.updateMany({
+                  where: { transactionId: BigInt(transactionId) },
+                  data: {
+                    status: "paid",
+                    paidAt: new Date(),
+                    balanceCents: BigInt(0),
+                  },
+                });
+
+                // Send payment confirmation emails (dynamic import to avoid circular dependency)
+                const { sendPaymentReceivedEmailToBuyer, sendPaymentReceivedEmailToProvider } =
+                  await import("../services/marketplace-email-service.js");
+
+                const totalAmount = `$${(Number(transaction.totalCents) / 100).toFixed(2)}`;
+                const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+
+                sendPaymentReceivedEmailToBuyer({
+                  buyerEmail: transaction.client.email,
+                  buyerFirstName: transaction.client.firstName || "",
+                  transactionId: Number(transaction.id),
+                  serviceTitle,
+                  providerBusinessName: transaction.provider.businessName,
+                  totalAmount,
+                }).catch((err) => {
+                  req.log.error({ err }, "Failed to send payment received email to buyer");
+                });
+
+                sendPaymentReceivedEmailToProvider({
+                  providerEmail: transaction.provider.user.email,
+                  providerBusinessName: transaction.provider.businessName,
+                  transactionId: Number(transaction.id),
+                  serviceTitle,
+                  buyerName: `${transaction.client.firstName || ""} ${transaction.client.lastName || ""}`.trim() || transaction.client.email,
+                  totalAmount,
+                  paymentMode: "stripe",
+                }).catch((err) => {
+                  req.log.error({ err }, "Failed to send payment received email to provider");
+                });
+
+                req.log.info(
+                  { transactionId },
+                  "Marketplace transaction paid via Stripe"
+                );
+              }
+            }
+
             // Handle deposit invoice payment
             if (session.mode === "payment" && session.metadata?.type === "deposit_invoice") {
               const invoiceId = parseInt(session.metadata.invoiceId || "0");
@@ -474,7 +544,7 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 });
 
                 if (invoice) {
-                  const newBalanceCents = Math.max(0, invoice.balanceCents - amountPaid);
+                  const newBalanceCents = Math.max(0, Number(invoice.balanceCents) - amountPaid);
                   const isPaid = newBalanceCents <= 0;
 
                   await prisma.invoice.update({
@@ -615,7 +685,7 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   });
 
                   // Update invoice
-                  const newBalanceCents = Math.max(0, invoice.balanceCents - amountPaid);
+                  const newBalanceCents = Math.max(0, Number(invoice.balanceCents) - amountPaid);
                   const isPaid = newBalanceCents <= 0;
 
                   await prisma.invoice.update({

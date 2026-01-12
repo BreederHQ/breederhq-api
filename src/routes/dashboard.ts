@@ -194,7 +194,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       for (const inv of overdueInvoices) {
-        const amountDue = (inv.balanceCents || 0) / 100;
+        const amountDue = Number(inv.balanceCents || 0) / 100;
         alerts.push({
           id: `invoice-${inv.id}`,
           severity: "critical",
@@ -978,7 +978,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           id: `invoice-${inv.id}`,
           kind: "overdue_invoice",
           title: `Invoice #${inv.invoiceNumber || inv.id} overdue`,
-          description: `$${((inv.balanceCents || 0) / 100).toFixed(2)} outstanding - ${daysPastDue} days past due`,
+          description: `$${(Number(inv.balanceCents || 0) / 100).toFixed(2)} outstanding - ${daysPastDue} days past due`,
           partyId: inv.clientPartyId,
           partyName: inv.clientParty.name || "Unknown",
           partyKind: inv.clientParty.type === "ORGANIZATION" ? "ORGANIZATION" : "CONTACT",

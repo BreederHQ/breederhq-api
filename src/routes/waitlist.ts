@@ -1317,7 +1317,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     try {
       const emailContent = renderInvoiceEmail({
         invoiceNumber: invoice.invoiceNumber,
-        amountCents: invoice.amountCents,
+        amountCents: Number(invoice.amountCents),
         currency: "USD",
         dueAt: invoice.dueAt,
         clientName: entry.clientParty?.name || "Valued Customer",
