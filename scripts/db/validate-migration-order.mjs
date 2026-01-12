@@ -29,11 +29,12 @@ const MIGRATIONS_DIR = path.resolve(__dirname, '../../prisma/migrations');
 const createdEntities = new Map();
 
 // Regex patterns for detecting entity creation and references
-const CREATE_TABLE_REGEX = /CREATE TABLE\s+"(\w+)"/gi;
-const CREATE_TYPE_REGEX = /CREATE TYPE\s+"(\w+)"/gi;
-const REFERENCES_REGEX = /REFERENCES\s+"(\w+)"/gi;
-const ALTER_TABLE_REGEX = /ALTER TABLE\s+"(\w+)"/gi;
-const ALTER_TYPE_REGEX = /ALTER TYPE\s+"(\w+)"/gi;
+// Updated to handle both schema-qualified ("schema"."table") and unqualified ("table") names
+const CREATE_TABLE_REGEX = /CREATE TABLE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+const CREATE_TYPE_REGEX = /CREATE TYPE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+const REFERENCES_REGEX = /REFERENCES\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+const ALTER_TABLE_REGEX = /ALTER TABLE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+const ALTER_TYPE_REGEX = /ALTER TYPE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
 
 function getMigrationFolders() {
   const entries = fs.readdirSync(MIGRATIONS_DIR, { withFileTypes: true });
@@ -59,29 +60,34 @@ function parseMigrationSQL(sqlPath) {
   const alters = [];
 
   // Find all CREATE TABLE statements
+  // match[1] = schema (optional), match[2] = table name
   let match;
   while ((match = CREATE_TABLE_REGEX.exec(sql)) !== null) {
-    creates.push({ type: 'TABLE', name: match[1] });
+    creates.push({ type: 'TABLE', name: match[2] });
   }
 
   // Find all CREATE TYPE statements
+  // match[1] = schema (optional), match[2] = type name
   while ((match = CREATE_TYPE_REGEX.exec(sql)) !== null) {
-    creates.push({ type: 'TYPE', name: match[1] });
+    creates.push({ type: 'TYPE', name: match[2] });
   }
 
   // Find all REFERENCES (foreign keys)
+  // match[1] = schema (optional), match[2] = table name
   while ((match = REFERENCES_REGEX.exec(sql)) !== null) {
-    references.push(match[1]);
+    references.push(match[2]);
   }
 
   // Find all ALTER TABLE statements
+  // match[1] = schema (optional), match[2] = table name
   while ((match = ALTER_TABLE_REGEX.exec(sql)) !== null) {
-    alters.push({ type: 'TABLE', name: match[1] });
+    alters.push({ type: 'TABLE', name: match[2] });
   }
 
   // Find all ALTER TYPE statements
+  // match[1] = schema (optional), match[2] = type name
   while ((match = ALTER_TYPE_REGEX.exec(sql)) !== null) {
-    alters.push({ type: 'TYPE', name: match[1] });
+    alters.push({ type: 'TYPE', name: match[2] });
   }
 
   return { creates, references, alters };
