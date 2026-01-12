@@ -9,6 +9,7 @@ import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
 import type { IdentifierType } from "@prisma/client";
+import { activeOnly } from "../utils/query-helpers.js";
 
 const AVATAR_SIZE = 256;
 
@@ -158,7 +159,7 @@ async function assertContactInTenant(contactId: number, tenantId: number) {
 }
 async function assertAnimalInTenant(animalId: number, tenantId: number) {
   const a = await prisma.animal.findFirst({
-    where: { id: animalId, tenantId },
+    where: activeOnly({ id: animalId, tenantId }),
     select: { id: true, tenantId: true },
   });
   if (!a) throw Object.assign(new Error("not_found"), { statusCode: 404 });
@@ -302,9 +303,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
     }
 
+    const whereWithActive = activeOnly(where);
     const [rawItems, total] = await prisma.$transaction([
       prisma.animal.findMany({
-        where,
+        where: whereWithActive,
         orderBy,
         skip,
         take,
@@ -344,7 +346,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         },
       }),
-      prisma.animal.count({ where }),
+      prisma.animal.count({ where: whereWithActive }),
     ]);
 
     const items = rawItems.map((rec) => ({
@@ -393,7 +395,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Return updated animal with computed cycleStartDates
     const rec = await prisma.animal.findFirst({
-      where: { id, tenantId },
+      where: activeOnly({ id, tenantId }),
       select: {
         id: true,
         tenantId: true,
@@ -442,7 +444,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const wantRepro = includeParts.includes("repro") || includeParts.includes("last_heat");
 
     const rec = await prisma.animal.findFirst({
-      where: { id, tenantId },
+      where: activeOnly({ id, tenantId }),
       select: {
         id: true,
         tenantId: true,
@@ -577,7 +579,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.damId != null) {
       const damId = typeof b.damId === "number" ? b.damId : parseInt(String(b.damId), 10);
       if (!Number.isNaN(damId)) {
-        const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId } });
+        const dam = await prisma.animal.findFirst({ where: activeOnly({ id: damId, tenantId }) });
         if (!dam) return reply.code(400).send({ error: "damId_not_found" });
         if (dam.sex !== "FEMALE") return reply.code(400).send({ error: "dam_must_be_female" });
         data.damId = damId;
@@ -586,7 +588,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.sireId != null) {
       const sireId = typeof b.sireId === "number" ? b.sireId : parseInt(String(b.sireId), 10);
       if (!Number.isNaN(sireId)) {
-        const sire = await prisma.animal.findFirst({ where: { id: sireId, tenantId } });
+        const sire = await prisma.animal.findFirst({ where: activeOnly({ id: sireId, tenantId }) });
         if (!sire) return reply.code(400).send({ error: "sireId_not_found" });
         if (sire.sex !== "MALE") return reply.code(400).send({ error: "sire_must_be_male" });
         data.sireId = sireId;
@@ -667,7 +669,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const id = parseIntStrict((req.params as { id: string }).id);
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
-    const existing = await prisma.animal.findFirst({ where: { id, tenantId }, select: { id: true } });
+    const existing = await prisma.animal.findFirst({ where: activeOnly({ id, tenantId }), select: { id: true } });
     if (!existing) return reply.code(404).send({ error: "not_found" });
 
     const b = (req.body || {}) as Partial<{
@@ -1404,7 +1406,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const animalId = parseIntStrict((req.params as { id: string }).id);
     if (!animalId) return reply.code(400).send({ error: "id_invalid" });
 
-    const a = await prisma.animal.findFirst({ where: { id: animalId, tenantId }, select: { id: true, species: true } });
+    const a = await prisma.animal.findFirst({ where: activeOnly({ id: animalId, tenantId }), select: { id: true, species: true } });
     if (!a) return reply.code(404).send({ error: "not_found" });
 
     const b = (req.body || {}) as {
