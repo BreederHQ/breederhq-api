@@ -1131,6 +1131,289 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
+  // GET /services - Browse all published service listings - REQUIRES ENTITLEMENT
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      type?: string;
+      search?: string;
+      city?: string;
+      state?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/services", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
+    const { type, search, city, state } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    // Service listing types
+    const serviceTypes = [
+      "STUD_SERVICE",
+      "TRAINING",
+      "VETERINARY",
+      "PHOTOGRAPHY",
+      "GROOMING",
+      "TRANSPORT",
+      "BOARDING",
+      "PRODUCT",
+      "OTHER_SERVICE",
+    ];
+
+    // Build where clause - only ACTIVE service listings
+    const where: any = {
+      status: "ACTIVE",
+      listingType: { in: serviceTypes },
+    };
+
+    // Filter by specific type if provided
+    if (type && serviceTypes.includes(type.toUpperCase())) {
+      where.listingType = type.toUpperCase();
+    }
+
+    // Search in title and description
+    if (search && search.trim()) {
+      where.OR = [
+        { title: { contains: search.trim(), mode: "insensitive" } },
+        { description: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    // Location filters
+    if (city && city.trim()) {
+      where.city = { contains: city.trim(), mode: "insensitive" };
+    }
+    if (state && state.trim()) {
+      where.state = { contains: state.trim(), mode: "insensitive" };
+    }
+
+    const [items, total] = await prisma.$transaction([
+      prisma.marketplaceListing.findMany({
+        where,
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          slug: true,
+          listingType: true,
+          title: true,
+          description: true,
+          city: true,
+          state: true,
+          country: true,
+          priceCents: true,
+          priceType: true,
+          images: true,
+          publishedAt: true,
+          // Include provider info if service provider listing
+          serviceProvider: {
+            select: {
+              id: true,
+              businessName: true,
+            },
+          },
+          // Include tenant/breeder info if breeder listing
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.marketplaceListing.count({ where }),
+    ]);
+
+    return reply.send({
+      items: items.map((listing) => {
+        const breederOrg = listing.tenant?.organizations?.[0];
+        return {
+          id: listing.id,
+          slug: listing.slug,
+          listingType: listing.listingType,
+          title: listing.title,
+          description: listing.description,
+          city: listing.city,
+          state: listing.state,
+          country: listing.country,
+          priceCents: listing.priceCents,
+          priceType: listing.priceType,
+          images: listing.images,
+          publishedAt: listing.publishedAt,
+          provider: listing.serviceProvider ? {
+            type: "service_provider",
+            id: listing.serviceProvider.id,
+            name: listing.serviceProvider.businessName,
+          } : breederOrg ? {
+            type: "breeder",
+            slug: breederOrg.programSlug,
+            name: breederOrg.name,
+          } : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /offspring-groups - Browse all published offspring groups - REQUIRES ENTITLEMENT
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      species?: string;
+      breed?: string;
+      search?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/offspring-groups", async (req, reply) => {
+    // SECURITY: Require entitlement before returning any data
+    if (!(await requireMarketplaceEntitlement(req, reply))) return;
+
+    const { species, breed, search } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    // Build where clause - only published groups from published breeders
+    const where: any = {
+      published: true,
+      listingSlug: { not: null },
+      tenant: {
+        organizations: {
+          some: {
+            isPublicProgram: true,
+          },
+        },
+      },
+    };
+
+    if (species) {
+      where.species = species.toUpperCase();
+    }
+
+    // Search in listing title and description, or dam/sire breed
+    if (search && search.trim()) {
+      where.OR = [
+        { listingTitle: { contains: search.trim(), mode: "insensitive" } },
+        { listingDescription: { contains: search.trim(), mode: "insensitive" } },
+        { dam: { breed: { contains: search.trim(), mode: "insensitive" } } },
+        { sire: { breed: { contains: search.trim(), mode: "insensitive" } } },
+      ];
+    }
+
+    // Filter by breed (check dam or sire breed)
+    if (breed && breed.trim()) {
+      where.OR = [
+        { dam: { breed: { contains: breed.trim(), mode: "insensitive" } } },
+        { sire: { breed: { contains: breed.trim(), mode: "insensitive" } } },
+      ];
+    }
+
+    const [groups, total] = await prisma.$transaction([
+      prisma.offspringGroup.findMany({
+        where,
+        orderBy: [{ actualBirthOn: "desc" }, { expectedBirthOn: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          listingSlug: true,
+          listingTitle: true,
+          listingDescription: true,
+          species: true,
+          expectedBirthOn: true,
+          actualBirthOn: true,
+          coverImageUrl: true,
+          marketplaceDefaultPriceCents: true,
+          dam: {
+            select: { name: true, photoUrl: true, breed: true },
+          },
+          sire: {
+            select: { name: true, photoUrl: true, breed: true },
+          },
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                  city: true,
+                  state: true,
+                },
+              },
+            },
+          },
+          Offspring: {
+            where: {
+              marketplaceListed: true,
+              lifeState: "ALIVE",
+              keeperIntent: "AVAILABLE",
+            },
+            select: {
+              id: true,
+              marketplacePriceCents: true,
+              priceCents: true,
+            },
+          },
+        },
+      }),
+      prisma.offspringGroup.count({ where }),
+    ]);
+
+    return reply.send({
+      items: groups.map((g) => {
+        const org = g.tenant?.organizations?.[0];
+        const availableCount = g.Offspring?.length || 0;
+
+        // Get price range from offspring
+        const prices = (g.Offspring || [])
+          .map((o) => o.marketplacePriceCents || o.priceCents || g.marketplaceDefaultPriceCents)
+          .filter((p): p is number => p !== null && p !== undefined);
+
+        const minPrice = prices.length > 0 ? Math.min(...prices) : g.marketplaceDefaultPriceCents;
+        const maxPrice = prices.length > 0 ? Math.max(...prices) : g.marketplaceDefaultPriceCents;
+
+        return {
+          id: g.id,
+          listingSlug: g.listingSlug,
+          title: g.listingTitle,
+          description: g.listingDescription,
+          species: g.species,
+          breed: g.dam?.breed || g.sire?.breed || null,
+          expectedBirthOn: g.expectedBirthOn,
+          actualBirthOn: g.actualBirthOn,
+          coverImageUrl: g.coverImageUrl,
+          availableCount,
+          priceMinCents: minPrice,
+          priceMaxCents: maxPrice,
+          dam: g.dam ? { name: g.dam.name, photoUrl: g.dam.photoUrl } : null,
+          sire: g.sire ? { name: g.sire.name, photoUrl: g.sire.photoUrl } : null,
+          breeder: org ? {
+            slug: org.programSlug,
+            name: org.name,
+            location: [org.city, org.state].filter(Boolean).join(", ") || null,
+          } : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // GET /breeding-programs - Browse all listed breeding programs - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{

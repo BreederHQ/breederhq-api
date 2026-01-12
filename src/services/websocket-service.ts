@@ -124,6 +124,9 @@ export function broadcastNewMessage(
     body: string;
     senderPartyId: number;
     createdAt: string;
+    attachmentFilename?: string | null;
+    attachmentMime?: string | null;
+    attachmentBytes?: number | null;
   },
   participantPartyIds: number[]
 ): void {
