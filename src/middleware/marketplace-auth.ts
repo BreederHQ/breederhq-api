@@ -113,3 +113,8 @@ export const requireProvider = requireUserType("provider");
  * Middleware to require buyer account
  */
 export const requireBuyer = requireUserType("buyer");
+
+/**
+ * Middleware to require admin account
+ */
+export const requireAdmin = requireUserType("admin");

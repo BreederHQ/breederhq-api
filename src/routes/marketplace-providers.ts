@@ -19,7 +19,44 @@ import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { requireProvider, requireProviderWithStripe } from "../middleware/marketplace-provider-auth.js";
 import { findMarketplaceUserById } from "../services/marketplace-auth-service.js";
 import { sendProviderWelcomeEmail } from "../services/marketplace-email-service.js";
+import { geocodeCityState, geocodeZipCode } from "../services/geocoding-service.js";
 import prisma from "../prisma.js";
+import { Decimal } from "@prisma/client/runtime/library";
+
+/**
+ * Geocode provider address to get lat/lng coordinates
+ * Tries city+state first, falls back to zip code
+ */
+async function geocodeProviderAddress(city?: string | null, state?: string | null, zip?: string | null, country?: string | null): Promise<{ latitude: Decimal; longitude: Decimal } | null> {
+  try {
+    // Try city + state first (more accurate)
+    if (city && state) {
+      const result = await geocodeCityState(city, state, country || "US");
+      if (result) {
+        return {
+          latitude: new Decimal(result.latitude.toFixed(8)),
+          longitude: new Decimal(result.longitude.toFixed(8)),
+        };
+      }
+    }
+
+    // Fall back to zip code
+    if (zip) {
+      const result = await geocodeZipCode(zip, country || "US");
+      if (result) {
+        return {
+          latitude: new Decimal(result.latitude.toFixed(8)),
+          longitude: new Decimal(result.longitude.toFixed(8)),
+        };
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[Geocode] Error geocoding provider address:", err);
+    return null;
+  }
+}
 
 const MARKETPLACE_URL = process.env.MARKETPLACE_URL || "https://marketplace.breederhq.com";
 
@@ -115,6 +152,9 @@ export default async function marketplaceProvidersRoutes(
     }
 
     try {
+      // Geocode address to get lat/lng (fire-and-forget, don't block registration)
+      const coords = await geocodeProviderAddress(city, state, zip, country);
+
       // Create provider and update user in a transaction
       const provider = await prisma.$transaction(async (tx) => {
         // Update user type to provider
@@ -136,6 +176,8 @@ export default async function marketplaceProvidersRoutes(
             state: state?.trim() || null,
             zip: zip?.trim() || null,
             country: country?.trim() || "US",
+            latitude: coords?.latitude || null,
+            longitude: coords?.longitude || null,
             tenantId: tenantId || null,
             status: "pending", // Will be "active" after review/approval
           },
@@ -358,6 +400,21 @@ export default async function marketplaceProvidersRoutes(
         error: "no_fields_to_update",
         message: "No valid fields provided for update.",
       });
+    }
+
+    // Re-geocode if address fields changed
+    const addressChanged = city !== undefined || state !== undefined || zip !== undefined || country !== undefined;
+    if (addressChanged) {
+      const newCity = updateData.city !== undefined ? updateData.city : provider.city;
+      const newState = updateData.state !== undefined ? updateData.state : provider.state;
+      const newZip = updateData.zip !== undefined ? updateData.zip : provider.zip;
+      const newCountry = updateData.country !== undefined ? updateData.country : provider.country;
+
+      const coords = await geocodeProviderAddress(newCity, newState, newZip, newCountry);
+      if (coords) {
+        updateData.latitude = coords.latitude;
+        updateData.longitude = coords.longitude;
+      }
     }
 
     try {
