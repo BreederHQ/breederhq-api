@@ -623,6 +623,9 @@ model User {
   // Communications Hub
   drafts Draft[] @relation("DraftCreatedBy")
 
+  // Marketplace saved listings
+  savedListings MarketplaceSavedListing[] @relation("UserSavedListings")
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -5967,7 +5970,6 @@ model MarketplaceUser {
   clientTransactions MarketplaceTransaction[] @relation("ClientTransactions")
   clientInvoices   MarketplaceInvoice[] @relation("ClientInvoices")
   reviews          MarketplaceReview[] @relation("ReviewsByClient")
-  savedListings    MarketplaceSavedListing[]
 
   @@index([email])
   @@index([tenantId])
@@ -6121,7 +6123,6 @@ model MarketplaceServiceListing {
   transactions MarketplaceTransaction[]
   threads      MarketplaceMessageThread[]
   reviews      MarketplaceReview[]
-  savedBy      MarketplaceSavedListing[]
 
   @@index([providerId, status])
   @@index([category, status, publishedAt(sort: Desc)])
@@ -6357,19 +6358,23 @@ model MarketplaceReview {
 }
 
 model MarketplaceSavedListing {
-  id         Int       @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
 
-  userId     Int       @map("user_id")
-  user       MarketplaceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // BHQ User ID (CUID string from main User table)
+  bhqUserId   String    @map("bhq_user_id") @db.VarChar(36)
+  bhqUser     User      @relation("UserSavedListings", fields: [bhqUserId], references: [id], onDelete: Cascade)
 
-  listingId  Int       @map("listing_id")
-  listing    MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Listing type: offspring_group, animal, service
+  listingType String    @map("listing_type") @db.VarChar(20)
 
-  savedAt    DateTime  @default(now()) @map("saved_at")
+  // Listing ID (references different tables based on listingType)
+  listingId   Int       @map("listing_id")
 
-  @@unique([userId, listingId])
-  @@index([userId, savedAt(sort: Desc)])
-  @@index([listingId])
+  savedAt     DateTime  @default(now()) @map("saved_at")
+
+  @@unique([bhqUserId, listingType, listingId])
+  @@index([bhqUserId, savedAt(sort: Desc)])
+  @@index([listingType, listingId])
   @@map("saved_listings")
   @@schema("marketplace")
 }

@@ -2,20 +2,46 @@
 /**
  * Marketplace Saved Items Routes
  *
- * Endpoints for saving/unsaving service listings (favorites).
+ * Endpoints for saving/unsaving listings (favorites).
+ * Supports multiple listing types: offspring_group, animal, service.
  *
  * Endpoints:
- *   GET    /saved              - List user's saved listings
- *   POST   /saved              - Save a listing { listingId }
- *   DELETE /saved/:listingId   - Unsave a listing
- *   GET    /saved/check/:listingId - Check if listing is saved
+ *   GET    /saved                          - List user's saved listings
+ *   POST   /saved                          - Save a listing { listingType, listingId }
+ *   DELETE /saved/:listingType/:listingId  - Unsave a listing
+ *   GET    /saved/check/:listingType/:listingId - Check if listing is saved
  *
- * All endpoints require authenticated MarketplaceUser.
+ * All endpoints require authenticated BHQ user (via marketplace session).
+ * Uses bhqUserId (string CUID) from the main User table.
  */
 
-import type { FastifyInstance, FastifyPluginOptions } from "fastify";
-import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
+import type { FastifyInstance, FastifyPluginOptions, FastifyRequest, FastifyReply } from "fastify";
+import { parseVerifiedSession } from "../utils/session.js";
 import prisma from "../prisma.js";
+
+// Valid listing types
+const VALID_LISTING_TYPES = ["offspring_group", "animal", "service"] as const;
+type ListingType = typeof VALID_LISTING_TYPES[number];
+
+function isValidListingType(type: unknown): type is ListingType {
+  return typeof type === "string" && VALID_LISTING_TYPES.includes(type as ListingType);
+}
+
+/**
+ * Middleware to require marketplace session (BHQ User auth).
+ * Sets req.bhqUserId (string CUID) on success.
+ */
+async function requireBhqAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const session = parseVerifiedSession(req, "MARKETPLACE");
+  if (!session) {
+    reply.code(401).send({
+      error: "unauthorized",
+      message: "Authentication required. Please log in.",
+    });
+    return;
+  }
+  (req as any).bhqUserId = session.userId; // CUID string
+}
 
 /**
  * Parse pagination parameters
@@ -35,88 +61,115 @@ export default async function marketplaceSavedRoutes(
    * GET /saved - List user's saved listings
    *
    * Query params:
+   *   - type: Filter by listing type (offspring_group, animal, service)
    *   - page: Page number (default: 1)
    *   - limit: Items per page (default: 25, max: 100)
    *
-   * Returns saved listings with full listing details and provider info.
+   * Returns saved listings with full listing details.
    */
   app.get("/saved", {
-    preHandler: requireMarketplaceAuth,
+    preHandler: requireBhqAuth,
     config: { rateLimit: { max: 100, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const userId = (req as any).marketplaceUserId;
+    const bhqUserId = (req as any).bhqUserId;
     const { page, limit, skip } = parsePaging(req.query);
+    const typeFilter = (req.query as any).type;
 
     try {
+      const where: any = { bhqUserId };
+      if (typeFilter && isValidListingType(typeFilter)) {
+        where.listingType = typeFilter;
+      }
+
       const [items, total] = await Promise.all([
         prisma.marketplaceSavedListing.findMany({
-          where: { userId },
+          where,
           skip,
           take: limit,
           orderBy: { savedAt: "desc" },
-          include: {
-            listing: {
-              select: {
-                id: true,
-                slug: true,
-                title: true,
-                description: true,
-                category: true,
-                subcategory: true,
-                priceCents: true,
-                priceType: true,
-                priceText: true,
-                coverImageUrl: true,
-                city: true,
-                state: true,
-                status: true,
-                deletedAt: true,
-                provider: {
-                  select: {
-                    id: true,
-                    businessName: true,
-                    averageRating: true,
-                    totalReviews: true,
-                    verifiedProvider: true,
-                  },
-                },
-              },
-            },
-          },
         }),
-        prisma.marketplaceSavedListing.count({ where: { userId } }),
+        prisma.marketplaceSavedListing.count({ where }),
       ]);
+
+      // Fetch expanded listing details for each saved item
+      const expandedItems = await Promise.all(
+        items.map(async (item) => {
+          let listing: any = null;
+
+          if (item.listingType === "service" && item.listingId) {
+            const serviceListing = await prisma.marketplaceServiceListing.findUnique({
+              where: { id: item.listingId },
+              include: {
+                provider: true,
+              },
+            });
+            if (serviceListing) {
+              listing = {
+                title: serviceListing.title,
+                slug: serviceListing.slug,
+                coverImageUrl: serviceListing.coverImageUrl,
+                status: serviceListing.status,
+                isAvailable: serviceListing.status === "published" && !serviceListing.deletedAt,
+                priceCents: serviceListing.priceCents ? Number(serviceListing.priceCents) : null,
+                breederName: serviceListing.provider?.businessName,
+              };
+            }
+          } else if (item.listingType === "offspring_group" && item.listingId) {
+            const offspringGroup = await prisma.offspringGroup.findUnique({
+              where: { id: item.listingId },
+              include: {
+                tenant: true,
+              },
+            });
+            if (offspringGroup) {
+              listing = {
+                title: offspringGroup.listingTitle || offspringGroup.name || "Unnamed Litter",
+                slug: offspringGroup.listingSlug,
+                coverImageUrl: offspringGroup.coverImageUrl,
+                status: offspringGroup.published ? "live" : "draft",
+                isAvailable: offspringGroup.published,
+                priceCents: offspringGroup.marketplaceDefaultPriceCents ? Number(offspringGroup.marketplaceDefaultPriceCents) : null,
+                breederName: offspringGroup.tenant?.businessName,
+                breederSlug: offspringGroup.tenant?.slug,
+              };
+            }
+          } else if (item.listingType === "animal" && item.listingId) {
+            const animal = await prisma.animal.findUnique({
+              where: { id: item.listingId },
+              include: {
+                tenant: true,
+                publicListing: true,
+              },
+            });
+            if (animal) {
+              listing = {
+                title: animal.name,
+                slug: animal.publicListing?.urlSlug || null,
+                coverImageUrl: animal.photoUrl,
+                status: animal.publicListing?.status || "DRAFT",
+                isAvailable: animal.publicListing?.status === "LIVE",
+                priceCents: animal.publicListing?.priceCents ? Number(animal.publicListing.priceCents) : null,
+                species: animal.species,
+                breed: animal.breed,
+                breederName: animal.tenant?.businessName,
+                breederSlug: animal.tenant?.slug,
+              };
+            }
+          }
+
+          return {
+            id: item.id,
+            listingType: item.listingType,
+            listingId: item.listingId,
+            savedAt: item.savedAt.toISOString(),
+            listing,
+          };
+        })
+      );
 
       return reply.send({
         ok: true,
-        items: items.map((item) => ({
-          id: item.id,
-          listingId: item.listingId,
-          savedAt: item.savedAt.toISOString(),
-          listing: item.listing ? {
-            id: item.listing.id,
-            slug: item.listing.slug,
-            title: item.listing.title,
-            description: item.listing.description?.slice(0, 200) || null,
-            category: item.listing.category,
-            subcategory: item.listing.subcategory,
-            priceCents: item.listing.priceCents?.toString() || null,
-            priceType: item.listing.priceType,
-            priceText: item.listing.priceText,
-            coverImageUrl: item.listing.coverImageUrl,
-            city: item.listing.city,
-            state: item.listing.state,
-            status: item.listing.status,
-            isAvailable: item.listing.status === "published" && !item.listing.deletedAt,
-            provider: item.listing.provider ? {
-              id: item.listing.provider.id,
-              businessName: item.listing.provider.businessName,
-              averageRating: item.listing.provider.averageRating.toString(),
-              totalReviews: item.listing.provider.totalReviews,
-              verifiedProvider: item.listing.provider.verifiedProvider,
-            } : null,
-          } : null,
-        })),
+        items: expandedItems,
         pagination: {
           page,
           limit,
@@ -134,16 +187,24 @@ export default async function marketplaceSavedRoutes(
    * POST /saved - Save a listing
    *
    * Body:
+   *   - listingType: string (required) - Type: offspring_group, animal, service
    *   - listingId: number (required) - ID of listing to save
    *
    * Returns the created saved listing entry.
    */
   app.post("/saved", {
-    preHandler: requireMarketplaceAuth,
+    preHandler: requireBhqAuth,
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const userId = (req as any).marketplaceUserId;
-    const { listingId } = req.body as { listingId?: number };
+    const bhqUserId = (req as any).bhqUserId;
+    const { listingType, listingId } = req.body as { listingType?: string; listingId?: number };
+
+    if (!isValidListingType(listingType)) {
+      return reply.code(400).send({
+        error: "invalid_listing_type",
+        message: `listingType must be one of: ${VALID_LISTING_TYPES.join(", ")}`,
+      });
+    }
 
     if (!listingId || typeof listingId !== "number") {
       return reply.code(400).send({
@@ -153,13 +214,30 @@ export default async function marketplaceSavedRoutes(
     }
 
     try {
-      // Verify listing exists and is published
-      const listing = await prisma.marketplaceServiceListing.findUnique({
-        where: { id: listingId },
-        select: { id: true, status: true, deletedAt: true, title: true },
-      });
+      // Verify listing exists based on type
+      let listingExists = false;
 
-      if (!listing || listing.deletedAt) {
+      if (listingType === "service") {
+        const listing = await prisma.marketplaceServiceListing.findUnique({
+          where: { id: listingId },
+          select: { id: true, deletedAt: true },
+        });
+        listingExists = !!listing && !listing.deletedAt;
+      } else if (listingType === "offspring_group") {
+        const listing = await prisma.offspringGroup.findUnique({
+          where: { id: listingId },
+          select: { id: true },
+        });
+        listingExists = !!listing;
+      } else if (listingType === "animal") {
+        const listing = await prisma.animal.findUnique({
+          where: { id: listingId },
+          select: { id: true },
+        });
+        listingExists = !!listing;
+      }
+
+      if (!listingExists) {
         return reply.code(404).send({
           error: "listing_not_found",
           message: "Listing not found.",
@@ -167,8 +245,8 @@ export default async function marketplaceSavedRoutes(
       }
 
       // Check if already saved
-      const existing = await prisma.marketplaceSavedListing.findUnique({
-        where: { userId_listingId: { userId, listingId } },
+      const existing = await prisma.marketplaceSavedListing.findFirst({
+        where: { bhqUserId, listingType, listingId },
       });
 
       if (existing) {
@@ -180,37 +258,49 @@ export default async function marketplaceSavedRoutes(
 
       // Create saved listing
       const saved = await prisma.marketplaceSavedListing.create({
-        data: { userId, listingId },
-        select: { id: true, listingId: true, savedAt: true },
+        data: { bhqUserId, listingType, listingId },
+        select: { id: true, listingType: true, listingId: true, savedAt: true },
       });
 
       return reply.code(201).send({
         ok: true,
+        success: true,
+        id: saved.id,
         saved: {
           id: saved.id,
+          listingType: saved.listingType,
           listingId: saved.listingId,
           savedAt: saved.savedAt.toISOString(),
         },
         message: "Listing saved successfully.",
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingId }, "Failed to save listing");
+      req.log?.error?.({ err, listingType, listingId }, "Failed to save listing");
       return reply.code(500).send({ error: "save_failed", message: "Failed to save listing." });
     }
   });
 
   /**
-   * DELETE /saved/:listingId - Unsave a listing
+   * DELETE /saved/:listingType/:listingId - Unsave a listing
    *
    * Params:
+   *   - listingType: string - Type of listing
    *   - listingId: number - ID of listing to unsave
    */
-  app.delete("/saved/:listingId", {
-    preHandler: requireMarketplaceAuth,
+  app.delete("/saved/:listingType/:listingId", {
+    preHandler: requireBhqAuth,
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const userId = (req as any).marketplaceUserId;
+    const bhqUserId = (req as any).bhqUserId;
+    const listingType = (req.params as any).listingType;
     const listingId = parseInt((req.params as any).listingId, 10);
+
+    if (!isValidListingType(listingType)) {
+      return reply.code(400).send({
+        error: "invalid_listing_type",
+        message: `listingType must be one of: ${VALID_LISTING_TYPES.join(", ")}`,
+      });
+    }
 
     if (isNaN(listingId)) {
       return reply.code(400).send({
@@ -221,8 +311,8 @@ export default async function marketplaceSavedRoutes(
 
     try {
       // Check if saved
-      const existing = await prisma.marketplaceSavedListing.findUnique({
-        where: { userId_listingId: { userId, listingId } },
+      const existing = await prisma.marketplaceSavedListing.findFirst({
+        where: { bhqUserId, listingType, listingId },
       });
 
       if (!existing) {
@@ -234,33 +324,43 @@ export default async function marketplaceSavedRoutes(
 
       // Delete
       await prisma.marketplaceSavedListing.delete({
-        where: { userId_listingId: { userId, listingId } },
+        where: { id: existing.id },
       });
 
       return reply.send({
         ok: true,
+        success: true,
         message: "Listing removed from saved items.",
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingId }, "Failed to unsave listing");
+      req.log?.error?.({ err, listingType, listingId }, "Failed to unsave listing");
       return reply.code(500).send({ error: "unsave_failed", message: "Failed to unsave listing." });
     }
   });
 
   /**
-   * GET /saved/check/:listingId - Check if a listing is saved
+   * GET /saved/check/:listingType/:listingId - Check if a listing is saved
    *
    * Params:
+   *   - listingType: string - Type of listing
    *   - listingId: number - ID of listing to check
    *
    * Returns { saved: boolean }
    */
-  app.get("/saved/check/:listingId", {
-    preHandler: requireMarketplaceAuth,
+  app.get("/saved/check/:listingType/:listingId", {
+    preHandler: requireBhqAuth,
     config: { rateLimit: { max: 100, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const userId = (req as any).marketplaceUserId;
+    const bhqUserId = (req as any).bhqUserId;
+    const listingType = (req.params as any).listingType;
     const listingId = parseInt((req.params as any).listingId, 10);
+
+    if (!isValidListingType(listingType)) {
+      return reply.code(400).send({
+        error: "invalid_listing_type",
+        message: `listingType must be one of: ${VALID_LISTING_TYPES.join(", ")}`,
+      });
+    }
 
     if (isNaN(listingId)) {
       return reply.code(400).send({
@@ -270,8 +370,8 @@ export default async function marketplaceSavedRoutes(
     }
 
     try {
-      const existing = await prisma.marketplaceSavedListing.findUnique({
-        where: { userId_listingId: { userId, listingId } },
+      const existing = await prisma.marketplaceSavedListing.findFirst({
+        where: { bhqUserId, listingType, listingId },
         select: { id: true },
       });
 
@@ -280,7 +380,7 @@ export default async function marketplaceSavedRoutes(
         saved: !!existing,
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingId }, "Failed to check saved status");
+      req.log?.error?.({ err, listingType, listingId }, "Failed to check saved status");
       return reply.code(500).send({ error: "check_failed", message: "Failed to check saved status." });
     }
   });
