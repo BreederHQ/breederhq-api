@@ -23,6 +23,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { requireProvider } from "../middleware/marketplace-provider-auth.js";
 import prisma from "../prisma.js";
+import { geocodeZipCode, geocodeAddress } from "../services/geocoding-service.js";
 
 // Valid listing categories
 const VALID_CATEGORIES = [
@@ -722,8 +723,34 @@ export default async function marketplaceListingsRoutes(
     const subcategory = query.subcategory ? String(query.subcategory).trim() : undefined;
     const city = query.city ? String(query.city).trim() : undefined;
     const state = query.state ? String(query.state).trim() : undefined;
+    const zip = query.zip ? String(query.zip).trim() : undefined;
+    let lat = query.lat ? parseFloat(query.lat) : undefined;
+    let lng = query.lng ? parseFloat(query.lng) : undefined;
+    const radiusMiles = query.radius ? parseFloat(query.radius) : undefined;
+    const nearZip = query.nearZip ? String(query.nearZip).trim() : undefined;
+    const nearAddress = query.nearAddress ? String(query.nearAddress).trim() : undefined;
+
+    // If nearZip or nearAddress provided with radius, geocode to get lat/lng
+    if (radiusMiles && !lat && !lng) {
+      if (nearZip) {
+        const geocoded = await geocodeZipCode(nearZip);
+        if (geocoded) {
+          lat = geocoded.latitude;
+          lng = geocoded.longitude;
+        }
+      } else if (nearAddress) {
+        const geocoded = await geocodeAddress(nearAddress);
+        if (geocoded) {
+          lat = geocoded.latitude;
+          lng = geocoded.longitude;
+        }
+      }
+    }
     const priceMin = query.priceMin ? parseInt(query.priceMin, 10) : undefined;
     const priceMax = query.priceMax ? parseInt(query.priceMax, 10) : undefined;
+    const minRating = query.minRating ? parseFloat(query.minRating) : undefined;
+    const providerType = query.providerType ? String(query.providerType).trim() : undefined;
+    const hasReviews = query.hasReviews === "true";
 
     // Build where clause
     const where: any = {
@@ -731,11 +758,12 @@ export default async function marketplaceListingsRoutes(
       deletedAt: null,
     };
 
-    // Full-text search
+    // Full-text search (includes provider business name)
     if (search) {
       where.OR = [
         { title: { contains: search, mode: "insensitive" } },
         { description: { contains: search, mode: "insensitive" } },
+        { provider: { businessName: { contains: search, mode: "insensitive" } } },
       ];
     }
 
@@ -747,12 +775,16 @@ export default async function marketplaceListingsRoutes(
       where.subcategory = subcategory;
     }
 
-    // Location filters
+    // Location filters (check both listing and provider location)
     if (city) {
       where.city = { contains: city, mode: "insensitive" };
     }
     if (state) {
       where.state = { contains: state, mode: "insensitive" };
+    }
+    if (zip) {
+      // Zip code search - exact match or starts with (for partial zip)
+      where.zip = { startsWith: zip };
     }
 
     // Price range filters
@@ -763,26 +795,58 @@ export default async function marketplaceListingsRoutes(
       where.priceCents = { ...where.priceCents, lte: BigInt(priceMax) };
     }
 
+    // Provider filters
+    if (minRating !== undefined && !isNaN(minRating) && minRating >= 1 && minRating <= 5) {
+      where.provider = { ...where.provider, averageRating: { gte: minRating } };
+    }
+    if (providerType) {
+      where.provider = { ...where.provider, providerType };
+    }
+    if (hasReviews) {
+      where.provider = { ...where.provider, totalReviews: { gt: 0 } };
+    }
+
     // Parse sort
     const sortParam = query.sort || "-publishedAt";
     let orderBy: any[] = [];
-    if (sortParam === "-publishedAt") {
+    if (sortParam === "-publishedAt" || sortParam === "recent") {
       orderBy = [{ publishedAt: "desc" }, { createdAt: "desc" }];
     } else if (sortParam === "title") {
       orderBy = [{ title: "asc" }];
-    } else if (sortParam === "priceCents") {
+    } else if (sortParam === "priceCents" || sortParam === "price_low") {
       orderBy = [{ priceCents: "asc" }];
+    } else if (sortParam === "-priceCents" || sortParam === "price_high") {
+      orderBy = [{ priceCents: "desc" }];
+    } else if (sortParam === "rating") {
+      orderBy = [{ provider: { averageRating: "desc" } }, { publishedAt: "desc" }];
+    } else if (sortParam === "reviews") {
+      orderBy = [{ provider: { totalReviews: "desc" } }, { publishedAt: "desc" }];
     } else {
       orderBy = [{ publishedAt: "desc" }];
     }
 
+    // Helper function to calculate distance in miles using Haversine formula
+    const calculateDistanceMiles = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+      const R = 3959; // Earth's radius in miles
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
     try {
+      // For radius search, we need to include lat/lng and filter post-query
+      const includeLatLng = lat !== undefined && lng !== undefined && radiusMiles !== undefined;
+
       const [listings, total] = await Promise.all([
         prisma.marketplaceServiceListing.findMany({
           where,
           orderBy,
-          skip,
-          take: limit,
+          skip: includeLatLng ? 0 : skip, // Get all for radius filtering
+          take: includeLatLng ? 500 : limit, // Limit for radius search
           include: {
             provider: {
               select: {
@@ -793,6 +857,8 @@ export default async function marketplaceListingsRoutes(
                 totalReviews: true,
                 city: true,
                 state: true,
+                latitude: includeLatLng,
+                longitude: includeLatLng,
               },
             },
           },
@@ -800,26 +866,76 @@ export default async function marketplaceListingsRoutes(
         prisma.marketplaceServiceListing.count({ where }),
       ]);
 
+      // Apply radius filter if specified
+      let filteredListings = listings;
+      if (includeLatLng && lat && lng && radiusMiles) {
+        filteredListings = listings.filter((listing: any) => {
+          // Check listing's own coordinates first
+          if (listing.latitude && listing.longitude) {
+            const distance = calculateDistanceMiles(
+              lat, lng,
+              Number(listing.latitude), Number(listing.longitude)
+            );
+            return distance <= radiusMiles;
+          }
+          // Fall back to provider's coordinates
+          if (listing.provider.latitude && listing.provider.longitude) {
+            const distance = calculateDistanceMiles(
+              lat, lng,
+              Number(listing.provider.latitude), Number(listing.provider.longitude)
+            );
+            return distance <= radiusMiles;
+          }
+          // No coordinates - exclude from radius search
+          return false;
+        });
+
+        // Apply pagination after filtering
+        filteredListings = filteredListings.slice(skip, skip + limit);
+      }
+
       // Transform to public DTO
-      const items = listings.map((listing) => ({
-        ...toListingDTO(listing),
-        provider: {
-          id: listing.provider.id,
-          businessName: listing.provider.businessName,
-          logoUrl: listing.provider.logoUrl,
-          averageRating: listing.provider.averageRating.toString(),
-          totalReviews: listing.provider.totalReviews,
-          city: listing.provider.city,
-          state: listing.provider.state,
-        },
-      }));
+      const items = filteredListings.map((listing: any) => {
+        const dto: any = {
+          ...toListingDTO(listing),
+          provider: {
+            id: listing.provider.id,
+            businessName: listing.provider.businessName,
+            logoUrl: listing.provider.logoUrl,
+            averageRating: listing.provider.averageRating.toString(),
+            totalReviews: listing.provider.totalReviews,
+            city: listing.provider.city,
+            state: listing.provider.state,
+          },
+        };
+
+        // Add distance if radius search
+        if (includeLatLng && lat && lng) {
+          const listingLat = listing.latitude ? Number(listing.latitude) :
+                            (listing.provider.latitude ? Number(listing.provider.latitude) : null);
+          const listingLng = listing.longitude ? Number(listing.longitude) :
+                            (listing.provider.longitude ? Number(listing.provider.longitude) : null);
+          if (listingLat && listingLng) {
+            dto.distanceMiles = Math.round(calculateDistanceMiles(lat, lng, listingLat, listingLng) * 10) / 10;
+          }
+        }
+
+        return dto;
+      });
+
+      // Sort by distance if radius search and no other sort specified
+      if (includeLatLng && (sortParam === "-publishedAt" || sortParam === "recent" || sortParam === "distance")) {
+        items.sort((a: any, b: any) => (a.distanceMiles || 999) - (b.distanceMiles || 999));
+      }
+
+      const filteredTotal = includeLatLng ? filteredListings.length : total;
 
       return reply.send({
         items,
-        total,
+        total: filteredTotal,
         page,
         limit,
-        hasMore: skip + listings.length < total,
+        hasMore: skip + items.length < filteredTotal,
       });
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to browse listings");
@@ -911,6 +1027,54 @@ export default async function marketplaceListingsRoutes(
       return reply.code(500).send({
         error: "get_failed",
         message: "Failed to get listing. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * Geocode a zip code or address to lat/lng (public utility endpoint)
+   * Useful for frontend to get coordinates before searching
+   */
+  app.get("/public/geocode", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const query = req.query as any;
+    const zip = query.zip ? String(query.zip).trim() : undefined;
+    const address = query.address ? String(query.address).trim() : undefined;
+
+    if (!zip && !address) {
+      return reply.code(400).send({
+        error: "missing_location",
+        message: "Either zip or address parameter is required.",
+      });
+    }
+
+    try {
+      let result;
+      if (zip) {
+        result = await geocodeZipCode(zip, query.country || "US");
+      } else if (address) {
+        result = await geocodeAddress(address);
+      }
+
+      if (!result) {
+        return reply.code(404).send({
+          error: "location_not_found",
+          message: "Could not find coordinates for the given location.",
+        });
+      }
+
+      return reply.send({
+        ok: true,
+        latitude: result.latitude,
+        longitude: result.longitude,
+        displayName: result.displayName,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to geocode location");
+      return reply.code(500).send({
+        error: "geocode_failed",
+        message: "Failed to geocode location. Please try again.",
       });
     }
   });

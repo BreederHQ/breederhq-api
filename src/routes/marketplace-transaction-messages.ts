@@ -15,6 +15,8 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
+import { broadcastTransactionMessage, broadcastUnreadCount } from "../services/marketplace-websocket-service.js";
+import { sendNewMessageNotificationEmail } from "../services/marketplace-email-service.js";
 
 /**
  * Convert BigInt fields to strings for JSON serialization
@@ -356,6 +358,96 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: finalThreadId },
           data: { lastMessageAt: new Date() },
         });
+
+        // Broadcast to WebSocket clients
+        // Get provider's user ID for WebSocket broadcast
+        const provider = await prisma.marketplaceProvider.findUnique({
+          where: { id: providerId },
+          select: { userId: true },
+        });
+
+        if (provider) {
+          // Broadcast message to both parties (excluding the sender)
+          broadcastTransactionMessage(
+            clientId, // buyer's userId (same as MarketplaceUser.id)
+            provider.userId, // provider's userId
+            userId, // sender's userId
+            {
+              id: String(message.id),
+              threadId: finalThreadId,
+              transactionId: String(transactionId),
+              messageText: message.messageText,
+              createdAt: message.createdAt.toISOString(),
+              sender: {
+                id: message.sender.id,
+                firstName: message.sender.firstName,
+                lastName: message.sender.lastName,
+              },
+            }
+          );
+
+          // Broadcast updated unread count to the recipient
+          const recipientId = userId === clientId ? provider.userId : clientId;
+          const unreadCount = await prisma.marketplaceMessage.count({
+            where: {
+              thread: {
+                OR: [{ clientId: recipientId }, { provider: { userId: recipientId } }],
+              },
+              senderId: { not: recipientId },
+              readAt: null,
+            },
+          });
+
+          const unreadThreads = await prisma.marketplaceMessageThread.count({
+            where: {
+              OR: [{ clientId: recipientId }, { provider: { userId: recipientId } }],
+              messages: {
+                some: {
+                  senderId: { not: recipientId },
+                  readAt: null,
+                },
+              },
+            },
+          });
+
+          broadcastUnreadCount(recipientId, {
+            unreadThreads,
+            totalUnreadMessages: unreadCount,
+          });
+
+          // Send email notification to recipient (async, don't wait)
+          const recipientUser = await prisma.marketplaceUser.findUnique({
+            where: { id: recipientId },
+            select: { email: true, firstName: true, lastName: true },
+          });
+
+          // Get service title from transaction
+          const txn = await prisma.marketplaceTransaction.findUnique({
+            where: { id: transactionId },
+            select: {
+              serviceDescription: true,
+              listing: { select: { title: true } },
+            },
+          });
+
+          if (recipientUser && txn) {
+            const senderName =
+              `${message.sender.firstName || ""} ${message.sender.lastName || ""}`.trim() || "Someone";
+            const recipientName = recipientUser.firstName || "there";
+            const serviceTitle = txn.listing?.title || txn.serviceDescription.split(":")[0];
+
+            sendNewMessageNotificationEmail({
+              recipientEmail: recipientUser.email,
+              recipientName,
+              senderName,
+              messagePreview: message.messageText,
+              serviceTitle,
+              transactionId: Number(transactionId),
+            }).catch((err) => {
+              console.error("Failed to send new message notification email:", err);
+            });
+          }
+        }
 
         return reply.send({
           ok: true,

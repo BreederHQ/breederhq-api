@@ -6004,6 +6004,8 @@ model MarketplaceProvider {
   state                           String?
   zip                             String?
   country                         String?   @default("US")
+  latitude                        Decimal?  @db.Decimal(10,8) @map("latitude")
+  longitude                       Decimal?  @db.Decimal(11,8) @map("longitude")
 
   // Stripe Connect for automated payouts
   stripeConnectAccountId          String?   @unique @map("stripe_connect_account_id")
@@ -6088,6 +6090,8 @@ model MarketplaceServiceListing {
   city         String?
   state        String?
   zip          String?
+  latitude     Decimal?  @db.Decimal(10,8) @map("latitude")
+  longitude    Decimal?  @db.Decimal(11,8) @map("longitude")
 
   // Service details
   duration     String?

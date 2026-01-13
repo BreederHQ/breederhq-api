@@ -970,3 +970,94 @@ View transaction: ${transactionUrl}
     category: "transactional",
   });
 }
+
+/**
+ * Send new message notification email
+ * Sent when a user receives a new message on a transaction
+ */
+export async function sendNewMessageNotificationEmail(data: {
+  recipientEmail: string;
+  recipientName: string;
+  senderName: string;
+  messagePreview: string;
+  serviceTitle: string;
+  transactionId: number;
+}): Promise<void> {
+  const transactionUrl = `${MARKETPLACE_URL}/transactions/${data.transactionId}`;
+
+  // Truncate message preview to 200 characters
+  const preview =
+    data.messagePreview.length > 200
+      ? data.messagePreview.substring(0, 200) + "..."
+      : data.messagePreview;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Message</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="text-align: center; margin-bottom: 30px;">
+    <h1 style="color: #2563eb; margin: 0; font-size: 24px;">${FROM_NAME}</h1>
+  </div>
+
+  <div style="background: #f8fafc; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+    <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #1e293b;">New Message</h2>
+    <p style="margin: 0 0 16px 0; color: #64748b;">
+      You have a new message from <strong>${data.senderName}</strong> regarding:
+    </p>
+    <p style="margin: 0 0 16px 0; font-weight: 600; color: #1e293b;">
+      ${data.serviceTitle}
+    </p>
+    <div style="background: #ffffff; border-left: 4px solid #2563eb; padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0;">
+      <p style="margin: 0; color: #475569; font-style: italic;">
+        "${preview}"
+      </p>
+    </div>
+  </div>
+
+  <div style="text-align: center; margin-bottom: 24px;">
+    <a href="${transactionUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: 600;">View & Reply</a>
+  </div>
+
+  <div style="text-align: center; color: #94a3b8; font-size: 14px;">
+    <p style="margin: 0;">Transaction #${data.transactionId}</p>
+  </div>
+
+  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
+
+  <div style="text-align: center; color: #94a3b8; font-size: 12px;">
+    <p style="margin: 0 0 8px 0;">You're receiving this email because you have an active transaction on ${FROM_NAME}.</p>
+    <p style="margin: 0;">© ${new Date().getFullYear()} ${FROM_NAME}. All rights reserved.</p>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const text = `
+New Message from ${data.senderName}
+
+Hi ${data.recipientName},
+
+You have a new message regarding: ${data.serviceTitle}
+
+"${preview}"
+
+View and reply: ${transactionUrl}
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.recipientEmail,
+    subject: `New message from ${data.senderName} - ${data.serviceTitle}`,
+    html,
+    text,
+    templateKey: "marketplace_new_message",
+    category: "transactional",
+  });
+}

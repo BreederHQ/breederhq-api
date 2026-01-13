@@ -479,6 +479,11 @@ import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // M
 import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
 import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
 import marketplaceTransactionMessagesRoutes from "./routes/marketplace-transaction-messages.js"; // Marketplace transaction messaging
+import marketplaceWebsocketRoutes from "./routes/marketplace-websocket.js"; // Marketplace WebSocket for real-time messaging
+import marketplaceReviewsRoutes from "./routes/marketplace-reviews.js"; // Marketplace reviews & ratings
+import marketplaceAdminRoutes from "./routes/marketplace-admin.js"; // Marketplace admin dashboard
+import marketplaceSavedRoutes from "./routes/marketplace-saved.js"; // Marketplace saved items (favorites)
+import marketplaceNotificationsRoutes from "./routes/marketplace-notifications.js"; // Marketplace notification counts
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -542,6 +547,11 @@ app.register(
     api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
     api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
     api.register(marketplaceTransactionMessagesRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transaction messaging)
+    api.register(marketplaceWebsocketRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/ws (WebSocket for real-time messaging)
+    api.register(marketplaceReviewsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Reviews & ratings)
+    api.register(marketplaceAdminRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/admin/* (Admin dashboard)
+    api.register(marketplaceSavedRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/saved/* (Saved items/favorites)
+    api.register(marketplaceNotificationsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/notifications/* (Notification counts)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
