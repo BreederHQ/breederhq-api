@@ -39,12 +39,28 @@
  *     POST   /admin/users/:id/suspend        - Suspend user
  *     POST   /admin/users/:id/unsuspend      - Unsuspend user
  *     POST   /admin/users/:id/make-admin     - Promote user to admin
+ *
+ *   Verification Queue:
+ *     GET    /admin/verification-requests         - List verification requests
+ *     GET    /admin/verification-requests/:id     - Get request details
+ *     POST   /admin/verification-requests/:id/start-review - Start reviewing
+ *     POST   /admin/verification-requests/:id/approve      - Approve request
+ *     POST   /admin/verification-requests/:id/deny         - Deny request
+ *     POST   /admin/verification-requests/:id/request-info - Request more info
+ *     GET    /admin/verification-stats             - Queue statistics
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { requireAdmin } from "../middleware/marketplace-auth.js";
 import prisma from "../prisma.js";
 import { Decimal } from "@prisma/client/runtime/library";
+import {
+  getVerificationRequests,
+  getVerificationRequestById,
+  updateVerificationRequestStatus,
+  requestMoreInfo,
+} from "../services/marketplace-verification-service.js";
+import type { VerificationRequestStatus } from "@prisma/client";
 
 /**
  * Parse pagination parameters
@@ -874,6 +890,264 @@ export default async function marketplaceAdminRoutes(
     } catch (err: any) {
       req.log?.error?.({ err, userId }, "Failed to promote user");
       return reply.code(500).send({ error: "promote_failed", message: "Failed to promote user." });
+    }
+  });
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * VERIFICATION REQUEST QUEUE (Admin Review)
+   * ═══════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * GET /admin/verification-requests - List all verification requests
+   * Query params:
+   *   - status: PENDING | IN_REVIEW | NEEDS_INFO | APPROVED | DENIED
+   *   - userType: BREEDER | SERVICE_PROVIDER
+   *   - page, limit
+   */
+  app.get("/admin/verification-requests", { preHandler: requireAdmin }, async (req, reply) => {
+    const query = req.query as any;
+    const { page, limit, skip } = parsePaging(query);
+    const status = query.status ? String(query.status).trim() as VerificationRequestStatus : undefined;
+    const userType = query.userType ? String(query.userType).trim() as "BREEDER" | "SERVICE_PROVIDER" : undefined;
+
+    try {
+      const { requests, total } = await getVerificationRequests({
+        status,
+        userType,
+        limit,
+        offset: skip,
+      });
+
+      return reply.send({
+        ok: true,
+        requests: requests.map((r: any) => ({
+          id: r.id,
+          userType: r.userType,
+          packageType: r.packageType,
+          requestedTier: r.requestedTier,
+          status: r.status,
+          amountPaidCents: r.amountPaidCents,
+          createdAt: r.createdAt.toISOString(),
+          reviewedAt: r.reviewedAt?.toISOString() || null,
+          infoRequestedAt: r.infoRequestedAt?.toISOString() || null,
+          provider: r.provider ? {
+            id: r.provider.id,
+            businessName: r.provider.businessName,
+            publicEmail: r.provider.publicEmail,
+            user: r.provider.user,
+          } : null,
+          marketplaceUser: r.marketplaceUser ? {
+            id: r.marketplaceUser.id,
+            email: r.marketplaceUser.email,
+            firstName: r.marketplaceUser.firstName,
+            lastName: r.marketplaceUser.lastName,
+          } : null,
+        })),
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to fetch verification requests");
+      return reply.code(500).send({ error: "fetch_failed", message: "Failed to fetch verification requests." });
+    }
+  });
+
+  /**
+   * GET /admin/verification-requests/:id - Get single verification request details
+   */
+  app.get("/admin/verification-requests/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const requestId = parseInt((req.params as any).id, 10);
+    if (isNaN(requestId)) return reply.code(400).send({ error: "invalid_request_id" });
+
+    try {
+      const request = await getVerificationRequestById(requestId);
+
+      if (!request) {
+        return reply.code(404).send({ error: "request_not_found", message: "Verification request not found." });
+      }
+
+      return reply.send({
+        ok: true,
+        request: {
+          id: request.id,
+          userType: request.userType,
+          packageType: request.packageType,
+          requestedTier: request.requestedTier,
+          status: request.status,
+          submittedInfo: request.submittedInfo,
+          amountPaidCents: request.amountPaidCents,
+          paymentIntentId: request.paymentIntentId,
+          createdAt: request.createdAt.toISOString(),
+          reviewedAt: request.reviewedAt?.toISOString() || null,
+          reviewedBy: request.reviewedBy,
+          reviewNotes: request.reviewNotes,
+          infoRequestedAt: request.infoRequestedAt?.toISOString() || null,
+          infoRequestNote: request.infoRequestNote,
+          infoProvidedAt: request.infoProvidedAt?.toISOString() || null,
+          provider: (request as any).provider || null,
+          marketplaceUser: (request as any).marketplaceUser || null,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, requestId }, "Failed to fetch verification request");
+      return reply.code(500).send({ error: "fetch_failed", message: "Failed to fetch verification request." });
+    }
+  });
+
+  /**
+   * POST /admin/verification-requests/:id/start-review - Mark request as being reviewed
+   */
+  app.post("/admin/verification-requests/:id/start-review", {
+    preHandler: requireAdmin,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const requestId = parseInt((req.params as any).id, 10);
+    const adminUserId = req.marketplaceUserId!;
+    if (isNaN(requestId)) return reply.code(400).send({ error: "invalid_request_id" });
+
+    try {
+      const updated = await updateVerificationRequestStatus(requestId, "IN_REVIEW", adminUserId);
+
+      if (!updated) {
+        return reply.code(404).send({ error: "request_not_found", message: "Verification request not found." });
+      }
+
+      return reply.send({ ok: true, message: "Review started." });
+    } catch (err: any) {
+      req.log?.error?.({ err, requestId }, "Failed to start review");
+      return reply.code(500).send({ error: "update_failed", message: "Failed to start review." });
+    }
+  });
+
+  /**
+   * POST /admin/verification-requests/:id/approve - Approve verification request
+   */
+  app.post("/admin/verification-requests/:id/approve", {
+    preHandler: requireAdmin,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const requestId = parseInt((req.params as any).id, 10);
+    const adminUserId = req.marketplaceUserId!;
+    const { notes } = (req.body || {}) as { notes?: string };
+    if (isNaN(requestId)) return reply.code(400).send({ error: "invalid_request_id" });
+
+    try {
+      const updated = await updateVerificationRequestStatus(requestId, "APPROVED", adminUserId, notes);
+
+      if (!updated) {
+        return reply.code(404).send({ error: "request_not_found", message: "Verification request not found." });
+      }
+
+      return reply.send({ ok: true, message: "Verification approved successfully." });
+    } catch (err: any) {
+      req.log?.error?.({ err, requestId }, "Failed to approve verification");
+      return reply.code(500).send({ error: "approve_failed", message: "Failed to approve verification." });
+    }
+  });
+
+  /**
+   * POST /admin/verification-requests/:id/deny - Deny verification request
+   */
+  app.post("/admin/verification-requests/:id/deny", {
+    preHandler: requireAdmin,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const requestId = parseInt((req.params as any).id, 10);
+    const adminUserId = req.marketplaceUserId!;
+    const { notes } = (req.body || {}) as { notes?: string };
+    if (isNaN(requestId)) return reply.code(400).send({ error: "invalid_request_id" });
+
+    if (!notes) {
+      return reply.code(400).send({ error: "notes_required", message: "Denial reason is required." });
+    }
+
+    try {
+      const updated = await updateVerificationRequestStatus(requestId, "DENIED", adminUserId, notes);
+
+      if (!updated) {
+        return reply.code(404).send({ error: "request_not_found", message: "Verification request not found." });
+      }
+
+      return reply.send({ ok: true, message: "Verification denied." });
+    } catch (err: any) {
+      req.log?.error?.({ err, requestId }, "Failed to deny verification");
+      return reply.code(500).send({ error: "deny_failed", message: "Failed to deny verification." });
+    }
+  });
+
+  /**
+   * POST /admin/verification-requests/:id/request-info - Request more information
+   */
+  app.post("/admin/verification-requests/:id/request-info", {
+    preHandler: requireAdmin,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const requestId = parseInt((req.params as any).id, 10);
+    const adminUserId = req.marketplaceUserId!;
+    const { note } = (req.body || {}) as { note?: string };
+    if (isNaN(requestId)) return reply.code(400).send({ error: "invalid_request_id" });
+
+    if (!note) {
+      return reply.code(400).send({ error: "note_required", message: "Please specify what information is needed." });
+    }
+
+    try {
+      const updated = await requestMoreInfo(requestId, adminUserId, note);
+
+      if (!updated) {
+        return reply.code(404).send({ error: "request_not_found", message: "Verification request not found." });
+      }
+
+      return reply.send({ ok: true, message: "Information requested from user." });
+    } catch (err: any) {
+      req.log?.error?.({ err, requestId }, "Failed to request info");
+      return reply.code(500).send({ error: "request_info_failed", message: "Failed to request more information." });
+    }
+  });
+
+  /**
+   * GET /admin/verification-stats - Verification queue statistics
+   */
+  app.get("/admin/verification-stats", { preHandler: requireAdmin }, async (req, reply) => {
+    try {
+      const [
+        totalPending,
+        totalInReview,
+        totalNeedsInfo,
+        totalApproved,
+        totalDenied,
+        breederPending,
+        servicePending,
+      ] = await Promise.all([
+        prisma.verificationRequest.count({ where: { status: "PENDING" } }),
+        prisma.verificationRequest.count({ where: { status: "IN_REVIEW" } }),
+        prisma.verificationRequest.count({ where: { status: "NEEDS_INFO" } }),
+        prisma.verificationRequest.count({ where: { status: "APPROVED" } }),
+        prisma.verificationRequest.count({ where: { status: "DENIED" } }),
+        prisma.verificationRequest.count({ where: { status: "PENDING", userType: "BREEDER" } }),
+        prisma.verificationRequest.count({ where: { status: "PENDING", userType: "SERVICE_PROVIDER" } }),
+      ]);
+
+      return reply.send({
+        ok: true,
+        stats: {
+          queue: {
+            pending: totalPending,
+            inReview: totalInReview,
+            needsInfo: totalNeedsInfo,
+          },
+          completed: {
+            approved: totalApproved,
+            denied: totalDenied,
+          },
+          pendingByType: {
+            breeder: breederPending,
+            serviceProvider: servicePending,
+          },
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to fetch verification stats");
+      return reply.code(500).send({ error: "stats_failed", message: "Failed to fetch verification statistics." });
     }
   });
 }

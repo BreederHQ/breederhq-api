@@ -484,6 +484,8 @@ import marketplaceReviewsRoutes from "./routes/marketplace-reviews.js"; // Marke
 import marketplaceAdminRoutes from "./routes/marketplace-admin.js"; // Marketplace admin dashboard
 import marketplaceSavedRoutes from "./routes/marketplace-saved.js"; // Marketplace saved items (favorites)
 import marketplaceNotificationsRoutes from "./routes/marketplace-notifications.js"; // Marketplace notification counts
+import marketplaceVerificationRoutes from "./routes/marketplace-verification.js"; // Marketplace verification (phone, identity, packages)
+import marketplace2faRoutes from "./routes/marketplace-2fa.js"; // Marketplace 2FA (TOTP, SMS, Passkey)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
@@ -511,6 +513,7 @@ import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - se
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Services (marketplace)
+import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
@@ -552,6 +555,8 @@ app.register(
     api.register(marketplaceAdminRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/admin/* (Admin dashboard)
     api.register(marketplaceSavedRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/saved/* (Saved items/favorites)
     api.register(marketplaceNotificationsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/notifications/* (Notification counts)
+    api.register(marketplaceVerificationRoutes, { prefix: "/marketplace/verification" }); // /api/v1/marketplace/verification/* (Phone, identity, packages)
+    api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -828,6 +833,7 @@ app.register(
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
     api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
+    api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
