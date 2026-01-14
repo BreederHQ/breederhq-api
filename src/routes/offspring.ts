@@ -2349,9 +2349,17 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const G = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
-      include: { plan: { select: { species: true, damId: true, sireId: true } } },
+      include: { plan: { select: { id: true, birthDateActual: true, species: true, damId: true, sireId: true } } },
     });
     if (!G) return reply.code(404).send({ error: "group not found" });
+
+    // Business rule: Cannot add offspring until the birth date actual has been recorded on the linked breeding plan
+    if (G.plan && !G.plan.birthDateActual) {
+      return reply.code(400).send({
+        error: "birth_date_not_recorded",
+        detail: "Cannot add offspring until the birth date has been recorded on the linked breeding plan.",
+      });
+    }
 
     if (!body?.name || !body?.sex) {
       return reply.code(400).send({ error: "name and sex are required" });
