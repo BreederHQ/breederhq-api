@@ -155,7 +155,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
                 status: true,
                 expectedBirthDate: true,
                 birthDateActual: true,
-                offspringGroups: {
+                offspringGroup: {
                   select: {
                     id: true,
                     expectedBirthOn: true,
@@ -165,7 +165,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
                     countPlaced: true,
                     published: true,
                     _count: {
-                      select: { offspring: true },
+                      select: { Offspring: true },
                     },
                   },
                 },
@@ -182,7 +182,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       // Compute summary stats for each program
       const items = programs.map((program) => {
         const plans = program.breedingPlans || [];
-        const allGroups = plans.flatMap((p) => p.offspringGroups || []);
+        const allGroups = plans.flatMap((p) => p.offspringGroup ? [p.offspringGroup] : []);
 
         // Count active plans (not completed/cancelled)
         const activePlans = plans.filter((p) =>
@@ -206,13 +206,13 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         const availableLitters = allGroups.filter((g) => {
           const born = g.actualBirthOn;
           const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.offspring ?? 0;
+          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
           return born && placed < total;
         });
 
         const totalAvailable = availableLitters.reduce((sum, g) => {
           const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.offspring ?? 0;
+          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
           return sum + Math.max(0, total - placed);
         }, 0);
 

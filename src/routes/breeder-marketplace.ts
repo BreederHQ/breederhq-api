@@ -303,7 +303,7 @@ export default async function breederMarketplaceRoutes(
       const animalCounts = groupIds.length
         ? await prisma.animal.groupBy({
             by: ["offspringGroupId"],
-            where: { offspringGroupId: { in: groupIds } },
+            where: { tenantId, offspringGroupId: { in: groupIds } },
             _count: { _all: true },
           })
         : [];
@@ -320,6 +320,7 @@ export default async function breederMarketplaceRoutes(
         name: group.name,
         species: group.species,
         breedText: group.plan?.breedText ?? null,
+        breedingPlanId: group.planId ?? null,
         actualBirthOn: group.actualBirthOn?.toISOString() ?? null,
         expectedBirthOn: group.expectedBirthOn?.toISOString() ?? null,
         published: group.published,
@@ -327,6 +328,8 @@ export default async function breederMarketplaceRoutes(
         listingDescription: group.listingDescription,
         countLive: group.countLive,
         countBorn: group.countBorn,
+        totalCount: animalCountMap.get(group.id) ?? 0,
+        availableCount: 0, // TODO: implement when placement status tracking is added
         createdAt: group.createdAt.toISOString(),
         updatedAt: group.updatedAt.toISOString(),
         sire: group.sire ? { id: group.sire.id, name: group.sire.name } : null,
@@ -334,9 +337,6 @@ export default async function breederMarketplaceRoutes(
         breedingProgram: group.plan?.program
           ? { id: group.plan.program.id, name: group.plan.program.name }
           : null,
-        counts: {
-          animals: animalCountMap.get(group.id) ?? 0,
-        },
       }));
 
       return reply.send({

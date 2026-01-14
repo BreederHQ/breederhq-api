@@ -518,6 +518,53 @@ enum AnimalListingStatus {
   PAUSED
   @@schema("public")
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Notification System Enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+enum NotificationType {
+  vaccination_expiring_7d
+  vaccination_expiring_3d
+  vaccination_expiring_1d
+  vaccination_overdue
+  breeding_heat_cycle_expected
+  breeding_hormone_testing_due
+  breeding_window_approaching
+  pregnancy_check_14d
+  pregnancy_check_30d
+  pregnancy_check_overdue
+  foaling_270d
+  foaling_300d
+  foaling_320d
+  foaling_330d
+  foaling_30d
+  foaling_14d
+  foaling_7d
+  foaling_approaching
+  foaling_overdue
+  marketplace_inquiry
+  marketplace_waitlist_signup
+  system_announcement
+  @@schema("public")
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  @@schema("public")
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  DISMISSED
+  @@schema("public")
+}
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Users & Auth
@@ -625,6 +672,13 @@ model User {
 
   // Marketplace saved listings
   savedListings MarketplaceSavedListing[] @relation("UserSavedListings")
+
+  // Breeding program inquiry assignments
+  assignedInquiries BreedingProgramInquiry[]
+
+  // Notifications
+  notifications             Notification[]
+  notificationPreferences   UserNotificationPreferences?
 
   @@index([partyId])
   @@index([defaultTenantId])
@@ -791,26 +845,30 @@ model Tenant {
   sharesSent     AnimalShare[]         @relation("ShareFromTenant")
   sharesReceived AnimalShare[]         @relation("ShareToTenant")
   publicListings AnimalPublicListing[]
+  directListings DirectAnimalListing[] @relation("TenantDirectListings")
+  animalPrograms AnimalProgram[]       @relation("TenantAnimalPrograms")
   User           User[]
   tags           Tag[]
   CustomBreed    CustomBreed[]
 
   // breeding additions
-  breedingPlans      BreedingPlan[]
-  reproductiveCycles ReproductiveCycle[]
-  planSharesSent     BreedingPlanShare[] @relation("PlanShareFromTenant")
-  planSharesReceived BreedingPlanShare[] @relation("PlanShareToTenant")
-  planEvents         BreedingPlanEvent[]
-  testResults        TestResult[]
-  breedingAttempts   BreedingAttempt[]
-  pregnancyChecks    PregnancyCheck[]
-  litters            Litter[]
-  offspringGroups    OffspringGroup[]
-  offspring          Offspring[]
-  waitlist           WaitlistEntry[]
-  attachments        Attachment[]
-  planParties        PlanParty[]
-  planCodeCounters   PlanCodeCounter[]
+  breedingPlans       BreedingPlan[]
+  reproductiveCycles  ReproductiveCycle[]
+  planSharesSent      BreedingPlanShare[]   @relation("PlanShareFromTenant")
+  planSharesReceived  BreedingPlanShare[]   @relation("PlanShareToTenant")
+  planEvents          BreedingPlanEvent[]
+  testResults         TestResult[]
+  breedingAttempts    BreedingAttempt[]
+  pregnancyChecks     PregnancyCheck[]
+  litters             Litter[]
+  offspringGroups     OffspringGroup[]
+  offspring           Offspring[]
+  waitlist            WaitlistEntry[]
+  attachments         Attachment[]
+  planParties         PlanParty[]
+  planCodeCounters    PlanCodeCounter[]
+  foalingOutcomes     FoalingOutcome[]
+  breedingMilestones  BreedingMilestone[]
 
   availabilityPrefs Json?
 
@@ -819,8 +877,9 @@ model Tenant {
   programBreeds TenantProgramBreed[]
 
   // Breeding Programs (marketplace)
-  breedingPrograms     BreedingProgram[]
-  breedingProgramMedia BreedingProgramMedia[]
+  breedingPrograms         BreedingProgram[]
+  breedingProgramMedia     BreedingProgramMedia[]
+  breedingProgramInquiries BreedingProgramInquiry[]
 
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -928,6 +987,10 @@ model Tenant {
   // Communications Hub
   drafts Draft[]
 
+  // Notifications
+  notifications             Notification[]
+  notificationPreferences   UserNotificationPreferences[]
+
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
 
@@ -955,6 +1018,100 @@ model TenantMembership {
   @@index([tenantId])
   @@index([partyId])
   @@index([membershipRole, membershipStatus])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Notification System
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Notification - Stores all user notifications (in-app, email, SMS)
+ * MVP: Focus on vaccination and breeding timeline alerts
+ */
+model Notification {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId          String?  // Target user (null = all tenant users)
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Notification content
+  type            NotificationType
+  title           String
+  message         String   @db.Text
+  linkUrl         String?  // Deep link to relevant entity (e.g., /animals/123)
+
+  // Priority & status
+  priority        NotificationPriority @default(MEDIUM)
+  status          NotificationStatus   @default(UNREAD)
+
+  // Status timestamps
+  readAt          DateTime?
+  dismissedAt     DateTime?
+
+  // Idempotency: prevent duplicate notifications
+  // Format: "{type}:{entityType}:{entityId}:{date}"
+  // Example: "vaccination_expiring_1d:VaccinationRecord:456:2026-01-14"
+  idempotencyKey  String?  @unique
+
+  // Metadata for context (e.g., animal name, dates, etc.)
+  metadata        Json?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, userId, status])
+  @@index([tenantId, status, createdAt])
+  @@index([type])
+  @@index([createdAt])
+  @@schema("public")
+}
+
+/**
+ * UserNotificationPreferences - User settings for notification delivery
+ * MVP: Focus on toggles for alert types (email channel for Phase 2)
+ */
+model UserNotificationPreferences {
+  id                    Int      @id @default(autoincrement())
+  tenantId              Int
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ─── Vaccination Alerts ────────────────────────────────────────
+  vaccinationExpiring   Boolean  @default(true)   // 7d, 3d, 1d warnings
+  vaccinationOverdue    Boolean  @default(true)   // Overdue alerts
+
+  // ─── Breeding Timeline Alerts ──────────────────────────────────
+  breedingTimeline      Boolean  @default(true)   // Heat cycle, hormone testing
+  pregnancyCheck        Boolean  @default(true)   // Pregnancy check reminders
+  foalingApproaching    Boolean  @default(true)   // Foaling countdown (30d, 14d, 7d)
+  heatCycleExpected     Boolean  @default(true)   // Heat cycle prediction
+
+  // ─── Marketplace Alerts (Future) ───────────────────────────────
+  marketplaceInquiry    Boolean  @default(true)   // New inquiries
+  waitlistSignup        Boolean  @default(true)   // Waitlist signups
+
+  // ─── Channel Preferences (Phase 2) ─────────────────────────────
+  emailEnabled          Boolean  @default(true)   // Email delivery
+  smsEnabled            Boolean  @default(false)  // SMS delivery (Phase 2)
+  pushEnabled           Boolean  @default(true)   // Push notifications (Phase 2)
+
+  // ─── Phone Verification (Phase 2 - SMS) ───────────────────────
+  phoneNumber           String?
+  phoneVerified         Boolean  @default(false)
+  phoneVerifiedAt       DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([userId])
   @@schema("public")
 }
 
@@ -2010,10 +2167,12 @@ model Animal {
 
   tagAssignments    TagAssignment[]
   owners            AnimalOwner[]
-  registryIds       AnimalRegistryIdentifier[]
-  shares            AnimalShare[]              @relation("ShareAnimal")
-  publicListing     AnimalPublicListing?
-  createdAt         DateTime                   @default(now())
+  registryIds         AnimalRegistryIdentifier[]
+  shares              AnimalShare[]                  @relation("ShareAnimal")
+  publicListing       AnimalPublicListing?
+  directListings      DirectAnimalListing[]          @relation("AnimalDirectListings")
+  programParticipants AnimalProgramParticipant[]     @relation("AnimalProgramParticipants")
+  createdAt           DateTime                       @default(now())
   updatedAt         DateTime                   @updatedAt
   archived          Boolean                    @default(false)
 
@@ -2214,6 +2373,184 @@ model AnimalPublicListing {
   @@index([tenantId, status])
   @@index([tenantId, intent])
   @@index([status, intent])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Animal Listings V2 - Direct Listings & Programs
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model DirectAnimalListing {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("TenantDirectListings", fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation("AnimalDirectListings", fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Template & Identity
+  templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
+  slug         String  @unique
+  headline     String? @db.VarChar(120)
+  title        String? @db.VarChar(100) // Override animal name
+
+  // Content
+  summary     String? @db.Text
+  description String? @db.Text
+
+  // Data Drawer Configuration (which data points to show)
+  dataDrawerConfig Json @db.JsonB // { identity: {...}, media: {...}, healthTesting: {...}, ... }
+
+  // Template-specific content
+  listingContent Json? @db.JsonB // Template-specific fields (e.g., stud fee, guardian terms)
+
+  // Pricing
+  priceModel    String  @db.VarChar(32) // "fixed" | "range" | "inquire"
+  priceCents    Int?
+  priceMinCents Int?
+  priceMaxCents Int?
+
+  // Location override
+  locationCity    String? @db.VarChar(100)
+  locationRegion  String? @db.VarChar(100)
+  locationCountry String? @db.VarChar(2)
+
+  // Publishing
+  status      String  @db.VarChar(32) @default("DRAFT") // DRAFT, ACTIVE, PAUSED
+  listed      Boolean @default(true) // true = public listing, false = unlisted (direct link only)
+  publishedAt DateTime?
+  pausedAt    DateTime?
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, templateType])
+  @@index([animalId])
+  @@index([status, listed])
+  @@index([slug])
+  @@schema("public")
+}
+
+model AnimalProgram {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("TenantAnimalPrograms", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Program Identity
+  name         String  @db.VarChar(100)
+  slug         String  @unique
+  templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
+  headline     String? @db.VarChar(120)
+  description  String? @db.Text
+
+  // Media
+  coverImageUrl String? @db.VarChar(500)
+  media         AnimalProgramMedia[]
+
+  // Data Drawer Configuration (shared by all participants)
+  dataDrawerConfig Json @db.JsonB
+
+  // Template-specific shared content
+  programContent Json? @db.JsonB
+
+  // Default Pricing (can be overridden per participant)
+  defaultPriceModel    String  @db.VarChar(32) @default("inquire")
+  defaultPriceCents    Int?
+  defaultPriceMinCents Int?
+  defaultPriceMaxCents Int?
+
+  // Publishing
+  published   Boolean   @default(false)
+  listed      Boolean   @default(true) // true = public, false = unlisted
+  publishedAt DateTime?
+
+  // Settings
+  acceptInquiries Boolean @default(true)
+  openWaitlist    Boolean @default(false)
+
+  // Participants
+  participants AnimalProgramParticipant[]
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, published])
+  @@index([tenantId, templateType])
+  @@index([slug])
+  @@schema("public")
+}
+
+model AnimalProgramParticipant {
+  id        Int            @id @default(autoincrement())
+  programId Int
+  program   AnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  animalId  Int
+  animal    Animal         @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Per-participant visibility settings
+  status   String  @default("ACTIVE") // ACTIVE, PAUSED
+  listed   Boolean @default(true)
+  featured Boolean @default(false)
+
+  // Per-participant overrides
+  headlineOverride    String? @db.VarChar(120)
+  descriptionOverride String? @db.Text
+  dataDrawerOverride  Json?   @db.JsonB // Overrides for specific data drawer settings
+  contentOverride     Json?   @db.JsonB // Template-specific content overrides
+
+  // Per-participant pricing overrides
+  priceModel    String? @db.VarChar(32)
+  priceCents    Int?
+  priceMinCents Int?
+  priceMaxCents Int?
+
+  // Display order
+  sortOrder Int @default(0)
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  addedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([programId, animalId])
+  @@index([programId, status])
+  @@index([animalId])
+  @@schema("public")
+}
+
+model AnimalProgramMedia {
+  id        Int           @id @default(autoincrement())
+  programId Int
+  program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  type        String @db.VarChar(32) // "image" | "video"
+  url         String @db.VarChar(500)
+  caption     String? @db.Text
+  sortOrder   Int    @default(0)
+  isPrimary   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId, sortOrder])
   @@schema("public")
 }
 
@@ -2564,6 +2901,7 @@ model BreedingProgram {
   // Relations
   breedingPlans BreedingPlan[]
   media         BreedingProgramMedia[]
+  inquiries     BreedingProgramInquiry[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -2589,6 +2927,64 @@ model BreedingProgramMedia {
 
   @@index([programId])
   @@index([tenantId])
+  @@schema("public")
+}
+
+model BreedingProgramInquiry {
+  id        Int             @id @default(autoincrement())
+  programId Int
+  program   BreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  tenantId  Int // Breeder's tenant
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Buyer information
+  buyerName  String
+  buyerEmail String
+  buyerPhone String?
+
+  // Inquiry details
+  subject String
+  message String @db.Text
+
+  // What they're interested in
+  interestedIn String? // "Next litter", "Specific horse", "General info"
+  priceRange   String? // "Under $5K", "$5K-$10K", "$10K+"
+  timeline     String? // "Immediate", "Next 3 months", "6+ months", "Just researching"
+
+  // Internal tracking
+  status           InquiryStatus @default(NEW)
+  assignedToUserId String?
+  assignedToUser   User?         @relation(fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  // Communication
+  responded   Boolean   @default(false)
+  respondedAt DateTime?
+  notes       String?   @db.Text
+
+  // Marketing tracking
+  source      String? // "Marketplace", "Google", "Facebook", "Referral"
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId, status])
+  @@index([tenantId, status])
+  @@index([buyerEmail])
+  @@index([createdAt])
+  @@schema("public")
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SCHEDULED_VISIT
+  CONVERTED
+  NOT_INTERESTED
+  SPAM
   @@schema("public")
 }
 
@@ -2655,23 +3051,26 @@ model BreedingPlan {
   depositsPaidCents      Int?
   depositRiskScore       Int?
 
-  Litter           Litter?
-  offspringGroup   OffspringGroup?
-  Events           BreedingPlanEvent[]
-  Waitlist         WaitlistEntry[]
-  Shares           BreedingPlanShare[]
-  TestResults      TestResult[]
-  BreedingAttempts BreedingAttempt[]
-  PregnancyChecks  PregnancyCheck[]
-  Attachments      Attachment[]
-  Parties          PlanParty[]
-  Invoice          Invoice[]
-  Expense          Expense[]
-  TagAssignments   TagAssignment[]
+  Litter             Litter?
+  offspringGroup     OffspringGroup?
+  Events             BreedingPlanEvent[]
+  Waitlist           WaitlistEntry[]
+  Shares             BreedingPlanShare[]
+  TestResults        TestResult[]
+  BreedingAttempts   BreedingAttempt[]
+  PregnancyChecks    PregnancyCheck[]
+  Attachments        Attachment[]
+  Parties            PlanParty[]
+  Invoice            Invoice[]
+  Expense            Expense[]
+  TagAssignments     TagAssignment[]
+  foalingOutcome     FoalingOutcome?
+  breedingMilestones BreedingMilestone[]
 
-  archived  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  archived  Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -2680,6 +3079,7 @@ model BreedingPlan {
   @@index([damId])
   @@index([sireId])
   @@index([status])
+  @@index([deletedAt])
   @@index([committedAt])
   @@index([expectedWeaned])
   @@index([expectedPlacementCompleted])
@@ -2863,6 +3263,118 @@ model PregnancyCheck {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Foaling Automation
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model FoalingOutcome {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  breedingPlanId Int          @unique
+  breedingPlan   BreedingPlan @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
+  // Veterinary details
+  hadComplications    Boolean @default(false)
+  complicationDetails String? @db.Text
+  veterinarianCalled  Boolean @default(false)
+  veterinarianName    String?
+  veterinarianNotes   String? @db.Text
+
+  // Post-foaling physiology
+  placentaPassed        Boolean?
+  placentaPassedMinutes Int?
+  mareCondition         MarePostFoalingCondition?
+
+  // Post-foaling reproductive cycle
+  postFoalingHeatDate  DateTime?
+  postFoalingHeatNotes String?
+  readyForRebreeding   Boolean   @default(false)
+  rebredDate           DateTime?
+
+  // Media
+  foalPhotoUrls Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([breedingPlanId])
+  @@schema("public")
+}
+
+enum MarePostFoalingCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  VETERINARY_CARE_REQUIRED
+
+  @@schema("public")
+}
+
+model BreedingMilestone {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  breedingPlanId Int
+  breedingPlan   BreedingPlan @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
+  milestoneType      MilestoneType
+  scheduledDate      DateTime
+  completedDate      DateTime?
+  isCompleted        Boolean       @default(false)
+  notificationSent   Boolean       @default(false)
+  notificationSentAt DateTime?
+  notes              String?       @db.Text
+  vetAppointmentId   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([breedingPlanId, scheduledDate])
+  @@index([scheduledDate, isCompleted])
+  @@schema("public")
+}
+
+enum MilestoneType {
+  VET_PREGNANCY_CHECK_15D
+  VET_ULTRASOUND_45D
+  VET_ULTRASOUND_90D
+  BEGIN_MONITORING_300D
+  PREPARE_FOALING_AREA_320D
+  DAILY_CHECKS_330D
+  DUE_DATE_340D
+  OVERDUE_VET_CALL_350D
+
+  @@schema("public")
+}
+
+enum FoalHealthStatus {
+  HEALTHY
+  MINOR_ISSUES
+  VETERINARY_CARE
+  CRITICAL
+  DECEASED
+
+  @@schema("public")
+}
+
+enum FoalNursingStatus {
+  UNKNOWN
+  NURSING_WELL
+  ASSISTED
+  BOTTLE_FED
+  ORPHANED
+
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Offspring Group, Offspring, legacy Litter, Waitlist
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -2932,6 +3444,7 @@ model OffspringGroup {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   archivedAt DateTime?
+  deletedAt  DateTime?
   Invoice    Invoice[]
   Campaign   Campaign[]
   Task       Task[]
@@ -2949,6 +3462,7 @@ model OffspringGroup {
   @@index([placementStartAt])
   @@index([placementCompletedAt])
   @@index([published])
+  @@index([deletedAt])
   @@schema("public")
 }
 
@@ -2999,6 +3513,17 @@ model Offspring {
   bornAt  DateTime?
   diedAt  DateTime?
   status  OffspringStatus @default(NEWBORN)
+  color   String?
+
+  // health outcome tracking (foaling automation)
+  birthWeight     Float?
+  healthStatus    FoalHealthStatus    @default(HEALTHY)
+  healthNotes     String?             @db.Text
+  nursingStatus   FoalNursingStatus   @default(UNKNOWN)
+  standingMinutes Int?
+  nursingMinutes  Int?
+  requiredVetCare Boolean             @default(false)
+  vetCareDetails  String?
 
   // orthogonal lifecycle dimensions (production canonical state)
   lifeState      OffspringLifeState      @default(ALIVE)
