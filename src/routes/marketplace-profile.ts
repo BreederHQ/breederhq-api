@@ -341,6 +341,10 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       ...existing,
       published: sanitizedPublished,
       publishedAt: now,
+      // Clear draft after publishing to prevent stale draft data from overriding published
+      // The frontend merges with { ...published, ...draft } so old draft values would win
+      draft: undefined,
+      draftUpdatedAt: undefined,
     };
 
     await writeProfileSetting(tenantId, updated, getActorId(req));

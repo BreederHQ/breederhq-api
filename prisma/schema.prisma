@@ -2077,6 +2077,15 @@ model AnimalGenetics {
   physicalTraitsData Json?     @db.JsonB // Size (IGF1), Bobtail, Dewclaws, etc.
   eyeColorData       Json?     @db.JsonB // Eye color genetics
   otherTraitsData    Json?     @db.JsonB // Breed-specific traits
+
+  // Extended Embark data
+  breedComposition       Json?     @db.JsonB // Array of { breed: string, percentage: number }
+  coi                    Json?     @db.JsonB // { coefficient, percentage, riskLevel, source }
+  mhcDiversity           Json?     @db.JsonB // { drb1Alleles, dqa1Dqb1Alleles, diversityScore }
+  lineage                Json?     @db.JsonB // { mtHaplotype, mtHaplogroup, yHaplotype, yHaplogroup }
+  predictedAdultWeight   Json?     @db.JsonB // { value, unit }
+  lifeStage              String?   @db.VarChar(100)
+
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @default(now()) @updatedAt
 
@@ -2524,19 +2533,28 @@ model BreedingProgram {
   slug        String // URL-friendly identifier, unique per tenant
   name        String // "Goldendoodle Program"
   description String? @db.Text
+  programStory String? @db.Text // Extended story/narrative about the program
   species     Species
   breedText   String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
+  breedId     Int? // Optional link to Breed record for structured breed data
+
+  // Cover Image
+  coverImageUrl  String? // Primary cover image URL
+  showCoverImage Boolean @default(true) // Visibility toggle for cover image
 
   // Marketplace Settings
   listed             Boolean @default(false)
   acceptInquiries    Boolean @default(true)
   openWaitlist       Boolean @default(false)
   acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
+  comingSoon         Boolean @default(false) // Coming Soon badge for programs in development
 
   // Pricing & Details
   pricingTiers    Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
   whatsIncluded   String? @db.Text // What comes with each animal
+  showWhatsIncluded Boolean @default(true) // Visibility toggle
   typicalWaitTime String? // "3-6 months"
+  showWaitTime    Boolean @default(true) // Visibility toggle
 
   // Timestamps
   createdAt   DateTime  @default(now())
@@ -5174,6 +5192,65 @@ enum BreederReportStatus {
   ACTIONED
   @@schema("public")
 }
+
+// ============================================================================
+// Marketplace Verification Enums
+// ============================================================================
+
+/**
+ * BreederVerificationTier - Verification levels for breeders on the marketplace
+ * Tier 0: SUBSCRIBER - Has active subscription (baseline)
+ * Tier 1: MARKETPLACE_ENABLED - Phone verified
+ * Tier 2: IDENTITY_VERIFIED - Stripe Identity verified
+ * Tier 3: VERIFIED - Paid package (BreederHQ Verified)
+ * Tier 4: ACCREDITED - Paid package (BreederHQ Accredited)
+ */
+enum BreederVerificationTier {
+  SUBSCRIBER
+  MARKETPLACE_ENABLED
+  IDENTITY_VERIFIED
+  VERIFIED
+  ACCREDITED
+  @@schema("marketplace")
+}
+
+/**
+ * ServiceProviderVerificationTier - Verification levels for service providers
+ * Tier 0: LISTED - Email verified + 2FA enabled
+ * Tier 1: IDENTITY_VERIFIED - Stripe Identity or Stripe Connect verified
+ * Tier 2: VERIFIED_PROFESSIONAL - Paid package (credentials verified)
+ * Tier 3: ACCREDITED_PROVIDER - Paid package (license + insurance verified)
+ */
+enum ServiceProviderVerificationTier {
+  LISTED
+  IDENTITY_VERIFIED
+  VERIFIED_PROFESSIONAL
+  ACCREDITED_PROVIDER
+  @@schema("marketplace")
+}
+
+/**
+ * VerificationRequestStatus - Status of verification package requests
+ */
+enum VerificationRequestStatus {
+  PENDING       // Awaiting staff review
+  IN_REVIEW     // Staff actively reviewing
+  NEEDS_INFO    // Waiting for user to provide more info
+  APPROVED      // Verified, badge activated
+  DENIED        // Rejected
+  @@schema("marketplace")
+}
+
+/**
+ * TwoFactorMethod - Available 2FA methods for marketplace users
+ */
+enum TwoFactorMethod {
+  PASSKEY       // WebAuthn/Passkey (recommended)
+  TOTP          // Authenticator app
+  SMS           // SMS OTP (fallback)
+  @@schema("marketplace")
+}
+
 /**
  * BreederReport - Individual reports from marketplace users against breeders
  * Reports require admin review before any action is taken
@@ -5963,6 +6040,59 @@ model MarketplaceUser {
   // Soft delete
   deletedAt        DateTime? @map("deleted_at")
 
+  // ============================================================================
+  // Two-Factor Authentication (2FA)
+  // ============================================================================
+  twoFactorEnabled              Boolean         @default(false) @map("two_factor_enabled")
+  twoFactorMethod               TwoFactorMethod? @map("two_factor_method")
+  twoFactorEnabledAt            DateTime?       @map("two_factor_enabled_at")
+
+  // TOTP (Authenticator App)
+  totpSecret                    String?         @map("totp_secret")
+  totpVerifiedAt                DateTime?       @map("totp_verified_at")
+
+  // Passkey (WebAuthn) - marketplace-specific
+  passkeyCredentialId           String?         @map("passkey_credential_id")
+  passkeyPublicKey              Bytes?          @map("passkey_public_key")
+  passkeyCounter                Int?            @map("passkey_counter")
+  passkeyCreatedAt              DateTime?       @map("passkey_created_at")
+
+  // SMS verification for 2FA
+  smsPhoneNumber                String?         @map("sms_phone_number")
+  smsVerifiedAt                 DateTime?       @map("sms_verified_at")
+  smsVerificationToken          String?         @map("sms_verification_token")
+  smsVerificationTokenExpires   DateTime?       @map("sms_verification_token_expires")
+
+  // ============================================================================
+  // Service Provider Verification
+  // ============================================================================
+  serviceProviderTier           ServiceProviderVerificationTier? @map("service_provider_tier")
+  serviceProviderTierAchievedAt DateTime?       @map("service_provider_tier_achieved_at")
+
+  // Stripe Identity (for standalone $10 verification)
+  stripeIdentitySessionId       String?         @map("stripe_identity_session_id")
+  stripeIdentityStatus          String?         @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt            DateTime?       @map("identity_verified_at")
+
+  // Paid verification packages - Verified Professional
+  verifiedProfessionalPurchasedAt DateTime?     @map("verified_professional_purchased_at")
+  verifiedProfessionalApprovedAt  DateTime?     @map("verified_professional_approved_at")
+  verifiedProfessionalApprovedBy  Int?          @map("verified_professional_approved_by")
+  verifiedProfessionalExpiresAt   DateTime?     @map("verified_professional_expires_at")
+
+  // Paid verification packages - Accredited Provider
+  accreditedProviderPurchasedAt   DateTime?     @map("accredited_provider_purchased_at")
+  accreditedProviderApprovedAt    DateTime?     @map("accredited_provider_approved_at")
+  accreditedProviderApprovedBy    Int?          @map("accredited_provider_approved_by")
+  accreditedProviderExpiresAt     DateTime?     @map("accredited_provider_expires_at")
+
+  // Platform-earned badges (service providers)
+  quickResponderBadge           Boolean         @default(false) @map("quick_responder_badge")
+  establishedProviderBadge      Boolean         @default(false) @map("established_provider_badge")
+  topRatedBadge                 Boolean         @default(false) @map("top_rated_badge")
+  trustedProviderBadge          Boolean         @default(false) @map("trusted_provider_badge")
+  acceptsPaymentsBadge          Boolean         @default(false) @map("accepts_payments_badge")
+
   // Relations
   provider         MarketplaceProvider?
   sentMessages     MarketplaceMessage[]
@@ -5970,12 +6100,15 @@ model MarketplaceUser {
   clientTransactions MarketplaceTransaction[] @relation("ClientTransactions")
   clientInvoices   MarketplaceInvoice[] @relation("ClientInvoices")
   reviews          MarketplaceReview[] @relation("ReviewsByClient")
+  verificationRequests VerificationRequest[] @relation("UserVerificationRequests")
 
   @@index([email])
   @@index([tenantId])
   @@index([stripeCustomerId])
   @@index([deletedAt])
   @@index([status])
+  @@index([twoFactorEnabled])
+  @@index([serviceProviderTier])
   @@map("users")
   @@schema("marketplace")
 }
@@ -6033,10 +6166,46 @@ model MarketplaceProvider {
   averageRating                   Decimal   @default(0.00) @map("average_rating") @db.Decimal(3,2)
   totalReviews                    Int       @default(0) @map("total_reviews")
 
-  // Badge flags
+  // Badge flags (legacy - kept for backwards compatibility)
   verifiedProvider                Boolean   @default(false) @map("verified_provider")
   premiumProvider                 Boolean   @default(false) @map("premium_provider")
   quickResponder                  Boolean   @default(false) @map("quick_responder")
+
+  // ============================================================================
+  // Breeder Verification System
+  // ============================================================================
+  verificationTier                BreederVerificationTier @default(SUBSCRIBER) @map("verification_tier")
+  verificationTierAchievedAt      DateTime? @map("verification_tier_achieved_at")
+
+  // Phone verification (required for MARKETPLACE_ENABLED tier)
+  phoneVerifiedAt                 DateTime? @map("phone_verified_at")
+  phoneVerificationToken          String?   @map("phone_verification_token")
+  phoneVerificationTokenExpires   DateTime? @map("phone_verification_token_expires")
+
+  // Stripe Identity verification (for IDENTITY_VERIFIED tier)
+  stripeIdentitySessionId         String?   @map("stripe_identity_session_id")
+  stripeIdentityStatus            String?   @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt              DateTime? @map("identity_verified_at")
+
+  // Paid verification packages - BreederHQ Verified
+  verifiedPackagePurchasedAt      DateTime? @map("verified_package_purchased_at")
+  verifiedPackageApprovedAt       DateTime? @map("verified_package_approved_at")
+  verifiedPackageApprovedBy       Int?      @map("verified_package_approved_by")
+  verifiedPackageExpiresAt        DateTime? @map("verified_package_expires_at")
+
+  // Paid verification packages - BreederHQ Accredited
+  accreditedPackagePurchasedAt    DateTime? @map("accredited_package_purchased_at")
+  accreditedPackageApprovedAt     DateTime? @map("accredited_package_approved_at")
+  accreditedPackageApprovedBy     Int?      @map("accredited_package_approved_by")
+  accreditedPackageExpiresAt      DateTime? @map("accredited_package_expires_at")
+
+  // Additional platform-earned badges
+  establishedBadge                Boolean   @default(false) @map("established_badge")
+  establishedBadgeEarnedAt        DateTime? @map("established_badge_earned_at")
+  topRatedBadge                   Boolean   @default(false) @map("top_rated_badge")
+  topRatedBadgeEarnedAt           DateTime? @map("top_rated_badge_earned_at")
+  trustedBadge                    Boolean   @default(false) @map("trusted_badge")
+  trustedBadgeEarnedAt            DateTime? @map("trusted_badge_earned_at")
 
   // Status
   status                          String    @default("pending")
@@ -6056,6 +6225,7 @@ model MarketplaceProvider {
   providerTransactions            MarketplaceTransaction[] @relation("ProviderTransactions")
   providerInvoices                MarketplaceInvoice[] @relation("ProviderInvoices")
   reviews                         MarketplaceReview[] @relation("ReviewsForProvider")
+  verificationRequests            VerificationRequest[] @relation("ProviderVerificationRequests")
 
   @@index([userId])
   @@index([tenantId])
@@ -6063,7 +6233,62 @@ model MarketplaceProvider {
   @@index([status, activatedAt])
   @@index([city, state, status])
   @@index([deletedAt])
+  @@index([verificationTier])
   @@map("providers")
+  @@schema("marketplace")
+}
+
+/**
+ * VerificationRequest - Staff queue for processing paid verification packages
+ * Handles both Breeder and Service Provider verification requests
+ */
+model VerificationRequest {
+  id                          Int       @id @default(autoincrement())
+
+  // Who is being verified (polymorphic - one of these will be set)
+  userType                    String    @map("user_type") // "BREEDER" or "SERVICE_PROVIDER"
+  providerId                  Int?      @map("provider_id")
+  provider                    MarketplaceProvider? @relation("ProviderVerificationRequests", fields: [providerId], references: [id], onDelete: Cascade)
+  marketplaceUserId           Int?      @map("marketplace_user_id")
+  marketplaceUser             MarketplaceUser? @relation("UserVerificationRequests", fields: [marketplaceUserId], references: [id], onDelete: Cascade)
+
+  // What package was requested
+  packageType                 String    @map("package_type") // "VERIFIED" or "ACCREDITED"
+  requestedTier               String    @map("requested_tier") // Full tier name for reference
+
+  // Request status
+  status                      VerificationRequestStatus @default(PENDING)
+
+  // User-submitted verification info (flexible JSON storage)
+  // Breeders: { registryName, registryMemberId, animalsToVerify, vetClinicName, vetClinicPhone, ... }
+  // Service Providers: { certifications, professionalLicenseType, insuranceCompany, ... }
+  submittedInfo               Json?     @map("submitted_info")
+
+  // Staff review
+  reviewChecklist             Json?     @map("review_checklist") // Completed checklist items
+  reviewNotes                 String?   @map("review_notes")     // Internal notes
+  reviewedAt                  DateTime? @map("reviewed_at")
+  reviewedBy                  Int?      @map("reviewed_by")      // Admin user ID
+
+  // If more info needed from user
+  infoRequestedAt             DateTime? @map("info_requested_at")
+  infoRequestNote             String?   @map("info_request_note")
+  infoProvidedAt              DateTime? @map("info_provided_at")
+
+  // Payment tracking
+  paymentIntentId             String?   @map("payment_intent_id") // Stripe PaymentIntent ID
+  amountPaidCents             Int?      @map("amount_paid_cents")
+
+  // Timestamps
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([userType, status])
+  @@index([providerId])
+  @@index([marketplaceUserId])
+  @@index([reviewedBy])
+  @@map("verification_requests")
   @@schema("marketplace")
 }
 

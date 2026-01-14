@@ -54,6 +54,7 @@ GET  /offspring-groups                      # Browse ALL published offspring gro
 # Animal Listings
 GET  /programs/:programSlug/animals         # List animal listings for a breeder
 GET  /programs/:programSlug/animals/:slug   # Animal listing detail
+GET  /animals                               # Browse ALL animal listings (studs, rehomes, etc.)
 
 # Services (Stud, Training, etc. from breeders)
 GET  /services                              # Browse all service listings
@@ -63,6 +64,61 @@ POST /inquiries                             # Create inquiry to breeder
 ```
 
 **Documentation**: Will add to `marketplace-api-v2.md` or create separate `breeder-marketplace-api.md`
+
+---
+
+## Animal Listings Browse
+
+**Status**: ✅ EXISTS (Added 2026-01-13)
+
+```
+GET /api/v1/public-marketplace/animals       # Browse all animal listings
+```
+
+**Filters Available**:
+- `search` - Full-text search (title, headline, summary, animal name, breed)
+- `intent` - Listing intent: STUD, REHOME, GUARDIAN, BROOD_PLACEMENT, TRAINED, WORKING, STARTED, CO_OWNERSHIP
+- `species` - Filter by species (DOG, CAT, etc.)
+- `breed` - Filter by breed text
+- `location` - City/state filter (matches listing location OR breeder organization location)
+- `limit` - Items per page (default: 24, max: 100)
+- `offset` - Pagination offset
+
+**Response**:
+```json
+{
+  "items": [
+    {
+      "id": 123,
+      "urlSlug": "max-the-stud",
+      "intent": "STUD",
+      "headline": "Champion Bloodline",
+      "title": "Max - AKC Champion Stud",
+      "summary": "Proven stud...",
+      "priceCents": 250000,
+      "priceMinCents": null,
+      "priceMaxCents": null,
+      "priceText": "$2,500",
+      "priceModel": "fixed",
+      "locationCity": "Austin",
+      "locationRegion": "TX",
+      "publishedAt": "2026-01-10T15:30:00.000Z",
+      "animalName": "Max",
+      "animalSex": "MALE",
+      "animalSpecies": "DOG",
+      "animalBreed": "German Shepherd",
+      "animalPhotoUrl": "https://...",
+      "animalBirthDate": "2022-05-15T00:00:00.000Z",
+      "programSlug": "champion-gsds",
+      "programName": "Champion GSDs",
+      "breederLocation": "Austin, TX"
+    }
+  ],
+  "total": 45,
+  "limit": 24,
+  "offset": 0
+}
+```
 
 ---
 
