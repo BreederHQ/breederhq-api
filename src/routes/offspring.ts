@@ -193,6 +193,23 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       const group = await tx.offspringGroup.findFirst({ where: { id: groupId, tenantId } });
       if (!group) throw new Error("group not found for tenant");
 
+      // BUSINESS RULE: Cannot unlink an offspring group that has offspring
+      // Check for offspring in the Animal table (legacy)
+      const animalCount = await tx.animal.count({
+        where: { tenantId, offspringGroupId: groupId },
+      });
+      // Check for offspring in the Offspring table
+      const offspringCount = await tx.offspring.count({
+        where: { tenantId, groupId },
+      });
+      if (animalCount > 0 || offspringCount > 0) {
+        const error = new Error("cannot_unlink_group_with_offspring") as any;
+        error.code = "BUSINESS_RULE_VIOLATION";
+        error.detail = "Cannot unlink an offspring group from its breeding plan because offspring have already been added. Remove all offspring first before unlinking the group.";
+        error.statusCode = 400;
+        throw error;
+      }
+
       const updated = await tx.offspringGroup.update({
         where: { id: group.id },
         data: { planId: null, linkState: "orphan" },
@@ -503,6 +520,15 @@ function groupDetail(
           typeof (o as any).priceCents === "number"
             ? (o as any).priceCents / 100
             : null,
+        // Collar color fields for display in Offspring tab
+        whelpingCollarColor: (o as any).collarColorName ?? null,
+        collarColorName: (o as any).collarColorName ?? null,
+        collarColorHex: (o as any).collarColorHex ?? null,
+        collarAssignedAt: (o as any).collarAssignedAt
+          ? ((o as any).collarAssignedAt instanceof Date
+            ? (o as any).collarAssignedAt.toISOString()
+            : String((o as any).collarAssignedAt))
+          : null,
       };
     }),
 
@@ -1796,6 +1822,14 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "offspring group not found" });
     }
 
+    // Business rule: Cannot add offspring until the birth date actual has been recorded on the linked breeding plan
+    if (group.plan && !group.plan.birthDateActual) {
+      return reply.code(400).send({
+        error: "birth_date_not_recorded",
+        detail: "Cannot add offspring until the birth date has been recorded on the linked breeding plan.",
+      });
+    }
+
     const name: string | null =
       typeof body.name === "string" && body.name.trim().length > 0 ? body.name.trim() : null;
 
@@ -2334,11 +2368,144 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const existing = await prisma.offspring.findFirst({
       where: { id, tenantId },
+      include: {
+        group: {
+          select: {
+            id: true,
+            planId: true,
+            plan: { select: { birthDateActual: true } },
+          },
+        },
+      },
     });
     if (!existing) return reply.code(404).send({ error: "not found" });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BUSINESS RULE: Offspring Deletion Protection
+    // Offspring can only be deleted if they are "fresh" (no real business data).
+    // Once an offspring has contracts, buyers, invoices, health records, or has
+    // been placed, it becomes part of the permanent record for lineage tracking.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const blockers: Record<string, boolean> = {};
+
+    // Check if offspring has a buyer assigned
+    if (existing.buyerPartyId) {
+      blockers.hasBuyer = true;
+    }
+
+    // Check if offspring has been placed
+    if (existing.placementState === "PLACED" || existing.placedAt) {
+      blockers.isPlaced = true;
+    }
+
+    // Check if offspring has financial transactions
+    if (existing.financialState && existing.financialState !== "NONE") {
+      blockers.hasFinancialState = true;
+    }
+    if (existing.paidInFullAt || existing.depositCents) {
+      blockers.hasPayments = true;
+    }
+
+    // Check if offspring has contracts
+    if (existing.contractId || existing.contractSignedAt) {
+      blockers.hasContract = true;
+    }
+
+    // Check if offspring has been promoted to a full animal record
+    if (existing.promotedAnimalId) {
+      blockers.isPromoted = true;
+    }
+
+    // Check if offspring is deceased (death is a permanent record)
+    if (existing.lifeState === "DECEASED" || existing.diedAt) {
+      blockers.isDeceased = true;
+    }
+
+    // Check for related records that would create orphaned data
+    const [healthEventsCount, documentsCount, invoicesCount] = await Promise.all([
+      prisma.offspringHealthEvent?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
+      prisma.offspringDocument?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
+      prisma.offspringInvoice?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
+    ]);
+
+    if (healthEventsCount > 0) blockers.hasHealthEvents = true;
+    if (documentsCount > 0) blockers.hasDocuments = true;
+    if (invoicesCount > 0) blockers.hasInvoices = true;
+
+    if (Object.keys(blockers).length > 0) {
+      return reply.code(409).send({
+        error: "offspring_delete_blocked",
+        detail: "Cannot delete this offspring because it has associated business data. Offspring with buyers, contracts, payments, health records, or placement history are permanent records for lineage and regulatory compliance.",
+        blockers,
+      });
+    }
+
+    // Safe to delete - offspring is fresh with no business data
     await prisma.offspring.delete({ where: { id } });
     reply.send({ ok: true, deleted: id });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Archive Individual Offspring (Soft Delete)
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.post("/offspring/individuals/:id/archive", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+    const { reason } = (req.body as any) ?? {};
+
+    if (!Number.isFinite(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+
+    // Verify ownership
+    const existing = await prisma.offspring.findFirst({
+      where: { id, tenantId },
+    });
+    if (!existing) return reply.code(404).send({ error: "not found" });
+
+    // Archive the offspring (soft delete)
+    const archived = await prisma.offspring.update({
+      where: { id },
+      data: {
+        archivedAt: new Date(),
+        archiveReason: reason || null,
+      },
+    });
+
+    reply.send({ ok: true, archived });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Restore Archived Offspring
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.post("/offspring/individuals/:id/restore", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+
+    if (!Number.isFinite(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+
+    // Verify ownership and that it's archived
+    const existing = await prisma.offspring.findFirst({
+      where: { id, tenantId },
+    });
+    if (!existing) return reply.code(404).send({ error: "not found" });
+    if (!existing.archivedAt) {
+      return reply.code(400).send({ error: "offspring_not_archived" });
+    }
+
+    // Restore the offspring
+    const restored = await prisma.offspring.update({
+      where: { id },
+      data: {
+        archivedAt: null,
+        archiveReason: null,
+      },
+    });
+
+    reply.send({ ok: true, restored });
   });
 
   /* ===== OFFSPRING ANIMALS: CREATE ===== */
@@ -2886,8 +3053,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const groupId = Number(req.params.groupId);
       const { actorId } = req.body;
       const og = __makeOffspringGroupsService({ prisma: (app as any).prisma ?? prisma, authorizer: __og_authorizer });
-      const out = await og.unlinkGroup({ tenantId, groupId, actorId });
-      reply.send(out);
+      try {
+        const out = await og.unlinkGroup({ tenantId, groupId, actorId });
+        reply.send(out);
+      } catch (err: any) {
+        if (err.code === "BUSINESS_RULE_VIOLATION") {
+          return reply.code(err.statusCode ?? 400).send({
+            error: err.message,
+            detail: err.detail,
+          });
+        }
+        throw err;
+      }
     }
   );
 

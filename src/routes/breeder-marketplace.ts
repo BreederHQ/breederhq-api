@@ -293,6 +293,7 @@ export default async function breederMarketplaceRoutes(
                 program: true,
               },
             },
+            Offspring: true, // Include offspring for breeding programs dashboard
           },
         }),
         prisma.offspringGroup.count({ where }),
@@ -329,7 +330,9 @@ export default async function breederMarketplaceRoutes(
         countLive: group.countLive,
         countBorn: group.countBorn,
         totalCount: animalCountMap.get(group.id) ?? 0,
-        availableCount: 0, // TODO: implement when placement status tracking is added
+        availableCount: (group.Offspring || []).filter(
+          (o: any) => o.keeperIntent === 'AVAILABLE' && o.marketplaceListed
+        ).length,
         createdAt: group.createdAt.toISOString(),
         updatedAt: group.updatedAt.toISOString(),
         sire: group.sire ? { id: group.sire.id, name: group.sire.name } : null,
@@ -337,6 +340,7 @@ export default async function breederMarketplaceRoutes(
         breedingProgram: group.plan?.program
           ? { id: group.plan.program.id, name: group.plan.program.name }
           : null,
+        offspring: group.Offspring ?? [], // Include offspring for breeding programs dashboard
       }));
 
       return reply.send({

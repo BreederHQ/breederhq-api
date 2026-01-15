@@ -497,6 +497,7 @@ function includeFlags(qInclude: any) {
     sire: has("parents") ? true : false,
     organization: has("org") ? true : false,
     program: has("program") ? true : false,
+    offspringGroup: has("offspringgroup") || has("offspring") ? true : false,
   };
 }
 
@@ -1054,6 +1055,113 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (b[k] !== undefined) (data as any)[k] = b[k] ? new Date(b[k]) : null;
       }
 
+      // Fetch existing plan dates once for all validations
+      const existingPlanDates = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          cycleStartDateActual: true,
+          hormoneTestingStartDateActual: true,
+          breedDateActual: true,
+          birthDateActual: true,
+          weanedDateActual: true,
+          placementStartDateActual: true,
+          placementCompletedDateActual: true,
+        },
+      });
+
+      // Determine if birthDateActual will remain set after this update
+      const birthDateWillBeSet = b.birthDateActual !== null &&
+        (b.birthDateActual !== undefined || existingPlanDates?.birthDateActual);
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // BUSINESS RULE: Birth Date Actual is a "LOCK POINT"
+      // Once birthDateActual is recorded, ALL upstream dates become immutable.
+      // This protects the integrity of the breeding record - birth is a real-world
+      // event that validates the entire upstream breeding history.
+      // ═══════════════════════════════════════════════════════════════════════════
+
+      const UPSTREAM_DATE_FIELDS = [
+        "cycleStartDateActual",
+        "hormoneTestingStartDateActual",
+        "breedDateActual",
+      ] as const;
+
+      if (birthDateWillBeSet) {
+        // Check if any upstream date is being cleared
+        for (const field of UPSTREAM_DATE_FIELDS) {
+          if (b[field] === null && (existingPlanDates as any)?.[field]) {
+            return reply.code(400).send({
+              error: "upstream_dates_locked_by_birth",
+              detail: `Cannot clear ${field} because the actual birth date has been recorded. Once birth occurs, the breeding history is locked to preserve data integrity for lineage and genetics tracking.`,
+            });
+          }
+        }
+
+        // Check if any upstream date is being modified (changed to a different value)
+        for (const field of UPSTREAM_DATE_FIELDS) {
+          const existingValue = (existingPlanDates as any)?.[field];
+          const newValue = b[field];
+          if (existingValue && newValue !== undefined && newValue !== null) {
+            const existingDate = new Date(existingValue).toISOString().slice(0, 10);
+            const newDate = new Date(newValue).toISOString().slice(0, 10);
+            if (existingDate !== newDate) {
+              return reply.code(400).send({
+                error: "upstream_dates_locked_by_birth",
+                detail: `Cannot modify ${field} because the actual birth date has been recorded. Once birth occurs, the breeding history is locked to preserve data integrity for lineage and genetics tracking.`,
+              });
+            }
+          }
+        }
+      }
+
+      // BUSINESS RULE: Cannot clear birthDateActual if offspring exist in linked offspring group
+      if (b.birthDateActual === null) {
+        const linkedGroup = await prisma.offspringGroup.findFirst({
+          where: { planId: id, tenantId },
+          select: { id: true },
+        });
+        if (linkedGroup) {
+          // Check for offspring in the Animal table (legacy)
+          const animalCount = await prisma.animal.count({
+            where: { tenantId, offspringGroupId: linkedGroup.id },
+          });
+          // Check for offspring in the Offspring table
+          const offspringCount = await prisma.offspring.count({
+            where: { tenantId, groupId: linkedGroup.id },
+          });
+          if (animalCount > 0 || offspringCount > 0) {
+            return reply.code(400).send({
+              error: "cannot_clear_birth_date_with_offspring",
+              detail: "Cannot clear the actual birth date because offspring have already been added to the linked offspring group. Remove all offspring first before clearing this date.",
+            });
+          }
+        }
+      }
+
+      // BUSINESS RULE: Cannot clear weanedDateActual if placementStartDateActual is set
+      if (b.weanedDateActual === null) {
+        const placementStartWillBeSet = b.placementStartDateActual !== null &&
+          (b.placementStartDateActual !== undefined || existingPlanDates?.placementStartDateActual);
+        if (placementStartWillBeSet) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual weaned date because the actual placement start date is recorded. Clear the placement start date first.",
+          });
+        }
+      }
+
+      // BUSINESS RULE: Cannot clear placementStartDateActual if placementCompletedDateActual is set
+      if (b.placementStartDateActual === null) {
+        const placementCompletedWillBeSet = b.placementCompletedDateActual !== null &&
+          (b.placementCompletedDateActual !== undefined || existingPlanDates?.placementCompletedDateActual);
+        if (placementCompletedWillBeSet) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual placement start date because the actual placement completed date is recorded. Clear the placement completed date first.",
+          });
+        }
+      }
+
       if (b.status !== undefined) {
         const s = normalizePlanStatus(b.status);
         if (!s) return reply.code(400).send({ error: "bad_status" });
@@ -1129,6 +1237,69 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             error: "date_required_for_status",
             detail: "placementCompletedDateActual is required to set status to COMPLETE"
           });
+        }
+
+        // BUSINESS RULE: Status regression validation
+        // Define the progression order of statuses (index = progression level)
+        const STATUS_ORDER = [
+          "PLANNING", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
+          "BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"
+        ];
+        const currentStatusIndex = STATUS_ORDER.indexOf(String(existing.status));
+        const newStatusIndex = STATUS_ORDER.indexOf(s);
+
+        // Check if this is a regression (moving backwards in the lifecycle)
+        if (currentStatusIndex > -1 && newStatusIndex > -1 && newStatusIndex < currentStatusIndex) {
+          // Regression detected - validate data consistency
+
+          // Cannot regress past BIRTHED if offspring exist
+          if (currentStatusIndex >= STATUS_ORDER.indexOf("BIRTHED") && newStatusIndex < STATUS_ORDER.indexOf("BIRTHED")) {
+            const linkedGroup = await prisma.offspringGroup.findFirst({
+              where: { planId: id, tenantId },
+              select: { id: true },
+            });
+            if (linkedGroup) {
+              const animalCount = await prisma.animal.count({
+                where: { tenantId, offspringGroupId: linkedGroup.id },
+              });
+              const offspringCount = await prisma.offspring.count({
+                where: { tenantId, groupId: linkedGroup.id },
+              });
+              if (animalCount > 0 || offspringCount > 0) {
+                return reply.code(400).send({
+                  error: "cannot_regress_status_with_offspring",
+                  detail: `Cannot change status from ${existing.status} to ${s} because offspring have already been added. Remove all offspring first before regressing the plan status.`,
+                });
+              }
+            }
+          }
+
+          // Cannot regress if the status has corresponding actual dates recorded
+          // E.g., cannot go back to BRED if birthDateActual is still set
+          if (newStatusIndex < STATUS_ORDER.indexOf("BIRTHED") && finalBirthDate) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while birthDateActual is recorded. Clear the birth date first.`,
+            });
+          }
+          if (newStatusIndex < STATUS_ORDER.indexOf("WEANED") && finalWeanedDate) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while weanedDateActual is recorded. Clear the weaned date first.`,
+            });
+          }
+          if (newStatusIndex < STATUS_ORDER.indexOf("PLACEMENT") && finalPlacementStart) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while placementStartDateActual is recorded. Clear the placement start date first.`,
+            });
+          }
+          if (newStatusIndex < STATUS_ORDER.indexOf("COMPLETE") && finalPlacementCompleted) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while placementCompletedDateActual is recorded. Clear the placement completed date first.`,
+            });
+          }
         }
 
         data.status = s as any;

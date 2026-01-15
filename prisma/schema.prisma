@@ -3569,6 +3569,10 @@ model Offspring {
   notes String?
   data  Json?
 
+  // Archive (soft delete for individual offspring)
+  archivedAt    DateTime?
+  archiveReason String?   @db.Text
+
   Tags                TagAssignment[]
   Attachments         Attachment[]
   Events              OffspringEvent[]

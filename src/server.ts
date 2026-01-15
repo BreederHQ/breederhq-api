@@ -673,7 +673,8 @@ app.register(
 
       // 5) Public marketplace browse endpoints (GET only)
       // These endpoints allow anonymous browsing of marketplace listings
-      const publicBrowseEndpoints = [
+      const publicBrowsePatterns = [
+        // Exact matches and prefixes for list endpoints
         "/marketplace/offspring-groups",
         "/marketplace/animal-programs",
         "/marketplace/animals",
@@ -684,9 +685,16 @@ app.register(
         "/api/v1/marketplace/services",
       ];
 
-      const isPublicBrowsePath = publicBrowseEndpoints.some(endpoint =>
-        pathOnly === endpoint || pathOnly.endsWith(endpoint)
-      );
+      // Check if path matches public browse patterns (including detail pages like /animal-programs/:slug)
+      const isPublicBrowsePath = publicBrowsePatterns.some(pattern => {
+        // Exact match
+        if (pathOnly === pattern) return true;
+        // Path ends with pattern (handles /api/v1 prefix variations)
+        if (pathOnly.endsWith(pattern)) return true;
+        // Path starts with pattern (handles detail pages like /animal-programs/my-slug)
+        if (pathOnly.startsWith(pattern + "/")) return true;
+        return false;
+      });
 
       if (m === "GET" && isPublicBrowsePath) {
         // Skip auth checks - public browse endpoint
