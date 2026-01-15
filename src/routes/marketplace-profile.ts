@@ -179,6 +179,12 @@ function stripAddressFields(data: Record<string, unknown>): Record<string, unkno
 
 /**
  * Validate that minimum required fields are present for publishing.
+ *
+ * Optional branding fields:
+ * - logoUrl: URL to breeder logo (recommended 400x400px square)
+ * - bannerImageUrl: URL to banner image (recommended 1200x400px wide)
+ * - showLogo: boolean visibility flag for logo
+ * - showBanner: boolean visibility flag for banner
  */
 function validatePublishPayload(
   data: Record<string, unknown>
@@ -199,6 +205,20 @@ function validatePublishPayload(
   // Note: Frontend should warn if hiding all programs, but backend allows it
   if (!Array.isArray(data.listedPrograms)) {
     errors.push("listedPrograms must be an array");
+  }
+
+  // Optional branding fields - validate types if present
+  if (data.logoUrl !== undefined && data.logoUrl !== null && typeof data.logoUrl !== "string") {
+    errors.push("logoUrl must be a string if provided");
+  }
+  if (data.bannerImageUrl !== undefined && data.bannerImageUrl !== null && typeof data.bannerImageUrl !== "string") {
+    errors.push("bannerImageUrl must be a string if provided");
+  }
+  if (data.showLogo !== undefined && data.showLogo !== null && typeof data.showLogo !== "boolean") {
+    errors.push("showLogo must be a boolean if provided");
+  }
+  if (data.showBanner !== undefined && data.showBanner !== null && typeof data.showBanner !== "boolean") {
+    errors.push("showBanner must be a boolean if provided");
   }
 
   if (errors.length > 0) {
