@@ -880,6 +880,7 @@ model Tenant {
   breedingPrograms         BreedingProgram[]
   breedingProgramMedia     BreedingProgramMedia[]
   breedingProgramInquiries BreedingProgramInquiry[]
+  breedingProgramRules     BreedingProgramRule[]
 
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -7131,4 +7132,93 @@ model MarketplaceSavedListing {
   @@index([listingType, listingId])
   @@map("saved_listings")
   @@schema("marketplace")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Breeding Program Rules & Automation
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum BreedingRuleCategory {
+  LISTING
+  PRICING
+  VISIBILITY
+  BUYER_INTERACTION
+  STATUS
+  NOTIFICATIONS
+  @@schema("public")
+}
+
+enum BreedingRuleLevel {
+  PROGRAM
+  PLAN
+  GROUP
+  OFFSPRING
+  @@schema("public")
+}
+
+model BreedingProgramRule {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Rule identity
+  category    BreedingRuleCategory
+  ruleType    String   @db.VarChar(100) // Specific rule within category
+  name        String   @db.VarChar(255)
+  description String?  @db.Text
+  enabled     Boolean  @default(true)
+
+  // Configuration (varies by rule type)
+  config      Json     @default("{}")
+
+  // Hierarchy tracking
+  level       BreedingRuleLevel
+  levelId     String   @db.VarChar(50) // Program slug or entity ID
+  inheritsFromId Int?
+  inheritsFrom   BreedingProgramRule?  @relation("RuleInheritance", fields: [inheritsFromId], references: [id], onDelete: SetNull)
+  overriddenBy   BreedingProgramRule[] @relation("RuleInheritance")
+
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  executions  BreedingProgramRuleExecution[]
+
+  @@unique([tenantId, level, levelId, ruleType])
+  @@index([tenantId])
+  @@index([level, levelId])
+  @@index([inheritsFromId])
+  @@index([ruleType])
+  @@index([tenantId, enabled])
+  @@schema("public")
+}
+
+model BreedingProgramRuleExecution {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  ruleId      Int
+  rule        BreedingProgramRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  // Execution context
+  triggeredBy String   @db.VarChar(50) // 'user_action', 'cron_job', 'webhook'
+  entityType  String   @db.VarChar(20) // 'offspring', 'group', 'plan'
+  entityId    Int
+
+  // Result
+  success     Boolean
+  action      String?  @db.VarChar(100) // 'set_marketplace_listed', 'update_price', etc.
+  changes     Json?    // What actually changed
+  error       String?  @db.Text
+
+  // Metadata
+  executedAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([ruleId])
+  @@index([entityType, entityId])
+  @@index([executedAt])
+  @@schema("public")
 }

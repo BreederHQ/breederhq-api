@@ -524,6 +524,8 @@ import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inboun
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
+import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
+import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -900,6 +902,7 @@ app.register(
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
+    api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
     api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
@@ -1063,6 +1066,9 @@ export async function start() {
 
     // Start notification scan cron job
     startNotificationScanJob();
+
+    // Start rule execution cron job
+    startRuleExecutionJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1075,12 +1081,14 @@ start();
 process.on("SIGTERM", async () => {
   app.log.info("SIGTERM received, closing");
   stopNotificationScanJob();
+  stopRuleExecutionJob();
   await app.close();
   process.exit(0);
 });
 process.on("SIGINT", async () => {
   app.log.info("SIGINT received, closing");
   stopNotificationScanJob();
+  stopRuleExecutionJob();
   await app.close();
   process.exit(0);
 });
