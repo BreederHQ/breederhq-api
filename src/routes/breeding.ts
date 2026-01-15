@@ -1316,6 +1316,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
       for (const k of passthrough) if (b[k] !== undefined) (data as any)[k] = b[k];
 
+      // Handle programId updates (links plan to a BreedingProgram for marketplace)
+      if (b.programId !== undefined) {
+        if (b.programId === null) {
+          // Allow unlinking from a program
+          data.programId = null;
+        } else {
+          // Validate program exists and belongs to tenant
+          const program = await prisma.breedingProgram.findFirst({
+            where: { id: Number(b.programId), tenantId },
+            select: { id: true },
+          });
+          if (!program) return reply.code(400).send({ error: "program_not_found" });
+          data.programId = Number(b.programId);
+        }
+      }
+
       try {
         const lockNorm = validateAndNormalizeLockPayload(b);
         if (lockNorm.touched) {
