@@ -911,6 +911,188 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true });
   });
 
+  // GET /animals/:id/can-delete
+  // Check if an animal can be safely deleted and return any blockers
+  // Deletion is ONLY allowed if the animal has essentially no real data
+  app.get("/animals/:id/can-delete", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    try {
+      // Verify animal exists in tenant
+      const animal = await prisma.animal.findFirst({
+        where: { id, tenantId },
+        select: { id: true },
+      });
+      if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+      const blockers: Record<string, boolean> = {};
+      const details: Record<string, number> = {};
+
+      // Check for offspring (this animal is a parent via Animal table damId/sireId)
+      const offspringCount = await prisma.animal.count({
+        where: {
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (offspringCount > 0) {
+        blockers.hasOffspring = true;
+        blockers.isParentInPedigree = true;
+        details.offspringCount = offspringCount;
+      }
+
+      // Check for offspring via Offspring table
+      const offspringTableCount = await prisma.offspring.count({
+        where: {
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (offspringTableCount > 0) {
+        blockers.hasOffspring = true;
+        details.offspringCount = (details.offspringCount || 0) + offspringTableCount;
+      }
+
+      // Check for cross-tenant identity links
+      const identityLinkCount = await prisma.animalIdentityLink.count({
+        where: { animalId: id },
+      });
+      if (identityLinkCount > 0) {
+        blockers.hasCrossTenantLinks = true;
+        details.crossTenantLinkCount = identityLinkCount;
+      }
+
+      // Check for breeding plans
+      const breedingPlanCount = await prisma.breedingPlan.count({
+        where: {
+          tenantId,
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (breedingPlanCount > 0) {
+        blockers.hasBreedingPlans = true;
+        details.breedingPlanCount = breedingPlanCount;
+      }
+
+      // Check for waitlist entries (allocations and preferences)
+      const waitlistCount = await prisma.waitlistEntry.count({
+        where: {
+          tenantId,
+          OR: [{ animalId: id }, { sirePrefId: id }, { damPrefId: id }],
+        },
+      });
+      if (waitlistCount > 0) {
+        blockers.hasWaitlistEntries = true;
+        details.waitlistEntryCount = waitlistCount;
+      }
+
+      // Check for invoices linked to this animal
+      const invoiceCount = await prisma.invoice.count({
+        where: { tenantId, animalId: id },
+      });
+      if (invoiceCount > 0) {
+        blockers.hasInvoices = true;
+        details.invoiceCount = invoiceCount;
+      }
+
+      // Check for payments linked to this animal (via invoices)
+      const paymentCount = await prisma.payment.count({
+        where: {
+          tenantId,
+          invoice: { animalId: id },
+        },
+      });
+      if (paymentCount > 0) {
+        blockers.hasPayments = true;
+        details.paymentCount = paymentCount;
+      }
+
+      // Check for documents
+      const documentCount = await prisma.document.count({
+        where: { tenantId, animalId: id },
+      });
+      if (documentCount > 0) {
+        blockers.hasDocuments = true;
+        details.documentCount = documentCount;
+      }
+
+      // Check for health records (vaccination records)
+      const healthRecordCount = await prisma.vaccinationRecord.count({
+        where: { tenantId, animalId: id },
+      });
+      if (healthRecordCount > 0) {
+        blockers.hasHealthRecords = true;
+        details.healthRecordCount = healthRecordCount;
+      }
+
+      // Check for registry identifiers
+      const registrationCount = await prisma.animalRegistryIdentifier.count({
+        where: { animalId: id },
+      });
+      if (registrationCount > 0) {
+        blockers.hasRegistrations = true;
+        details.registrationCount = registrationCount;
+      }
+
+      // Check for titles
+      const titleCount = await prisma.animalTitle.count({
+        where: { tenantId, animalId: id },
+      });
+      if (titleCount > 0) {
+        blockers.hasTitles = true;
+        details.titleCount = titleCount;
+      }
+
+      // Check for competition entries
+      const competitionCount = await prisma.competitionEntry.count({
+        where: { tenantId, animalId: id },
+      });
+      if (competitionCount > 0) {
+        blockers.hasCompetitions = true;
+        details.competitionCount = competitionCount;
+      }
+
+      // Check for ownership history
+      const ownershipTransferCount = await prisma.animalOwnershipChange.count({
+        where: { tenantId, animalId: id },
+      });
+      if (ownershipTransferCount > 0) {
+        blockers.hasOwnershipHistory = true;
+        details.ownershipTransferCount = ownershipTransferCount;
+      }
+
+      // Check for public listing
+      const publicListingCount = await prisma.animalPublicListing.count({
+        where: { animalId: id },
+      });
+      if (publicListingCount > 0) {
+        blockers.hasPublicListing = true;
+      }
+
+      // Check for media (trait value documents, animal shares, etc)
+      const mediaCount = await prisma.animalTraitValueDocument.count({
+        where: { tenantId, animalId: id },
+      });
+      if (mediaCount > 0) {
+        blockers.hasMedia = true;
+        details.mediaCount = mediaCount;
+      }
+
+      const canDelete = Object.keys(blockers).length === 0;
+
+      return reply.send({
+        canDelete,
+        blockers,
+        details: Object.keys(details).length > 0 ? details : undefined,
+      });
+    } catch (err) {
+      console.error("[animals/can-delete] Error checking delete eligibility:", err);
+      return reply.code(500).send({ error: "internal_error", message: String(err) });
+    }
+  });
+
   /* TAGS */
   // GET /animals/:id/tags
   app.get("/animals/:id/tags", async (req, reply) => {

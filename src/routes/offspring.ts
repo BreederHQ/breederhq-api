@@ -299,6 +299,12 @@ import {
   validatePlacementSchedulingPolicy,
   type PlacementSchedulingPolicy,
 } from "../services/placement-scheduling.js";
+import {
+  triggerOnOffspringCreated,
+  triggerOnOffspringUpdated,
+  triggerOnOffspringGroupCreated,
+  triggerOnOffspringGroupUpdated,
+} from "../lib/rule-triggers.js";
 
 /* ========= helpers ========= */
 
@@ -680,6 +686,36 @@ function mapOffspringToAnimalLite(o: any) {
 
     litterId: o.groupId ?? null,
     groupName: group?.name ?? null,
+    // Include full group object with plan for DOB inheritance
+    group: group
+      ? {
+          id: group.id,
+          name: group.name ?? null,
+          code: group.code ?? null,
+          birthedStartAt: group.birthedStartAt
+            ? (group.birthedStartAt instanceof Date
+              ? group.birthedStartAt.toISOString()
+              : String(group.birthedStartAt))
+            : null,
+          birthedEndAt: group.birthedEndAt
+            ? (group.birthedEndAt instanceof Date
+              ? group.birthedEndAt.toISOString()
+              : String(group.birthedEndAt))
+            : null,
+          breedText: group.breedText ?? null,
+          plan: group.plan
+            ? {
+                id: group.plan.id,
+                birthedAt: group.plan.birthedAt
+                  ? (group.plan.birthedAt instanceof Date
+                    ? group.plan.birthedAt.toISOString()
+                    : String(group.plan.birthedAt))
+                  : null,
+                breedText: group.plan.breedText ?? null,
+              }
+            : null,
+        }
+      : null,
     buyerName: buyerParty?.name ?? null,
 
     placedAt: (o as any).placedAt
@@ -1001,6 +1037,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             breedText: true,
             dam: { select: { id: true, name: true } },
             sire: { select: { id: true, name: true } },
+            programId: true,
+            program: { select: { id: true, name: true } },
             expectedPlacementStart: true,
             expectedPlacementCompleted: true,
             placementStartDateActual: true,
@@ -1075,6 +1113,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               breedText: true,
               dam: { select: { id: true, name: true } },
               sire: { select: { id: true, name: true } },
+              programId: true,
+              program: { select: { id: true, name: true } },
             },
           },
         },
@@ -1451,6 +1491,20 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       createdAt: buyer.createdAt,
       updatedAt: buyer.updatedAt,
     }));
+
+    // Trigger rule execution for offspring group
+    if (!existing) {
+      // New group created
+      triggerOnOffspringGroupCreated(created.id, tenantId).catch(err =>
+        req.log.error({ err, groupId: created.id }, 'Failed to trigger rules on group creation')
+      );
+    } else {
+      // Group updated
+      const changedFields = Object.keys(payload);
+      triggerOnOffspringGroupUpdated(created.id, tenantId, changedFields).catch(err =>
+        req.log.error({ err, groupId: created.id }, 'Failed to trigger rules on group update')
+      );
+    }
 
     reply.send(
       groupDetail(
@@ -1838,7 +1892,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ? body.sex
         : null;
 
-    const bornAt = body.birthDate ? parseISO(body.birthDate) : null;
+    // Default bornAt from the breeding plan's birthDateActual if not explicitly provided
+    const bornAt = body.birthDate
+      ? parseISO(body.birthDate)
+      : group.plan?.birthDateActual ?? null;
 
     const data: any =
       typeof body.data === "object" && body.data !== null ? { ...body.data } : {};
@@ -1966,6 +2023,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Trigger rule execution for new offspring
+    triggerOnOffspringCreated(created.id, tenantId).catch(err =>
+      req.log.error({ err, offspringId: created.id }, 'Failed to trigger rules on offspring creation')
+    );
+
     reply.code(201).send(mapOffspringToAnimalLite(created));
   });
 
@@ -2071,6 +2133,17 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               select: {
                 id: true,
                 name: true,
+                code: true,
+                birthedStartAt: true,
+                birthedEndAt: true,
+                breedText: true,
+                plan: {
+                  select: {
+                    id: true,
+                    birthedAt: true,
+                    breedText: true,
+                  },
+                },
               },
             },
           },
@@ -2354,6 +2427,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       );
       return reply.code(500).send({ error: "database_error" });
     }
+
+    // Trigger rule execution for updated offspring
+    const changedFields = Object.keys(data);
+    triggerOnOffspringUpdated(id, tenantId, changedFields).catch(err =>
+      req.log.error({ err, offspringId: id }, 'Failed to trigger rules on offspring update')
+    );
 
     reply.send(mapOffspringToAnimalLite(updated));
   });
