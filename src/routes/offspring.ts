@@ -398,8 +398,14 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
       breedText: G.plan.breedText,
       dam: G.plan.dam,
       sire: G.plan.sire,
+      programId: G.plan.programId ?? null,
+      program: G.plan.program ?? null,
       expectedPlacementStart: G.plan.expectedPlacementStart,
       expectedPlacementCompleted: G.plan.expectedPlacementCompleted,
+      // Dates for computing expected timeline in offspring UI
+      lockedCycleStart: G.plan.lockedCycleStart?.toISOString?.() ?? G.plan.lockedCycleStart ?? null,
+      expectedBirthDate: G.plan.expectedBirthDate?.toISOString?.() ?? G.plan.expectedBirthDate ?? null,
+      expectedWeaned: G.plan.expectedWeaned?.toISOString?.() ?? G.plan.expectedWeaned ?? null,
     },
     statusOverride: G.statusOverride ?? null,
     statusOverrideReason: G.statusOverrideReason ?? null,
@@ -445,6 +451,12 @@ function groupDetail(
         breedText: G.plan.breedText,
         dam: G.plan.dam ? { id: G.plan.dam.id, name: G.plan.dam.name } : null,
         sire: G.plan.sire ? { id: G.plan.sire.id, name: G.plan.sire.name } : null,
+        programId: G.plan.programId ?? null,
+        program: G.plan.program ? { id: G.plan.program.id, name: G.plan.program.name } : null,
+        // Birth date fields for offspring group UI
+        status: G.plan.status ?? null,
+        birthDateActual: G.plan.birthDateActual?.toISOString?.()?.slice(0, 10) ?? null,
+        breedDateActual: G.plan.breedDateActual?.toISOString?.()?.slice(0, 10) ?? null,
       }
       : null,
 
@@ -716,6 +728,7 @@ function mapOffspringToAnimalLite(o: any) {
             : null,
         }
       : null,
+    buyerPartyId: (o as any).buyerPartyId ?? null,
     buyerName: buyerParty?.name ?? null,
 
     placedAt: (o as any).placedAt
@@ -1043,6 +1056,14 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             expectedPlacementCompleted: true,
             placementStartDateActual: true,
             placementCompletedDateActual: true,
+            // Birth date fields for offspring group UI
+            status: true,
+            birthDateActual: true,
+            breedDateActual: true,
+            // Locked cycle date for computing expected dates
+            lockedCycleStart: true,
+            expectedBirthDate: true,
+            expectedWeaned: true,
           },
         },
       },
@@ -1115,6 +1136,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sire: { select: { id: true, name: true } },
               programId: true,
               program: { select: { id: true, name: true } },
+              // Birth date fields for offspring group UI
+              status: true,
+              birthDateActual: true,
+              breedDateActual: true,
             },
           },
         },
@@ -1370,6 +1395,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             breedText: true,
             dam: { select: { id: true, name: true } },
             sire: { select: { id: true, name: true } },
+            // Birth date fields for offspring group UI
+            status: true,
+            birthDateActual: true,
+            breedDateActual: true,
           },
         },
       },
@@ -1569,6 +1598,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             breedText: true,
             dam: { select: { id: true, name: true } },
             sire: { select: { id: true, name: true } },
+            // Birth date fields for offspring group UI
+            status: true,
+            birthDateActual: true,
+            breedDateActual: true,
           },
         },
       },
@@ -2133,17 +2166,21 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               select: {
                 id: true,
                 name: true,
-                code: true,
-                birthedStartAt: true,
-                birthedEndAt: true,
-                breedText: true,
+                actualBirthOn: true,
                 plan: {
                   select: {
                     id: true,
-                    birthedAt: true,
+                    code: true,
                     breedText: true,
+                    birthDateActual: true,
                   },
                 },
+              },
+            },
+            buyerParty: {
+              select: {
+                id: true,
+                name: true,
               },
             },
           },
@@ -2418,6 +2455,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               name: true,
             },
           },
+          buyerParty: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       });
     } catch (err) {
@@ -2503,9 +2546,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Check for related records that would create orphaned data
     const [healthEventsCount, documentsCount, invoicesCount] = await Promise.all([
-      prisma.offspringHealthEvent?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
+      prisma.offspringEvent?.count?.({ where: { offspringId: id, type: "HEALTH" } }).catch(() => 0) ?? 0,
       prisma.offspringDocument?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
-      prisma.offspringInvoice?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
+      prisma.offspringInvoiceLink?.count?.({ where: { offspringId: id } }).catch(() => 0) ?? 0,
     ]);
 
     if (healthEventsCount > 0) blockers.hasHealthEvents = true;
@@ -2971,6 +3014,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               breedText: true,
               dam: { select: { id: true, name: true } },
               sire: { select: { id: true, name: true } },
+              // Birth date fields for offspring group UI
+              status: true,
+              birthDateActual: true,
+              breedDateActual: true,
             },
           },
         },

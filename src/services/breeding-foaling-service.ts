@@ -115,6 +115,11 @@ export async function recordFoaling(params: {
 
     if (!plan) throw new Error("Breeding plan not found");
 
+    // Validate: breedDateActual must be set before recording birth
+    if (!plan.breedDateActual) {
+      throw new Error("Cannot record birth date: the breeding date (breedDateActual) must be recorded first.");
+    }
+
     // 2. Update breeding plan
     await tx.breedingPlan.update({
       where: { id: breedingPlanId },

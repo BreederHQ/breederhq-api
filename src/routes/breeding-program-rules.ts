@@ -8,7 +8,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * GET /api/v1/breeding/programs/rules/effective
    * Get effective rules for a specific entity (with inheritance resolved)
    */
-  app.get('/programs/rules/effective', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/breeding/programs/rules/effective', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const query = req.query as any;
       const { level, id } = query;
@@ -44,7 +44,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * GET /api/v1/breeding/programs/rules
    * Get all rules for a specific level/entity
    */
-  app.get('/programs/rules', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/breeding/programs/rules', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const query = req.query as any;
       const { level, levelId, category, enabled } = query;
@@ -92,7 +92,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * GET /api/v1/breeding/programs/rules/:id
    * Get a specific rule by ID
    */
-  app.get('/programs/rules/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/breeding/programs/rules/:id', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const params = req.params as any;
       const { id } = params;
@@ -132,7 +132,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * POST /api/v1/breeding/programs/rules
    * Create or update a rule
    */
-  app.post('/programs/rules', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/breeding/programs/rules', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const body = req.body as any;
       const {
@@ -234,7 +234,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * POST /api/v1/breeding/programs/rules/:id/override
    * Create an override for a rule at a more specific level
    */
-  app.post('/programs/rules/:id/override', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/breeding/programs/rules/:id/override', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const params = req.params as any;
       const { id } = params;
@@ -326,7 +326,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * DELETE /api/v1/breeding/programs/rules/:id
    * Delete a rule (or remove an override to revert to inherited)
    */
-  app.delete('/programs/rules/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.delete('/breeding/programs/rules/:id', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const params = req.params as any;
       const { id } = params;
@@ -362,7 +362,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * PATCH /api/v1/breeding/programs/rules/:id/toggle
    * Toggle a rule enabled/disabled
    */
-  app.patch('/programs/rules/:id/toggle', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.patch('/breeding/programs/rules/:id/toggle', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const params = req.params as any;
       const { id } = params;
@@ -399,7 +399,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * POST /api/v1/breeding/programs/rules/execute
    * Manually execute all rules for an entity (for testing/debugging)
    */
-  app.post('/programs/rules/execute', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/breeding/programs/rules/execute', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const body = req.body as any;
       const { level, id } = body;
@@ -431,7 +431,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * GET /api/v1/breeding/programs/rules/:id/executions
    * Get execution history for a rule
    */
-  app.get('/programs/rules/:id/executions', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/breeding/programs/rules/:id/executions', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const params = req.params as any;
       const { id } = params;
@@ -481,7 +481,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
    * GET /api/v1/breeding/programs/rules/chain
    * Get the inheritance chain for an entity (debugging)
    */
-  app.get('/programs/rules/chain', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/breeding/programs/rules/chain', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const query = req.query as any;
       const { level, id } = query;
@@ -505,6 +505,115 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
     } catch (error) {
       req.log.error('Error building chain:', error);
       return reply.code(500).send({ error: 'Failed to build inheritance chain' });
+    }
+  });
+
+  /**
+   * POST /api/v1/breeding/programs/rules/disable-inheritance
+   * Disable all inherited rules from a specific level by creating disabled overrides
+   * Body: { currentLevel, currentLevelId, fromLevel }
+   */
+  app.post('/breeding/programs/rules/disable-inheritance', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = req.body as any;
+      const { currentLevel, currentLevelId, fromLevel } = body;
+      const tenantId = (req as any).tenantId;
+
+      if (!tenantId) {
+        return reply.code(401).send({ error: 'Not authenticated' });
+      }
+
+      if (!currentLevel || !currentLevelId || !fromLevel) {
+        return reply.code(400).send({
+          error: 'Missing required fields: currentLevel, currentLevelId, fromLevel'
+        });
+      }
+
+      // Validate levels
+      const validLevels: BreedingRuleLevel[] = ['OFFSPRING', 'GROUP', 'PLAN', 'PROGRAM'];
+      if (!validLevels.includes(currentLevel) || !validLevels.includes(fromLevel)) {
+        return reply.code(400).send({ error: 'Invalid level' });
+      }
+
+      // Validate that fromLevel is a parent of currentLevel
+      const levelHierarchy: BreedingRuleLevel[] = ['PROGRAM', 'PLAN', 'GROUP', 'OFFSPRING'];
+      const currentLevelIndex = levelHierarchy.indexOf(currentLevel);
+      const fromLevelIndex = levelHierarchy.indexOf(fromLevel);
+
+      if (fromLevelIndex >= currentLevelIndex) {
+        return reply.code(400).send({
+          error: 'fromLevel must be a parent level of currentLevel'
+        });
+      }
+
+      // Get all effective rules to find which ones come from the specified level
+      const effectiveRules = await getEffectiveRules(currentLevel, currentLevelId, tenantId);
+
+      // Filter to only rules from the specified fromLevel
+      const rulesToOverride = effectiveRules.filter(rule => rule.level === fromLevel);
+
+      if (rulesToOverride.length === 0) {
+        return reply.send({
+          success: true,
+          message: 'No rules to override from this level',
+          overridesCreated: 0
+        });
+      }
+
+      // Create disabled overrides for each rule at the current level
+      const overrides = [];
+      for (const rule of rulesToOverride) {
+        // Check if override already exists
+        const existing = await prisma.breedingProgramRule.findUnique({
+          where: {
+            tenantId_level_levelId_ruleType: {
+              tenantId,
+              level: currentLevel,
+              levelId: String(currentLevelId),
+              ruleType: rule.ruleType
+            }
+          }
+        });
+
+        if (existing) {
+          // Update existing to be disabled
+          const updated = await prisma.breedingProgramRule.update({
+            where: { id: existing.id },
+            data: {
+              enabled: false,
+              inheritsFromId: rule.id
+            }
+          });
+          overrides.push(updated);
+        } else {
+          // Create new disabled override
+          const override = await prisma.breedingProgramRule.create({
+            data: {
+              tenantId,
+              category: rule.category,
+              ruleType: rule.ruleType,
+              name: rule.name,
+              description: rule.description,
+              enabled: false,
+              config: rule.config || {},
+              level: currentLevel,
+              levelId: String(currentLevelId),
+              inheritsFromId: rule.id
+            }
+          });
+          overrides.push(override);
+        }
+      }
+
+      return reply.send({
+        success: true,
+        message: `Created ${overrides.length} disabled overrides`,
+        overridesCreated: overrides.length,
+        overrides
+      });
+    } catch (error) {
+      req.log.error('Error disabling inheritance:', error);
+      return reply.code(500).send({ error: 'Failed to disable inheritance' });
     }
   });
 }
