@@ -8,6 +8,10 @@ import { recordWaitlistOutcome } from "../services/marketplace-flag.js";
 import { generateInvoiceNumber } from "../services/finance/invoice-numbering.js";
 import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
+import {
+  sendWaitlistApprovalToUser,
+  sendWaitlistRejectionToUser,
+} from "../services/marketplace-email-service.js";
 
 /* ───────── helpers ───────── */
 
@@ -852,6 +856,42 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       console.error("[waitlist/approve] Failed to record outcome:", err);
     }
 
+    // Send approval email to user
+    try {
+      const clientEmail = updated?.clientParty?.email || updated?.clientParty?.contact?.email;
+      const clientName = updated?.clientParty?.contact?.display_name ||
+        updated?.clientParty?.contact?.first_name ||
+        updated?.clientParty?.name ||
+        "there";
+
+      // Get breeder info
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { slug: true },
+      });
+      const breederOrg = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { name: true },
+      });
+
+      // Extract program name from notes if available
+      const programMatch = entry.notes?.match(/^Program:\s*(.+)$/m);
+      const programName = programMatch ? programMatch[1].trim() : undefined;
+
+      if (clientEmail) {
+        await sendWaitlistApprovalToUser({
+          userEmail: clientEmail,
+          userName: clientName,
+          breederName: breederOrg?.name || "the breeder",
+          programName,
+          tenantSlug: tenant?.slug || undefined,
+        });
+      }
+    } catch (err) {
+      // Don't fail the approval if email fails
+      console.error("[waitlist/approve] Failed to send approval email:", err);
+    }
+
     reply.send({
       ...serializeEntry(updated),
       linkedToExisting,
@@ -970,6 +1010,38 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     } catch (err) {
       // Don't fail the rejection if tracking fails
       console.error("[waitlist/reject] Failed to record outcome:", err);
+    }
+
+    // Send rejection email to user
+    try {
+      const clientEmail = entry.clientParty?.email || updated?.clientParty?.contact?.email;
+      const clientName = updated?.clientParty?.contact?.display_name ||
+        updated?.clientParty?.contact?.first_name ||
+        entry.clientParty?.name ||
+        "there";
+
+      // Get breeder info
+      const breederOrg = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { name: true },
+      });
+
+      // Extract program name from notes if available
+      const programMatch = entry.notes?.match(/^Program:\s*(.+)$/m);
+      const programName = programMatch ? programMatch[1].trim() : undefined;
+
+      if (clientEmail) {
+        await sendWaitlistRejectionToUser({
+          userEmail: clientEmail,
+          userName: clientName,
+          breederName: breederOrg?.name || "the breeder",
+          programName,
+          reason: reason || undefined,
+        });
+      }
+    } catch (err) {
+      // Don't fail the rejection if email fails
+      console.error("[waitlist/reject] Failed to send rejection email:", err);
     }
 
     reply.send(serializeEntry(updated));

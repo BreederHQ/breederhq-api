@@ -13,6 +13,7 @@
 import cron from "node-cron";
 import { runNotificationScan } from "../services/notification-scanner.js";
 import { deliverPendingNotifications } from "../services/notification-delivery.js";
+import { runContractScan } from "../services/contracts/contract-scanner.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -39,7 +40,11 @@ export async function runNotificationScanJob(): Promise<void> {
     const scanResults = await runNotificationScan();
     console.log(`[notification-scan-job] Scan complete:`, scanResults);
 
-    // Step 2: Deliver all pending notifications via email
+    // Step 2: Scan for contract expirations and reminders
+    const contractResults = await runContractScan();
+    console.log(`[notification-scan-job] Contract scan complete:`, contractResults);
+
+    // Step 3: Deliver all pending notifications via email
     const deliveryResults = await deliverPendingNotifications();
     console.log(`[notification-scan-job] Delivery complete:`, deliveryResults);
 
@@ -47,9 +52,11 @@ export async function runNotificationScanJob(): Promise<void> {
     const durationMs = endTime.getTime() - startTime.getTime();
     console.log(`[notification-scan-job] Job complete in ${durationMs}ms`);
     console.log(`[notification-scan-job] Summary:
-  - Notifications created: ${scanResults.total}
+  - Notifications created: ${scanResults.total + contractResults.total}
     - Vaccinations: ${scanResults.vaccinations}
     - Breeding: ${scanResults.breeding}
+    - Contract reminders: ${contractResults.reminders}
+    - Contract expirations: ${contractResults.expired}
   - Emails sent: ${deliveryResults.sent}
   - Emails failed: ${deliveryResults.failed}
     `);

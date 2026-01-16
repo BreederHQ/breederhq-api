@@ -33,6 +33,10 @@ import {
   type PublicListingSummaryDTO,
   type PublicProgramSummaryDTO,
 } from "../utils/public-dto.js";
+import {
+  sendInquiryConfirmationToUser,
+  sendInquiryNotificationToBreeder,
+} from "../services/marketplace-email-service.js";
 
 // ============================================================================
 // Security: Environment flags
@@ -1394,6 +1398,54 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         },
         select: { id: true },
       });
+
+      // Send email notifications (don't fail the request if emails fail)
+      try {
+        // Get user details for emails
+        const userDetails = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { email: true, firstName: true, lastName: true },
+        });
+
+        // Get breeder details for emails
+        const breederOrg = await prisma.organization.findUnique({
+          where: { id: resolved.organizationId },
+          select: {
+            name: true,
+            party: { select: { email: true } },
+          },
+        });
+
+        const userName = [userDetails?.firstName, userDetails?.lastName].filter(Boolean).join(" ") || "there";
+        const breederName = breederOrg?.name || org?.name || "the breeder";
+
+        // Send confirmation to user
+        if (userDetails?.email) {
+          await sendInquiryConfirmationToUser({
+            userEmail: userDetails.email,
+            userName,
+            breederName,
+            listingTitle: listingTitle || undefined,
+            message,
+          }).catch((e) => console.error("Failed to send inquiry confirmation to user:", e));
+        }
+
+        // Send notification to breeder
+        if (breederOrg?.party?.email) {
+          await sendInquiryNotificationToBreeder({
+            breederEmail: breederOrg.party.email,
+            breederName,
+            inquirerName: userName,
+            inquirerEmail: userDetails?.email || "unknown",
+            listingTitle: listingTitle || undefined,
+            message,
+            threadId: thread.id,
+            tenantId: resolved.tenantId,
+          }).catch((e) => console.error("Failed to send inquiry notification to breeder:", e));
+        }
+      } catch (emailErr) {
+        console.error("Failed to send inquiry emails:", emailErr);
+      }
 
       return reply.send({ ok: true, threadId: thread.id });
     } catch (err: any) {
