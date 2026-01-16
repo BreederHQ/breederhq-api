@@ -248,7 +248,14 @@ import {
   addFoalingOutcome,
   getFoalingCalendar,
   createBreedingMilestones,
+  deleteBreedingMilestones,
+  recalculateMilestones,
 } from "../services/breeding-foaling-service.js";
+import {
+  getMareReproductiveHistory,
+  getMareDetailedFoalingHistory,
+  recalculateMareHistory,
+} from "../services/mare-reproductive-history-service.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -498,6 +505,7 @@ function includeFlags(qInclude: any) {
     organization: has("org") ? true : false,
     program: has("program") ? true : false,
     offspringGroup: has("offspringgroup") || has("offspring") ? true : false,
+    breedingMilestones: has("milestones") ? { orderBy: { scheduledDate: "asc" as const } } : false,
   };
 }
 
@@ -2598,6 +2606,109 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       reply.send(milestone);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // PATCH /breeding/milestones/:id/uncomplete
+  app.patch("/breeding/milestones/:id/uncomplete", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const milestone = await prisma.breedingMilestone.update({
+        where: { id: Number(id), tenantId },
+        data: {
+          isCompleted: false,
+          completedDate: null,
+        },
+      });
+
+      reply.send(milestone);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/mares/:mareId/reproductive-history
+  app.get("/breeding/mares/:mareId/reproductive-history", async (req, reply) => {
+    try {
+      const { mareId } = req.params as { mareId: string };
+      const tenantId = (req as any).tenantId;
+
+      const history = await getMareReproductiveHistory(Number(mareId), tenantId);
+
+      if (!history) {
+        reply.status(404).send({ error: "Reproductive history not found for this mare" });
+        return;
+      }
+
+      reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/mares/:mareId/foaling-history
+  app.get("/breeding/mares/:mareId/foaling-history", async (req, reply) => {
+    try {
+      const { mareId } = req.params as { mareId: string };
+      const tenantId = (req as any).tenantId;
+
+      const history = await getMareDetailedFoalingHistory(Number(mareId), tenantId);
+      reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/mares/:mareId/reproductive-history/recalculate
+  app.post("/breeding/mares/:mareId/reproductive-history/recalculate", async (req, reply) => {
+    try {
+      const { mareId } = req.params as { mareId: string };
+      const tenantId = (req as any).tenantId;
+
+      const history = await recalculateMareHistory(Number(mareId), tenantId);
+
+      if (!history) {
+        reply.status(404).send({ error: "No foaling history found for this mare" });
+        return;
+      }
+
+      reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // DELETE /breeding/plans/:id/milestones - Delete all milestones for a plan
+  app.delete("/breeding/plans/:id/milestones", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const result = await deleteBreedingMilestones(Number(id), tenantId);
+      reply.send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/milestones/recalculate - Recalculate milestone dates from breed date
+  app.post("/breeding/plans/:id/milestones/recalculate", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const milestones = await recalculateMilestones(Number(id), tenantId);
+      reply.send(milestones);
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

@@ -7,22 +7,35 @@
  */
 
 import prisma from "../prisma.js";
+import { updateMareReproductiveHistory } from "./mare-reproductive-history-service.js";
 
-// Date utility functions
-function startOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
+// Date utility functions - use UTC to avoid timezone shift issues
+function startOfDayUTC(date: Date): Date {
+  const result = new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    0, 0, 0, 0
+  ));
   return result;
 }
 
 function differenceInDays(dateA: Date, dateB: Date): number {
+  // Normalize both dates to start of day UTC to get accurate day difference
+  const a = startOfDayUTC(dateA);
+  const b = startOfDayUTC(dateB);
   const msPerDay = 1000 * 60 * 60 * 24;
-  return Math.floor((dateA.getTime() - dateB.getTime()) / msPerDay);
+  return Math.round((a.getTime() - b.getTime()) / msPerDay);
 }
 
 function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
+  // Use UTC methods to avoid timezone shifts
+  const result = new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate() + days,
+    12, 0, 0, 0  // Set to noon UTC to avoid edge cases
+  ));
   return result;
 }
 
@@ -48,14 +61,38 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
   });
 
   if (!plan) throw new Error("Breeding plan not found");
-  if (!plan.expectedBirthDate) throw new Error("No expected birth date set");
 
-  const today = startOfDay(new Date());
-  const expectedBirthStartOfDay = startOfDay(plan.expectedBirthDate);
+  const today = startOfDayUTC(new Date());
+
+  // Handle case when no expected birth date is set
+  if (!plan.expectedBirthDate) {
+    return {
+      breedingPlanId: plan.id,
+      dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name } : null,
+      sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name } : null,
+      expectedBirthDate: null,
+      actualBreedDate: plan.breedDateActual,
+      actualBirthDate: plan.birthDateActual,
+      daysUntilFoaling: null,
+      status: plan.birthDateActual ? "FOALED" : "PLANNING",
+      milestones: plan.breedingMilestones.map((m) => ({
+        id: m.id,
+        type: m.milestoneType,
+        scheduledDate: m.scheduledDate,
+        completedDate: m.completedDate,
+        isCompleted: m.isCompleted,
+        daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
+      })),
+      offspring: plan.offspringGroup?.Offspring || [],
+      outcome: plan.foalingOutcome || null,
+    };
+  }
+
+  const expectedBirthStartOfDay = startOfDayUTC(plan.expectedBirthDate);
   const daysUntilFoaling = differenceInDays(expectedBirthStartOfDay, today);
 
   // Calculate status
-  let status: "EXPECTING" | "MONITORING" | "IMMINENT" | "OVERDUE" | "FOALED";
+  let status: "PLANNING" | "EXPECTING" | "MONITORING" | "IMMINENT" | "OVERDUE" | "FOALED";
   if (plan.birthDateActual) {
     status = "FOALED";
   } else if (daysUntilFoaling < 0) {
@@ -73,6 +110,7 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
     dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name } : null,
     sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name } : null,
     expectedBirthDate: plan.expectedBirthDate,
+    actualBreedDate: plan.breedDateActual,
     actualBirthDate: plan.birthDateActual,
     daysUntilFoaling,
     status,
@@ -82,7 +120,7 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
       scheduledDate: m.scheduledDate,
       completedDate: m.completedDate,
       isCompleted: m.isCompleted,
-      daysUntil: differenceInDays(startOfDay(m.scheduledDate), today),
+      daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
     })),
     offspring: plan.offspringGroup?.Offspring || [],
     outcome: plan.foalingOutcome || null,
@@ -218,7 +256,7 @@ export async function addFoalingOutcome(params: {
 
   if (!plan) throw new Error("Breeding plan not found");
 
-  return await prisma.foalingOutcome.upsert({
+  const outcome = await prisma.foalingOutcome.upsert({
     where: { breedingPlanId },
     create: {
       tenantId,
@@ -227,6 +265,18 @@ export async function addFoalingOutcome(params: {
     },
     update: outcomeData,
   });
+
+  // Update mare reproductive history if this is a horse breeding with a dam
+  if (plan.species === "HORSE" && plan.damId) {
+    try {
+      await updateMareReproductiveHistory(plan.damId, tenantId, breedingPlanId);
+    } catch (err) {
+      console.error("[Foaling] Failed to update mare reproductive history:", err);
+      // Don't fail the outcome save if history update fails
+    }
+  }
+
+  return outcome;
 }
 
 /**
@@ -261,11 +311,11 @@ export async function getFoalingCalendar(params: {
     orderBy: { expectedBirthDate: "asc" },
   });
 
-  const today = startOfDay(new Date());
+  const today = startOfDayUTC(new Date());
 
   return plans.map((plan) => {
     const daysUntil = differenceInDays(
-      startOfDay(plan.expectedBirthDate!),
+      startOfDayUTC(plan.expectedBirthDate!),
       today
     );
 
@@ -282,7 +332,10 @@ export async function getFoalingCalendar(params: {
 }
 
 /**
- * Auto-generate milestones when breeding plan becomes pregnant
+ * Auto-generate milestones when breeding is confirmed (breedDateActual is set)
+ *
+ * Milestones are calculated from the actual breed date, not expected dates.
+ * Horse gestation is approximately 340 days.
  */
 export async function createBreedingMilestones(
   breedingPlanId: number,
@@ -292,8 +345,13 @@ export async function createBreedingMilestones(
     where: { id: breedingPlanId, tenantId },
   });
 
-  if (!plan || !plan.expectedBirthDate) {
-    throw new Error("Breeding plan not found or missing expected birth date");
+  if (!plan) {
+    throw new Error("Breeding plan not found");
+  }
+
+  // Milestones require actual breed date - they should not be created from speculative expected dates
+  if (!plan.breedDateActual) {
+    throw new Error("Cannot create milestones: the actual breeding date must be recorded first. Milestones are calculated from the confirmed breeding date.");
   }
 
   // Check if milestones already exist
@@ -305,38 +363,42 @@ export async function createBreedingMilestones(
     throw new Error("Milestones already exist for this breeding plan");
   }
 
+  // Horse gestation is ~340 days from breeding
+  const GESTATION_DAYS = 340;
+
+  // Milestones are defined as days AFTER breeding
   const milestones = [
     {
       milestoneType: "VET_PREGNANCY_CHECK_15D",
-      daysFromBirth: -325, // 15 days after breeding (340 - 15)
+      daysAfterBreeding: 15,
     },
     {
       milestoneType: "VET_ULTRASOUND_45D",
-      daysFromBirth: -295, // 45 days after breeding
+      daysAfterBreeding: 45,
     },
     {
       milestoneType: "VET_ULTRASOUND_90D",
-      daysFromBirth: -250, // 90 days after breeding
+      daysAfterBreeding: 90,
     },
     {
       milestoneType: "BEGIN_MONITORING_300D",
-      daysFromBirth: -40, // 300 days after breeding = 40 days before birth
+      daysAfterBreeding: 300,
     },
     {
       milestoneType: "PREPARE_FOALING_AREA_320D",
-      daysFromBirth: -20,
+      daysAfterBreeding: 320,
     },
     {
       milestoneType: "DAILY_CHECKS_330D",
-      daysFromBirth: -10,
+      daysAfterBreeding: 330,
     },
     {
       milestoneType: "DUE_DATE_340D",
-      daysFromBirth: 0,
+      daysAfterBreeding: GESTATION_DAYS,
     },
     {
       milestoneType: "OVERDUE_VET_CALL_350D",
-      daysFromBirth: 10,
+      daysAfterBreeding: 350,
     },
   ];
 
@@ -347,9 +409,83 @@ export async function createBreedingMilestones(
           tenantId,
           breedingPlanId,
           milestoneType: m.milestoneType as any,
-          scheduledDate: addDays(plan.expectedBirthDate!, m.daysFromBirth),
+          scheduledDate: addDays(plan.breedDateActual!, m.daysAfterBreeding),
         },
       })
     )
   );
+}
+
+/**
+ * Delete all milestones for a breeding plan (to allow regeneration)
+ */
+export async function deleteBreedingMilestones(
+  breedingPlanId: number,
+  tenantId: number
+) {
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: breedingPlanId, tenantId },
+  });
+
+  if (!plan) {
+    throw new Error("Breeding plan not found");
+  }
+
+  const deleted = await prisma.breedingMilestone.deleteMany({
+    where: { breedingPlanId, tenantId },
+  });
+
+  return { deletedCount: deleted.count };
+}
+
+/**
+ * Recalculate milestone dates based on actual breed date
+ * This updates existing milestones rather than deleting and recreating
+ */
+export async function recalculateMilestones(
+  breedingPlanId: number,
+  tenantId: number
+) {
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: breedingPlanId, tenantId },
+    include: {
+      breedingMilestones: true,
+    },
+  });
+
+  if (!plan) {
+    throw new Error("Breeding plan not found");
+  }
+
+  if (!plan.breedDateActual) {
+    throw new Error("Cannot recalculate milestones: no actual breeding date recorded");
+  }
+
+  // Milestone days after breeding (same as createBreedingMilestones)
+  const MILESTONE_DAYS: Record<string, number> = {
+    VET_PREGNANCY_CHECK_15D: 15,
+    VET_ULTRASOUND_45D: 45,
+    VET_ULTRASOUND_90D: 90,
+    BEGIN_MONITORING_300D: 300,
+    PREPARE_FOALING_AREA_320D: 320,
+    DAILY_CHECKS_330D: 330,
+    DUE_DATE_340D: 340,
+    OVERDUE_VET_CALL_350D: 350,
+  };
+
+  const updates = await Promise.all(
+    plan.breedingMilestones.map((m) => {
+      const daysAfterBreeding = MILESTONE_DAYS[m.milestoneType];
+      if (daysAfterBreeding === undefined) return m; // Unknown type, skip
+
+      const newScheduledDate = addDays(plan.breedDateActual!, daysAfterBreeding);
+
+      return prisma.breedingMilestone.update({
+        where: { id: m.id },
+        data: { scheduledDate: newScheduledDate },
+      });
+    })
+  );
+
+  return updates;
 }
