@@ -453,10 +453,16 @@ function groupDetail(
         sire: G.plan.sire ? { id: G.plan.sire.id, name: G.plan.sire.name } : null,
         programId: G.plan.programId ?? null,
         program: G.plan.program ? { id: G.plan.program.id, name: G.plan.program.name } : null,
+        expectedPlacementStart: G.plan.expectedPlacementStart?.toISOString?.() ?? G.plan.expectedPlacementStart ?? null,
+        expectedPlacementCompleted: G.plan.expectedPlacementCompleted?.toISOString?.() ?? G.plan.expectedPlacementCompleted ?? null,
         // Birth date fields for offspring group UI
         status: G.plan.status ?? null,
         birthDateActual: G.plan.birthDateActual?.toISOString?.()?.slice(0, 10) ?? null,
         breedDateActual: G.plan.breedDateActual?.toISOString?.()?.slice(0, 10) ?? null,
+        // Dates for computing expected timeline in offspring UI
+        lockedCycleStart: G.plan.lockedCycleStart?.toISOString?.() ?? G.plan.lockedCycleStart ?? null,
+        expectedBirthDate: G.plan.expectedBirthDate?.toISOString?.() ?? G.plan.expectedBirthDate ?? null,
+        expectedWeaned: G.plan.expectedWeaned?.toISOString?.() ?? G.plan.expectedWeaned ?? null,
       }
       : null,
 
@@ -1136,10 +1142,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sire: { select: { id: true, name: true } },
               programId: true,
               program: { select: { id: true, name: true } },
+              expectedPlacementStart: true,
+              expectedPlacementCompleted: true,
               // Birth date fields for offspring group UI
               status: true,
               birthDateActual: true,
               breedDateActual: true,
+              // Locked cycle date for computing expected dates
+              lockedCycleStart: true,
+              expectedBirthDate: true,
+              expectedWeaned: true,
             },
           },
         },
