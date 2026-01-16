@@ -16,6 +16,7 @@ import {
 import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
+import { activeOnly } from "../utils/query-helpers.js";
 
 /* ───────────────────────── errors ───────────────────────── */
 
@@ -121,21 +122,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Outstanding total (all non-void invoices with balance > 0)
       const outstandingResult = await prisma.invoice.aggregate({
-        where: {
+        where: activeOnly({
           ...partyWhere,
           status: { not: "void" },
           balanceCents: { gt: 0 },
-        },
+        }),
         _sum: { balanceCents: true },
       });
 
       // Invoiced MTD (total of invoices issued this month, not void)
       const invoicedMtdResult = await prisma.invoice.aggregate({
-        where: {
+        where: activeOnly({
           ...partyWhere,
           status: { not: "void" },
           issuedAt: { gte: startOfMonth, lte: endOfMonth },
-        },
+        }),
         _sum: { amountCents: true },
       });
 
@@ -152,7 +153,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
           select: { amountCents: true },
         });
-        collectedMtdCents = payments.reduce((sum, p) => sum + (p.amountCents || 0), 0);
+        collectedMtdCents = payments.reduce((sum, p) => sum + Number(p.amountCents || 0), 0);
       } else {
         const collectedMtdResult = await prisma.payment.aggregate({
           where: {
@@ -162,7 +163,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
           _sum: { amountCents: true },
         });
-        collectedMtdCents = collectedMtdResult._sum.amountCents || 0;
+        collectedMtdCents = Number(collectedMtdResult._sum.amountCents || 0);
       }
 
       // Expenses MTD - CLIENTs should not see expenses (staff-only data)
@@ -180,12 +181,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Deposits outstanding (invoices with category DEPOSIT or MIXED, not void, with balance > 0)
       const depositsResult = await prisma.invoice.aggregate({
-        where: {
+        where: activeOnly({
           ...partyWhere,
           category: { in: ["DEPOSIT", "MIXED"] },
           status: { not: "void" },
           balanceCents: { gt: 0 },
-        },
+        }),
         _sum: { balanceCents: true },
       });
       const depositsOutstandingCents = depositsResult._sum.balanceCents || 0;
@@ -433,9 +434,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const sortBy = allowedSortFields.includes(query.sortBy) ? query.sortBy : "createdAt";
       const sortDir = query.sortDir === "asc" ? "asc" : "desc";
 
+      const whereWithActive = activeOnly(where);
       const [data, total] = await Promise.all([
         prisma.invoice.findMany({
-          where,
+          where: whereWithActive,
           skip,
           take: limit,
           orderBy: { [sortBy]: sortDir },
@@ -449,7 +451,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           },
         }),
-        prisma.invoice.count({ where }),
+        prisma.invoice.count({ where: whereWithActive }),
       ]);
 
       // Map to DTO with clientPartyName resolved
@@ -499,7 +501,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const invoice = await prisma.invoice.findFirst({
-        where,
+        where: activeOnly(where),
       });
 
       if (!invoice) return reply.code(404).send({ error: "not_found" });
@@ -531,7 +533,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Get current invoice before update
       const beforeUpdate = await prisma.invoice.findFirst({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         include: {
           clientParty: { select: { email: true, name: true } },
           tenant: { select: { name: true } },
@@ -541,7 +543,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!beforeUpdate) return reply.code(404).send({ error: "not_found" });
 
       const invoice = await prisma.invoice.updateMany({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         data: updates,
       });
 
@@ -555,7 +557,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (clientEmail) {
           const emailContent = renderInvoiceEmail({
             invoiceNumber: beforeUpdate.invoiceNumber,
-            amountCents: beforeUpdate.amountCents,
+            amountCents: Number(beforeUpdate.amountCents),
             currency: beforeUpdate.currency,
             dueAt: beforeUpdate.dueAt,
             clientName: beforeUpdate.clientParty?.name || "Valued Customer",
@@ -594,7 +596,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!id) return reply.code(400).send({ error: "invalid_id" });
 
       const invoice = await prisma.invoice.updateMany({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         data: {
           status: "void",
           voidedAt: new Date(),
@@ -618,7 +620,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = parseIntOrNull((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "invalid_id" });
 
-      const invoice = await prisma.invoice.findFirst({ where: { id, tenantId } });
+      const invoice = await prisma.invoice.findFirst({ where: activeOnly({ id, tenantId }) });
       if (!invoice) return reply.code(404).send({ error: "invoice_not_found" });
 
       const b = req.body as any;
@@ -655,7 +657,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = parseIntOrNull((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "invalid_id" });
 
-      const invoice = await prisma.invoice.findFirst({ where: { id, tenantId } });
+      const invoice = await prisma.invoice.findFirst({ where: activeOnly({ id, tenantId }) });
       if (!invoice) return reply.code(404).send({ error: "invoice_not_found" });
 
       const attachments = await prisma.attachment.findMany({

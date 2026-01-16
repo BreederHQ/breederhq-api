@@ -180,8 +180,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const actorContext = (req as any).actorContext;
     const surface = (req as any).surface;
 
+    // Allow anonymous users - return empty profile
     if (!userId) {
-      return reply.code(401).send({ error: "unauthorized" });
+      return reply.send({
+        userId: null,
+        email: null,
+        name: null,
+        firstName: null,
+        lastName: null,
+        phone: null,
+        marketplaceEntitled: false,
+        actorContext: "PUBLIC",
+        surface,
+        entitlements: [],
+        entitlementSource: null,
+      });
     }
 
     // Fetch user info and entitlements
@@ -431,6 +444,354 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     return reply.send({ items, total });
   });
+
+  // --------------------------------------------------------------------------
+  // GET /animal-programs - Animal Programs index (search/browse) - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      location?: string;
+      templateType?: string;
+      tenantId?: string; // Optional: filter by breeder (numeric ID or slug)
+      limit?: string;
+      offset?: string;
+    };
+  }>("/animal-programs", async (req, reply) => {
+    // PUBLIC: No auth required - this is a public browsing endpoint
+
+    const { search, templateType, tenantId } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause - only published and listed programs
+    const where: any = {
+      published: true,
+      listed: true,
+    };
+
+    // Filter by tenant/breeder if specified (for breeder storefront context)
+    // Accepts either numeric ID or slug
+    if (tenantId) {
+      const parsedId = parseInt(tenantId, 10);
+      if (!isNaN(parsedId)) {
+        // Numeric ID
+        where.tenantId = parsedId;
+      } else {
+        // Slug - need to resolve to ID first
+        const tenant = await prisma.tenant.findUnique({
+          where: { slug: tenantId.trim().toLowerCase() },
+          select: { id: true },
+        });
+        if (tenant) {
+          where.tenantId = tenant.id;
+        } else {
+          // Invalid slug - return empty results
+          return reply.send({ items: [], total: 0, limit, offset });
+        }
+      }
+    }
+
+    // Search filter - case insensitive name or headline match
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm, mode: "insensitive" } },
+        { headline: { contains: searchTerm, mode: "insensitive" } },
+        { description: { contains: searchTerm, mode: "insensitive" } },
+      ];
+    }
+
+    // Template type filter (STUD_SERVICES, GUARDIAN, etc.)
+    if (templateType && templateType.trim()) {
+      where.templateType = templateType.toUpperCase();
+    }
+
+    // Species and breed filters not implemented yet (would require animal aggregation)
+    // Accept params without error but ignore for now
+
+    const [programs, total] = await Promise.all([
+      prisma.animalProgram.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          headline: true,
+          description: true,
+          coverImageUrl: true,
+          templateType: true,
+          defaultPriceModel: true,
+          defaultPriceCents: true,
+          defaultPriceMinCents: true,
+          defaultPriceMaxCents: true,
+          viewCount: true,
+          publishedAt: true,
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              organizations: {
+                take: 1,
+                select: {
+                  programSlug: true,
+                  city: true,
+                  state: true,
+                  country: true,
+                },
+              },
+            },
+          },
+          participants: {
+            where: { listed: true, status: "ACTIVE" },
+            select: {
+              id: true,
+              animal: {
+                select: {
+                  id: true,
+                  name: true,
+                  photoUrl: true,
+                  species: true,
+                  breed: true,
+                  sex: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.animalProgram.count({ where }),
+    ]);
+
+    // Transform to public DTOs
+    const items = programs.map((program) => ({
+      id: program.id,
+      slug: program.slug,
+      name: program.name,
+      headline: program.headline || null,
+      description: program.description || null,
+      coverImageUrl: program.coverImageUrl || null,
+      templateType: program.templateType,
+      priceModel: program.defaultPriceModel,
+      priceCents: program.defaultPriceCents || null,
+      priceMinCents: program.defaultPriceMinCents || null,
+      priceMaxCents: program.defaultPriceMaxCents || null,
+      viewCount: program.viewCount,
+      publishedAt: program.publishedAt?.toISOString() || null,
+      breeder: {
+        tenantId: program.tenant.id,
+        name: program.tenant.name,
+        slug: program.tenant.organizations[0]?.programSlug || null,
+        location: [
+          program.tenant.organizations[0]?.city,
+          program.tenant.organizations[0]?.state,
+          program.tenant.organizations[0]?.country,
+        ]
+          .filter(Boolean)
+          .join(", ") || null,
+      },
+      participants: program.participants.map((p) => ({
+        id: p.id,
+        animalId: p.animal.id,
+        name: p.animal.name,
+        photoUrl: p.animal.photoUrl,
+        species: p.animal.species,
+        breed: p.animal.breed,
+        sex: p.animal.sex,
+      })),
+      participantCount: program.participants.length,
+    }));
+
+    return reply.send({ items, total, limit, offset });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /animal-programs/:slug - Animal Program detail - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{ Params: { slug: string } }>(
+    "/animal-programs/:slug",
+    async (req, reply) => {
+      // PUBLIC: No auth required - this is a public browsing endpoint
+
+      const { slug } = req.params;
+
+      if (!isValidSlug(slug)) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const program = await prisma.animalProgram.findFirst({
+        where: {
+          slug,
+          published: true,
+          listed: true,
+        },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          headline: true,
+          description: true,
+          coverImageUrl: true,
+          templateType: true,
+          programContent: true,
+          dataDrawerConfig: true,
+          defaultPriceModel: true,
+          defaultPriceCents: true,
+          defaultPriceMinCents: true,
+          defaultPriceMaxCents: true,
+          acceptInquiries: true,
+          openWaitlist: true,
+          viewCount: true,
+          inquiryCount: true,
+          publishedAt: true,
+          createdAt: true,
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              organizations: {
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                  city: true,
+                  state: true,
+                  country: true,
+                  publicContactEmail: true,
+                  website: true,
+                },
+              },
+            },
+          },
+          participants: {
+            where: { listed: true, status: "ACTIVE" },
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              headlineOverride: true,
+              descriptionOverride: true,
+              priceModel: true,
+              priceCents: true,
+              priceMinCents: true,
+              priceMaxCents: true,
+              featured: true,
+              viewCount: true,
+              inquiryCount: true,
+              animal: {
+                select: {
+                  id: true,
+                  name: true,
+                  photoUrl: true,
+                  species: true,
+                  breed: true,
+                  sex: true,
+                  birthDate: true,
+                },
+              },
+            },
+          },
+          media: {
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              type: true,
+              url: true,
+              caption: true,
+              isPrimary: true,
+            },
+          },
+        },
+      });
+
+      if (!program) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Increment view count asynchronously (don't await)
+      prisma.animalProgram
+        .update({
+          where: { id: program.id },
+          data: {
+            viewCount: { increment: 1 },
+            lastViewedAt: new Date(),
+          },
+        })
+        .catch((err) => {
+          req.log.error({ err, programId: program.id }, "Failed to increment view count");
+        });
+
+      // Transform to public DTO
+      const dto = {
+        id: program.id,
+        slug: program.slug,
+        name: program.name,
+        headline: program.headline || null,
+        description: program.description || null,
+        coverImageUrl: program.coverImageUrl || null,
+        templateType: program.templateType,
+        programContent: program.programContent || {},
+        dataDrawerConfig: program.dataDrawerConfig || {},
+        priceModel: program.defaultPriceModel,
+        priceCents: program.defaultPriceCents || null,
+        priceMinCents: program.defaultPriceMinCents || null,
+        priceMaxCents: program.defaultPriceMaxCents || null,
+        acceptInquiries: program.acceptInquiries,
+        openWaitlist: program.openWaitlist,
+        viewCount: program.viewCount,
+        inquiryCount: program.inquiryCount,
+        publishedAt: program.publishedAt?.toISOString() || null,
+        createdAt: program.createdAt.toISOString(),
+        breeder: {
+          tenantId: program.tenant.id,
+          name: program.tenant.name,
+          slug: program.tenant.organizations[0]?.programSlug || null,
+          location: [
+            program.tenant.organizations[0]?.city,
+            program.tenant.organizations[0]?.state,
+            program.tenant.organizations[0]?.country,
+          ]
+            .filter(Boolean)
+            .join(", ") || null,
+          contactEmail: program.tenant.organizations[0]?.publicContactEmail || null,
+          website: program.tenant.organizations[0]?.website || null,
+        },
+        participants: program.participants.map((p) => ({
+          id: p.id,
+          animalId: p.animal.id,
+          name: p.animal.name,
+          photoUrl: p.animal.photoUrl,
+          species: p.animal.species,
+          breed: p.animal.breed,
+          sex: p.animal.sex,
+          birthDate: p.animal.birthDate?.toISOString() || null,
+          headlineOverride: p.headlineOverride || null,
+          descriptionOverride: p.descriptionOverride || null,
+          priceModel: p.priceModel || null,
+          priceCents: p.priceCents || null,
+          priceMinCents: p.priceMinCents || null,
+          priceMaxCents: p.priceMaxCents || null,
+          featured: p.featured,
+          viewCount: p.viewCount,
+          inquiryCount: p.inquiryCount,
+        })),
+        media: program.media.map((m) => ({
+          id: m.id,
+          type: m.type,
+          url: m.url,
+          caption: m.caption || null,
+          isPrimary: m.isPrimary,
+        })),
+        participantCount: program.participants.length,
+      };
+
+      return reply.send(dto);
+    }
+  );
 
   // --------------------------------------------------------------------------
   // GET /programs/:programSlug - Program profile - REQUIRES ENTITLEMENT
@@ -1127,6 +1488,491 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       total,
       page,
       limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /services - Browse all published service listings - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      type?: string;
+      search?: string;
+      city?: string;
+      state?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/services", async (req, reply) => {
+    // PUBLIC: No auth required - this is a public browsing endpoint
+
+    const { type, search, city, state } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    // Service listing types
+    const serviceTypes = [
+      "STUD_SERVICE",
+      "TRAINING",
+      "VETERINARY",
+      "PHOTOGRAPHY",
+      "GROOMING",
+      "TRANSPORT",
+      "BOARDING",
+      "PRODUCT",
+      "OTHER_SERVICE",
+    ];
+
+    // Build where clause - only ACTIVE service listings
+    const where: any = {
+      status: "ACTIVE",
+      listingType: { in: serviceTypes },
+    };
+
+    // Filter by specific type if provided
+    if (type && serviceTypes.includes(type.toUpperCase())) {
+      where.listingType = type.toUpperCase();
+    }
+
+    // Search in title and description
+    if (search && search.trim()) {
+      where.OR = [
+        { title: { contains: search.trim(), mode: "insensitive" } },
+        { description: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    // Location filters
+    if (city && city.trim()) {
+      where.city = { contains: city.trim(), mode: "insensitive" };
+    }
+    if (state && state.trim()) {
+      where.state = { contains: state.trim(), mode: "insensitive" };
+    }
+
+    const [items, total] = await prisma.$transaction([
+      prisma.marketplaceListing.findMany({
+        where,
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          slug: true,
+          listingType: true,
+          title: true,
+          description: true,
+          city: true,
+          state: true,
+          country: true,
+          priceCents: true,
+          priceType: true,
+          images: true,
+          publishedAt: true,
+          // Include provider info if service provider listing
+          serviceProvider: {
+            select: {
+              id: true,
+              businessName: true,
+            },
+          },
+          // Include tenant/breeder info if breeder listing
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.marketplaceListing.count({ where }),
+    ]);
+
+    return reply.send({
+      items: items.map((listing) => {
+        const breederOrg = listing.tenant?.organizations?.[0];
+        return {
+          id: listing.id,
+          slug: listing.slug,
+          listingType: listing.listingType,
+          title: listing.title,
+          description: listing.description,
+          city: listing.city,
+          state: listing.state,
+          country: listing.country,
+          priceCents: listing.priceCents,
+          priceType: listing.priceType,
+          images: listing.images,
+          publishedAt: listing.publishedAt,
+          provider: listing.serviceProvider ? {
+            type: "service_provider",
+            id: listing.serviceProvider.id,
+            name: listing.serviceProvider.businessName,
+          } : breederOrg ? {
+            type: "breeder",
+            slug: breederOrg.programSlug,
+            name: breederOrg.name,
+          } : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /offspring-groups - Browse all published offspring groups - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      species?: string;
+      breed?: string;
+      search?: string;
+      location?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/offspring-groups", async (req, reply) => {
+    // PUBLIC: No auth required - this is a public browsing endpoint
+
+    const { species, breed, search, location } = req.query;
+    const { page, limit, skip } = parsePaging(req.query);
+
+    // Build where clause - only published groups from published breeders
+    const where: any = {
+      published: true,
+      listingSlug: { not: null },
+      tenant: {
+        organizations: {
+          some: {
+            isPublicProgram: true,
+          },
+        },
+      },
+    };
+
+    if (species) {
+      where.species = species.toUpperCase();
+    }
+
+    // Search in listing title and description, or dam/sire breed
+    if (search && search.trim()) {
+      where.OR = [
+        { listingTitle: { contains: search.trim(), mode: "insensitive" } },
+        { listingDescription: { contains: search.trim(), mode: "insensitive" } },
+        { dam: { breed: { contains: search.trim(), mode: "insensitive" } } },
+        { sire: { breed: { contains: search.trim(), mode: "insensitive" } } },
+      ];
+    }
+
+    // Filter by breed (check dam or sire breed)
+    if (breed && breed.trim()) {
+      // Note: This will override the search OR clause if both are present
+      // In practice, users typically use one or the other
+      where.OR = [
+        { dam: { breed: { contains: breed.trim(), mode: "insensitive" } } },
+        { sire: { breed: { contains: breed.trim(), mode: "insensitive" } } },
+      ];
+    }
+
+    // Location filter - match breeder's city, state, or the location text
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.tenant = {
+        ...where.tenant,
+        organizations: {
+          some: {
+            isPublicProgram: true,
+            OR: [
+              { city: { contains: locationTerm, mode: "insensitive" } },
+              { state: { contains: locationTerm, mode: "insensitive" } },
+              { country: { contains: locationTerm, mode: "insensitive" } },
+            ],
+          },
+        },
+      };
+    }
+
+    const [groups, total] = await prisma.$transaction([
+      prisma.offspringGroup.findMany({
+        where,
+        orderBy: [{ actualBirthOn: "desc" }, { expectedBirthOn: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          listingSlug: true,
+          listingTitle: true,
+          listingDescription: true,
+          species: true,
+          expectedBirthOn: true,
+          actualBirthOn: true,
+          coverImageUrl: true,
+          marketplaceDefaultPriceCents: true,
+          dam: {
+            select: { name: true, photoUrl: true, breed: true },
+          },
+          sire: {
+            select: { name: true, photoUrl: true, breed: true },
+          },
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                  city: true,
+                  state: true,
+                },
+              },
+            },
+          },
+          Offspring: {
+            where: {
+              marketplaceListed: true,
+              lifeState: "ALIVE",
+              keeperIntent: "AVAILABLE",
+            },
+            select: {
+              id: true,
+              marketplacePriceCents: true,
+              priceCents: true,
+            },
+          },
+        },
+      }),
+      prisma.offspringGroup.count({ where }),
+    ]);
+
+    return reply.send({
+      items: groups.map((g) => {
+        const org = g.tenant?.organizations?.[0];
+        const availableCount = g.Offspring?.length || 0;
+
+        // Get price range from offspring
+        const prices = (g.Offspring || [])
+          .map((o) => o.marketplacePriceCents || o.priceCents || g.marketplaceDefaultPriceCents)
+          .filter((p): p is number => p !== null && p !== undefined);
+
+        const minPrice = prices.length > 0 ? Math.min(...prices) : g.marketplaceDefaultPriceCents;
+        const maxPrice = prices.length > 0 ? Math.max(...prices) : g.marketplaceDefaultPriceCents;
+
+        return {
+          id: g.id,
+          listingSlug: g.listingSlug,
+          title: g.listingTitle,
+          description: g.listingDescription,
+          species: g.species,
+          breed: g.dam?.breed || g.sire?.breed || null,
+          expectedBirthOn: g.expectedBirthOn,
+          actualBirthOn: g.actualBirthOn,
+          coverImageUrl: g.coverImageUrl,
+          availableCount,
+          priceMinCents: minPrice,
+          priceMaxCents: maxPrice,
+          dam: g.dam ? { name: g.dam.name, photoUrl: g.dam.photoUrl } : null,
+          sire: g.sire ? { name: g.sire.name, photoUrl: g.sire.photoUrl } : null,
+          breeder: org ? {
+            slug: org.programSlug,
+            name: org.name,
+            location: [org.city, org.state].filter(Boolean).join(", ") || null,
+          } : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /animals - Browse all published animal listings - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{
+    Querystring: {
+      search?: string;
+      intent?: string;
+      species?: string;
+      breed?: string;
+      location?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/animals", async (req, reply) => {
+    // PUBLIC: No auth required - this is a public browsing endpoint
+
+    const { search, intent, species, breed, location } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause - only LIVE status listings from public programs
+    const where: any = {
+      status: "LIVE",
+      urlSlug: { not: null },
+      tenant: {
+        organizations: {
+          some: {
+            isPublicProgram: true,
+          },
+        },
+      },
+    };
+
+    // Filter by intent type (STUD, REHOME, etc.)
+    if (intent) {
+      where.intent = intent.toUpperCase();
+    }
+
+    // Filter by species via the animal relation
+    if (species) {
+      where.animal = {
+        ...where.animal,
+        species: species.toUpperCase(),
+      };
+    }
+
+    // Search in title, headline, summary, or animal name/breed
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { title: { contains: searchTerm, mode: "insensitive" } },
+        { headline: { contains: searchTerm, mode: "insensitive" } },
+        { summary: { contains: searchTerm, mode: "insensitive" } },
+        { animal: { name: { contains: searchTerm, mode: "insensitive" } } },
+        { animal: { breed: { contains: searchTerm, mode: "insensitive" } } },
+      ];
+    }
+
+    // Filter by breed via the animal relation
+    if (breed && breed.trim()) {
+      where.animal = {
+        ...where.animal,
+        breed: { contains: breed.trim(), mode: "insensitive" },
+      };
+    }
+
+    // Location filter - match listing's location or breeder's location
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { locationCity: { contains: locationTerm, mode: "insensitive" } },
+            { locationRegion: { contains: locationTerm, mode: "insensitive" } },
+            { locationCountry: { contains: locationTerm, mode: "insensitive" } },
+            {
+              tenant: {
+                organizations: {
+                  some: {
+                    isPublicProgram: true,
+                    OR: [
+                      { city: { contains: locationTerm, mode: "insensitive" } },
+                      { state: { contains: locationTerm, mode: "insensitive" } },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ];
+    }
+
+    const [listings, total] = await prisma.$transaction([
+      prisma.animalPublicListing.findMany({
+        where,
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          urlSlug: true,
+          intent: true,
+          headline: true,
+          title: true,
+          summary: true,
+          priceCents: true,
+          priceMinCents: true,
+          priceMaxCents: true,
+          priceText: true,
+          priceModel: true,
+          locationCity: true,
+          locationRegion: true,
+          publishedAt: true,
+          animal: {
+            select: {
+              id: true,
+              name: true,
+              sex: true,
+              species: true,
+              breed: true,
+              photoUrl: true,
+              birthDate: true,
+            },
+          },
+          tenant: {
+            select: {
+              organizations: {
+                where: { isPublicProgram: true },
+                take: 1,
+                select: {
+                  programSlug: true,
+                  name: true,
+                  city: true,
+                  state: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.animalPublicListing.count({ where }),
+    ]);
+
+    // Transform to response format
+    const items = listings.map((listing) => {
+      const org = listing.tenant?.organizations?.[0] || null;
+      return {
+        id: listing.id,
+        urlSlug: listing.urlSlug,
+        intent: listing.intent,
+        headline: listing.headline,
+        title: listing.title,
+        summary: listing.summary,
+        priceCents: listing.priceCents,
+        priceMinCents: listing.priceMinCents,
+        priceMaxCents: listing.priceMaxCents,
+        priceText: listing.priceText,
+        priceModel: listing.priceModel,
+        locationCity: listing.locationCity,
+        locationRegion: listing.locationRegion,
+        publishedAt: listing.publishedAt?.toISOString() || null,
+        animalName: listing.animal?.name || null,
+        animalSex: listing.animal?.sex || null,
+        animalSpecies: listing.animal?.species || null,
+        animalBreed: listing.animal?.breed || null,
+        animalPhotoUrl: listing.animal?.photoUrl || null,
+        animalBirthDate: listing.animal?.birthDate?.toISOString() || null,
+        programSlug: org?.programSlug || null,
+        programName: org?.name || null,
+        breederLocation: org ? [org.city, org.state].filter(Boolean).join(", ") || null : null,
+      };
+    });
+
+    return reply.send({
+      items,
+      total,
+      limit,
+      offset,
     });
   });
 

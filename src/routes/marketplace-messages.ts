@@ -2,10 +2,12 @@
 // Marketplace messaging endpoints for buyer-to-breeder communication
 //
 // Endpoints:
-//   GET  /messages/threads           - List threads for current marketplace user
-//   GET  /messages/threads/:id       - Get thread details
-//   POST /messages/threads           - Create new thread with breeder
-//   POST /messages/threads/:id       - Send message in thread
+//   GET  /messages/counts               - Get unread counts for notification badge
+//   GET  /messages/threads              - List threads for current marketplace user
+//   GET  /messages/threads/:id          - Get thread details (auto-marks as read)
+//   POST /messages/threads/:id/mark-read - Explicitly mark thread as read
+//   POST /messages/threads              - Create new thread with breeder
+//   POST /messages/threads/:id/messages - Send message in thread
 //
 // Security:
 // - Requires valid marketplace session (PUBLIC context with MARKETPLACE_ACCESS)
@@ -117,6 +119,93 @@ async function getUserPartyIds(userId: string): Promise<number[]> {
 }
 
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // --------------------------------------------------------------------------
+  // GET /messages/counts - Get unread message counts for notification badge
+  // --------------------------------------------------------------------------
+  app.get(
+    "/counts",
+    {
+      config: {
+        rateLimit: { max: 100, timeWindow: "1 minute" },
+      },
+    },
+    async (req, reply) => {
+      const userId = requireMarketplaceAuth(req);
+
+      try {
+        // Get all party IDs for this user across all tenants
+        const userPartyIds = await getUserPartyIds(userId);
+
+        if (userPartyIds.length === 0) {
+          return reply.send({
+            ok: true,
+            counts: {
+              unreadThreads: 0,
+              totalUnreadMessages: 0,
+            },
+          });
+        }
+
+        // Get threads where user is a participant
+        const participantRecords = await prisma.messageParticipant.findMany({
+          where: { partyId: { in: userPartyIds } },
+          select: { threadId: true, lastReadAt: true, partyId: true },
+        });
+
+        const threadIds = participantRecords.map((p) => p.threadId);
+        if (threadIds.length === 0) {
+          return reply.send({
+            ok: true,
+            counts: {
+              unreadThreads: 0,
+              totalUnreadMessages: 0,
+            },
+          });
+        }
+
+        // Calculate unread counts for all threads
+        let unreadThreadsCount = 0;
+        let totalUnreadMessages = 0;
+
+        for (const participant of participantRecords) {
+          const lastReadAt = participant.lastReadAt;
+          const userPartyId = participant.partyId;
+
+          const unreadCount = lastReadAt
+            ? await prisma.message.count({
+                where: {
+                  threadId: participant.threadId,
+                  createdAt: { gt: lastReadAt },
+                  senderPartyId: { not: userPartyId },
+                },
+              })
+            : await prisma.message.count({
+                where: {
+                  threadId: participant.threadId,
+                  senderPartyId: { not: userPartyId },
+                },
+              });
+
+          if (unreadCount > 0) {
+            unreadThreadsCount++;
+            totalUnreadMessages += unreadCount;
+          }
+        }
+
+        return reply.send({
+          ok: true,
+          counts: {
+            unreadThreads: unreadThreadsCount,
+            totalUnreadMessages,
+          },
+        });
+      } catch (err: any) {
+        if (err.statusCode) throw err;
+        return reply.code(500).send({ error: "internal_error", detail: err.message });
+      }
+    }
+  );
+
   // --------------------------------------------------------------------------
   // GET /messages/threads - List threads for current marketplace user
   // --------------------------------------------------------------------------
@@ -243,6 +332,57 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
+
+  // --------------------------------------------------------------------------
+  // POST /messages/threads/:id/mark-read - Mark thread as read
+  // --------------------------------------------------------------------------
+  app.post(
+    "/threads/:id/mark-read",
+    {
+      config: {
+        rateLimit: { max: 60, timeWindow: "1 minute" },
+      },
+    },
+    async (req, reply) => {
+      const userId = requireMarketplaceAuth(req);
+      const threadId = Number((req.params as any).id);
+
+      // Validate thread ID is a valid number
+      if (!Number.isFinite(threadId) || threadId <= 0) {
+        return reply.code(400).send({ error: "invalid_thread_id" });
+      }
+
+      try {
+        const userPartyIds = await getUserPartyIds(userId);
+
+        const thread = await prisma.messageThread.findFirst({
+          where: { id: threadId },
+          select: { id: true, participants: { select: { partyId: true } } },
+        });
+
+        if (!thread) {
+          return reply.code(404).send({ error: "not_found" });
+        }
+
+        // Verify user is a participant
+        const userPartyInThread = thread.participants.find((p) => userPartyIds.includes(p.partyId));
+        if (!userPartyInThread) {
+          return reply.code(403).send({ error: "forbidden" });
+        }
+
+        // Update lastReadAt for this user's party
+        await prisma.messageParticipant.updateMany({
+          where: { threadId, partyId: userPartyInThread.partyId },
+          data: { lastReadAt: new Date() },
+        });
+
+        return reply.send({ ok: true, message: "Thread marked as read" });
+      } catch (err: any) {
+        if (err.statusCode) throw err;
+        return reply.code(500).send({ error: "internal_error", detail: err.message });
+      }
+    }
+  );
 
   // --------------------------------------------------------------------------
   // POST /messages/threads - Create new thread with a breeder

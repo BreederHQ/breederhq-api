@@ -9,6 +9,7 @@ import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
 import type { IdentifierType } from "@prisma/client";
+import { activeOnly } from "../utils/query-helpers.js";
 
 const AVATAR_SIZE = 256;
 
@@ -158,7 +159,7 @@ async function assertContactInTenant(contactId: number, tenantId: number) {
 }
 async function assertAnimalInTenant(animalId: number, tenantId: number) {
   const a = await prisma.animal.findFirst({
-    where: { id: animalId, tenantId },
+    where: activeOnly({ id: animalId, tenantId }),
     select: { id: true, tenantId: true },
   });
   if (!a) throw Object.assign(new Error("not_found"), { statusCode: 404 });
@@ -302,9 +303,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
     }
 
+    const whereWithActive = activeOnly(where);
     const [rawItems, total] = await prisma.$transaction([
       prisma.animal.findMany({
-        where,
+        where: whereWithActive,
         orderBy,
         skip,
         take,
@@ -344,7 +346,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         },
       }),
-      prisma.animal.count({ where }),
+      prisma.animal.count({ where: whereWithActive }),
     ]);
 
     const items = rawItems.map((rec) => ({
@@ -393,7 +395,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Return updated animal with computed cycleStartDates
     const rec = await prisma.animal.findFirst({
-      where: { id, tenantId },
+      where: activeOnly({ id, tenantId }),
       select: {
         id: true,
         tenantId: true,
@@ -442,7 +444,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const wantRepro = includeParts.includes("repro") || includeParts.includes("last_heat");
 
     const rec = await prisma.animal.findFirst({
-      where: { id, tenantId },
+      where: activeOnly({ id, tenantId }),
       select: {
         id: true,
         tenantId: true,
@@ -577,7 +579,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.damId != null) {
       const damId = typeof b.damId === "number" ? b.damId : parseInt(String(b.damId), 10);
       if (!Number.isNaN(damId)) {
-        const dam = await prisma.animal.findFirst({ where: { id: damId, tenantId } });
+        const dam = await prisma.animal.findFirst({ where: activeOnly({ id: damId, tenantId }) });
         if (!dam) return reply.code(400).send({ error: "damId_not_found" });
         if (dam.sex !== "FEMALE") return reply.code(400).send({ error: "dam_must_be_female" });
         data.damId = damId;
@@ -586,7 +588,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.sireId != null) {
       const sireId = typeof b.sireId === "number" ? b.sireId : parseInt(String(b.sireId), 10);
       if (!Number.isNaN(sireId)) {
-        const sire = await prisma.animal.findFirst({ where: { id: sireId, tenantId } });
+        const sire = await prisma.animal.findFirst({ where: activeOnly({ id: sireId, tenantId }) });
         if (!sire) return reply.code(400).send({ error: "sireId_not_found" });
         if (sire.sex !== "MALE") return reply.code(400).send({ error: "sire_must_be_male" });
         data.sireId = sireId;
@@ -667,7 +669,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const id = parseIntStrict((req.params as { id: string }).id);
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
-    const existing = await prisma.animal.findFirst({ where: { id, tenantId }, select: { id: true } });
+    const existing = await prisma.animal.findFirst({ where: activeOnly({ id, tenantId }), select: { id: true } });
     if (!existing) return reply.code(404).send({ error: "not_found" });
 
     const b = (req.body || {}) as Partial<{
@@ -907,6 +909,188 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
 
     reply.send({ ok: true });
+  });
+
+  // GET /animals/:id/can-delete
+  // Check if an animal can be safely deleted and return any blockers
+  // Deletion is ONLY allowed if the animal has essentially no real data
+  app.get("/animals/:id/can-delete", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    try {
+      // Verify animal exists in tenant
+      const animal = await prisma.animal.findFirst({
+        where: { id, tenantId },
+        select: { id: true },
+      });
+      if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+      const blockers: Record<string, boolean> = {};
+      const details: Record<string, number> = {};
+
+      // Check for offspring (this animal is a parent via Animal table damId/sireId)
+      const offspringCount = await prisma.animal.count({
+        where: {
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (offspringCount > 0) {
+        blockers.hasOffspring = true;
+        blockers.isParentInPedigree = true;
+        details.offspringCount = offspringCount;
+      }
+
+      // Check for offspring via Offspring table
+      const offspringTableCount = await prisma.offspring.count({
+        where: {
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (offspringTableCount > 0) {
+        blockers.hasOffspring = true;
+        details.offspringCount = (details.offspringCount || 0) + offspringTableCount;
+      }
+
+      // Check for cross-tenant identity links
+      const identityLinkCount = await prisma.animalIdentityLink.count({
+        where: { animalId: id },
+      });
+      if (identityLinkCount > 0) {
+        blockers.hasCrossTenantLinks = true;
+        details.crossTenantLinkCount = identityLinkCount;
+      }
+
+      // Check for breeding plans
+      const breedingPlanCount = await prisma.breedingPlan.count({
+        where: {
+          tenantId,
+          OR: [{ damId: id }, { sireId: id }],
+        },
+      });
+      if (breedingPlanCount > 0) {
+        blockers.hasBreedingPlans = true;
+        details.breedingPlanCount = breedingPlanCount;
+      }
+
+      // Check for waitlist entries (allocations and preferences)
+      const waitlistCount = await prisma.waitlistEntry.count({
+        where: {
+          tenantId,
+          OR: [{ animalId: id }, { sirePrefId: id }, { damPrefId: id }],
+        },
+      });
+      if (waitlistCount > 0) {
+        blockers.hasWaitlistEntries = true;
+        details.waitlistEntryCount = waitlistCount;
+      }
+
+      // Check for invoices linked to this animal
+      const invoiceCount = await prisma.invoice.count({
+        where: { tenantId, animalId: id },
+      });
+      if (invoiceCount > 0) {
+        blockers.hasInvoices = true;
+        details.invoiceCount = invoiceCount;
+      }
+
+      // Check for payments linked to this animal (via invoices)
+      const paymentCount = await prisma.payment.count({
+        where: {
+          tenantId,
+          invoice: { animalId: id },
+        },
+      });
+      if (paymentCount > 0) {
+        blockers.hasPayments = true;
+        details.paymentCount = paymentCount;
+      }
+
+      // Check for documents
+      const documentCount = await prisma.document.count({
+        where: { tenantId, animalId: id },
+      });
+      if (documentCount > 0) {
+        blockers.hasDocuments = true;
+        details.documentCount = documentCount;
+      }
+
+      // Check for health records (vaccination records)
+      const healthRecordCount = await prisma.vaccinationRecord.count({
+        where: { tenantId, animalId: id },
+      });
+      if (healthRecordCount > 0) {
+        blockers.hasHealthRecords = true;
+        details.healthRecordCount = healthRecordCount;
+      }
+
+      // Check for registry identifiers
+      const registrationCount = await prisma.animalRegistryIdentifier.count({
+        where: { animalId: id },
+      });
+      if (registrationCount > 0) {
+        blockers.hasRegistrations = true;
+        details.registrationCount = registrationCount;
+      }
+
+      // Check for titles
+      const titleCount = await prisma.animalTitle.count({
+        where: { tenantId, animalId: id },
+      });
+      if (titleCount > 0) {
+        blockers.hasTitles = true;
+        details.titleCount = titleCount;
+      }
+
+      // Check for competition entries
+      const competitionCount = await prisma.competitionEntry.count({
+        where: { tenantId, animalId: id },
+      });
+      if (competitionCount > 0) {
+        blockers.hasCompetitions = true;
+        details.competitionCount = competitionCount;
+      }
+
+      // Check for ownership history
+      const ownershipTransferCount = await prisma.animalOwnershipChange.count({
+        where: { tenantId, animalId: id },
+      });
+      if (ownershipTransferCount > 0) {
+        blockers.hasOwnershipHistory = true;
+        details.ownershipTransferCount = ownershipTransferCount;
+      }
+
+      // Check for public listing
+      const publicListingCount = await prisma.animalPublicListing.count({
+        where: { animalId: id },
+      });
+      if (publicListingCount > 0) {
+        blockers.hasPublicListing = true;
+      }
+
+      // Check for media (trait value documents, animal shares, etc)
+      const mediaCount = await prisma.animalTraitValueDocument.count({
+        where: { tenantId, animalId: id },
+      });
+      if (mediaCount > 0) {
+        blockers.hasMedia = true;
+        details.mediaCount = mediaCount;
+      }
+
+      const canDelete = Object.keys(blockers).length === 0;
+
+      return reply.send({
+        canDelete,
+        blockers,
+        details: Object.keys(details).length > 0 ? details : undefined,
+      });
+    } catch (err) {
+      console.error("[animals/can-delete] Error checking delete eligibility:", err);
+      return reply.code(500).send({ error: "internal_error", message: String(err) });
+    }
   });
 
   /* TAGS */
@@ -1404,7 +1588,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const animalId = parseIntStrict((req.params as { id: string }).id);
     if (!animalId) return reply.code(400).send({ error: "id_invalid" });
 
-    const a = await prisma.animal.findFirst({ where: { id: animalId, tenantId }, select: { id: true, species: true } });
+    const a = await prisma.animal.findFirst({ where: activeOnly({ id: animalId, tenantId }), select: { id: true, species: true } });
     if (!a) return reply.code(404).send({ error: "not_found" });
 
     const b = (req.body || {}) as {

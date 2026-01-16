@@ -11,6 +11,7 @@ import {
 } from "../services/marketplace-block.js";
 import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
+import { activeOnly } from "../utils/query-helpers.js";
 
 /**
  * Contact schema alignment
@@ -289,10 +290,11 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ];
       }
 
+      const whereWithActive = activeOnly(where);
       const [total, rows] = await Promise.all([
-        prisma.contact.count({ where }),
+        prisma.contact.count({ where: whereWithActive }),
         prisma.contact.findMany({
-          where,
+          where: whereWithActive,
           skip,
           take: limit,
           orderBy,
@@ -345,7 +347,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
       const row = await prisma.contact.findFirst({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         select: {
           id: true,
           tenantId: true,
@@ -572,7 +574,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Ensure contact exists in this tenant
     const existing = await app.prisma.contact.findFirst({
-      where: { id: contactId, tenantId },
+      where: activeOnly({ id: contactId, tenantId }),
       select: {
         id: true,
         partyId: true,
@@ -873,7 +875,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
       const contact = await prisma.contact.findFirst({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         select: { id: true, tenantId: true, partyId: true },
       });
       if (!contact) return reply.code(404).send({ error: "not_found" });
@@ -923,7 +925,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
       const contact = await prisma.contact.findFirst({
-        where: { id, tenantId },
+        where: activeOnly({ id, tenantId }),
         select: { id: true, tenantId: true, partyId: true },
       });
       if (!contact) return reply.code(404).send({ error: "not_found" });
@@ -975,7 +977,7 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "bad_id" });
 
     const c = await prisma.contact.findFirst({
-      where: { id, tenantId },
+      where: activeOnly({ id, tenantId }),
       select: { organizationId: true },
     });
     if (!c) return reply.code(404).send({ error: "not_found" });

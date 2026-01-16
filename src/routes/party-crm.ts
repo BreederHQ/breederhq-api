@@ -645,6 +645,255 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "get_activity_failed" });
     }
   });
+
+  // ─────────────────────────────────────────────────────────
+  // PROFILE CHANGE REQUESTS (Breeder-facing)
+  // ─────────────────────────────────────────────────────────
+
+  // GET /parties/:partyId/change-requests
+  // Get pending change requests for a contact
+  app.get("/parties/:partyId/change-requests", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const partyId = toNum((req.params as any).partyId);
+      if (!partyId) return reply.code(400).send({ error: "invalid_party_id" });
+
+      // Get contact for this party
+      const contact = await prisma.contact.findFirst({
+        where: { tenantId, partyId },
+        select: { id: true },
+      });
+
+      if (!contact) {
+        return reply.code(404).send({ error: "contact_not_found" });
+      }
+
+      const requests = await prisma.contactChangeRequest.findMany({
+        where: {
+          tenantId,
+          contactId: contact.id,
+        },
+        orderBy: { requestedAt: "desc" },
+      });
+
+      return reply.send({
+        requests: requests.map((r) => ({
+          id: r.id,
+          fieldName: r.fieldName,
+          oldValue: r.oldValue,
+          newValue: r.newValue,
+          status: r.status,
+          requestedAt: r.requestedAt.toISOString(),
+          resolvedAt: r.resolvedAt?.toISOString() || null,
+          resolvedBy: r.resolvedBy,
+          resolutionNote: r.resolutionNote,
+        })),
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get change requests");
+      return reply.code(500).send({ error: "get_requests_failed" });
+    }
+  });
+
+  // POST /parties/:partyId/change-requests/:requestId/approve
+  // Approve a name change request
+  app.post("/parties/:partyId/change-requests/:requestId/approve", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const partyId = toNum((req.params as any).partyId);
+      if (!partyId) return reply.code(400).send({ error: "invalid_party_id" });
+
+      const requestId = toNum((req.params as any).requestId);
+      if (!requestId) return reply.code(400).send({ error: "invalid_request_id" });
+
+      const userId = (req as any).userId || null;
+
+      // Get contact for this party
+      const contact = await prisma.contact.findFirst({
+        where: { tenantId, partyId },
+        select: { id: true },
+      });
+
+      if (!contact) {
+        return reply.code(404).send({ error: "contact_not_found" });
+      }
+
+      // Get the change request
+      const changeRequest = await prisma.contactChangeRequest.findFirst({
+        where: {
+          id: requestId,
+          tenantId,
+          contactId: contact.id,
+          status: "PENDING",
+        },
+      });
+
+      if (!changeRequest) {
+        return reply.code(404).send({ error: "request_not_found" });
+      }
+
+      // Map field name to Contact model field
+      const fieldMap: Record<string, string> = {
+        firstName: "first_name",
+        lastName: "last_name",
+        nickname: "nickname",
+      };
+
+      const dbField = fieldMap[changeRequest.fieldName];
+      if (!dbField) {
+        return reply.code(400).send({ error: "invalid_field" });
+      }
+
+      // Update contact and mark request as approved
+      await prisma.$transaction([
+        prisma.contact.update({
+          where: { id: contact.id },
+          data: { [dbField]: changeRequest.newValue },
+        }),
+        prisma.contactChangeRequest.update({
+          where: { id: requestId },
+          data: {
+            status: "APPROVED",
+            resolvedAt: new Date(),
+            resolvedBy: userId,
+          },
+        }),
+      ]);
+
+      // Log activity
+      await logActivity(
+        tenantId,
+        partyId,
+        "NAME_CHANGE_APPROVED",
+        `Name change approved: ${changeRequest.fieldName}`,
+        `Changed ${changeRequest.fieldName} from "${changeRequest.oldValue || "(empty)"}" to "${changeRequest.newValue}"`,
+        { fieldName: changeRequest.fieldName, oldValue: changeRequest.oldValue, newValue: changeRequest.newValue, requestId }
+      );
+
+      return reply.send({ ok: true });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to approve change request");
+      return reply.code(500).send({ error: "approve_failed" });
+    }
+  });
+
+  // POST /parties/:partyId/change-requests/:requestId/reject
+  // Reject a name change request
+  app.post<{ Params: { partyId: string; requestId: string }; Body: { reason?: string } }>(
+    "/parties/:partyId/change-requests/:requestId/reject",
+    async (req, reply) => {
+      try {
+        const tenantId = Number((req as any).tenantId);
+        if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+        const partyId = toNum(req.params.partyId);
+        if (!partyId) return reply.code(400).send({ error: "invalid_party_id" });
+
+        const requestId = toNum(req.params.requestId);
+        if (!requestId) return reply.code(400).send({ error: "invalid_request_id" });
+
+        const { reason } = req.body || {};
+        const userId = (req as any).userId || null;
+
+        // Get contact for this party
+        const contact = await prisma.contact.findFirst({
+          where: { tenantId, partyId },
+          select: { id: true },
+        });
+
+        if (!contact) {
+          return reply.code(404).send({ error: "contact_not_found" });
+        }
+
+        // Get the change request
+        const changeRequest = await prisma.contactChangeRequest.findFirst({
+          where: {
+            id: requestId,
+            tenantId,
+            contactId: contact.id,
+            status: "PENDING",
+          },
+        });
+
+        if (!changeRequest) {
+          return reply.code(404).send({ error: "request_not_found" });
+        }
+
+        // Mark request as rejected
+        await prisma.contactChangeRequest.update({
+          where: { id: requestId },
+          data: {
+            status: "REJECTED",
+            resolvedAt: new Date(),
+            resolvedBy: userId,
+            resolutionNote: reason || null,
+          },
+        });
+
+        // Log activity
+        await logActivity(
+          tenantId,
+          partyId,
+          "NAME_CHANGE_REJECTED",
+          `Name change rejected: ${changeRequest.fieldName}`,
+          reason || `Rejected request to change ${changeRequest.fieldName}`,
+          { fieldName: changeRequest.fieldName, requestId, reason }
+        );
+
+        return reply.send({ ok: true });
+      } catch (err) {
+        req.log?.error?.({ err }, "Failed to reject change request");
+        return reply.code(500).send({ error: "reject_failed" });
+      }
+    }
+  );
+
+  // GET /dashboard/pending-change-requests
+  // Get count and list of pending change requests across all contacts (for notification badge)
+  app.get("/dashboard/pending-change-requests", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const pendingRequests = await prisma.contactChangeRequest.findMany({
+        where: {
+          tenantId,
+          status: "PENDING",
+        },
+        include: {
+          contact: {
+            select: {
+              id: true,
+              display_name: true,
+              partyId: true,
+            },
+          },
+        },
+        orderBy: { requestedAt: "desc" },
+      });
+
+      return reply.send({
+        count: pendingRequests.length,
+        requests: pendingRequests.map((r) => ({
+          id: r.id,
+          contactId: r.contact.id,
+          contactName: r.contact.display_name,
+          partyId: r.contact.partyId,
+          fieldName: r.fieldName,
+          oldValue: r.oldValue,
+          newValue: r.newValue,
+          requestedAt: r.requestedAt.toISOString(),
+        })),
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get pending change requests");
+      return reply.code(500).send({ error: "get_pending_failed" });
+    }
+  });
 };
 
 export default partyCrmRoutes;

@@ -1,11 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DATABASE_DIRECT_URL")
+  schemas   = ["public", "marketplace"]
 }
 
 /**
@@ -17,15 +19,15 @@ datasource db {
 enum PartyType {
   CONTACT
   ORGANIZATION
+  @@schema("public")
 }
-
 enum MembershipRole {
   OWNER
   ADMIN
   MEMBER
   VIEWER
+  @@schema("public")
 }
-
 enum AnimalStatus {
   ACTIVE
   BREEDING
@@ -33,8 +35,8 @@ enum AnimalStatus {
   RETIRED
   DECEASED
   PROSPECT
+  @@schema("public")
 }
-
 enum Species {
   DOG
   CAT
@@ -42,28 +44,28 @@ enum Species {
   GOAT
   RABBIT
   SHEEP
+  @@schema("public")
 }
-
 enum TenantOperationType {
   HOBBY
   COMMERCIAL
   PERFORMANCE
+  @@schema("public")
 }
-
 enum HorseIntendedUse {
   BREEDING
   SHOW
   RACING
+  @@schema("public")
 }
-
 enum HorseValuationSource {
   PRIVATE_SALE
   AUCTION
   APPRAISAL
   INSURANCE
   OTHER
+  @@schema("public")
 }
-
 enum OwnershipChangeKind {
   SALE
   SYNDICATION
@@ -71,15 +73,15 @@ enum OwnershipChangeKind {
   LEASE
   DEATH
   OTHER
+  @@schema("public")
 }
-
 enum PaymentIntentStatus {
   PLANNED
   EXTERNAL
   COMPLETED
   CANCELED
+  @@schema("public")
 }
-
 enum PaymentIntentPurpose {
   DEPOSIT
   PURCHASE
@@ -87,13 +89,13 @@ enum PaymentIntentPurpose {
   BOARDING
   TRAINING
   OTHER
+  @@schema("public")
 }
-
 enum Sex {
   FEMALE
   MALE
+  @@schema("public")
 }
-
 enum TagModule {
   CONTACT
   ORGANIZATION
@@ -104,59 +106,59 @@ enum TagModule {
   MESSAGE_THREAD
   DRAFT
   BREEDING_PLAN
+  @@schema("public")
 }
-
 enum OwnerPartyType {
   Organization
   Contact
+  @@schema("public")
 }
-
 enum TenantRole {
   OWNER
   ADMIN
   MEMBER
   BILLING
   VIEWER
+  @@schema("public")
 }
-
 // New enums for unified tenant membership model (STAFF vs CLIENT)
 enum TenantMembershipRole {
   STAFF // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
   CLIENT // Portal client (created via invite acceptance)
+  @@schema("public")
 }
-
 enum TenantMembershipStatus {
   INVITED // Invite sent, not yet accepted
   ACTIVE // Full access
   SUSPENDED // Access revoked
+  @@schema("public")
 }
-
 enum ShareScope {
   VIEW
   BREED_PLAN
+  @@schema("public")
 }
-
 enum ShareStatus {
   PENDING
   ACCEPTED
   REVOKED
   EXPIRED
+  @@schema("public")
 }
-
 enum VerificationPurpose {
   VERIFY_EMAIL
   RESET_PASSWORD
   INVITE
   OTHER
+  @@schema("public")
 }
-
 enum PortalAccessStatus {
   NO_ACCESS
   INVITED
   ACTIVE
   SUSPENDED
+  @@schema("public")
 }
-
 // User entitlement enums for marketplace and other feature access
 enum EntitlementKey {
   // Surface access
@@ -188,8 +190,8 @@ enum EntitlementKey {
   MARKETPLACE_LISTING_QUOTA
   STORAGE_QUOTA_GB
   SMS_QUOTA
+  @@schema("public")
 }
-
 enum FeatureModule {
   GENETICS
   MARKETPLACE
@@ -203,26 +205,26 @@ enum FeatureModule {
   PORTAL
   REPORTING
   SETTINGS
+  @@schema("public")
 }
-
 enum EntitlementStatus {
   ACTIVE // Entitlement granted and active
   REVOKED // Entitlement revoked
+  @@schema("public")
 }
-
 // Subscription & Billing enums
 enum ProductType {
   SUBSCRIPTION // Recurring subscription plan
   ADD_ON // Add-on to subscription
   ONE_TIME // One-time purchase
+  @@schema("public")
 }
-
 enum BillingInterval {
   MONTHLY
   YEARLY
   QUARTERLY
+  @@schema("public")
 }
-
 enum SubscriptionStatus {
   TRIAL // In trial period
   ACTIVE // Paid and active
@@ -231,8 +233,8 @@ enum SubscriptionStatus {
   EXPIRED // Trial or subscription expired
   INCOMPLETE // Stripe payment pending
   PAUSED // Paused (future feature)
+  @@schema("public")
 }
-
 enum UsageMetricKey {
   ANIMAL_COUNT
   CONTACT_COUNT
@@ -242,8 +244,8 @@ enum UsageMetricKey {
   STORAGE_BYTES
   SMS_SENT
   API_CALLS
+  @@schema("public")
 }
-
 enum AnimalCategory {
   RABBIT
   SMALL_RODENT // Hamster, guinea pig, etc.
@@ -255,8 +257,8 @@ enum AnimalCategory {
   LIVESTOCK // Cattle, sheep, goats
   EXOTIC // Reptiles, etc.
   OTHER
+  @@schema("public")
 }
-
 enum ListingType {
   BREEDING_PROGRAM // Breeder's main program profile
   STUD_SERVICE // Stud/breeding services
@@ -268,8 +270,8 @@ enum ListingType {
   BOARDING // Boarding/kennel
   PRODUCT // Equipment, supplies
   OTHER_SERVICE
+  @@schema("public")
 }
-
 enum ListingStatus {
   DRAFT
   PENDING_REVIEW
@@ -277,33 +279,33 @@ enum ListingStatus {
   PAUSED
   EXPIRED
   REMOVED
+  @@schema("public")
 }
-
 enum ListingTier {
   FREE // Basic listing
   PREMIUM // Featured, more photos
   BUSINESS // Top placement, analytics
+  @@schema("public")
 }
-
 enum CommChannel {
   EMAIL
   SMS
   PHONE
   MAIL
   WHATSAPP
+  @@schema("public")
 }
-
 enum PreferenceLevel {
   ALLOW
   NOT_PREFERRED
   NEVER
+  @@schema("public")
 }
-
 enum ComplianceStatus {
   SUBSCRIBED
   UNSUBSCRIBED
+  @@schema("public")
 }
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Trait system enums
@@ -317,36 +319,36 @@ enum TraitValueType {
   DATE
   TEXT
   JSON
+  @@schema("public")
 }
-
 enum TraitSource {
   SELF_REPORTED
   VET
   LAB
   REGISTRY
+  @@schema("public")
 }
-
 enum TraitStatus {
   NOT_PROVIDED
   PROVIDED
   PENDING
   PASS
   FAIL
+  @@schema("public")
 }
-
 enum DocVisibility {
   PRIVATE
   BUYERS
   PUBLIC
+  @@schema("public")
 }
-
 enum DocStatus {
   PLACEHOLDER
   UPLOADING
   READY
   FAILED
+  @@schema("public")
 }
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
@@ -365,23 +367,23 @@ enum BreedingPlanStatus {
   PLACEMENT
   COMPLETE
   CANCELED
+  @@schema("public")
 }
-
 enum BreedingMethod {
   NATURAL
   AI_TCI
   AI_SI
   AI_FROZEN
+  @@schema("public")
 }
-
 enum PregnancyCheckMethod {
   PALPATION
   ULTRASOUND
   RELAXIN_TEST
   XRAY
   OTHER
+  @@schema("public")
 }
-
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -392,8 +394,8 @@ enum WaitlistStatus {
   COMPLETED
   CANCELED
   REJECTED
+  @@schema("public")
 }
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Cross-tenant animal linking enums
@@ -403,16 +405,16 @@ enum WaitlistStatus {
 enum ParentType {
   SIRE
   DAM
+  @@schema("public")
 }
-
 enum LinkRequestStatus {
   PENDING
   APPROVED
   DENIED
   EXPIRED
   REVOKED
+  @@schema("public")
 }
-
 enum LinkMethod {
   GAID
   EXCHANGE_CODE
@@ -420,14 +422,14 @@ enum LinkMethod {
   MICROCHIP_MATCH
   BREEDER_REQUEST
   OFFSPRING_DERIVED
+  @@schema("public")
 }
-
 enum RevokedBy {
   CHILD_OWNER
   PARENT_OWNER
   SYSTEM
+  @@schema("public")
 }
-
 /**
  * Offspring Group linking state
  */
@@ -435,8 +437,8 @@ enum OffspringLinkState {
   linked
   orphan
   pending
+  @@schema("public")
 }
-
 enum OffspringLinkReason {
   legacy_import
   rescue
@@ -446,8 +448,8 @@ enum OffspringLinkReason {
   placeholder
   historical
   other
+  @@schema("public")
 }
-
 /**
  * Offspring lifecycle
  */
@@ -457,13 +459,13 @@ enum OffspringStatus {
   WEANED
   PLACED
   DECEASED
+  @@schema("public")
 }
-
 enum OffspringLifeState {
   ALIVE
   DECEASED
+  @@schema("public")
 }
-
 enum OffspringPlacementState {
   UNASSIGNED
   OPTION_HOLD
@@ -471,15 +473,15 @@ enum OffspringPlacementState {
   PLACED
   RETURNED
   TRANSFERRED
+  @@schema("public")
 }
-
 enum OffspringKeeperIntent {
   AVAILABLE
   UNDER_EVALUATION
   WITHHELD
   KEEP
+  @@schema("public")
 }
-
 enum OffspringFinancialState {
   NONE
   DEPOSIT_PENDING
@@ -487,15 +489,15 @@ enum OffspringFinancialState {
   PAID_IN_FULL
   REFUNDED
   CHARGEBACK
+  @@schema("public")
 }
-
 enum OffspringPaperworkState {
   NONE
   SENT
   SIGNED
   COMPLETE
+  @@schema("public")
 }
-
 /**
  * Animal marketplace listing enums
  */
@@ -508,12 +510,59 @@ enum AnimalListingIntent {
   WORKING
   STARTED
   CO_OWNERSHIP
+  @@schema("public")
 }
-
 enum AnimalListingStatus {
   DRAFT
   LIVE
   PAUSED
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Notification System Enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+enum NotificationType {
+  vaccination_expiring_7d
+  vaccination_expiring_3d
+  vaccination_expiring_1d
+  vaccination_overdue
+  breeding_heat_cycle_expected
+  breeding_hormone_testing_due
+  breeding_window_approaching
+  pregnancy_check_14d
+  pregnancy_check_30d
+  pregnancy_check_overdue
+  foaling_270d
+  foaling_300d
+  foaling_320d
+  foaling_330d
+  foaling_30d
+  foaling_14d
+  foaling_7d
+  foaling_approaching
+  foaling_overdue
+  marketplace_inquiry
+  marketplace_waitlist_signup
+  system_announcement
+  @@schema("public")
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  @@schema("public")
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  DISMISSED
+  @@schema("public")
 }
 
 /**
@@ -621,11 +670,22 @@ model User {
   // Communications Hub
   drafts Draft[] @relation("DraftCreatedBy")
 
+  // Marketplace saved listings
+  savedListings MarketplaceSavedListing[] @relation("UserSavedListings")
+
+  // Breeding program inquiry assignments
+  assignedInquiries BreedingProgramInquiry[]
+
+  // Notifications
+  notifications             Notification[]
+  notificationPreferences   UserNotificationPreferences?
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
   @@index([whatsappE164])
   @@index([country])
+  @@schema("public")
 }
 
 /**
@@ -645,6 +705,7 @@ model TosAcceptance {
 
   @@index([userId])
   @@index([version])
+  @@schema("public")
 }
 
 /**
@@ -664,6 +725,7 @@ model UserEntitlement {
   @@unique([userId, key])
   @@index([userId])
   @@index([key, status])
+  @@schema("public")
 }
 
 model Session {
@@ -676,6 +738,7 @@ model Session {
   updatedAt    DateTime @updatedAt
 
   @@index([userId])
+  @@schema("public")
 }
 
 model VerificationToken {
@@ -692,6 +755,7 @@ model VerificationToken {
 
   @@id([identifier, tokenHash])
   @@index([identifier, purpose])
+  @@schema("public")
 }
 
 model Passkey {
@@ -705,6 +769,7 @@ model Passkey {
   updatedAt    DateTime @updatedAt
 
   @@index([userId])
+  @@schema("public")
 }
 
 model RecoveryCode {
@@ -716,6 +781,7 @@ model RecoveryCode {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@schema("public")
 }
 
 model Invitation {
@@ -731,6 +797,7 @@ model Invitation {
 
   @@index([email])
   @@index([organizationId])
+  @@schema("public")
 }
 
 model Invite {
@@ -746,6 +813,7 @@ model Invite {
 
   @@index([email])
   @@index([token])
+  @@schema("public")
 }
 
 /**
@@ -762,6 +830,12 @@ model Tenant {
 
   operationType TenantOperationType @default(HOBBY)
 
+  // Marketplace payment settings
+  marketplacePaymentMode            String  @default("manual")
+  stripeConnectAccountId            String? @unique
+  stripeConnectOnboardingComplete   Boolean @default(false)
+  stripeConnectPayoutsEnabled       Boolean @default(false)
+
   memberships    TenantMembership[]
   organizations  Organization[]
   contacts       Contact[]
@@ -771,26 +845,30 @@ model Tenant {
   sharesSent     AnimalShare[]         @relation("ShareFromTenant")
   sharesReceived AnimalShare[]         @relation("ShareToTenant")
   publicListings AnimalPublicListing[]
+  directListings DirectAnimalListing[] @relation("TenantDirectListings")
+  animalPrograms AnimalProgram[]       @relation("TenantAnimalPrograms")
   User           User[]
   tags           Tag[]
   CustomBreed    CustomBreed[]
 
   // breeding additions
-  breedingPlans      BreedingPlan[]
-  reproductiveCycles ReproductiveCycle[]
-  planSharesSent     BreedingPlanShare[] @relation("PlanShareFromTenant")
-  planSharesReceived BreedingPlanShare[] @relation("PlanShareToTenant")
-  planEvents         BreedingPlanEvent[]
-  testResults        TestResult[]
-  breedingAttempts   BreedingAttempt[]
-  pregnancyChecks    PregnancyCheck[]
-  litters            Litter[]
-  offspringGroups    OffspringGroup[]
-  offspring          Offspring[]
-  waitlist           WaitlistEntry[]
-  attachments        Attachment[]
-  planParties        PlanParty[]
-  planCodeCounters   PlanCodeCounter[]
+  breedingPlans       BreedingPlan[]
+  reproductiveCycles  ReproductiveCycle[]
+  planSharesSent      BreedingPlanShare[]   @relation("PlanShareFromTenant")
+  planSharesReceived  BreedingPlanShare[]   @relation("PlanShareToTenant")
+  planEvents          BreedingPlanEvent[]
+  testResults         TestResult[]
+  breedingAttempts    BreedingAttempt[]
+  pregnancyChecks     PregnancyCheck[]
+  litters             Litter[]
+  offspringGroups     OffspringGroup[]
+  offspring           Offspring[]
+  waitlist            WaitlistEntry[]
+  attachments         Attachment[]
+  planParties         PlanParty[]
+  planCodeCounters    PlanCodeCounter[]
+  foalingOutcomes     FoalingOutcome[]
+  breedingMilestones  BreedingMilestone[]
 
   availabilityPrefs Json?
 
@@ -799,8 +877,10 @@ model Tenant {
   programBreeds TenantProgramBreed[]
 
   // Breeding Programs (marketplace)
-  breedingPrograms     BreedingProgram[]
-  breedingProgramMedia BreedingProgramMedia[]
+  breedingPrograms         BreedingProgram[]
+  breedingProgramMedia     BreedingProgramMedia[]
+  breedingProgramInquiries BreedingProgramInquiry[]
+  breedingProgramRules     BreedingProgramRule[]
 
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -883,10 +963,10 @@ model Tenant {
   lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
 
   // Cross-tenant animal linking
-  linkRequestsFrom          AnimalLinkRequest[]     @relation("LinkRequestFrom")
-  linkRequestsTo            AnimalLinkRequest[]     @relation("LinkRequestTo")
-  crossTenantLinksAsChild   CrossTenantAnimalLink[] @relation("LinkChildTenant")
-  crossTenantLinksAsParent  CrossTenantAnimalLink[] @relation("LinkParentTenant")
+  linkRequestsFrom         AnimalLinkRequest[]     @relation("LinkRequestFrom")
+  linkRequestsTo           AnimalLinkRequest[]     @relation("LinkRequestTo")
+  crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkChildTenant")
+  crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkParentTenant")
 
   // Title & Competition tracking
   titleDefinitions   TitleDefinition[]
@@ -901,14 +981,23 @@ model Tenant {
   partyActivity   PartyActivity[]
   unlinkedEmails  UnlinkedEmail[]
 
+  // Client profile change requests
+  contactChangeRequests ContactChangeRequest[]
+  emailChangeRequests   EmailChangeRequest[]
+
   // Communications Hub
   drafts Draft[]
+
+  // Notifications
+  notifications             Notification[]
+  notificationPreferences   UserNotificationPreferences[]
 
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
 
   @@index([name])
   @@index([quickResponderBadge])
+  @@schema("public")
 }
 
 model TenantMembership {
@@ -930,6 +1019,101 @@ model TenantMembership {
   @@index([tenantId])
   @@index([partyId])
   @@index([membershipRole, membershipStatus])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Notification System
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Notification - Stores all user notifications (in-app, email, SMS)
+ * MVP: Focus on vaccination and breeding timeline alerts
+ */
+model Notification {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId          String?  // Target user (null = all tenant users)
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Notification content
+  type            NotificationType
+  title           String
+  message         String   @db.Text
+  linkUrl         String?  // Deep link to relevant entity (e.g., /animals/123)
+
+  // Priority & status
+  priority        NotificationPriority @default(MEDIUM)
+  status          NotificationStatus   @default(UNREAD)
+
+  // Status timestamps
+  readAt          DateTime?
+  dismissedAt     DateTime?
+
+  // Idempotency: prevent duplicate notifications
+  // Format: "{type}:{entityType}:{entityId}:{date}"
+  // Example: "vaccination_expiring_1d:VaccinationRecord:456:2026-01-14"
+  idempotencyKey  String?  @unique
+
+  // Metadata for context (e.g., animal name, dates, etc.)
+  metadata        Json?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, userId, status])
+  @@index([tenantId, status, createdAt])
+  @@index([type])
+  @@index([createdAt])
+  @@schema("public")
+}
+
+/**
+ * UserNotificationPreferences - User settings for notification delivery
+ * MVP: Focus on toggles for alert types (email channel for Phase 2)
+ */
+model UserNotificationPreferences {
+  id                    Int      @id @default(autoincrement())
+  tenantId              Int
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ─── Vaccination Alerts ────────────────────────────────────────
+  vaccinationExpiring   Boolean  @default(true)   // 7d, 3d, 1d warnings
+  vaccinationOverdue    Boolean  @default(true)   // Overdue alerts
+
+  // ─── Breeding Timeline Alerts ──────────────────────────────────
+  breedingTimeline      Boolean  @default(true)   // Heat cycle, hormone testing
+  pregnancyCheck        Boolean  @default(true)   // Pregnancy check reminders
+  foalingApproaching    Boolean  @default(true)   // Foaling countdown (30d, 14d, 7d)
+  heatCycleExpected     Boolean  @default(true)   // Heat cycle prediction
+
+  // ─── Marketplace Alerts (Future) ───────────────────────────────
+  marketplaceInquiry    Boolean  @default(true)   // New inquiries
+  waitlistSignup        Boolean  @default(true)   // Waitlist signups
+
+  // ─── Channel Preferences (Phase 2) ─────────────────────────────
+  emailEnabled          Boolean  @default(true)   // Email delivery
+  smsEnabled            Boolean  @default(false)  // SMS delivery (Phase 2)
+  pushEnabled           Boolean  @default(true)   // Push notifications (Phase 2)
+
+  // ─── Phone Verification (Phase 2 - SMS) ───────────────────────
+  phoneNumber           String?
+  phoneVerified         Boolean  @default(false)
+  phoneVerifiedAt       DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([userId])
+  @@schema("public")
 }
 
 model BillingAccount {
@@ -964,6 +1148,7 @@ model BillingAccount {
   updatedAt DateTime @updatedAt
 
   @@index([stripeCustomerId])
+  @@schema("public")
 }
 
 /**
@@ -1006,6 +1191,7 @@ model Product {
 
   @@index([type, active])
   @@index([active, sortOrder])
+  @@schema("public")
 }
 
 model ProductEntitlement {
@@ -1022,6 +1208,7 @@ model ProductEntitlement {
   @@unique([productId, entitlementKey])
   @@index([productId])
   @@index([entitlementKey])
+  @@schema("public")
 }
 
 model Subscription {
@@ -1067,6 +1254,7 @@ model Subscription {
   @@index([stripeSubscriptionId])
   @@index([stripeCustomerId])
   @@index([currentPeriodEnd])
+  @@schema("public")
 }
 
 model SubscriptionAddOn {
@@ -1088,6 +1276,7 @@ model SubscriptionAddOn {
 
   @@index([subscriptionId])
   @@index([productId])
+  @@schema("public")
 }
 
 model UsageRecord {
@@ -1106,6 +1295,7 @@ model UsageRecord {
 
   @@index([tenantId, metricKey, recordedAt])
   @@index([recordedAt])
+  @@schema("public")
 }
 
 model UsageSnapshot {
@@ -1120,6 +1310,7 @@ model UsageSnapshot {
 
   @@id([tenantId, metricKey])
   @@index([tenantId])
+  @@schema("public")
 }
 
 /**
@@ -1161,6 +1352,7 @@ model Feature {
   @@index([module])
   @@index([entitlementKey])
   @@index([isActive])
+  @@schema("public")
 }
 
 /**
@@ -1189,6 +1381,7 @@ model FeatureCheck {
   @@index([tenantId, timestamp])
   @@index([timestamp])
   @@index([granted, timestamp])
+  @@schema("public")
 }
 
 /**
@@ -1210,6 +1403,7 @@ model FeatureCheckDaily {
   @@index([date])
   @@index([featureKey])
   @@index([tenantId])
+  @@schema("public")
 }
 
 model PaymentMethod {
@@ -1237,6 +1431,7 @@ model PaymentMethod {
 
   @@index([tenantId])
   @@index([tenantId, isDefault])
+  @@schema("public")
 }
 
 model ReferralCode {
@@ -1266,6 +1461,7 @@ model ReferralCode {
   @@index([referrerTenantId])
   @@index([code])
   @@index([active, expiresAt])
+  @@schema("public")
 }
 
 model Referral {
@@ -1297,6 +1493,7 @@ model Referral {
   @@index([referrerTenantId])
   @@index([refereeTenantId])
   @@index([codeId])
+  @@schema("public")
 }
 
 model MarketplaceListing {
@@ -1361,6 +1558,7 @@ model MarketplaceListing {
   @@index([status, publishedAt])
   @@index([listingType, category])
   @@index([tier])
+  @@schema("public")
 }
 
 model ServiceProviderProfile {
@@ -1395,6 +1593,7 @@ model ServiceProviderProfile {
 
   @@index([userId])
   @@index([plan])
+  @@schema("public")
 }
 
 model SystemConfig {
@@ -1406,6 +1605,7 @@ model SystemConfig {
   updatedAt   DateTime @updatedAt
 
   @@index([key])
+  @@schema("public")
 }
 
 model Organization {
@@ -1452,6 +1652,7 @@ model Organization {
   @@index([name])
   @@index([tenantId])
   @@index([isPublicProgram])
+  @@schema("public")
 }
 
 model Membership {
@@ -1463,6 +1664,7 @@ model Membership {
 
   @@id([userId, organizationId])
   @@index([organizationId])
+  @@schema("public")
 }
 
 model Party {
@@ -1523,11 +1725,11 @@ model Party {
   marketplaceBlocksLifted  MarketplaceUserBlock[] @relation("MarketplaceBlockLifter")
 
   // CRM relations
-  notes       PartyNote[]      @relation("PartyNotes")
-  events      PartyEvent[]     @relation("PartyEvents")
-  milestones  PartyMilestone[] @relation("PartyMilestones")
-  emails      PartyEmail[]     @relation("PartyEmails")
-  activity    PartyActivity[]  @relation("PartyActivity")
+  notes      PartyNote[]      @relation("PartyNotes")
+  events     PartyEvent[]     @relation("PartyEvents")
+  milestones PartyMilestone[] @relation("PartyMilestones")
+  emails     PartyEmail[]     @relation("PartyEmails")
+  activity   PartyActivity[]  @relation("PartyActivity")
 
   // Communications Hub relations
   emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
@@ -1539,6 +1741,7 @@ model Party {
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
+  @@schema("public")
 }
 
 model PartyCommPreference {
@@ -1556,6 +1759,7 @@ model PartyCommPreference {
   @@unique([partyId, channel])
   @@index([partyId])
   @@index([channel, compliance])
+  @@schema("public")
 }
 
 model PartyCommPreferenceEvent {
@@ -1574,6 +1778,7 @@ model PartyCommPreferenceEvent {
 
   @@index([partyId, createdAt])
   @@index([channel, createdAt])
+  @@schema("public")
 }
 
 model Contact {
@@ -1614,7 +1819,21 @@ model Contact {
   externalProvider String?
   externalId       String?
 
+  // Marketplace integration
+  marketplaceUserId            Int?
+  marketplaceFirstContactedAt  DateTime?
+  marketplaceTotalTransactions Int    @default(0)
+  marketplaceTotalSpentCents   BigInt @default(0)
+
+  // Soft delete
+  deletedAt DateTime?
+
+  // Profile change requests from client portal
+  changeRequests      ContactChangeRequest[]
+  emailChangeRequests EmailChangeRequest[]
+
   @@unique([tenantId, email])
+  @@unique([marketplaceUserId, tenantId])
   @@index([organizationId])
   @@index([tenantId])
   @@index([display_name])
@@ -1623,6 +1842,9 @@ model Contact {
   @@index([first_name])
   @@index([nickname])
   @@index([tenantId, partyId])
+  @@index([deletedAt])
+  @@index([tenantId, deletedAt])
+  @@schema("public")
 }
 
 /**
@@ -1637,21 +1859,21 @@ enum PartyEventKind {
   CALL
   VISIT
   CUSTOM
+  @@schema("public")
 }
-
 enum PartyEventStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
+  @@schema("public")
 }
-
 enum PartyMilestoneKind {
   BIRTHDAY
   CUSTOMER_ANNIVERSARY
   PLACEMENT_ANNIVERSARY
   CUSTOM
+  @@schema("public")
 }
-
 enum PartyActivityKind {
   NOTE_ADDED
   NOTE_UPDATED
@@ -1666,115 +1888,127 @@ enum PartyActivityKind {
   PAYMENT_RECEIVED
   MESSAGE_SENT
   MESSAGE_RECEIVED
+  // Client profile changes
+  PROFILE_UPDATED_BY_CLIENT // Client self-updated address/phone
+  NAME_CHANGE_REQUESTED // Client requested name change
+  NAME_CHANGE_APPROVED // Breeder approved name change
+  NAME_CHANGE_REJECTED // Breeder rejected name change
+  EMAIL_CHANGE_REQUESTED // Client requested email change
+  EMAIL_CHANGE_VERIFIED // Client verified new email
+  EMAIL_CHANGE_EXPIRED // Email change request expired
+  @@schema("public")
 }
-
 model PartyNote {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party    @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyNotes", fields: [partyId], references: [id], onDelete: Cascade)
 
   content   String   @db.Text
   pinned    Boolean  @default(false)
-  createdBy Int?     // userId who created
+  createdBy Int? // userId who created
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, partyId])
   @@index([partyId, pinned])
+  @@schema("public")
 }
 
 model PartyEvent {
-  id        Int              @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party            @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyEvents", fields: [partyId], references: [id], onDelete: Cascade)
 
-  kind      PartyEventKind   @default(FOLLOW_UP)
-  title     String
-  notes     String?          @db.Text
+  kind        PartyEventKind   @default(FOLLOW_UP)
+  title       String
+  notes       String?          @db.Text
   scheduledAt DateTime
-  status    PartyEventStatus @default(SCHEDULED)
+  status      PartyEventStatus @default(SCHEDULED)
   completedAt DateTime?
-  createdBy Int?             // userId who created
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  createdBy   Int? // userId who created
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   @@index([tenantId, partyId])
   @@index([partyId, scheduledAt])
   @@index([tenantId, status, scheduledAt])
+  @@schema("public")
 }
 
 model PartyMilestone {
-  id        Int                 @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party               @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyMilestones", fields: [partyId], references: [id], onDelete: Cascade)
 
-  kind      PartyMilestoneKind  @default(CUSTOM)
-  label     String              // e.g., "Birthday", "1st Placement Anniversary"
-  date      DateTime            @db.Date  // The actual date (month/day matters for annual)
-  annual    Boolean             @default(true) // If true, recurs yearly
-  notes     String?             @db.Text
-  createdBy Int?                // userId who created
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
+  kind      PartyMilestoneKind @default(CUSTOM)
+  label     String // e.g., "Birthday", "1st Placement Anniversary"
+  date      DateTime           @db.Date // The actual date (month/day matters for annual)
+  annual    Boolean            @default(true) // If true, recurs yearly
+  notes     String?            @db.Text
+  createdBy Int? // userId who created
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
   @@index([tenantId, partyId])
   @@index([partyId, date])
   @@index([tenantId, annual])
+  @@schema("public")
 }
 
 model PartyEmail {
-  id        Int      @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party    @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyEmails", fields: [partyId], references: [id], onDelete: Cascade)
 
   subject   String
   body      String   @db.Text
-  toEmail   String   // recipient email at time of send
+  toEmail   String // recipient email at time of send
   sentAt    DateTime @default(now())
   status    String   @default("sent") // sent, delivered, bounced, failed
-  isRead    Boolean  @default(false)  // whether user has acknowledged this sent email
-  messageId String?  // external mail provider message ID
-  createdBy Int?     // userId who sent
+  isRead    Boolean  @default(false) // whether user has acknowledged this sent email
+  messageId String? // external mail provider message ID
+  createdBy Int? // userId who sent
   createdAt DateTime @default(now())
 
   @@index([tenantId, partyId])
   @@index([partyId, sentAt])
+  @@schema("public")
 }
 
 /// UnlinkedEmail - Emails sent to addresses not associated with a contact/org
 /// Used by MessagingHub to store emails that can later be linked when contacts are created
 model UnlinkedEmail {
-  id            Int       @id @default(autoincrement())
-  tenantId      Int
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Recipient info (no party association initially)
-  toAddresses   String[]  // array of email addresses
-  fromAddress   String    // sender email
+  toAddresses String[] // array of email addresses
+  fromAddress String // sender email
 
   // Email content
-  subject       String
-  bodyText      String?   @db.Text
-  bodyHtml      String?   @db.Text
-  bodyPreview   String?   // First ~200 chars for list display
+  subject     String
+  bodyText    String? @db.Text
+  bodyHtml    String? @db.Text
+  bodyPreview String? // First ~200 chars for list display
 
   // Status tracking
-  status        String    @default("sent") // queued, sent, delivered, bounced, failed
-  direction     String    @default("outbound") // outbound, inbound
-  isRead        Boolean   @default(false) // whether user has acknowledged this sent email
+  status    String  @default("sent") // queued, sent, delivered, bounced, failed
+  direction String  @default("outbound") // outbound, inbound
+  isRead    Boolean @default(false) // whether user has acknowledged this sent email
 
   // Timestamps
-  sentAt        DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   // For later reconciliation - link to party when contact is created
   linkedPartyId Int?
@@ -1782,35 +2016,37 @@ model UnlinkedEmail {
   linkedAt      DateTime?
 
   // Metadata
-  messageId     String?   // external mail provider message ID
-  templateKey   String?   // template used if any
-  category      String    @default("transactional") // transactional, marketing
-  metadata      Json?     // flexible store for additional data
-  createdBy     Int?      // userId who sent
+  messageId   String? // external mail provider message ID
+  templateKey String? // template used if any
+  category    String  @default("transactional") // transactional, marketing
+  metadata    Json? // flexible store for additional data
+  createdBy   Int? // userId who sent
 
   @@index([tenantId])
   @@index([tenantId, linkedPartyId])
   @@index([tenantId, createdAt])
   @@index([toAddresses])
+  @@schema("public")
 }
 
 model PartyActivity {
-  id        Int               @id @default(autoincrement())
-  tenantId  Int
-  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  partyId   Int
-  party     Party             @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId  Int
+  party    Party  @relation("PartyActivity", fields: [partyId], references: [id], onDelete: Cascade)
 
   kind      PartyActivityKind
   title     String
   detail    String?           @db.Text
-  metadata  Json?             // flexible store for entity IDs, etc.
-  actorId   Int?              // userId who performed action
+  metadata  Json? // flexible store for entity IDs, etc.
+  actorId   Int? // userId who performed action
   createdAt DateTime          @default(now())
 
   @@index([tenantId, partyId])
   @@index([partyId, createdAt])
   @@index([tenantId, kind])
+  @@schema("public")
 }
 
 /**
@@ -1930,24 +2166,29 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments   TagAssignment[]
-  owners           AnimalOwner[]
-  registryIds      AnimalRegistryIdentifier[]
-  shares           AnimalShare[]              @relation("ShareAnimal")
-  publicListing    AnimalPublicListing?
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
-  archived         Boolean                    @default(false)
-  TestResult       TestResult[]
-  Attachment       Attachment[]
-  Offspring        Offspring[]                @relation("PromotedAnimal")
-  PaymentIntent    PaymentIntent[]
-  AnimalTraitValue    AnimalTraitValue[]
-  VaccinationRecord   VaccinationRecord[]
-  Document            Document[]
-  Invoice             Invoice[]
-  Expense          Expense[]
-  genetics         AnimalGenetics?
+  tagAssignments    TagAssignment[]
+  owners            AnimalOwner[]
+  registryIds         AnimalRegistryIdentifier[]
+  shares              AnimalShare[]                  @relation("ShareAnimal")
+  publicListing       AnimalPublicListing?
+  directListings      DirectAnimalListing[]          @relation("AnimalDirectListings")
+  programParticipants AnimalProgramParticipant[]     @relation("AnimalProgramParticipants")
+  createdAt           DateTime                       @default(now())
+  updatedAt         DateTime                   @updatedAt
+  archived          Boolean                    @default(false)
+
+  // Soft delete
+  deletedAt DateTime?
+  TestResult        TestResult[]
+  Attachment        Attachment[]
+  Offspring         Offspring[]                @relation("PromotedAnimal")
+  PaymentIntent     PaymentIntent[]
+  AnimalTraitValue  AnimalTraitValue[]
+  VaccinationRecord VaccinationRecord[]
+  Document          Document[]
+  Invoice           Invoice[]
+  Expense           Expense[]
+  genetics          AnimalGenetics?
 
   // Title & Competition tracking
   titles             AnimalTitle[]
@@ -1960,8 +2201,8 @@ model Animal {
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
   // ─────────────────────────────────────────────────────────────────────────────
-  linkRequestsAsSource AnimalLinkRequest[]    @relation("LinkSource")
-  linkRequestsAsTarget AnimalLinkRequest[]    @relation("LinkTarget")
+  linkRequestsAsSource     AnimalLinkRequest[]     @relation("LinkSource")
+  linkRequestsAsTarget     AnimalLinkRequest[]     @relation("LinkTarget")
   crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkedChild")
   crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkedParent")
 
@@ -1980,6 +2221,7 @@ model Animal {
   @@index([tenantId, buyerPartyId])
   @@index([damId])
   @@index([sireId])
+  @@schema("public")
 }
 
 model AnimalGenetics {
@@ -1995,10 +2237,20 @@ model AnimalGenetics {
   physicalTraitsData Json?     @db.JsonB // Size (IGF1), Bobtail, Dewclaws, etc.
   eyeColorData       Json?     @db.JsonB // Eye color genetics
   otherTraitsData    Json?     @db.JsonB // Breed-specific traits
+
+  // Extended Embark data
+  breedComposition       Json?     @db.JsonB // Array of { breed: string, percentage: number }
+  coi                    Json?     @db.JsonB // { coefficient, percentage, riskLevel, source }
+  mhcDiversity           Json?     @db.JsonB // { drb1Alleles, dqa1Dqb1Alleles, diversityScore }
+  lineage                Json?     @db.JsonB // { mtHaplotype, mtHaplogroup, yHaplotype, yHaplogroup }
+  predictedAdultWeight   Json?     @db.JsonB // { value, unit }
+  lifeStage              String?   @db.VarChar(100)
+
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @default(now()) @updatedAt
 
   @@index([animalId])
+  @@schema("public")
 }
 
 model AnimalOwner {
@@ -2018,6 +2270,7 @@ model AnimalOwner {
   @@unique([animalId, partyId])
   @@index([animalId])
   @@index([partyId])
+  @@schema("public")
 }
 
 model Registry {
@@ -2031,6 +2284,7 @@ model Registry {
   updatedAt         DateTime                   @updatedAt
   identifiers       AnimalRegistryIdentifier[]
   BreedRegistryLink BreedRegistryLink[]
+  @@schema("public")
 }
 
 model AnimalRegistryIdentifier {
@@ -2048,6 +2302,7 @@ model AnimalRegistryIdentifier {
   @@unique([registryId, identifier])
   @@index([animalId])
   @@index([registryId])
+  @@schema("public")
 }
 
 model AnimalShare {
@@ -2068,6 +2323,7 @@ model AnimalShare {
   @@unique([animalId, toTenantId])
   @@index([fromTenantId])
   @@index([toTenantId])
+  @@schema("public")
 }
 
 model AnimalPublicListing {
@@ -2118,6 +2374,185 @@ model AnimalPublicListing {
   @@index([tenantId, status])
   @@index([tenantId, intent])
   @@index([status, intent])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Animal Listings V2 - Direct Listings & Programs
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model DirectAnimalListing {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("TenantDirectListings", fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation("AnimalDirectListings", fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Template & Identity
+  templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
+  slug         String  @unique
+  headline     String? @db.VarChar(120)
+  title        String? @db.VarChar(100) // Override animal name
+
+  // Content
+  summary     String? @db.Text
+  description String? @db.Text
+
+  // Data Drawer Configuration (which data points to show)
+  dataDrawerConfig Json @db.JsonB // { identity: {...}, media: {...}, healthTesting: {...}, ... }
+
+  // Template-specific content
+  listingContent Json? @db.JsonB // Template-specific fields (e.g., stud fee, guardian terms)
+
+  // Pricing
+  priceModel    String  @db.VarChar(32) // "fixed" | "range" | "inquire"
+  priceCents    Int?
+  priceMinCents Int?
+  priceMaxCents Int?
+
+  // Location override
+  locationCity    String? @db.VarChar(100)
+  locationRegion  String? @db.VarChar(100)
+  locationCountry String? @db.VarChar(2)
+
+  // Publishing
+  status      String  @db.VarChar(32) @default("DRAFT") // DRAFT, ACTIVE, PAUSED
+  listed      Boolean @default(true) // true = public listing, false = unlisted (direct link only)
+  publishedAt DateTime?
+  pausedAt    DateTime?
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, templateType])
+  @@index([animalId])
+  @@index([status, listed])
+  @@index([slug])
+  @@schema("public")
+}
+
+model AnimalProgram {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation("TenantAnimalPrograms", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Program Identity
+  name         String  @db.VarChar(100)
+  slug         String  @unique
+  templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
+  headline     String? @db.VarChar(120)
+  description  String? @db.Text
+
+  // Media
+  coverImageUrl String? @db.VarChar(500)
+  media         AnimalProgramMedia[]
+
+  // Data Drawer Configuration (shared by all participants)
+  dataDrawerConfig Json @db.JsonB
+
+  // Template-specific shared content
+  programContent Json? @db.JsonB
+
+  // Default Pricing (can be overridden per participant)
+  defaultPriceModel    String  @db.VarChar(32) @default("inquire")
+  defaultPriceCents    Int?
+  defaultPriceMinCents Int?
+  defaultPriceMaxCents Int?
+
+  // Publishing
+  published   Boolean   @default(false)
+  listed      Boolean   @default(true) // true = public, false = unlisted
+  publishedAt DateTime?
+
+  // Settings
+  acceptInquiries Boolean @default(true)
+  openWaitlist    Boolean @default(false)
+
+  // Participants
+  participants AnimalProgramParticipant[]
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, published])
+  @@index([tenantId, templateType])
+  @@index([slug])
+  @@schema("public")
+}
+
+model AnimalProgramParticipant {
+  id        Int            @id @default(autoincrement())
+  programId Int
+  program   AnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  animalId  Int
+  animal    Animal         @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Per-participant visibility settings
+  status   String  @default("ACTIVE") // ACTIVE, PAUSED
+  listed   Boolean @default(true)
+  featured Boolean @default(false)
+
+  // Per-participant overrides
+  headlineOverride    String? @db.VarChar(120)
+  descriptionOverride String? @db.Text
+  dataDrawerOverride  Json?   @db.JsonB // Overrides for specific data drawer settings
+  contentOverride     Json?   @db.JsonB // Template-specific content overrides
+
+  // Per-participant pricing overrides
+  priceModel    String? @db.VarChar(32)
+  priceCents    Int?
+  priceMinCents Int?
+  priceMaxCents Int?
+
+  // Display order
+  sortOrder Int @default(0)
+
+  // Metadata
+  viewCount     Int      @default(0)
+  inquiryCount  Int      @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  addedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([programId, animalId])
+  @@index([programId, status])
+  @@index([animalId])
+  @@schema("public")
+}
+
+model AnimalProgramMedia {
+  id        Int           @id @default(autoincrement())
+  programId Int
+  program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  type        String @db.VarChar(32) // "image" | "video"
+  url         String @db.VarChar(500)
+  caption     String? @db.Text
+  sortOrder   Int    @default(0)
+  isPrimary   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId, sortOrder])
+  @@schema("public")
 }
 
 /**
@@ -2145,6 +2580,7 @@ model TraitDefinition {
   @@unique([species, key, tenantId])
   @@index([species])
   @@index([tenantId, species])
+  @@schema("public")
 }
 
 model AnimalTraitValue {
@@ -2164,7 +2600,7 @@ model AnimalTraitValue {
   verified           Boolean                    @default(false)
   verifiedAt         DateTime?
   marketplaceVisible Boolean?
-  networkVisible     Boolean?                   // Cross-tenant sharing visibility (when enableHealthSharing is on)
+  networkVisible     Boolean? // Cross-tenant sharing visibility (when enableHealthSharing is on)
   notes              String?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
@@ -2175,6 +2611,7 @@ model AnimalTraitValue {
   @@unique([tenantId, animalId, traitDefinitionId])
   @@index([tenantId, animalId])
   @@index([tenantId, traitDefinitionId])
+  @@schema("public")
 }
 
 model AnimalTraitValueDocument {
@@ -2191,6 +2628,7 @@ model AnimalTraitValueDocument {
   @@index([tenantId, animalId])
   @@index([tenantId, animalTraitValueId])
   @@index([tenantId, documentId])
+  @@schema("public")
 }
 
 /**
@@ -2225,6 +2663,7 @@ model VaccinationRecord {
   @@index([tenantId, protocolKey])
   @@index([animalId, protocolKey])
   @@index([administeredAt])
+  @@schema("public")
 }
 
 /**
@@ -2249,6 +2688,7 @@ model Tag {
   @@unique([tenantId, module, name])
   @@index([tenantId, module])
   @@index([tenantId, isArchived, module])
+  @@schema("public")
 }
 
 model TagAssignment {
@@ -2302,6 +2742,7 @@ model TagAssignment {
   @@index([draftId])
   @@index([breedingPlanId])
   @@index([tagId, taggedPartyId])
+  @@schema("public")
 }
 
 /**
@@ -2324,6 +2765,7 @@ model Breed {
   TenantProgramBreed TenantProgramBreed[]
 
   @@index([species])
+  @@schema("public")
 }
 
 model AnimalBreed {
@@ -2339,6 +2781,7 @@ model AnimalBreed {
   @@unique([animalId, breedId])
   @@index([animalId])
   @@index([breedId])
+  @@schema("public")
 }
 
 model BreedRegistryLink {
@@ -2358,6 +2801,7 @@ model BreedRegistryLink {
 
   @@id([breedId, registryId])
   @@index([registryId])
+  @@schema("public")
 }
 
 model CustomBreed {
@@ -2381,6 +2825,7 @@ model CustomBreed {
   @@unique([tenantId, species, name])
   @@index([tenantId, species])
   @@index([tenantId, createdByOrganizationId])
+  @@schema("public")
 }
 
 /// Breeds selected for a tenant's breeding program (displayed on marketplace listings)
@@ -2408,6 +2853,7 @@ model TenantProgramBreed {
   @@unique([tenantId, breedId])
   @@unique([tenantId, customBreedId])
   @@index([tenantId, species])
+  @@schema("public")
 }
 
 /**
@@ -2422,22 +2868,31 @@ model BreedingProgram {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Identity
-  slug        String  // URL-friendly identifier, unique per tenant
-  name        String  // "Goldendoodle Program"
+  slug        String // URL-friendly identifier, unique per tenant
+  name        String // "Goldendoodle Program"
   description String? @db.Text
+  programStory String? @db.Text // Extended story/narrative about the program
   species     Species
   breedText   String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
+  breedId     Int? // Optional link to Breed record for structured breed data
+
+  // Cover Image
+  coverImageUrl  String? // Primary cover image URL
+  showCoverImage Boolean @default(true) // Visibility toggle for cover image
 
   // Marketplace Settings
   listed             Boolean @default(false)
   acceptInquiries    Boolean @default(true)
   openWaitlist       Boolean @default(false)
   acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
+  comingSoon         Boolean @default(false) // Coming Soon badge for programs in development
 
   // Pricing & Details
-  pricingTiers    Json?   // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
+  pricingTiers    Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
   whatsIncluded   String? @db.Text // What comes with each animal
+  showWhatsIncluded Boolean @default(true) // Visibility toggle
   typicalWaitTime String? // "3-6 months"
+  showWaitTime    Boolean @default(true) // Visibility toggle
 
   // Timestamps
   createdAt   DateTime  @default(now())
@@ -2447,11 +2902,13 @@ model BreedingProgram {
   // Relations
   breedingPlans BreedingPlan[]
   media         BreedingProgramMedia[]
+  inquiries     BreedingProgramInquiry[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
   @@index([listed])
   @@index([species])
+  @@schema("public")
 }
 
 model BreedingProgramMedia {
@@ -2471,6 +2928,65 @@ model BreedingProgramMedia {
 
   @@index([programId])
   @@index([tenantId])
+  @@schema("public")
+}
+
+model BreedingProgramInquiry {
+  id        Int             @id @default(autoincrement())
+  programId Int
+  program   BreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  tenantId  Int // Breeder's tenant
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Buyer information
+  buyerName  String
+  buyerEmail String
+  buyerPhone String?
+
+  // Inquiry details
+  subject String
+  message String @db.Text
+
+  // What they're interested in
+  interestedIn String? // "Next litter", "Specific horse", "General info"
+  priceRange   String? // "Under $5K", "$5K-$10K", "$10K+"
+  timeline     String? // "Immediate", "Next 3 months", "6+ months", "Just researching"
+
+  // Internal tracking
+  status           InquiryStatus @default(NEW)
+  assignedToUserId String?
+  assignedToUser   User?         @relation(fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  // Communication
+  responded   Boolean   @default(false)
+  respondedAt DateTime?
+  notes       String?   @db.Text
+
+  // Marketing tracking
+  source      String? // "Marketplace", "Google", "Facebook", "Referral"
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId, status])
+  @@index([tenantId, status])
+  @@index([buyerEmail])
+  @@index([createdAt])
+  @@schema("public")
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SCHEDULED_VISIT
+  CONVERTED
+  NOT_INTERESTED
+  SPAM
+  @@schema("public")
 }
 
 /**
@@ -2536,23 +3052,26 @@ model BreedingPlan {
   depositsPaidCents      Int?
   depositRiskScore       Int?
 
-  Litter           Litter?
-  offspringGroup   OffspringGroup?
-  Events           BreedingPlanEvent[]
-  Waitlist         WaitlistEntry[]
-  Shares           BreedingPlanShare[]
-  TestResults      TestResult[]
-  BreedingAttempts BreedingAttempt[]
-  PregnancyChecks  PregnancyCheck[]
-  Attachments      Attachment[]
-  Parties          PlanParty[]
-  Invoice          Invoice[]
-  Expense          Expense[]
-  TagAssignments   TagAssignment[]
+  Litter             Litter?
+  offspringGroup     OffspringGroup?
+  Events             BreedingPlanEvent[]
+  Waitlist           WaitlistEntry[]
+  Shares             BreedingPlanShare[]
+  TestResults        TestResult[]
+  BreedingAttempts   BreedingAttempt[]
+  PregnancyChecks    PregnancyCheck[]
+  Attachments        Attachment[]
+  Parties            PlanParty[]
+  Invoice            Invoice[]
+  Expense            Expense[]
+  TagAssignments     TagAssignment[]
+  foalingOutcome     FoalingOutcome?
+  breedingMilestones BreedingMilestone[]
 
-  archived  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  archived  Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -2561,6 +3080,7 @@ model BreedingPlan {
   @@index([damId])
   @@index([sireId])
   @@index([status])
+  @@index([deletedAt])
   @@index([committedAt])
   @@index([expectedWeaned])
   @@index([expectedPlacementCompleted])
@@ -2572,6 +3092,7 @@ model BreedingPlan {
   @@index([expectedHormoneTestingStart])
   @@index([expectedBreedDate])
   @@index([cycleStartDateActual])
+  @@schema("public")
 }
 
 model ReproductiveCycle {
@@ -2596,6 +3117,7 @@ model ReproductiveCycle {
   @@index([tenantId])
   @@index([femaleId])
   @@index([cycleStart])
+  @@schema("public")
 }
 
 model BreedingPlanShare {
@@ -2616,6 +3138,7 @@ model BreedingPlanShare {
   @@unique([planId, toTenantId])
   @@index([fromTenantId])
   @@index([toTenantId])
+  @@schema("public")
 }
 
 /**
@@ -2647,6 +3170,7 @@ model BreedingPlanEvent {
 
   @@index([tenantId])
   @@index([planId, type, occurredAt])
+  @@schema("public")
 }
 
 model TestResult {
@@ -2681,6 +3205,7 @@ model TestResult {
   @@index([animalId])
   @@index([planId])
   @@index([kind, collectedAt])
+  @@schema("public")
 }
 
 model BreedingAttempt {
@@ -2712,6 +3237,7 @@ model BreedingAttempt {
   @@index([tenantId])
   @@index([planId])
   @@index([studOwnerPartyId])
+  @@schema("public")
 }
 
 model PregnancyCheck {
@@ -2733,6 +3259,119 @@ model PregnancyCheck {
 
   @@index([tenantId])
   @@index([planId, checkedAt])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Foaling Automation
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model FoalingOutcome {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  breedingPlanId Int          @unique
+  breedingPlan   BreedingPlan @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
+  // Veterinary details
+  hadComplications    Boolean @default(false)
+  complicationDetails String? @db.Text
+  veterinarianCalled  Boolean @default(false)
+  veterinarianName    String?
+  veterinarianNotes   String? @db.Text
+
+  // Post-foaling physiology
+  placentaPassed        Boolean?
+  placentaPassedMinutes Int?
+  mareCondition         MarePostFoalingCondition?
+
+  // Post-foaling reproductive cycle
+  postFoalingHeatDate  DateTime?
+  postFoalingHeatNotes String?
+  readyForRebreeding   Boolean   @default(false)
+  rebredDate           DateTime?
+
+  // Media
+  foalPhotoUrls Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([breedingPlanId])
+  @@schema("public")
+}
+
+enum MarePostFoalingCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  VETERINARY_CARE_REQUIRED
+
+  @@schema("public")
+}
+
+model BreedingMilestone {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  breedingPlanId Int
+  breedingPlan   BreedingPlan @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
+  milestoneType      MilestoneType
+  scheduledDate      DateTime
+  completedDate      DateTime?
+  isCompleted        Boolean       @default(false)
+  notificationSent   Boolean       @default(false)
+  notificationSentAt DateTime?
+  notes              String?       @db.Text
+  vetAppointmentId   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([breedingPlanId, scheduledDate])
+  @@index([scheduledDate, isCompleted])
+  @@schema("public")
+}
+
+enum MilestoneType {
+  VET_PREGNANCY_CHECK_15D
+  VET_ULTRASOUND_45D
+  VET_ULTRASOUND_90D
+  BEGIN_MONITORING_300D
+  PREPARE_FOALING_AREA_320D
+  DAILY_CHECKS_330D
+  DUE_DATE_340D
+  OVERDUE_VET_CALL_350D
+
+  @@schema("public")
+}
+
+enum FoalHealthStatus {
+  HEALTHY
+  MINOR_ISSUES
+  VETERINARY_CARE
+  CRITICAL
+  DECEASED
+
+  @@schema("public")
+}
+
+enum FoalNursingStatus {
+  UNKNOWN
+  NURSING_WELL
+  ASSISTED
+  BOTTLE_FED
+  ORPHANED
+
+  @@schema("public")
 }
 
 /**
@@ -2806,6 +3445,7 @@ model OffspringGroup {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   archivedAt DateTime?
+  deletedAt  DateTime?
   Invoice    Invoice[]
   Campaign   Campaign[]
   Task       Task[]
@@ -2823,6 +3463,8 @@ model OffspringGroup {
   @@index([placementStartAt])
   @@index([placementCompletedAt])
   @@index([published])
+  @@index([deletedAt])
+  @@schema("public")
 }
 
 model OffspringGroupBuyer {
@@ -2853,6 +3495,7 @@ model OffspringGroupBuyer {
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
   @@index([waitlistEntryId])
+  @@schema("public")
 }
 
 model Offspring {
@@ -2871,6 +3514,17 @@ model Offspring {
   bornAt  DateTime?
   diedAt  DateTime?
   status  OffspringStatus @default(NEWBORN)
+  color   String?
+
+  // health outcome tracking (foaling automation)
+  birthWeight     Float?
+  healthStatus    FoalHealthStatus    @default(HEALTHY)
+  healthNotes     String?             @db.Text
+  nursingStatus   FoalNursingStatus   @default(UNKNOWN)
+  standingMinutes Int?
+  nursingMinutes  Int?
+  requiredVetCare Boolean             @default(false)
+  vetCareDetails  String?
 
   // orthogonal lifecycle dimensions (production canonical state)
   lifeState      OffspringLifeState      @default(ALIVE)
@@ -2916,6 +3570,10 @@ model Offspring {
   notes String?
   data  Json?
 
+  // Archive (soft delete for individual offspring)
+  archivedAt    DateTime?
+  archiveReason String?   @db.Text
+
   Tags                TagAssignment[]
   Attachments         Attachment[]
   Events              OffspringEvent[]
@@ -2949,6 +3607,7 @@ model Offspring {
   @@index([placedAt])
   @@index([tenantId, damId])
   @@index([tenantId, sireId])
+  @@schema("public")
 }
 
 model OffspringEvent {
@@ -2975,6 +3634,7 @@ model OffspringEvent {
 
   @@index([tenantId])
   @@index([offspringId, type, occurredAt])
+  @@schema("public")
 }
 
 /**
@@ -3026,6 +3686,7 @@ model Litter {
   @@index([tenantId, weanedAt])
   @@index([tenantId, placementStartAt])
   @@index([tenantId, placementCompletedAt])
+  @@schema("public")
 }
 
 model WaitlistEntry {
@@ -3081,7 +3742,7 @@ model WaitlistEntry {
   rejectedAt     DateTime?
   rejectedReason String?
 
-  notes         String?
+  notes String?
 
   // Origin tracking for conversion attribution
   originSource      String? // "direct" | "utm" | "referrer" | "embed" | "social"
@@ -3108,6 +3769,7 @@ model WaitlistEntry {
   @@index([damPrefId])
   @@index([animalId])
   @@index([tenantId, depositPaidAt])
+  @@schema("public")
 }
 
 /**
@@ -3140,6 +3802,7 @@ model OffspringGroupEvent {
 
   @@index([tenantId])
   @@index([offspringGroupId, type, occurredAt])
+  @@schema("public")
 }
 
 /**
@@ -3171,6 +3834,7 @@ model LitterEvent {
 
   @@index([tenantId])
   @@index([litterId, type, occurredAt])
+  @@schema("public")
 }
 
 /**
@@ -3235,6 +3899,7 @@ model Attachment {
   @@index([invoiceId])
   @@index([paymentId])
   @@index([expenseId])
+  @@schema("public")
 }
 
 model PlanParty {
@@ -3257,6 +3922,7 @@ model PlanParty {
   @@index([planId])
   @@index([partyId])
   @@index([tenantId, partyId, role])
+  @@schema("public")
 }
 
 model PlanCodeCounter {
@@ -3268,6 +3934,7 @@ model PlanCodeCounter {
 
   @@id([tenantId, year])
   @@index([tenantId])
+  @@schema("public")
 }
 
 /**
@@ -3291,6 +3958,7 @@ model TenantSetting {
   @@id([tenantId, namespace])
   @@index([tenantId])
   @@index([namespace])
+  @@schema("public")
 }
 
 /**
@@ -3304,8 +3972,8 @@ enum FinanceScope {
   organization
   general
   waitlist
+  @@schema("public")
 }
-
 enum InvoiceStatus {
   draft
   issued
@@ -3315,16 +3983,16 @@ enum InvoiceStatus {
   uncollectible
   refunded
   cancelled
+  @@schema("public")
 }
-
 enum InvoiceCategory {
   DEPOSIT
   SERVICE
   GOODS
   MIXED
   OTHER
+  @@schema("public")
 }
-
 enum LineItemKind {
   DEPOSIT
   SERVICE_FEE
@@ -3332,8 +4000,8 @@ enum LineItemKind {
   DISCOUNT
   TAX
   OTHER
+  @@schema("public")
 }
-
 enum PaymentStatus {
   pending
   succeeded
@@ -3341,8 +4009,8 @@ enum PaymentStatus {
   refunded
   disputed
   cancelled
+  @@schema("public")
 }
-
 enum ExpenseCategory {
   VETERINARY
   FEED
@@ -3356,8 +4024,8 @@ enum ExpenseCategory {
   FACILITIES
   INSURANCE
   OTHER
+  @@schema("public")
 }
-
 enum CampaignChannel {
   email
   social
@@ -3365,20 +4033,20 @@ enum CampaignChannel {
   marketplace
   website
   other
+  @@schema("public")
 }
-
 enum TaskScope {
   group
   offspring
+  @@schema("public")
 }
-
 enum TaskStatus {
   open
   in_progress
   done
   cancelled
+  @@schema("public")
 }
-
 enum HealthType {
   weight
   vaccine
@@ -3386,16 +4054,16 @@ enum HealthType {
   vet_visit
   treatment
   other
+  @@schema("public")
 }
-
 enum DocumentScope {
   group
   offspring
   invoice
   contract
   animal
+  @@schema("public")
 }
-
 enum DocumentKind {
   generic
   health_certificate
@@ -3409,16 +4077,16 @@ enum DocumentKind {
   lease_agreement
   insurance_policy
   vet_certificate
+  @@schema("public")
 }
-
 enum SignatureProvider {
   internal
   docusign
   hellosign
   adobe
   other
+  @@schema("public")
 }
-
 enum ContractStatus {
   draft
   sent
@@ -3427,8 +4095,8 @@ enum ContractStatus {
   declined
   voided
   expired
+  @@schema("public")
 }
-
 enum SignatureStatus {
   pending
   viewed
@@ -3436,8 +4104,8 @@ enum SignatureStatus {
   declined
   voided
   expired
+  @@schema("public")
 }
-
 // ---------- Finance ----------
 
 /**
@@ -3456,6 +4124,7 @@ model Sequence {
 
   @@unique([tenantId, key, year])
   @@index([tenantId, key, year])
+  @@schema("public")
 }
 
 /**
@@ -3473,6 +4142,7 @@ model IdempotencyKey {
 
   @@unique([tenantId, key])
   @@index([tenantId, createdAt])
+  @@schema("public")
 }
 
 model Invoice {
@@ -3504,9 +4174,9 @@ model Invoice {
   invoiceNumber String // Server-generated, format: INV-YYYY-NNNN
   number        String? // Legacy field, keep for compatibility
   currency      String          @default("USD")
-  amountCents   Int
-  balanceCents  Int
-  depositCents  Int?
+  amountCents   BigInt
+  balanceCents  BigInt
+  depositCents  BigInt?
   status        InvoiceStatus   @default(draft)
   category      InvoiceCategory @default(OTHER)
   dueAt         DateTime?
@@ -3523,6 +4193,26 @@ model Invoice {
 
   notes String?
   data  Json?
+
+  // Marketplace integration
+  isMarketplaceInvoice     Boolean   @default(false)
+  marketplaceTransactionId Int?
+  paymentModeSnapshot      String?
+  stripeInvoiceId          String?
+  stripePaymentIntentId    String?
+
+  // Manual payment tracking
+  buyerMarkedPaidAt    DateTime?
+  buyerPaymentMethod   String?
+  buyerPaymentReference String?
+  providerConfirmedAt  DateTime?
+  providerConfirmedBy  Int?
+
+  // Partial refunds
+  refundedCents BigInt @default(0)
+
+  // Soft delete
+  deletedAt DateTime?
 
   LineItems     InvoiceLineItem[]
   Payments      Payment[]
@@ -3547,6 +4237,12 @@ model Invoice {
   @@index([scope, offspringId])
   @@index([status])
   @@index([clientPartyId])
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@index([clientPartyId, status])
+  @@index([deletedAt])
+  @@index([tenantId, isMarketplaceInvoice, status])
+  @@index([stripeInvoiceId])
+  @@schema("public")
 }
 
 model InvoiceLineItem {
@@ -3571,6 +4267,7 @@ model InvoiceLineItem {
 
   @@index([tenantId])
   @@index([invoiceId])
+  @@schema("public")
 }
 
 model Payment {
@@ -3582,7 +4279,7 @@ model Payment {
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   status       PaymentStatus @default(pending)
-  amountCents  Int
+  amountCents  BigInt
   receivedAt   DateTime // When payment was received
   methodType   String? // e.g., "card", "bank_transfer", "cash", "check"
   processor    String? // e.g., "stripe", "square", "manual"
@@ -3609,6 +4306,8 @@ model Payment {
   @@index([tenantId, receivedAt])
   @@index([invoiceId])
   @@index([status])
+  @@index([invoiceId, status])
+  @@schema("public")
 }
 
 /**
@@ -3653,6 +4352,7 @@ model Expense {
   @@index([tenantId, animalId])
   @@index([tenantId, vendorPartyId])
   @@index([tenantId, category])
+  @@schema("public")
 }
 
 model AnimalOwnershipChange {
@@ -3689,6 +4389,7 @@ model AnimalOwnershipChange {
   @@index([animalId])
   @@index([kind])
   @@index([occurredAt])
+  @@schema("public")
 }
 
 model PaymentIntent {
@@ -3725,6 +4426,7 @@ model PaymentIntent {
   @@index([ownershipChangeId])
   @@index([status])
   @@index([purpose])
+  @@schema("public")
 }
 
 // ---------- Marketing ----------
@@ -3765,6 +4467,7 @@ model Campaign {
   @@index([tenantId])
   @@index([offspringGroupId])
   @@index([channel])
+  @@schema("public")
 }
 
 model CampaignAttribution {
@@ -3785,26 +4488,27 @@ model CampaignAttribution {
   @@index([tenantId])
   @@index([campaignId])
   @@index([offspringId])
+  @@schema("public")
 }
 
 enum EmailSendStatus {
   queued
   sent
   failed
+  @@schema("public")
 }
-
 enum TemplateChannel {
   email
   dm
   social
+  @@schema("public")
 }
-
 enum TemplateStatus {
   draft
   active
   archived
+  @@schema("public")
 }
-
 enum TemplateCategory {
   auto_reply
   invoice_message
@@ -3812,24 +4516,24 @@ enum TemplateCategory {
   waitlist_update
   general_follow_up
   custom
+  @@schema("public")
 }
-
 enum EmailSendCategory {
   transactional
   marketing
+  @@schema("public")
 }
-
 enum AutoReplyTriggerType {
   dm_first_message_from_party
   dm_after_hours
+  @@schema("public")
 }
-
 enum AutoReplyStatus {
   sent
   skipped
   failed
+  @@schema("public")
 }
-
 model Template {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -3847,7 +4551,7 @@ model Template {
 
   content        TemplateContent[]
   autoReplyRules AutoReplyRule[]
-  drafts         Draft[]          @relation("DraftTemplate")
+  drafts         Draft[]           @relation("DraftTemplate")
 
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -3857,6 +4561,7 @@ model Template {
   @@index([tenantId, channel])
   @@index([tenantId, status])
   @@index([tenantId, category])
+  @@schema("public")
 }
 
 model TemplateContent {
@@ -3873,6 +4578,7 @@ model TemplateContent {
   updatedAt DateTime @updatedAt
 
   @@index([templateId])
+  @@schema("public")
 }
 
 model AutoReplyRule {
@@ -3897,6 +4603,7 @@ model AutoReplyRule {
 
   @@index([tenantId, channel, enabled])
   @@index([templateId])
+  @@schema("public")
 }
 
 model AutoReplyLog {
@@ -3925,6 +4632,7 @@ model AutoReplyLog {
   @@index([tenantId, channel, createdAt])
   @@index([threadId])
   @@index([ruleId])
+  @@schema("public")
 }
 
 model EmailSendLog {
@@ -3972,6 +4680,7 @@ model EmailSendLog {
   @@index([tenantId, archived])
   @@index([tenantId, flagged])
   @@index([tenantId, partyId])
+  @@schema("public")
 }
 
 model MessageThread {
@@ -4000,9 +4709,9 @@ model MessageThread {
   originUtmCampaign String? // utm_campaign parameter
   originPagePath    String? // Page path where conversion occurred
 
-  participants  MessageParticipant[]
-  messages      Message[]
-  autoReplyLogs AutoReplyLog[]
+  participants   MessageParticipant[]
+  messages       Message[]
+  autoReplyLogs  AutoReplyLog[]
   tagAssignments TagAssignment[]
 
   lastMessageAt DateTime?
@@ -4028,6 +4737,7 @@ model MessageThread {
   @@index([tenantId, businessHoursResponseTime])
   @@index([tenantId, flagged])
   @@index([tenantId, archived])
+  @@schema("public")
 }
 
 model MessageParticipant {
@@ -4045,6 +4755,7 @@ model MessageParticipant {
   @@unique([threadId, partyId])
   @@index([threadId])
   @@index([partyId])
+  @@schema("public")
 }
 
 model Message {
@@ -4057,6 +4768,12 @@ model Message {
 
   body String @db.Text
 
+  // Attachment fields (optional - null means text-only message)
+  attachmentFilename String? // Original filename (e.g., "contract.pdf")
+  attachmentMime     String? // MIME type (e.g., "application/pdf")
+  attachmentBytes    Int? // File size in bytes
+  attachmentKey      String? // Storage key/path (e.g., "messages/4/12345-contract.pdf")
+
   isAutomated      Boolean @default(false)
   automationRuleId Int?
 
@@ -4064,14 +4781,15 @@ model Message {
 
   @@index([threadId, createdAt])
   @@index([senderPartyId])
+  @@schema("public")
 }
 
 // ---------- Communications Hub: Drafts ----------
 enum DraftChannel {
   email
   dm
+  @@schema("public")
 }
-
 model Draft {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -4110,6 +4828,7 @@ model Draft {
   @@index([tenantId, partyId])
   @@index([tenantId, channel])
   @@index([tenantId, updatedAt])
+  @@schema("public")
 }
 
 // ---------- Tasks ----------
@@ -4141,6 +4860,7 @@ model Task {
   @@index([scope, groupId])
   @@index([scope, offspringId])
   @@index([status, dueAt])
+  @@schema("public")
 }
 
 // ---------- Health ----------
@@ -4172,6 +4892,7 @@ model HealthEvent {
   @@index([tenantId])
   @@index([offspringId, occurredAt])
   @@index([kind])
+  @@schema("public")
 }
 
 // ---------- Documents & Contracts ----------
@@ -4238,6 +4959,7 @@ model Document {
   @@index([scope, invoiceId])
   @@index([scope, contractId])
   @@index([kind])
+  @@schema("public")
 }
 
 model ContractTemplate {
@@ -4259,6 +4981,7 @@ model ContractTemplate {
 
   @@index([tenantId])
   @@index([isActive])
+  @@schema("public")
 }
 
 model Contract {
@@ -4305,6 +5028,7 @@ model Contract {
   @@index([invoiceId])
   @@index([status])
   @@index([provider, providerEnvelopeId])
+  @@schema("public")
 }
 
 model ContractParty {
@@ -4343,6 +5067,7 @@ model ContractParty {
   @@index([partyId])
   @@index([tenantId, partyId])
   @@index([status])
+  @@schema("public")
 }
 
 model SignatureEvent {
@@ -4367,6 +5092,7 @@ model SignatureEvent {
   @@index([contractId])
   @@index([partyId])
   @@index([status, at])
+  @@schema("public")
 }
 
 enum InvoiceRole {
@@ -4374,15 +5100,15 @@ enum InvoiceRole {
   DEPOSIT
   FINAL
   MISC
+  @@schema("public")
 }
-
 enum EsignProvider {
   DOCUSIGN
   HELLOSIGN
   ADOBE
   OTHER
+  @@schema("public")
 }
-
 enum EsignStatus {
   DRAFT
   SENT
@@ -4391,8 +5117,8 @@ enum EsignStatus {
   DECLINED
   EXPIRED
   VOIDED
+  @@schema("public")
 }
-
 model OffspringDocument {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -4421,6 +5147,7 @@ model OffspringDocument {
   @@index([tenantId])
   @@index([offspringId])
   @@index([status])
+  @@schema("public")
 }
 
 model OffspringContract {
@@ -4457,6 +5184,7 @@ model OffspringContract {
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
   @@index([status])
+  @@schema("public")
 }
 
 model OffspringInvoiceLink {
@@ -4484,6 +5212,7 @@ model OffspringInvoiceLink {
   @@index([tenantId])
   @@index([offspringId])
   @@index([invoiceId])
+  @@schema("public")
 }
 
 model AccountingIntegration {
@@ -4508,6 +5237,7 @@ model AccountingIntegration {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, provider])
+  @@schema("public")
 }
 
 /**
@@ -4553,6 +5283,7 @@ model PortalAccess {
   @@index([partyId])
   @@index([userId])
   @@index([status])
+  @@schema("public")
 }
 
 model PortalInvite {
@@ -4592,6 +5323,7 @@ model PortalInvite {
   @@index([tenantId, partyId])
   @@index([tenantId, emailNorm])
   @@index([expiresAt])
+  @@schema("public")
 }
 
 /**
@@ -4604,20 +5336,20 @@ model PortalInvite {
 enum AuditOutcome {
   SUCCESS
   FAILURE
+  @@schema("public")
 }
-
 enum AuditSurface {
   PLATFORM
   PORTAL
   MARKETPLACE
+  @@schema("public")
 }
-
 enum AuditActorContext {
   STAFF
   CLIENT
   PUBLIC
+  @@schema("public")
 }
-
 model AuditEvent {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
@@ -4642,6 +5374,7 @@ model AuditEvent {
   @@index([userId, createdAt])
   @@index([tenantId, createdAt])
   @@index([action, createdAt])
+  @@schema("public")
 }
 
 /**
@@ -4656,32 +5389,32 @@ enum SchedulingEventStatus {
   OPEN // Accepting bookings
   CLOSED // No longer accepting bookings
   CANCELLED // Event cancelled
+  @@schema("public")
 }
-
 enum SchedulingSlotStatus {
   AVAILABLE // Open for booking
   FULL // Capacity reached
   CANCELLED // Slot cancelled
+  @@schema("public")
 }
-
 enum SchedulingSlotMode {
   IN_PERSON
   VIRTUAL
+  @@schema("public")
 }
-
 enum SchedulingBookingStatus {
   CONFIRMED
   CANCELLED
   RESCHEDULED
   NO_SHOW
+  @@schema("public")
 }
-
 enum MarketplaceBlockLevel {
   LIGHT // Block waitlist requests only
   MEDIUM // Block waitlist + messages
   HEAVY // Block waitlist + messages + profile view
+  @@schema("public")
 }
-
 /**
  * SchedulingEventTemplate - Reusable event configuration
  * Optional for MVP but provides future flexibility for recurring events
@@ -4725,6 +5458,7 @@ model SchedulingEventTemplate {
   @@index([tenantId, status])
   @@index([tenantId, eventType])
   @@index([offspringId])
+  @@schema("public")
 }
 
 /**
@@ -4775,6 +5509,7 @@ model SchedulingAvailabilityBlock {
   @@index([tenantId, startAt])
   @@index([templateId])
   @@index([offspringGroupId])
+  @@schema("public")
 }
 
 /**
@@ -4816,6 +5551,7 @@ model SchedulingSlot {
   @@index([tenantId, startsAt])
   @@index([blockId])
   @@index([blockId, startsAt])
+  @@schema("public")
 }
 
 /**
@@ -4874,6 +5610,7 @@ model SchedulingBooking {
   @@index([partyId])
   @@index([eventId, partyId])
   @@index([status])
+  @@schema("public")
 }
 
 // ============================================================================
@@ -4911,6 +5648,7 @@ model MarketplaceUserBlock {
   @@index([blockedUserId])
   @@index([tenantId])
   @@index([tenantId, liftedAt]) // For finding active blocks
+  @@schema("public")
 }
 
 /**
@@ -4944,6 +5682,7 @@ model MarketplaceUserFlag {
   @@index([flaggedAt])
   @@index([suspendedAt])
   @@index([activeBlocks])
+  @@schema("public")
 }
 
 /**
@@ -4955,6 +5694,7 @@ model PlatformSetting {
   namespace String   @unique @db.VarChar(64) // e.g., "marketplace-abuse"
   data      Json
   updatedAt DateTime @updatedAt
+  @@schema("public")
 }
 
 // ============================================================================
@@ -4967,19 +5707,78 @@ enum BreederReportReason {
   HARASSMENT
   MISREPRESENTATION
   OTHER
+  @@schema("public")
 }
-
 enum BreederReportSeverity {
   LIGHT
   MEDIUM
   HEAVY
+  @@schema("public")
 }
-
 enum BreederReportStatus {
   PENDING
   REVIEWED
   DISMISSED
   ACTIONED
+  @@schema("public")
+}
+
+// ============================================================================
+// Marketplace Verification Enums
+// ============================================================================
+
+/**
+ * BreederVerificationTier - Verification levels for breeders on the marketplace
+ * Tier 0: SUBSCRIBER - Has active subscription (baseline)
+ * Tier 1: MARKETPLACE_ENABLED - Phone verified
+ * Tier 2: IDENTITY_VERIFIED - Stripe Identity verified
+ * Tier 3: VERIFIED - Paid package (BreederHQ Verified)
+ * Tier 4: ACCREDITED - Paid package (BreederHQ Accredited)
+ */
+enum BreederVerificationTier {
+  SUBSCRIBER
+  MARKETPLACE_ENABLED
+  IDENTITY_VERIFIED
+  VERIFIED
+  ACCREDITED
+  @@schema("marketplace")
+}
+
+/**
+ * ServiceProviderVerificationTier - Verification levels for service providers
+ * Tier 0: LISTED - Email verified + 2FA enabled
+ * Tier 1: IDENTITY_VERIFIED - Stripe Identity or Stripe Connect verified
+ * Tier 2: VERIFIED_PROFESSIONAL - Paid package (credentials verified)
+ * Tier 3: ACCREDITED_PROVIDER - Paid package (license + insurance verified)
+ */
+enum ServiceProviderVerificationTier {
+  LISTED
+  IDENTITY_VERIFIED
+  VERIFIED_PROFESSIONAL
+  ACCREDITED_PROVIDER
+  @@schema("marketplace")
+}
+
+/**
+ * VerificationRequestStatus - Status of verification package requests
+ */
+enum VerificationRequestStatus {
+  PENDING       // Awaiting staff review
+  IN_REVIEW     // Staff actively reviewing
+  NEEDS_INFO    // Waiting for user to provide more info
+  APPROVED      // Verified, badge activated
+  DENIED        // Rejected
+  @@schema("marketplace")
+}
+
+/**
+ * TwoFactorMethod - Available 2FA methods for marketplace users
+ */
+enum TwoFactorMethod {
+  PASSKEY       // WebAuthn/Passkey (recommended)
+  TOTP          // Authenticator app
+  SMS           // SMS OTP (fallback)
+  @@schema("marketplace")
 }
 
 /**
@@ -5018,6 +5817,7 @@ model BreederReport {
   @@index([reporterUserId])
   @@index([status])
   @@index([createdAt])
+  @@schema("public")
 }
 
 /**
@@ -5054,6 +5854,7 @@ model BreederReportFlag {
   @@index([flaggedAt])
   @@index([marketplaceSuspendedAt])
   @@index([pendingReports])
+  @@schema("public")
 }
 
 /**
@@ -5069,6 +5870,7 @@ model GeneticsDisclaimerAcceptance {
   userAgent  String?  @db.Text
 
   @@index([userId])
+  @@schema("public")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5101,8 +5903,8 @@ enum IdentifierType {
   EAR_TAG // Ear tag number (livestock)
   USDA_SCRAPIE // USDA Scrapie ID (sheep/goats)
   OTHER // Other registry or identifier
+  @@schema("public")
 }
-
 /**
  * GlobalAnimalIdentity - A canonical identity cluster for an animal across all tenants
  * When we're confident animals across tenants are the same individual, they share one of these.
@@ -5143,6 +5945,7 @@ model GlobalAnimalIdentity {
   @@index([species])
   @@index([damId])
   @@index([sireId])
+  @@schema("public")
 }
 
 /**
@@ -5172,6 +5975,7 @@ model GlobalAnimalIdentifier {
   @@unique([type, value]) // Each identifier value is globally unique per type
   @@index([identityId])
   @@index([type, value])
+  @@schema("public")
 }
 
 /**
@@ -5199,6 +6003,7 @@ model AnimalIdentityLink {
 
   @@unique([animalId]) // Each local animal links to at most one global identity
   @@index([identityId])
+  @@schema("public")
 }
 
 /**
@@ -5215,11 +6020,11 @@ model AnimalPrivacySettings {
   allowCrossTenantMatching Boolean @default(true)
 
   // Field-level visibility controls
-  showName          Boolean @default(true)
-  showPhoto         Boolean @default(true)
-  showFullDob       Boolean @default(true) // false = year only
-  showRegistryFull  Boolean @default(false) // false = last 4 digits only
-  showBreeder       Boolean @default(true) // Show tenant/breeder name
+  showName         Boolean @default(true)
+  showPhoto        Boolean @default(true)
+  showFullDob      Boolean @default(true) // false = year only
+  showRegistryFull Boolean @default(false) // false = last 4 digits only
+  showBreeder      Boolean @default(true) // Show tenant/breeder name
 
   // Gate toggles for granular per-item sharing (enables networkVisible toggles in respective tabs)
   enableHealthSharing   Boolean @default(false) // Gate for per-test visibility in Health tab
@@ -5239,6 +6044,7 @@ model AnimalPrivacySettings {
   // Contact preferences
   allowInfoRequests  Boolean @default(true) // Can others request more info?
   allowDirectContact Boolean @default(false) // Show contact info directly?
+  @@schema("public")
 }
 
 /**
@@ -5281,6 +6087,7 @@ model LineageInfoRequest {
   @@index([targetTenantId])
   @@index([targetIdentityId])
   @@index([status])
+  @@schema("public")
 }
 
 enum LineageRequestStatus {
@@ -5288,15 +6095,15 @@ enum LineageRequestStatus {
   APPROVED
   DENIED
   EXPIRED
+  @@schema("public")
 }
-
 enum LineageAccessLevel {
   LINEAGE_ONLY // Just position in pedigree, no details
   BASIC // Name, breed, DOB year
   STANDARD // Name, breed, full DOB, registry (partial)
   FULL // Everything the owner has made shareable
+  @@schema("public")
 }
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Cross-Tenant Animal Linking
@@ -5326,13 +6133,13 @@ model AnimalLinkRequest {
 
   // Target discovery - how the target animal was found (at least one populated)
   targetAnimalId     Int? // Direct animal ID if known
-  targetAnimal       Animal?  @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
+  targetAnimal       Animal? @relation("LinkTarget", fields: [targetAnimalId], references: [id], onDelete: SetNull)
   targetGaid         String? // GAID if searched by global ID
   targetExchangeCode String? // Exchange code if shared directly
   targetRegistryId   Int? // Registry ID if searched by registry number
   targetRegistryNum  String? // Registry number
   targetTenantId     Int? // Target breeder if found via breeder search
-  targetTenant       Tenant?  @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
+  targetTenant       Tenant? @relation("LinkRequestTo", fields: [targetTenantId], references: [id], onDelete: SetNull)
 
   // Request details
   message String? @db.Text // Message from requester
@@ -5352,6 +6159,7 @@ model AnimalLinkRequest {
   @@index([targetAnimalId])
   @@index([sourceAnimalId])
   @@index([status])
+  @@schema("public")
 }
 
 /**
@@ -5391,6 +6199,7 @@ model CrossTenantAnimalLink {
   @@index([childTenantId])
   @@index([parentTenantId])
   @@index([active])
+  @@schema("public")
 }
 
 /**
@@ -5412,14 +6221,14 @@ enum TitleCategory {
   BREED_SPECIFIC // Breed club awards
   PERFORMANCE // Racing, working, etc.
   OTHER
+  @@schema("public")
 }
-
 enum TitleStatus {
   IN_PROGRESS // Working toward (optional tracking)
   EARNED // Title completed
   VERIFIED // Confirmed by registry/org
+  @@schema("public")
 }
-
 enum CompetitionType {
   CONFORMATION_SHOW
   OBEDIENCE_TRIAL
@@ -5432,8 +6241,8 @@ enum CompetitionType {
   PERFORMANCE_TEST
   BREED_SPECIALTY
   OTHER
+  @@schema("public")
 }
-
 /**
  * TitleDefinition - Defines available titles (global or tenant-specific)
  * Global titles (tenantId=null) are seeded for common registries (AKC, UKC, etc.)
@@ -5476,6 +6285,7 @@ model TitleDefinition {
   @@index([species])
   @@index([category])
   @@index([tenantId])
+  @@schema("public")
 }
 
 /**
@@ -5499,9 +6309,9 @@ model AnimalTitle {
   majorWins    Int? // For conformation titles
 
   // Where the title was earned (event info)
-  eventName    String? // "Westminster Kennel Club 2024"
+  eventName     String? // "Westminster Kennel Club 2024"
   eventLocation String? // "New York, NY"
-  handlerName  String? // Person who handled/showed the animal
+  handlerName   String? // Person who handled/showed the animal
 
   // Verification
   verified    Boolean   @default(false)
@@ -5524,6 +6334,7 @@ model AnimalTitle {
   @@index([animalId])
   @@index([status])
   @@index([isPublic])
+  @@schema("public")
 }
 
 /**
@@ -5537,6 +6348,7 @@ model AnimalTitleDocument {
   document      Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([animalTitleId, documentId])
+  @@schema("public")
 }
 
 /**
@@ -5572,14 +6384,14 @@ model CompetitionEntry {
   scoreMax Float? // Max possible score
 
   // Racing-specific fields
-  prizeMoneyCents  Int?     // Prize/purse won in cents (e.g., 100000 = $1,000.00)
-  trackName        String?  // "Churchill Downs", "Santa Anita", "Shelbourne Park"
-  trackSurface     String?  // "dirt", "turf", "synthetic", "sand"
-  distanceFurlongs Float?   // Race distance in furlongs (1 furlong = 1/8 mile)
-  distanceMeters   Int?     // Race distance in meters (for greyhounds/international)
-  raceGrade        String?  // "G1", "G2", "G3", "Listed", "A", "B", "Open"
-  finishTime       String?  // "1:59.40" or "29.45" - stored as string for display
-  speedFigure      Int?     // Beyer speed figure, Timeform, etc.
+  prizeMoneyCents  Int? // Prize/purse won in cents (e.g., 100000 = $1,000.00)
+  trackName        String? // "Churchill Downs", "Santa Anita", "Shelbourne Park"
+  trackSurface     String? // "dirt", "turf", "synthetic", "sand"
+  distanceFurlongs Float? // Race distance in furlongs (1 furlong = 1/8 mile)
+  distanceMeters   Int? // Race distance in meters (for greyhounds/international)
+  raceGrade        String? // "G1", "G2", "G3", "Listed", "A", "B", "Open"
+  finishTime       String? // "1:59.40" or "29.45" - stored as string for display
+  speedFigure      Int? // Beyer speed figure, Timeform, etc.
 
   // Handler/rider info
   handlerName String? // Jockey, driver, handler (person who competed with animal)
@@ -5603,6 +6415,7 @@ model CompetitionEntry {
   @@index([eventDate])
   @@index([competitionType])
   @@index([isPublic])
+  @@schema("public")
 }
 
 /**
@@ -5616,4 +6429,796 @@ model CompetitionEntryDocument {
   document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([competitionEntryId, documentId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Client Profile Change Requests
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED // Client withdrew request
+  @@schema("public")
+}
+/**
+ * ContactChangeRequest - Tracks name change requests from clients
+ * (firstName, lastName, nickname require breeder approval)
+ */
+model ContactChangeRequest {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  contactId Int
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  // What changed
+  fieldName String // "firstName" | "lastName" | "nickname"
+  oldValue  String? // Previous value (null if was empty)
+  newValue  String // Requested new value
+
+  // Request metadata
+  status      ChangeRequestStatus @default(PENDING)
+  requestedAt DateTime            @default(now())
+  requestedBy String? // User ID of client who requested
+
+  // Resolution
+  resolvedAt     DateTime?
+  resolvedBy     String? // User ID of breeder who resolved
+  resolutionNote String? // Optional note from breeder (e.g., rejection reason)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([contactId])
+  @@schema("public")
+}
+
+enum EmailChangeStatus {
+  PENDING_VERIFICATION // Waiting for email verification
+  VERIFIED // Email verified, change applied
+  EXPIRED // Verification token expired
+  CANCELLED // Client cancelled
+  @@schema("public")
+}
+/**
+ * EmailChangeRequest - Tracks email change requests with verification
+ */
+model EmailChangeRequest {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  contactId Int
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  // Email change
+  oldEmail String?
+  newEmail String
+
+  // Verification
+  verificationToken String    @unique @default(cuid())
+  verifiedAt        DateTime?
+
+  // Status
+  status      EmailChangeStatus @default(PENDING_VERIFICATION)
+  requestedAt DateTime          @default(now())
+  expiresAt   DateTime // Token expiry (e.g., 24 hours)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([verificationToken])
+  @@schema("public")
+}
+
+// ============================================================================
+// MARKETPLACE MODELS (marketplace schema)
+// ============================================================================
+
+model MarketplaceUser {
+  id               Int       @id @default(autoincrement())
+  email            String    @unique
+  emailVerified    Boolean   @default(false) @map("email_verified")
+  passwordHash     String    @map("password_hash")
+
+  firstName        String?   @map("first_name")
+  lastName         String?   @map("last_name")
+  phone            String?
+
+  // Shipping address
+  addressLine1     String?   @map("address_line1")
+  addressLine2     String?   @map("address_line2")
+  city             String?
+  state            String?
+  zip              String?
+  country          String?   @default("US")
+
+  userType         String    @default("buyer") @map("user_type")
+
+  // Link to breeder account (if they're also a breeder)
+  tenantId         Int?      @map("tenant_id")
+  tenantVerified   Boolean   @default(false) @map("tenant_verified")
+
+  stripeCustomerId String?   @unique @map("stripe_customer_id")
+
+  // Account status
+  status           String    @default("active")
+  suspendedAt      DateTime? @map("suspended_at")
+  suspendedReason  String?   @map("suspended_reason")
+
+  // Email verification
+  emailVerifyToken   String?   @unique @map("email_verify_token")
+  emailVerifyExpires DateTime? @map("email_verify_expires")
+
+  // Password reset
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  lastLoginAt      DateTime? @map("last_login_at")
+
+  // Soft delete
+  deletedAt        DateTime? @map("deleted_at")
+
+  // ============================================================================
+  // Two-Factor Authentication (2FA)
+  // ============================================================================
+  twoFactorEnabled              Boolean         @default(false) @map("two_factor_enabled")
+  twoFactorMethod               TwoFactorMethod? @map("two_factor_method")
+  twoFactorEnabledAt            DateTime?       @map("two_factor_enabled_at")
+
+  // TOTP (Authenticator App)
+  totpSecret                    String?         @map("totp_secret")
+  totpVerifiedAt                DateTime?       @map("totp_verified_at")
+
+  // Passkey (WebAuthn) - marketplace-specific
+  passkeyCredentialId           String?         @map("passkey_credential_id")
+  passkeyPublicKey              Bytes?          @map("passkey_public_key")
+  passkeyCounter                Int?            @map("passkey_counter")
+  passkeyCreatedAt              DateTime?       @map("passkey_created_at")
+
+  // SMS verification for 2FA
+  smsPhoneNumber                String?         @map("sms_phone_number")
+  smsVerifiedAt                 DateTime?       @map("sms_verified_at")
+  smsVerificationToken          String?         @map("sms_verification_token")
+  smsVerificationTokenExpires   DateTime?       @map("sms_verification_token_expires")
+
+  // ============================================================================
+  // Service Provider Verification
+  // ============================================================================
+  serviceProviderTier           ServiceProviderVerificationTier? @map("service_provider_tier")
+  serviceProviderTierAchievedAt DateTime?       @map("service_provider_tier_achieved_at")
+
+  // Stripe Identity (for standalone $10 verification)
+  stripeIdentitySessionId       String?         @map("stripe_identity_session_id")
+  stripeIdentityStatus          String?         @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt            DateTime?       @map("identity_verified_at")
+
+  // Paid verification packages - Verified Professional
+  verifiedProfessionalPurchasedAt DateTime?     @map("verified_professional_purchased_at")
+  verifiedProfessionalApprovedAt  DateTime?     @map("verified_professional_approved_at")
+  verifiedProfessionalApprovedBy  Int?          @map("verified_professional_approved_by")
+  verifiedProfessionalExpiresAt   DateTime?     @map("verified_professional_expires_at")
+
+  // Paid verification packages - Accredited Provider
+  accreditedProviderPurchasedAt   DateTime?     @map("accredited_provider_purchased_at")
+  accreditedProviderApprovedAt    DateTime?     @map("accredited_provider_approved_at")
+  accreditedProviderApprovedBy    Int?          @map("accredited_provider_approved_by")
+  accreditedProviderExpiresAt     DateTime?     @map("accredited_provider_expires_at")
+
+  // Platform-earned badges (service providers)
+  quickResponderBadge           Boolean         @default(false) @map("quick_responder_badge")
+  establishedProviderBadge      Boolean         @default(false) @map("established_provider_badge")
+  topRatedBadge                 Boolean         @default(false) @map("top_rated_badge")
+  trustedProviderBadge          Boolean         @default(false) @map("trusted_provider_badge")
+  acceptsPaymentsBadge          Boolean         @default(false) @map("accepts_payments_badge")
+
+  // Relations
+  provider         MarketplaceProvider?
+  sentMessages     MarketplaceMessage[]
+  clientThreads    MarketplaceMessageThread[] @relation("ClientThreads")
+  clientTransactions MarketplaceTransaction[] @relation("ClientTransactions")
+  clientInvoices   MarketplaceInvoice[] @relation("ClientInvoices")
+  reviews          MarketplaceReview[] @relation("ReviewsByClient")
+  verificationRequests VerificationRequest[] @relation("UserVerificationRequests")
+
+  @@index([email])
+  @@index([tenantId])
+  @@index([stripeCustomerId])
+  @@index([deletedAt])
+  @@index([status])
+  @@index([twoFactorEnabled])
+  @@index([serviceProviderTier])
+  @@map("users")
+  @@schema("marketplace")
+}
+
+model MarketplaceProvider {
+  id                              Int       @id @default(autoincrement())
+  userId                          Int       @unique @map("user_id")
+  user                            MarketplaceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  providerType                    String    @map("provider_type")
+
+  // Link to breeder tenant (if provider is a breeder)
+  tenantId                        Int?      @map("tenant_id")
+
+  // Business info
+  businessName                    String    @map("business_name")
+  businessDescription             String?   @map("business_description")
+  logoUrl                         String?   @map("logo_url")
+  coverImageUrl                   String?   @map("cover_image_url")
+
+  // Contact
+  publicEmail                     String?   @map("public_email")
+  publicPhone                     String?   @map("public_phone")
+  website                         String?
+
+  // Location
+  city                            String?
+  state                           String?
+  zip                             String?
+  country                         String?   @default("US")
+  latitude                        Decimal?  @db.Decimal(10,8) @map("latitude")
+  longitude                       Decimal?  @db.Decimal(11,8) @map("longitude")
+
+  // Stripe Connect for automated payouts
+  stripeConnectAccountId          String?   @unique @map("stripe_connect_account_id")
+  stripeConnectOnboardingComplete Boolean   @default(false) @map("stripe_connect_onboarding_complete")
+  stripeConnectPayoutsEnabled     Boolean   @default(false) @map("stripe_connect_payouts_enabled")
+  stripeConnectDetailsSubmitted   Boolean   @default(false) @map("stripe_connect_details_submitted")
+
+  // Payment settings
+  paymentMode                     String    @default("manual") @map("payment_mode")
+  paymentInstructions             String?   @map("payment_instructions")
+
+  // Business hours (JSON)
+  businessHours                   Json?     @map("business_hours")
+  timeZone                        String?   @default("America/New_York") @map("time_zone")
+
+  // Stats (updated by triggers/cron)
+  totalListings                   Int       @default(0) @map("total_listings")
+  activeListings                  Int       @default(0) @map("active_listings")
+  totalTransactions               Int       @default(0) @map("total_transactions")
+  completedTransactions           Int       @default(0) @map("completed_transactions")
+  totalRevenueCents               BigInt    @default(0) @map("total_revenue_cents")
+  lifetimePayoutCents             BigInt    @default(0) @map("lifetime_payout_cents")
+  averageRating                   Decimal   @default(0.00) @map("average_rating") @db.Decimal(3,2)
+  totalReviews                    Int       @default(0) @map("total_reviews")
+
+  // Badge flags (legacy - kept for backwards compatibility)
+  verifiedProvider                Boolean   @default(false) @map("verified_provider")
+  premiumProvider                 Boolean   @default(false) @map("premium_provider")
+  quickResponder                  Boolean   @default(false) @map("quick_responder")
+
+  // ============================================================================
+  // Breeder Verification System
+  // ============================================================================
+  verificationTier                BreederVerificationTier @default(SUBSCRIBER) @map("verification_tier")
+  verificationTierAchievedAt      DateTime? @map("verification_tier_achieved_at")
+
+  // Phone verification (required for MARKETPLACE_ENABLED tier)
+  phoneVerifiedAt                 DateTime? @map("phone_verified_at")
+  phoneVerificationToken          String?   @map("phone_verification_token")
+  phoneVerificationTokenExpires   DateTime? @map("phone_verification_token_expires")
+
+  // Stripe Identity verification (for IDENTITY_VERIFIED tier)
+  stripeIdentitySessionId         String?   @map("stripe_identity_session_id")
+  stripeIdentityStatus            String?   @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt              DateTime? @map("identity_verified_at")
+
+  // Paid verification packages - BreederHQ Verified
+  verifiedPackagePurchasedAt      DateTime? @map("verified_package_purchased_at")
+  verifiedPackageApprovedAt       DateTime? @map("verified_package_approved_at")
+  verifiedPackageApprovedBy       Int?      @map("verified_package_approved_by")
+  verifiedPackageExpiresAt        DateTime? @map("verified_package_expires_at")
+
+  // Paid verification packages - BreederHQ Accredited
+  accreditedPackagePurchasedAt    DateTime? @map("accredited_package_purchased_at")
+  accreditedPackageApprovedAt     DateTime? @map("accredited_package_approved_at")
+  accreditedPackageApprovedBy     Int?      @map("accredited_package_approved_by")
+  accreditedPackageExpiresAt      DateTime? @map("accredited_package_expires_at")
+
+  // Additional platform-earned badges
+  establishedBadge                Boolean   @default(false) @map("established_badge")
+  establishedBadgeEarnedAt        DateTime? @map("established_badge_earned_at")
+  topRatedBadge                   Boolean   @default(false) @map("top_rated_badge")
+  topRatedBadgeEarnedAt           DateTime? @map("top_rated_badge_earned_at")
+  trustedBadge                    Boolean   @default(false) @map("trusted_badge")
+  trustedBadgeEarnedAt            DateTime? @map("trusted_badge_earned_at")
+
+  // Status
+  status                          String    @default("pending")
+  activatedAt                     DateTime? @map("activated_at")
+  suspendedAt                     DateTime? @map("suspended_at")
+  suspendedReason                 String?   @map("suspended_reason")
+
+  createdAt                       DateTime  @default(now()) @map("created_at")
+  updatedAt                       DateTime  @updatedAt @map("updated_at")
+
+  // Soft delete
+  deletedAt                       DateTime? @map("deleted_at")
+
+  // Relations
+  listings                        MarketplaceServiceListing[]
+  providerThreads                 MarketplaceMessageThread[] @relation("ProviderThreads")
+  providerTransactions            MarketplaceTransaction[] @relation("ProviderTransactions")
+  providerInvoices                MarketplaceInvoice[] @relation("ProviderInvoices")
+  reviews                         MarketplaceReview[] @relation("ReviewsForProvider")
+  verificationRequests            VerificationRequest[] @relation("ProviderVerificationRequests")
+
+  @@index([userId])
+  @@index([tenantId])
+  @@index([stripeConnectAccountId])
+  @@index([status, activatedAt])
+  @@index([city, state, status])
+  @@index([deletedAt])
+  @@index([verificationTier])
+  @@map("providers")
+  @@schema("marketplace")
+}
+
+/**
+ * VerificationRequest - Staff queue for processing paid verification packages
+ * Handles both Breeder and Service Provider verification requests
+ */
+model VerificationRequest {
+  id                          Int       @id @default(autoincrement())
+
+  // Who is being verified (polymorphic - one of these will be set)
+  userType                    String    @map("user_type") // "BREEDER" or "SERVICE_PROVIDER"
+  providerId                  Int?      @map("provider_id")
+  provider                    MarketplaceProvider? @relation("ProviderVerificationRequests", fields: [providerId], references: [id], onDelete: Cascade)
+  marketplaceUserId           Int?      @map("marketplace_user_id")
+  marketplaceUser             MarketplaceUser? @relation("UserVerificationRequests", fields: [marketplaceUserId], references: [id], onDelete: Cascade)
+
+  // What package was requested
+  packageType                 String    @map("package_type") // "VERIFIED" or "ACCREDITED"
+  requestedTier               String    @map("requested_tier") // Full tier name for reference
+
+  // Request status
+  status                      VerificationRequestStatus @default(PENDING)
+
+  // User-submitted verification info (flexible JSON storage)
+  // Breeders: { registryName, registryMemberId, animalsToVerify, vetClinicName, vetClinicPhone, ... }
+  // Service Providers: { certifications, professionalLicenseType, insuranceCompany, ... }
+  submittedInfo               Json?     @map("submitted_info")
+
+  // Staff review
+  reviewChecklist             Json?     @map("review_checklist") // Completed checklist items
+  reviewNotes                 String?   @map("review_notes")     // Internal notes
+  reviewedAt                  DateTime? @map("reviewed_at")
+  reviewedBy                  Int?      @map("reviewed_by")      // Admin user ID
+
+  // If more info needed from user
+  infoRequestedAt             DateTime? @map("info_requested_at")
+  infoRequestNote             String?   @map("info_request_note")
+  infoProvidedAt              DateTime? @map("info_provided_at")
+
+  // Payment tracking
+  paymentIntentId             String?   @map("payment_intent_id") // Stripe PaymentIntent ID
+  amountPaidCents             Int?      @map("amount_paid_cents")
+
+  // Timestamps
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([userType, status])
+  @@index([providerId])
+  @@index([marketplaceUserId])
+  @@index([reviewedBy])
+  @@map("verification_requests")
+  @@schema("marketplace")
+}
+
+model MarketplaceServiceListing {
+  id           Int       @id @default(autoincrement())
+  providerId   Int       @map("provider_id")
+  provider     MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  slug         String    @unique
+  title        String
+  description  String?
+
+  category     String
+  subcategory  String?
+
+  // Pricing
+  priceCents   BigInt?   @map("price_cents")
+  priceType    String?   @map("price_type")
+  priceText    String?   @map("price_text")
+
+  // Images
+  images       Json?
+  coverImageUrl String?  @map("cover_image_url")
+
+  // Location
+  city         String?
+  state        String?
+  zip          String?
+  latitude     Decimal?  @db.Decimal(10,8) @map("latitude")
+  longitude    Decimal?  @db.Decimal(11,8) @map("longitude")
+
+  // Service details
+  duration     String?
+  availability String?
+
+  // SEO
+  metaDescription String? @map("meta_description")
+  keywords     String?
+
+  // Stats
+  viewCount    Int       @default(0) @map("view_count")
+  inquiryCount Int       @default(0) @map("inquiry_count")
+  bookingCount Int       @default(0) @map("booking_count")
+
+  // Status
+  status       String    @default("draft")
+  publishedAt  DateTime? @map("published_at")
+  pausedAt     DateTime? @map("paused_at")
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // Soft delete
+  deletedAt    DateTime? @map("deleted_at")
+
+  // Relations
+  transactions MarketplaceTransaction[]
+  threads      MarketplaceMessageThread[]
+  reviews      MarketplaceReview[]
+
+  @@index([providerId, status])
+  @@index([category, status, publishedAt(sort: Desc)])
+  @@index([state, city, category, status])
+  @@index([deletedAt])
+  @@index([slug])
+  @@map("service_listings")
+  @@schema("marketplace")
+}
+
+model MarketplaceTransaction {
+  id                   BigInt    @id @default(autoincrement())
+
+  clientId             Int       @map("client_id")
+  client               MarketplaceUser @relation("ClientTransactions", fields: [clientId], references: [id], onDelete: Restrict)
+
+  providerId           Int       @map("provider_id")
+  provider             MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
+
+  listingId            Int?      @map("listing_id")
+  listing              MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  // Transaction details
+  serviceDescription   String    @map("service_description")
+  serviceNotes         String?   @map("service_notes")
+
+  // Pricing breakdown
+  servicePriceCents    BigInt    @map("service_price_cents")
+  platformFeeCents     BigInt    @default(0) @map("platform_fee_cents")
+  stripeFeesCents      BigInt    @default(0) @map("stripe_fees_cents")
+  totalCents           BigInt    @map("total_cents")
+  providerPayoutCents  BigInt?   @map("provider_payout_cents")
+
+  // Tax (if applicable)
+  taxCents             BigInt    @default(0) @map("tax_cents")
+  taxRate              Decimal?  @db.Decimal(5,4) @map("tax_rate")
+
+  // Invoice link (optional - can link to marketplace.invoices OR public.Invoice)
+  invoiceType          String?   @map("invoice_type")
+  tenantId             Int?      @map("tenant_id")
+  invoiceId            Int?      @map("invoice_id")
+
+  // Status workflow
+  status               String    @default("pending")
+
+  // Timestamps
+  createdAt            DateTime  @default(now()) @map("created_at")
+  invoicedAt           DateTime? @map("invoiced_at")
+  paidAt               DateTime? @map("paid_at")
+  startedAt            DateTime? @map("started_at")
+  completedAt          DateTime? @map("completed_at")
+  cancelledAt          DateTime? @map("cancelled_at")
+  refundedAt           DateTime? @map("refunded_at")
+
+  // Cancellation/refund
+  cancellationReason   String?   @map("cancellation_reason")
+  cancelledBy          String?   @map("cancelled_by")
+  refundAmountCents    BigInt    @default(0) @map("refund_amount_cents")
+  refundReason         String?   @map("refund_reason")
+
+  // Relations
+  marketplaceInvoice   MarketplaceInvoice?
+  threads              MarketplaceMessageThread[]
+  review               MarketplaceReview?
+
+  @@index([clientId, status, createdAt(sort: Desc)])
+  @@index([providerId, status, createdAt(sort: Desc)])
+  @@index([listingId, status])
+  @@index([invoiceType, tenantId, invoiceId])
+  @@index([status, paidAt])
+  @@map("transactions")
+  @@schema("marketplace")
+}
+
+model MarketplaceInvoice {
+  id                     Int       @id @default(autoincrement())
+
+  transactionId          BigInt    @unique @map("transaction_id")
+  transaction            MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  providerId             Int       @map("provider_id")
+  provider               MarketplaceProvider @relation("ProviderInvoices", fields: [providerId], references: [id], onDelete: Restrict)
+
+  clientId               Int       @map("client_id")
+  client                 MarketplaceUser @relation("ClientInvoices", fields: [clientId], references: [id], onDelete: Restrict)
+
+  invoiceNumber          String    @unique @map("invoice_number")
+
+  // Amounts
+  subtotalCents          BigInt    @map("subtotal_cents")
+  taxCents               BigInt    @default(0) @map("tax_cents")
+  totalCents             BigInt    @map("total_cents")
+  paidCents              BigInt    @default(0) @map("paid_cents")
+  balanceCents           BigInt    @map("balance_cents")
+  refundedCents          BigInt    @default(0) @map("refunded_cents")
+
+  // Status
+  status                 String    @default("draft")
+
+  // Payment
+  paymentMode            String    @default("stripe") @map("payment_mode")
+  paymentModeLockedAt    DateTime  @default(now()) @map("payment_mode_locked_at")
+  stripeInvoiceId        String?   @unique @map("stripe_invoice_id")
+  stripePaymentIntentId  String?   @unique @map("stripe_payment_intent_id")
+  stripeChargeId         String?   @map("stripe_charge_id")
+
+  // Manual payment confirmation
+  manualPaymentMarkedAt      DateTime? @map("manual_payment_marked_at")
+  manualPaymentMethod        String?   @map("manual_payment_method")
+  manualPaymentReference     String?   @map("manual_payment_reference")
+  manualPaymentConfirmedBy   Int?      @map("manual_payment_confirmed_by")
+
+  // Legacy fields (for backward compatibility)
+  buyerMarkedPaidAt      DateTime? @map("buyer_marked_paid_at")
+  buyerPaymentMethod     String?   @map("buyer_payment_method")
+  buyerPaymentReference  String?   @map("buyer_payment_reference")
+  providerConfirmedAt    DateTime? @map("provider_confirmed_at")
+  providerConfirmedById  Int?      @map("provider_confirmed_by")
+
+  // Dates
+  issuedAt               DateTime? @map("issued_at")
+  sentAt                 DateTime? @map("sent_at")
+  viewedAt               DateTime? @map("viewed_at")
+  dueAt                  DateTime? @map("due_at")
+  paidAt                 DateTime? @map("paid_at")
+  refundedAt             DateTime? @map("refunded_at")
+  voidedAt               DateTime? @map("voided_at")
+
+  // Notes
+  notes                  String?
+  internalNotes          String?   @map("internal_notes")
+
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  @@index([transactionId])
+  @@index([providerId, status, createdAt(sort: Desc)])
+  @@index([clientId, status, createdAt(sort: Desc)])
+  @@index([stripeInvoiceId])
+  @@index([stripePaymentIntentId])
+  @@index([stripeChargeId])
+  @@index([status, dueAt])
+  @@map("invoices")
+  @@schema("marketplace")
+}
+
+model MarketplaceMessageThread {
+  id              Int       @id @default(autoincrement())
+
+  clientId        Int       @map("client_id")
+  client          MarketplaceUser @relation("ClientThreads", fields: [clientId], references: [id], onDelete: Cascade)
+
+  providerId      Int       @map("provider_id")
+  provider        MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
+
+  listingId       Int?      @map("listing_id")
+  listing         MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  transactionId   BigInt?   @map("transaction_id")
+  transaction     MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  subject         String?
+  status          String    @default("active")
+
+  lastMessageAt   DateTime  @default(now()) @map("last_message_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  messages        MarketplaceMessage[]
+
+  @@index([clientId, lastMessageAt(sort: Desc)])
+  @@index([providerId, lastMessageAt(sort: Desc)])
+  @@map("message_threads")
+  @@schema("marketplace")
+}
+
+model MarketplaceMessage {
+  id           BigInt    @id @default(autoincrement())
+
+  threadId     Int       @map("thread_id")
+  thread       MarketplaceMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  senderId     Int       @map("sender_id")
+  sender       MarketplaceUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  messageText  String    @map("message_text")
+  readAt       DateTime? @map("read_at")
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([threadId, createdAt(sort: Desc)])
+  @@map("messages")
+  @@schema("marketplace")
+}
+
+model MarketplaceReview {
+  id             Int       @id @default(autoincrement())
+
+  transactionId  BigInt    @unique @map("transaction_id")
+  transaction    MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  providerId     Int       @map("provider_id")
+  provider       MarketplaceProvider @relation("ReviewsForProvider", fields: [providerId], references: [id], onDelete: Restrict)
+
+  clientId       Int       @map("client_id")
+  client         MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
+
+  listingId      Int?      @map("listing_id")
+  listing        MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  // Rating & review
+  rating         Int       // 1-5 stars
+  title          String?
+  reviewText     String?   @map("review_text")
+
+  // Response from provider
+  providerResponse String? @map("provider_response")
+  respondedAt    DateTime? @map("responded_at")
+
+  // Moderation
+  status         String    @default("published") // "published" | "flagged" | "removed"
+  flaggedReason  String?   @map("flagged_reason")
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([providerId, status, createdAt(sort: Desc)])
+  @@index([clientId])
+  @@index([listingId, status])
+  @@index([rating, status])
+  @@map("reviews")
+  @@schema("marketplace")
+}
+
+model MarketplaceSavedListing {
+  id          Int       @id @default(autoincrement())
+
+  // BHQ User ID (CUID string from main User table)
+  bhqUserId   String    @map("bhq_user_id") @db.VarChar(36)
+  bhqUser     User      @relation("UserSavedListings", fields: [bhqUserId], references: [id], onDelete: Cascade)
+
+  // Listing type: offspring_group, animal, service
+  listingType String    @map("listing_type") @db.VarChar(20)
+
+  // Listing ID (references different tables based on listingType)
+  listingId   Int       @map("listing_id")
+
+  savedAt     DateTime  @default(now()) @map("saved_at")
+
+  @@unique([bhqUserId, listingType, listingId])
+  @@index([bhqUserId, savedAt(sort: Desc)])
+  @@index([listingType, listingId])
+  @@map("saved_listings")
+  @@schema("marketplace")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Breeding Program Rules & Automation
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum BreedingRuleCategory {
+  LISTING
+  PRICING
+  VISIBILITY
+  BUYER_INTERACTION
+  STATUS
+  NOTIFICATIONS
+  @@schema("public")
+}
+
+enum BreedingRuleLevel {
+  PROGRAM
+  PLAN
+  GROUP
+  OFFSPRING
+  @@schema("public")
+}
+
+model BreedingProgramRule {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Rule identity
+  category    BreedingRuleCategory
+  ruleType    String   @db.VarChar(100) // Specific rule within category
+  name        String   @db.VarChar(255)
+  description String?  @db.Text
+  enabled     Boolean  @default(true)
+
+  // Configuration (varies by rule type)
+  config      Json     @default("{}")
+
+  // Hierarchy tracking
+  level       BreedingRuleLevel
+  levelId     String   @db.VarChar(50) // Program slug or entity ID
+  inheritsFromId Int?
+  inheritsFrom   BreedingProgramRule?  @relation("RuleInheritance", fields: [inheritsFromId], references: [id], onDelete: SetNull)
+  overriddenBy   BreedingProgramRule[] @relation("RuleInheritance")
+
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  executions  BreedingProgramRuleExecution[]
+
+  @@unique([tenantId, level, levelId, ruleType])
+  @@index([tenantId])
+  @@index([level, levelId])
+  @@index([inheritsFromId])
+  @@index([ruleType])
+  @@index([tenantId, enabled])
+  @@schema("public")
+}
+
+model BreedingProgramRuleExecution {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  ruleId      Int
+  rule        BreedingProgramRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  // Execution context
+  triggeredBy String   @db.VarChar(50) // 'user_action', 'cron_job', 'webhook'
+  entityType  String   @db.VarChar(20) // 'offspring', 'group', 'plan'
+  entityId    Int
+
+  // Result
+  success     Boolean
+  action      String?  @db.VarChar(100) // 'set_marketplace_listed', 'update_price', etc.
+  changes     Json?    // What actually changed
+  error       String?  @db.Text
+
+  // Metadata
+  executedAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([ruleId])
+  @@index([entityType, entityId])
+  @@index([executedAt])
+  @@schema("public")
 }
