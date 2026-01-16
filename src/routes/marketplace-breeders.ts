@@ -57,7 +57,14 @@ interface PlacementPolicies {
   requireApplication: boolean;
   requireInterview: boolean;
   requireContract: boolean;
+  requireDeposit: boolean;
+  requireReservationFee: boolean;
+  depositRefundable: boolean;
+  requireHomeVisit: boolean;
+  requireVetReference: boolean;
+  requireSpayNeuter: boolean;
   hasReturnPolicy: boolean;
+  lifetimeTakeBack: boolean;
   offersSupport: boolean;
   note: string | null;
 }
@@ -102,6 +109,8 @@ interface PublishedBreederResponse {
     acceptInquiries: boolean;
     openWaitlist: boolean;
     comingSoon: boolean;
+    /** Asset IDs for photos/media attached to this program */
+    mediaAssetIds: string[];
   }>;
   standardsAndCredentials: StandardsAndCredentials | null;
   placementPolicies: PlacementPolicies | null;
@@ -110,6 +119,35 @@ interface PublishedBreederResponse {
   businessHours: BusinessHoursSchedule | null;
   timeZone: string | null;
   quickResponderBadge: boolean;
+}
+
+/**
+ * Availability status for a breeder - helps buyers understand
+ * if this breeder is currently accepting inquiries or has animals available.
+ */
+interface AvailabilityStatus {
+  acceptingInquiries: boolean;
+  waitlistOpen: boolean;
+  availableNowCount: number;
+  upcomingLittersCount: number;
+}
+
+/**
+ * Trust badges earned by the breeder based on their activity and practices.
+ */
+interface TrustBadges {
+  quickResponder: boolean;
+  healthTesting: boolean;
+  experiencedBreeder: boolean;
+}
+
+/**
+ * Review summary for a breeder (if reviews exist).
+ */
+interface ReviewSummary {
+  hasReviews: boolean;
+  averageRating: number | null;
+  reviewCount: number;
 }
 
 /**
@@ -129,6 +167,27 @@ interface BreederSummary {
   zip: string | null;
   breeds: Array<{ name: string; species: string | null }>;
   logoAssetId: string | null;
+
+  // === ENHANCED FIELDS ===
+
+  // Experience & Trust
+  yearsInBusiness: number | null;
+  placementCount: number;
+
+  // Availability Status
+  availabilityStatus: AvailabilityStatus;
+
+  // Trust Badges
+  badges: TrustBadges;
+
+  // Response Metrics
+  averageResponseTimeHours: number | null;
+
+  // Review Summary
+  reviewSummary: ReviewSummary | null;
+
+  // Primary Species (for quick scanning)
+  primarySpecies: string | null;
 }
 
 interface BreedersListResponse {
@@ -186,6 +245,10 @@ function extractBreeds(published: Record<string, unknown>): Array<{ name: string
       .map((b: unknown) => {
         if (typeof b === "string" && b.trim()) return { name: b.trim(), species: null };
         if (b && typeof b === "object" && "name" in b) {
+          // Respect isPublic visibility flag - default to true for backward compatibility
+          const isPublic = (b as any).isPublic !== false;
+          if (!isPublic) return null;
+
           const name = safeString((b as any).name);
           const species = safeString((b as any).species);
           if (name) return { name, species };
@@ -216,6 +279,7 @@ function extractPrograms(
   acceptInquiries: boolean;
   openWaitlist: boolean;
   comingSoon: boolean;
+  mediaAssetIds: string[];
 }> {
   if (!Array.isArray(published.listedPrograms)) return [];
 
@@ -231,6 +295,7 @@ function extractPrograms(
         acceptInquiries: safeBool(prog.acceptInquiries),
         openWaitlist: safeBool(prog.openWaitlist),
         comingSoon: safeBool(prog.comingSoon),
+        mediaAssetIds: safeStringArray(prog.mediaAssetIds),
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -279,7 +344,13 @@ function isEmptyPolicies(p: PlacementPolicies): boolean {
     !p.requireApplication &&
     !p.requireInterview &&
     !p.requireContract &&
+    !p.requireDeposit &&
+    !p.requireReservationFee &&
+    !p.requireHomeVisit &&
+    !p.requireVetReference &&
+    !p.requireSpayNeuter &&
     !p.hasReturnPolicy &&
+    !p.lifetimeTakeBack &&
     !p.offersSupport &&
     !p.note
   );
@@ -287,7 +358,8 @@ function isEmptyPolicies(p: PlacementPolicies): boolean {
 
 /**
  * Extract standards and credentials from published data.
- * Returns null if all fields are empty.
+ * Respects showXxx visibility flags - only includes sections marked as public.
+ * Returns null if all visible fields are empty.
  */
 function extractStandardsAndCredentials(
   published: Record<string, unknown>
@@ -297,15 +369,21 @@ function extractStandardsAndCredentials(
 
   const data = raw as Record<string, unknown>;
 
+  // Check visibility flags - default to true for backward compatibility
+  const showRegistrations = data.showRegistrations !== false;
+  const showHealthPractices = data.showHealthPractices !== false;
+  const showBreedingPractices = data.showBreedingPractices !== false;
+  const showCarePractices = data.showCarePractices !== false;
+
   const creds: StandardsAndCredentials = {
-    registrations: safeStringArray(data.registrations),
-    healthPractices: safeStringArray(data.healthPractices),
-    breedingPractices: safeStringArray(data.breedingPractices),
-    carePractices: safeStringArray(data.carePractices),
-    registrationsNote: normalizeNote(data.registrationsNote),
-    healthNote: normalizeNote(data.healthNote),
-    breedingNote: normalizeNote(data.breedingNote),
-    careNote: normalizeNote(data.careNote),
+    registrations: showRegistrations ? safeStringArray(data.registrations) : [],
+    healthPractices: showHealthPractices ? safeStringArray(data.healthPractices) : [],
+    breedingPractices: showBreedingPractices ? safeStringArray(data.breedingPractices) : [],
+    carePractices: showCarePractices ? safeStringArray(data.carePractices) : [],
+    registrationsNote: showRegistrations ? normalizeNote(data.registrationsNote) : null,
+    healthNote: showHealthPractices ? normalizeNote(data.healthNote) : null,
+    breedingNote: showBreedingPractices ? normalizeNote(data.breedingNote) : null,
+    careNote: showCarePractices ? normalizeNote(data.careNote) : null,
   };
 
   return isEmptyCredentials(creds) ? null : creds;
@@ -313,7 +391,8 @@ function extractStandardsAndCredentials(
 
 /**
  * Extract placement policies from published data.
- * Returns null if all flags false and note empty.
+ * Respects showPolicies visibility flag.
+ * Returns null if hidden or all flags false and note empty.
  */
 function extractPlacementPolicies(
   published: Record<string, unknown>
@@ -323,11 +402,22 @@ function extractPlacementPolicies(
 
   const data = raw as Record<string, unknown>;
 
+  // Check visibility flag - default to true for backward compatibility
+  const showPolicies = data.showPolicies !== false;
+  if (!showPolicies) return null;
+
   const policies: PlacementPolicies = {
     requireApplication: safeBool(data.requireApplication),
     requireInterview: safeBool(data.requireInterview),
     requireContract: safeBool(data.requireContract),
+    requireDeposit: safeBool(data.requireDeposit),
+    requireReservationFee: safeBool(data.requireReservationFee),
+    depositRefundable: safeBool(data.depositRefundable),
+    requireHomeVisit: safeBool(data.requireHomeVisit),
+    requireVetReference: safeBool(data.requireVetReference),
+    requireSpayNeuter: safeBool(data.requireSpayNeuter),
     hasReturnPolicy: safeBool(data.hasReturnPolicy),
+    lifetimeTakeBack: safeBool(data.lifetimeTakeBack),
     offersSupport: safeBool(data.offersSupport),
     note: normalizeNote(data.note),
   };
@@ -383,7 +473,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     const offset = Math.max(0, isNaN(offsetParam) ? 0 : offsetParam);
 
     // Query all TenantSettings with marketplace-profile namespace
-    // Join to Tenant to get slug, filter to only tenants with slugs
+    // Join to Tenant to get slug and additional fields for enhanced data
     const settings = await prisma.tenantSetting.findMany({
       where: {
         namespace: NAMESPACE,
@@ -394,13 +484,86 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       select: {
         data: true,
         updatedAt: true,
+        tenantId: true,
         tenant: {
           select: {
+            id: true,
             slug: true,
+            quickResponderBadge: true,
           },
         },
       },
     });
+
+    // Collect all tenant IDs to batch-fetch stats
+    const tenantIds = settings
+      .filter((s) => s.tenant.slug)
+      .map((s) => s.tenantId);
+
+    // Batch fetch placement counts from Animal table (animals with placedAt timestamp set)
+    const animalPlacementCounts = await prisma.animal.groupBy({
+      by: ["tenantId"],
+      where: {
+        tenantId: { in: tenantIds },
+        placedAt: { not: null },
+      },
+      _count: { id: true },
+    });
+
+    // Batch fetch placement counts from Offspring table (offspring with placementState = PLACED)
+    const offspringPlacementCounts = await prisma.offspring.groupBy({
+      by: ["tenantId"],
+      where: {
+        tenantId: { in: tenantIds },
+        placementState: "PLACED",
+      },
+      _count: { id: true },
+    });
+
+    // Combine placement counts from both sources
+    const placementCountMap = new Map<number, number>();
+    for (const p of animalPlacementCounts) {
+      const count = (p._count as { id: number }).id;
+      placementCountMap.set(p.tenantId, (placementCountMap.get(p.tenantId) ?? 0) + count);
+    }
+    for (const p of offspringPlacementCounts) {
+      const count = (p._count as { id: number }).id;
+      placementCountMap.set(p.tenantId, (placementCountMap.get(p.tenantId) ?? 0) + count);
+    }
+
+    // Batch fetch available offspring count (marketplaceListed = true, placementState != PLACED)
+    const availableOffspringCounts = await prisma.offspring.groupBy({
+      by: ["tenantId"],
+      where: {
+        tenantId: { in: tenantIds },
+        marketplaceListed: true,
+        placementState: { not: "PLACED" },
+        lifeState: "ALIVE",
+      },
+      _count: { id: true },
+    });
+    const availableCountMap = new Map(
+      availableOffspringCounts.map((a) => [a.tenantId, (a._count as { id: number }).id])
+    );
+
+    // Batch fetch upcoming litters (OffspringGroup with expectedBirthOn within 90 days)
+    const ninetyDaysFromNow = new Date();
+    ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
+    const upcomingLitters = await prisma.offspringGroup.groupBy({
+      by: ["tenantId"],
+      where: {
+        tenantId: { in: tenantIds },
+        expectedBirthOn: {
+          gte: new Date(),
+          lte: ninetyDaysFromNow,
+        },
+        archivedAt: null,
+      },
+      _count: { id: true },
+    });
+    const upcomingLittersMap = new Map(
+      upcomingLitters.map((l) => [l.tenantId, (l._count as { id: number }).id])
+    );
 
     // Filter to only published profiles with valid businessName
     // and transform to summary items
@@ -421,6 +584,8 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const tenantSlug = setting.tenant.slug;
       if (!tenantSlug) continue;
 
+      const tenantId = setting.tenantId;
+
       // Extract location mode and raw address fields
       const publicLocationMode = safeString(published.publicLocationMode);
       const address = published.address as Record<string, unknown> | null | undefined;
@@ -434,6 +599,73 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       // Check if business identity (logo) should be shown
       const showBusinessIdentity = safeBool(published.showBusinessIdentity);
 
+      // Extract breeds for this breeder
+      const breeds = extractBreeds(published);
+
+      // Compute yearsInBusiness from yearEstablished
+      const yearEstablished = typeof published.yearEstablished === "number"
+        ? published.yearEstablished
+        : null;
+      const currentYear = new Date().getFullYear();
+      const yearsInBusiness = yearEstablished
+        ? Math.max(0, currentYear - yearEstablished)
+        : null;
+
+      // Get placement count from pre-fetched map
+      const placementCount = placementCountMap.get(tenantId) ?? 0;
+
+      // Get available animals count
+      const availableNowCount = availableCountMap.get(tenantId) ?? 0;
+
+      // Get upcoming litters count
+      const upcomingLittersCount = upcomingLittersMap.get(tenantId) ?? 0;
+
+      // Extract availability settings from published programs
+      const programs = Array.isArray(published.listedPrograms) ? published.listedPrograms : [];
+      const acceptingInquiries = programs.some(
+        (p: any) => p && typeof p === "object" && safeBool(p.acceptInquiries)
+      );
+      const waitlistOpen = programs.some(
+        (p: any) => p && typeof p === "object" && safeBool(p.openWaitlist)
+      );
+
+      // Build availability status
+      const availabilityStatus: AvailabilityStatus = {
+        acceptingInquiries,
+        waitlistOpen,
+        availableNowCount,
+        upcomingLittersCount,
+      };
+
+      // Check for health testing practices in credentials
+      const credentials = published.standardsAndCredentials as Record<string, unknown> | null;
+      const healthPractices = credentials ? safeStringArray(credentials.healthPractices) : [];
+      const hasHealthTesting = healthPractices.length > 0;
+
+      // Build trust badges
+      const badges: TrustBadges = {
+        quickResponder: setting.tenant.quickResponderBadge ?? false,
+        healthTesting: hasHealthTesting,
+        experiencedBreeder: placementCount >= 5,
+      };
+
+      // Compute primary species from breeds
+      const speciesCounts = new Map<string, number>();
+      for (const breed of breeds) {
+        if (breed.species) {
+          const species = breed.species.toLowerCase();
+          speciesCounts.set(species, (speciesCounts.get(species) ?? 0) + 1);
+        }
+      }
+      let primarySpecies: string | null = null;
+      let maxCount = 0;
+      for (const [species, count] of speciesCounts) {
+        if (count > maxCount) {
+          maxCount = count;
+          primarySpecies = species;
+        }
+      }
+
       const summary: BreederSummary = {
         tenantSlug,
         businessName,
@@ -442,8 +674,16 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         city,
         state,
         zip,
-        breeds: extractBreeds(published),
+        breeds,
         logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
+        // Enhanced fields
+        yearsInBusiness,
+        placementCount,
+        availabilityStatus,
+        badges,
+        averageResponseTimeHours: null, // TODO: Compute from inquiry response times
+        reviewSummary: null, // TODO: Compute from reviews table when available
+        primarySpecies,
       };
 
       publishedBreeders.push({

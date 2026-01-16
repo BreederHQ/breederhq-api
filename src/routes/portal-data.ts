@@ -539,8 +539,8 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let nextPaymentDueAt: string | null = null;
 
       for (const inv of invoices) {
-        const amountCents = inv.amountCents || 0;
-        const balanceCents = inv.balanceCents || 0;
+        const amountCents = Number(inv.amountCents || 0);
+        const balanceCents = Number(inv.balanceCents || 0);
         const paidCents = amountCents - balanceCents;
 
         totalPaidCents += paidCents;
@@ -636,9 +636,9 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
 
         // Calculate amounts from cents
-        const total = inv.amountCents / 100;
-        const amountDue = inv.balanceCents / 100;
-        const amountPaid = (inv.amountCents - inv.balanceCents) / 100;
+        const total = Number(inv.amountCents) / 100;
+        const amountDue = Number(inv.balanceCents) / 100;
+        const amountPaid = (Number(inv.amountCents) - Number(inv.balanceCents)) / 100;
 
         // Build description from line items or notes
         const description = inv.notes || (inv.LineItems.length > 0 ? inv.LineItems[0].description : "Invoice");
@@ -860,7 +860,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Calculate amount due
-      const amountDue = invoice.balanceCents;
+      const amountDue = Number(invoice.balanceCents);
       if (amountDue <= 0) {
         return reply.code(400).send({ error: "Invoice has no balance due" });
       }
@@ -963,6 +963,48 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to create portal invoice checkout");
       return reply.code(500).send({ error: "checkout_failed", detail: err.message });
+    }
+  });
+
+  /**
+   * GET /api/v1/portal/breeder
+   * Returns basic breeder/organization info for the portal context
+   * Primarily used for messaging - returns the org party ID needed to create threads
+   */
+  app.get("/portal/breeder", async (req, reply) => {
+    try {
+      const { tenantId } = await requireClientPartyScope(req);
+
+      // Get the tenant's organization (breeder) with their party ID
+      const org = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: {
+          id: true,
+          name: true,
+          partyId: true,
+          party: {
+            select: {
+              email: true,
+            },
+          },
+        },
+      });
+
+      if (!org) {
+        return reply.code(404).send({ error: "breeder_not_found" });
+      }
+
+      return reply.send({
+        breeder: {
+          orgId: org.id,
+          partyId: org.partyId,
+          name: org.name,
+          email: org.party?.email || null,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal breeder info");
+      return reply.code(500).send({ error: "failed_to_load" });
     }
   });
 };

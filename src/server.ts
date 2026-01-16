@@ -192,6 +192,14 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/auth/dev-login") return true;
   // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
 
+  // Marketplace auth bootstrap routes - session-based with MARKETPLACE surface
+  if (pathname === "/api/v1/marketplace/auth/login") return true;
+  if (pathname === "/api/v1/marketplace/auth/register") return true;
+  if (pathname === "/api/v1/marketplace/auth/logout") return true;
+  if (pathname === "/api/v1/marketplace/auth/verify-email") return true;
+  if (pathname === "/api/v1/marketplace/auth/forgot-password") return true;
+  if (pathname === "/api/v1/marketplace/auth/reset-password") return true;
+
   // Portal activation - user may not have CSRF token for portal surface yet
   if (pathname === "/api/v1/portal/activate") return true;
   if (pathname.startsWith("/api/v1/portal/invites/") && pathname.endsWith("/accept")) return true;
@@ -201,6 +209,9 @@ function isCsrfExempt(pathname: string, method: string): boolean {
 
   // Resend inbound email webhook - verified by Resend signature, not CSRF
   if (pathname === "/api/v1/webhooks/resend/inbound") return true;
+
+  // Public breeding program inquiries - unauthenticated public submissions
+  if (pathname.startsWith("/api/v1/public/breeding-programs/") && pathname.endsWith("/inquiries")) return true;
 
   return false;
 }
@@ -466,9 +477,22 @@ import marketplaceProfileRoutes from "./routes/marketplace-profile.js"; // Marke
 import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Public breeder profiles (no auth)
 import marketplaceWaitlistRoutes from "./routes/marketplace-waitlist.js"; // Marketplace waitlist requests
 import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Marketplace messaging (buyer-to-breeder)
+import marketplaceAuthRoutes from "./routes/marketplace-auth.js"; // Marketplace authentication (JWT-based)
+import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // Marketplace provider registration
+import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
+import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
+import marketplaceTransactionMessagesRoutes from "./routes/marketplace-transaction-messages.js"; // Marketplace transaction messaging
+import marketplaceWebsocketRoutes from "./routes/marketplace-websocket.js"; // Marketplace WebSocket for real-time messaging
+import marketplaceReviewsRoutes from "./routes/marketplace-reviews.js"; // Marketplace reviews & ratings
+import marketplaceAdminRoutes from "./routes/marketplace-admin.js"; // Marketplace admin dashboard
+import marketplaceSavedRoutes from "./routes/marketplace-saved.js"; // Marketplace saved items (favorites)
+import marketplaceNotificationsRoutes from "./routes/marketplace-notifications.js"; // Marketplace notification counts
+import marketplaceVerificationRoutes from "./routes/marketplace-verification.js"; // Marketplace verification (phone, identity, packages)
+import marketplace2faRoutes from "./routes/marketplace-2fa.js"; // Marketplace 2FA (TOTP, SMS, Passkey)
 import portalAccessRoutes from "./routes/portal-access.js"; // Portal Access Management
 import portalRoutes from "./routes/portal.js"; // Portal public routes (activation)
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
+import portalProfileRoutes from "./routes/portal-profile.js"; // Portal profile self-service
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
@@ -491,10 +515,17 @@ import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant an
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
+import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Services (marketplace)
+import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
+import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
+import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
+import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
+import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
+import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -523,6 +554,18 @@ app.register(
     api.register(settingsRoutes); // /api/v1/settings/* (user settings)
     api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
     api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
+    api.register(marketplaceAuthRoutes, { prefix: "/marketplace/auth" }); // /api/v1/marketplace/auth/* (JWT-based auth for marketplace)
+    api.register(marketplaceProvidersRoutes, { prefix: "/marketplace/providers" }); // /api/v1/marketplace/providers/* (Provider registration & management)
+    api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
+    api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
+    api.register(marketplaceTransactionMessagesRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transaction messaging)
+    api.register(marketplaceWebsocketRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/ws (WebSocket for real-time messaging)
+    api.register(marketplaceReviewsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Reviews & ratings)
+    api.register(marketplaceAdminRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/admin/* (Admin dashboard)
+    api.register(marketplaceSavedRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/saved/* (Saved items/favorites)
+    api.register(marketplaceNotificationsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/notifications/* (Notification counts)
+    api.register(marketplaceVerificationRoutes, { prefix: "/marketplace/verification" }); // /api/v1/marketplace/verification/* (Phone, identity, packages)
+    api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -615,6 +658,67 @@ app.register(
         (req as any).userId = null;
         (req as any).actorContext = "PUBLIC";
         return; // Exit hook early - no session/tenant/context verification needed
+      }
+
+      // 4) /public/breeding-programs/* are public (GET for list/detail, POST for inquiries)
+      // These endpoints allow anonymous browsing and inquiry submission
+      const isBreedingProgramsPublic =
+        pathOnly.startsWith("/public/breeding-programs") ||
+        pathOnly.startsWith("/api/v1/public/breeding-programs");
+      if ((m === "GET" || m === "POST") && isBreedingProgramsPublic) {
+        // Skip auth checks - public endpoints for marketplace browsing
+        (req as any).tenantId = null;
+        (req as any).userId = null;
+        (req as any).actorContext = "PUBLIC";
+        return; // Exit hook early
+      }
+
+      // 5) Public marketplace browse endpoints (GET only)
+      // These endpoints allow anonymous browsing of marketplace listings
+      const publicBrowsePatterns = [
+        // Exact matches and prefixes for list endpoints
+        "/marketplace/offspring-groups",
+        "/marketplace/animal-programs",
+        "/marketplace/animals",
+        "/marketplace/services",
+        "/api/v1/marketplace/offspring-groups",
+        "/api/v1/marketplace/animal-programs",
+        "/api/v1/marketplace/animals",
+        "/api/v1/marketplace/services",
+      ];
+
+      // Check if path matches public browse patterns (including detail pages like /animal-programs/:slug)
+      const isPublicBrowsePath = publicBrowsePatterns.some(pattern => {
+        // Exact match
+        if (pathOnly === pattern) return true;
+        // Path ends with pattern (handles /api/v1 prefix variations)
+        if (pathOnly.endsWith(pattern)) return true;
+        // Path starts with pattern (handles detail pages like /animal-programs/my-slug)
+        if (pathOnly.startsWith(pattern + "/")) return true;
+        return false;
+      });
+
+      if (m === "GET" && isPublicBrowsePath) {
+        // Skip auth checks - public browse endpoint
+        (req as any).tenantId = null;
+        (req as any).userId = null;
+        (req as any).actorContext = "PUBLIC";
+        return; // Exit hook early
+      }
+
+      // 6) /marketplace/me should work for both authenticated and anonymous users
+      // Anonymous users will get { userId: null } response from handler
+      const isMePath =
+        pathOnly === "/marketplace/me" ||
+        pathOnly === "/api/v1/marketplace/me" ||
+        pathOnly.endsWith("/marketplace/me");
+      if (m === "GET" && isMePath) {
+        // Allow through without session check - handler will determine auth status
+        const sess = parseVerifiedSession(req, surface as SessionSurface);
+        (req as any).userId = sess?.userId || null;
+        (req as any).tenantId = null;
+        (req as any).actorContext = sess?.userId ? "PUBLIC" : "PUBLIC";
+        return; // Exit hook early
       }
 
       // ---------- Session verification ----------
@@ -798,7 +902,10 @@ app.register(
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
+    api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
+    api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
     api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
+    api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
@@ -821,12 +928,15 @@ app.register(
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
+    api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
+    api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
     // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs
     // The middleware extracts tenant from the :slug param and sets req.tenantId
     api.register(portalDataRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/*
+    api.register(portalProfileRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/profile/*
     api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
@@ -849,6 +959,66 @@ app.register(
   },
   { prefix: "/api/v1" }
 );
+
+// ---------- API v2: Marketplace V2 ----------
+// Uses same tenant-scoped authentication as V1
+const v2App = app.register(
+  async (api) => {
+    // Reuse the same tenant authentication logic from V1
+    api.decorateRequest("tenantId", null as unknown as number);
+    api.decorateRequest("userId", null as unknown as string);
+    api.decorateRequest("surface", null as unknown as Surface);
+    api.decorateRequest("actorContext", null as unknown as ActorContext);
+
+    // Reuse tenant-scoped auth hook (same as V1 at line 610)
+    api.addHook("preHandler", async (req, reply) => {
+      const surface = (req as any).surface as Surface;
+
+      // CSRF validation for state-changing methods
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method.toUpperCase())) {
+        const csrfHeader = req.headers["x-csrf-token"] as string | undefined;
+        const csrfCookie = req.cookies?.["XSRF-TOKEN"];
+        const csrfResult = validateCsrfToken(csrfHeader, csrfCookie, surface as SessionSurface);
+
+        if (!csrfResult.valid) {
+          return reply.code(403).send({
+            error: "csrf_invalid",
+            detail: csrfResult.detail,
+          });
+        }
+      }
+
+      const sess = parseVerifiedSession(req, surface as SessionSurface);
+      if (!sess) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+      (req as any).userId = sess.userId;
+
+      const tenantIdRaw = req.headers["x-tenant-id"];
+      const tenantId = tenantIdRaw ? Number(tenantIdRaw) : null;
+
+      if (!tenantId || isNaN(tenantId)) {
+        return reply.code(401).send({ error: "unauthorized", message: "Tenant context required" });
+      }
+
+      const membership = await app.prisma.tenantMembership.findUnique({
+        where: { userId_tenantId: { userId: sess.userId, tenantId } },
+        select: { tenantId: true },
+      });
+
+      if (!membership) {
+        return reply.code(403).send({ error: "forbidden_tenant" });
+      }
+
+      (req as any).tenantId = tenantId;
+      (req as any).actorContext = "STAFF";
+    });
+
+    api.register(marketplaceV2Routes, { prefix: "/marketplace" });
+  },
+  { prefix: "/api/v2" }
+);
+
 // ---------- API v1/public: public marketplace subtree ----------
 // SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
 // All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
@@ -893,6 +1063,12 @@ export async function start() {
     app.printRoutes();
     await app.listen({ port: PORT, host: "0.0.0.0" });
     app.log.info(`API listening on :${PORT}`);
+
+    // Start notification scan cron job
+    startNotificationScanJob();
+
+    // Start rule execution cron job
+    startRuleExecutionJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -904,11 +1080,15 @@ start();
 // ---------- Shutdown ----------
 process.on("SIGTERM", async () => {
   app.log.info("SIGTERM received, closing");
+  stopNotificationScanJob();
+  stopRuleExecutionJob();
   await app.close();
   process.exit(0);
 });
 process.on("SIGINT", async () => {
   app.log.info("SIGINT received, closing");
+  stopNotificationScanJob();
+  stopRuleExecutionJob();
   await app.close();
   process.exit(0);
 });

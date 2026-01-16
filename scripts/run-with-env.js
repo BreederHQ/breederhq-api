@@ -34,10 +34,10 @@ function validateMigrationOrdering(migrationsDir) {
     }))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  // Regex patterns
-  const CREATE_TABLE_REGEX = /CREATE TABLE\s+"(\w+)"/gi;
-  const CREATE_TYPE_REGEX = /CREATE TYPE\s+"(\w+)"/gi;
-  const REFERENCES_REGEX = /REFERENCES\s+"(\w+)"/gi;
+  // Regex patterns (support schema-qualified names like "schema"."table")
+  const CREATE_TABLE_REGEX = /CREATE TABLE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+  const CREATE_TYPE_REGEX = /CREATE TYPE\s+(?:"(\w+)"\.)?"(\w+)"/gi;
+  const REFERENCES_REGEX = /REFERENCES\s+(?:"(\w+)"\.)?"(\w+)"/gi;
 
   // First pass: collect all created entities
   for (const migration of migrations) {
@@ -52,10 +52,10 @@ function validateMigrationOrdering(migrationsDir) {
     CREATE_TYPE_REGEX.lastIndex = 0;
 
     while ((match = CREATE_TABLE_REGEX.exec(sql)) !== null) {
-      createdEntities.set(match[1], { timestamp: migration.timestamp, migration: migration.name });
+      createdEntities.set(match[2], { timestamp: migration.timestamp, migration: migration.name });
     }
     while ((match = CREATE_TYPE_REGEX.exec(sql)) !== null) {
-      createdEntities.set(match[1], { timestamp: migration.timestamp, migration: migration.name });
+      createdEntities.set(match[2], { timestamp: migration.timestamp, migration: migration.name });
     }
   }
 
@@ -71,7 +71,7 @@ function validateMigrationOrdering(migrationsDir) {
     REFERENCES_REGEX.lastIndex = 0;
 
     while ((match = REFERENCES_REGEX.exec(sql)) !== null) {
-      const refTable = match[1];
+      const refTable = match[2];
       const creator = createdEntities.get(refTable);
 
       if (creator && creator.timestamp > migration.timestamp) {

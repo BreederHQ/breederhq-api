@@ -141,13 +141,36 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         ];
       }
 
-      const [items, total] = await prisma.$transaction([
+      const [programs, total] = await prisma.$transaction([
         prisma.breedingProgram.findMany({
           where,
           orderBy: { createdAt: "desc" },
           skip,
           take: limit,
           include: {
+            breedingPlans: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                expectedBirthDate: true,
+                birthDateActual: true,
+                offspringGroup: {
+                  select: {
+                    id: true,
+                    expectedBirthOn: true,
+                    actualBirthOn: true,
+                    countBorn: true,
+                    countLive: true,
+                    countPlaced: true,
+                    published: true,
+                    _count: {
+                      select: { Offspring: true },
+                    },
+                  },
+                },
+              },
+            },
             _count: {
               select: { breedingPlans: true },
             },
@@ -155,6 +178,60 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }),
         prisma.breedingProgram.count({ where }),
       ]);
+
+      // Compute summary stats for each program
+      const items = programs.map((program) => {
+        const plans = program.breedingPlans || [];
+        const allGroups = plans.flatMap((p) => p.offspringGroup ? [p.offspringGroup] : []);
+
+        // Count active plans (not completed/cancelled)
+        const activePlans = plans.filter((p) =>
+          p.status && !["COMPLETED", "CANCELLED", "ARCHIVED"].includes(String(p.status).toUpperCase())
+        );
+
+        // Find upcoming litters (expected birth in the future)
+        const now = new Date();
+        const upcomingLitters = allGroups.filter((g) => {
+          const expected = g.expectedBirthOn ? new Date(g.expectedBirthOn) : null;
+          return expected && expected > now && !g.actualBirthOn;
+        });
+
+        // Find next expected birth date
+        const nextExpectedBirth = upcomingLitters
+          .map((g) => g.expectedBirthOn)
+          .filter(Boolean)
+          .sort((a, b) => new Date(a!).getTime() - new Date(b!).getTime())[0] || null;
+
+        // Count available offspring (born but not all placed)
+        const availableLitters = allGroups.filter((g) => {
+          const born = g.actualBirthOn;
+          const placed = g.countPlaced ?? 0;
+          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+          return born && placed < total;
+        });
+
+        const totalAvailable = availableLitters.reduce((sum, g) => {
+          const placed = g.countPlaced ?? 0;
+          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+          return sum + Math.max(0, total - placed);
+        }, 0);
+
+        // Remove the full breedingPlans array from response (too verbose)
+        const { breedingPlans: _, ...programData } = program;
+
+        return {
+          ...programData,
+          summary: {
+            totalPlans: plans.length,
+            activePlans: activePlans.length,
+            totalLitters: allGroups.length,
+            upcomingLitters: upcomingLitters.length,
+            nextExpectedBirth,
+            availableLitters: availableLitters.length,
+            totalAvailable,
+          },
+        };
+      });
 
       reply.send({ items, total, page, limit });
     } catch (err) {
@@ -239,15 +316,22 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           slug,
           name,
           description: b.description ?? null,
+          programStory: b.programStory ?? null,
           species: species as any,
           breedText,
+          breedId: b.breedId ?? null,
+          coverImageUrl: b.coverImageUrl ?? null,
+          showCoverImage: b.showCoverImage ?? true,
           listed: b.listed ?? false,
           acceptInquiries: b.acceptInquiries ?? true,
           openWaitlist: b.openWaitlist ?? false,
           acceptReservations: b.acceptReservations ?? false,
+          comingSoon: b.comingSoon ?? false,
           pricingTiers: b.pricingTiers ?? null,
           whatsIncluded: b.whatsIncluded ?? null,
+          showWhatsIncluded: b.showWhatsIncluded ?? true,
           typicalWaitTime: b.typicalWaitTime ?? null,
+          showWaitTime: b.showWaitTime ?? true,
         },
       });
 
@@ -285,7 +369,11 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       if (b.description !== undefined) data.description = b.description;
+      if (b.programStory !== undefined) data.programStory = b.programStory;
       if (b.breedText !== undefined) data.breedText = b.breedText;
+      if (b.breedId !== undefined) data.breedId = b.breedId;
+      if (b.coverImageUrl !== undefined) data.coverImageUrl = b.coverImageUrl;
+      if (b.showCoverImage !== undefined) data.showCoverImage = Boolean(b.showCoverImage);
       if (b.listed !== undefined) {
         data.listed = Boolean(b.listed);
         // Set publishedAt when first published
@@ -302,9 +390,12 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (b.acceptInquiries !== undefined) data.acceptInquiries = Boolean(b.acceptInquiries);
       if (b.openWaitlist !== undefined) data.openWaitlist = Boolean(b.openWaitlist);
       if (b.acceptReservations !== undefined) data.acceptReservations = Boolean(b.acceptReservations);
+      if (b.comingSoon !== undefined) data.comingSoon = Boolean(b.comingSoon);
       if (b.pricingTiers !== undefined) data.pricingTiers = b.pricingTiers;
       if (b.whatsIncluded !== undefined) data.whatsIncluded = b.whatsIncluded;
+      if (b.showWhatsIncluded !== undefined) data.showWhatsIncluded = Boolean(b.showWhatsIncluded);
       if (b.typicalWaitTime !== undefined) data.typicalWaitTime = b.typicalWaitTime;
+      if (b.showWaitTime !== undefined) data.showWaitTime = Boolean(b.showWaitTime);
 
       const updated = await prisma.breedingProgram.update({
         where: { id },

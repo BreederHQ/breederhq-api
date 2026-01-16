@@ -5,10 +5,13 @@
  * Embark CSV format has three columns: Category, Name, Value
  *
  * Known Categories in Embark exports:
- * - "Color" - Coat color loci (E, K, A, B, D, M, S, etc.)
- * - "Trait" - Physical traits (Furnishings, Coat Length, etc.)
- * - "Health" - Health condition carrier status
- * - "Haplotype" - Maternal/Paternal lineage markers
+ * - "ID" - Dog identification (Name, Sex, Swab code)
+ * - "Breed Name" - Primary breed name
+ * - "Breed mix" - Breed composition percentages
+ * - "Genetic Stats" - Life Stage, Predicted Adult Weight
+ * - "Lineage" - MT/Y Haplotype and Haplogroup
+ * - "Health" - Health condition carrier status + COI + MHC
+ * - "Trait" / "Color" - Coat color, coat type, physical traits
  */
 
 // Types for parsed data
@@ -34,9 +37,82 @@ export interface ParsedGenetics {
 // Categories that contain ParsedLocus arrays (excludes 'unmapped')
 type LocusCategory = 'coatColor' | 'coatType' | 'physicalTraits' | 'eyeColor' | 'health' | 'otherTraits';
 
+/**
+ * Breed composition entry
+ */
+export interface BreedCompositionEntry {
+  breed: string;
+  percentage: number;
+}
+
+/**
+ * MHC diversity data from Embark
+ */
+export interface MHCDiversity {
+  drb1Alleles?: number;
+  dqa1Dqb1Alleles?: number;
+}
+
+/**
+ * Lineage data from Embark
+ */
+export interface GeneticLineage {
+  mtHaplotype?: string;
+  mtHaplogroup?: string;
+  yHaplotype?: string;
+  yHaplogroup?: string;
+}
+
+/**
+ * COI risk level
+ */
+export type COIRiskLevel = 'excellent' | 'good' | 'moderate' | 'high' | 'critical';
+
+/**
+ * COI data
+ */
+export interface COIData {
+  coefficient: number;
+  percentage: number;
+  riskLevel: COIRiskLevel;
+  source: 'embark';
+}
+
+/**
+ * Dog identity from Embark file
+ */
+export interface DogIdentity {
+  name?: string;
+  sex?: string;
+  swabCode?: string;
+}
+
+/**
+ * Predicted weight
+ */
+export interface PredictedWeight {
+  value: number;
+  unit: 'lbs' | 'kg';
+}
+
+/**
+ * Extended Embark data beyond genetic markers
+ */
+export interface EmbarkExtendedData {
+  dogIdentity?: DogIdentity;
+  breedName?: string;
+  breedComposition: BreedCompositionEntry[];
+  coi?: COIData;
+  mhcDiversity?: MHCDiversity;
+  lineage?: GeneticLineage;
+  predictedAdultWeight?: PredictedWeight;
+  lifeStage?: string;
+}
+
 export interface EmbarkParseResult {
   success: boolean;
   genetics: ParsedGenetics;
+  extended: EmbarkExtendedData;
   warnings: string[];
   errors: string[];
 }
@@ -965,6 +1041,43 @@ function parseGenotypeValue(value: string): { allele1?: string; allele2?: string
 }
 
 /**
+ * Calculate COI risk level from coefficient
+ */
+function calculateCOIRiskLevel(coefficient: number): COIRiskLevel {
+  const percentage = coefficient * 100;
+  if (percentage < 5) return 'excellent';
+  if (percentage < 10) return 'good';
+  if (percentage < 15) return 'moderate';
+  if (percentage < 25) return 'high';
+  return 'critical';
+}
+
+/**
+ * Parse weight value from Embark format (e.g., "57.41 lbs")
+ */
+function parseWeight(value: string): PredictedWeight | undefined {
+  const match = value.match(/^([\d.]+)\s*(lbs?|kg)$/i);
+  if (match) {
+    return {
+      value: parseFloat(match[1]),
+      unit: match[2].toLowerCase().startsWith('lb') ? 'lbs' : 'kg',
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Parse percentage value (e.g., "50.0%" -> 50)
+ */
+function parsePercentage(value: string): number | undefined {
+  const match = value.match(/^([\d.]+)%?$/);
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  return undefined;
+}
+
+/**
  * Main parser function for Embark CSV
  */
 export function parseEmbarkCSV(csvContent: string): EmbarkParseResult {
@@ -979,6 +1092,9 @@ export function parseEmbarkCSV(csvContent: string): EmbarkParseResult {
       otherTraits: [],
       unmapped: [],
     },
+    extended: {
+      breedComposition: [],
+    },
     warnings: [],
     errors: [],
   };
@@ -992,15 +1108,149 @@ export function parseEmbarkCSV(csvContent: string): EmbarkParseResult {
       return result;
     }
 
-    for (const row of rows) {
-      // Skip empty or header-like rows
-      if (!row.name || !row.value) continue;
+    // Initialize extended data collectors
+    const dogIdentity: DogIdentity = {};
+    const lineage: GeneticLineage = {};
+    const mhcDiversity: MHCDiversity = {};
 
-      // Try to find a mapping for this locus
-      const mapping = EMBARK_LOCUS_MAP[row.name];
+    for (const row of rows) {
+      // Skip empty rows
+      if (!row.name) continue;
+
+      const category = row.category?.trim() || '';
+      const name = row.name?.trim() || '';
+      const value = row.value?.trim() || '';
+
+      // === Extract ID category ===
+      if (category === 'ID') {
+        if (name === 'Name') {
+          dogIdentity.name = value;
+        } else if (name === 'Sex') {
+          dogIdentity.sex = value;
+        } else if (name === 'Swab code') {
+          dogIdentity.swabCode = value.replace(/^#\s*/, '');
+        }
+        continue;
+      }
+
+      // === Extract Breed Name ===
+      if (category === 'Breed Name' && name === 'Name') {
+        result.extended.breedName = value.trim();
+        continue;
+      }
+
+      // === Extract Breed Mix percentages ===
+      if (category === 'Breed mix') {
+        if (name !== 'Trace breeds' && value && value !== '-') {
+          const percentage = parsePercentage(value);
+          if (percentage !== undefined && percentage > 0) {
+            result.extended.breedComposition.push({
+              breed: name,
+              percentage,
+            });
+          }
+        }
+        continue;
+      }
+
+      // === Extract Genetic Stats ===
+      if (category === 'Genetic Stats') {
+        if (name === 'Life Stage') {
+          result.extended.lifeStage = value;
+        } else if (name === 'Predicted Adult Weight') {
+          result.extended.predictedAdultWeight = parseWeight(value);
+        }
+        continue;
+      }
+
+      // === Extract Lineage ===
+      if (category === 'Lineage') {
+        if (name === 'MT Haplotype' && value) {
+          lineage.mtHaplotype = value;
+        } else if (name === 'MT Haplogroup' && value) {
+          lineage.mtHaplogroup = value;
+        } else if (name === 'Y Haplotype' && value) {
+          lineage.yHaplotype = value;
+        } else if (name === 'Y Haplogroup' && value) {
+          lineage.yHaplogroup = value;
+        }
+        continue;
+      }
+
+      // === Extract COI from Health category ===
+      if (category === 'Health' && name.startsWith('Coefficient Of Inbreeding')) {
+        const coiValue = parseFloat(value);
+        if (!isNaN(coiValue)) {
+          result.extended.coi = {
+            coefficient: coiValue,
+            percentage: coiValue * 100,
+            riskLevel: calculateCOIRiskLevel(coiValue),
+            source: 'embark',
+          };
+        }
+        continue;
+      }
+
+      // === Extract MHC diversity from Health category ===
+      if (category === 'Health' && name.startsWith('MHC Class II')) {
+        const alleleCount = parseInt(value, 10);
+        if (!isNaN(alleleCount)) {
+          if (name.includes('DRB1')) {
+            mhcDiversity.drb1Alleles = alleleCount;
+          } else if (name.includes('DQA1') || name.includes('DQB1')) {
+            mhcDiversity.dqa1Dqb1Alleles = alleleCount;
+          }
+        }
+        continue;
+      }
+
+      // === Process genetic markers (Health, Trait, Color) ===
+      if (!value) continue;
+
+      // Try to find a mapping for this locus using multiple strategies
+      // Embark uses verbose names like "Factor IX Deficiency, Hemophilia B (F9 Exon 7, Terrier Variant)"
+      let mapping = EMBARK_LOCUS_MAP[name];
+
+      if (!mapping) {
+        // Strategy 1: Strip parenthetical suffix
+        // e.g., "MDR1 Drug Sensitivity (ABCB1)" -> "MDR1 Drug Sensitivity"
+        const nameWithoutParens = name.replace(/\s*\([^)]+\)\s*$/, '').trim();
+        if (nameWithoutParens !== name) {
+          mapping = EMBARK_LOCUS_MAP[nameWithoutParens];
+        }
+      }
+
+      if (!mapping) {
+        // Strategy 2: Take text before first comma (breed variants)
+        // e.g., "Factor IX Deficiency, Hemophilia B (F9 Exon 7, Terrier Variant)" -> "Factor IX Deficiency"
+        const nameBeforeComma = name.split(',')[0].trim();
+        if (nameBeforeComma !== name) {
+          mapping = EMBARK_LOCUS_MAP[nameBeforeComma];
+        }
+      }
+
+      if (!mapping) {
+        // Strategy 3: Strip both parentheses AND take before comma
+        // e.g., "Von Willebrand Disease Type I, Type I vWD (VWF)" -> "Von Willebrand Disease Type I"
+        const cleanName = name.replace(/\s*\([^)]+\)/g, '').split(',')[0].trim();
+        if (cleanName !== name) {
+          mapping = EMBARK_LOCUS_MAP[cleanName];
+        }
+      }
+
+      if (!mapping) {
+        // Strategy 4: Try to match key health condition keywords
+        const lowerName = name.toLowerCase();
+        for (const [key, value] of Object.entries(EMBARK_LOCUS_MAP)) {
+          if (value.category === 'health' && lowerName.includes(key.toLowerCase()) && key.length > 3) {
+            mapping = value;
+            break;
+          }
+        }
+      }
 
       if (mapping) {
-        const parsed = parseGenotypeValue(row.value);
+        const parsed = parseGenotypeValue(value);
         const locus: ParsedLocus = {
           locus: mapping.locus,
           locusName: mapping.locusName,
@@ -1011,12 +1261,106 @@ export function parseEmbarkCSV(csvContent: string): EmbarkParseResult {
         };
 
         result.genetics[mapping.category].push(locus);
-      } else {
-        // Store unmapped rows for review
+      } else if (category === 'Health') {
+        // For health markers we don't recognize, auto-create them with Embark's name
+        // Extract a code from the parenthetical gene name if present, otherwise use abbreviated name
+        const geneMatch = name.match(/\(([A-Z0-9]+)/i);
+        const autoCode = geneMatch ? geneMatch[1].toUpperCase() : name.substring(0, 20).replace(/[^A-Za-z0-9]/g, '');
+
+        const parsed = parseGenotypeValue(value);
+        const locus: ParsedLocus = {
+          locus: autoCode,
+          locusName: name.split('(')[0].split(',')[0].trim(), // Clean up the display name
+          allele1: parsed.allele1,
+          allele2: parsed.allele2,
+          genotype: parsed.genotype,
+          source: 'embark',
+        };
+        result.genetics.health.push(locus);
+
+        // Track as unmapped for admin review - data is imported but needs proper mapping added
         result.genetics.unmapped.push(row);
-        result.warnings.push(`Unknown locus: "${row.name}" (${row.value})`);
+        result.warnings.push(`[AUTO-CREATED Health] "${name}" → ${autoCode} (${value}) - needs mapping`);
+      } else if (category === 'Trait' || category === 'Color') {
+        // For trait/color markers we don't recognize, auto-create them with Embark's name
+        // This handles new traits Embark adds over time (e.g., Cocoa, R Locus, Panda White Spotting)
+        const geneMatch = name.match(/\(([A-Z0-9]+)/i);
+        // For traits, prefer a readable code from the locus name (e.g., "E Locus" -> "E")
+        const locusMatch = name.match(/^([A-Z][a-z]?)\s+Locus/i);
+        const autoCode = locusMatch
+          ? locusMatch[1].toUpperCase()
+          : geneMatch
+            ? geneMatch[1].toUpperCase()
+            : name.substring(0, 15).replace(/[^A-Za-z0-9]/g, '');
+
+        const parsed = parseGenotypeValue(value);
+        const locus: ParsedLocus = {
+          locus: autoCode,
+          locusName: name.split('(')[0].split(',')[0].trim(), // Clean up the display name
+          allele1: parsed.allele1,
+          allele2: parsed.allele2,
+          genotype: parsed.genotype,
+          source: 'embark',
+        };
+
+        // Determine category: Color-related traits go to coatColor, others to physical or other
+        const lowerName = name.toLowerCase();
+        const isCoatColor = category === 'Color' ||
+          lowerName.includes('locus') ||
+          lowerName.includes('color') ||
+          lowerName.includes('spotting') ||
+          lowerName.includes('merle') ||
+          lowerName.includes('dilute');
+        const isCoatType = lowerName.includes('furnish') ||
+          lowerName.includes('shed') ||
+          lowerName.includes('curl') ||
+          lowerName.includes('coat length') ||
+          lowerName.includes('hair');
+        const isEyeColor = lowerName.includes('eye') || lowerName.includes('blue eye');
+        const isPhysical = lowerName.includes('size') ||
+          lowerName.includes('weight') ||
+          lowerName.includes('bobtail') ||
+          lowerName.includes('dewclaw') ||
+          lowerName.includes('altitude');
+
+        let assignedCategory: string;
+        if (isCoatColor) {
+          result.genetics.coatColor.push(locus);
+          assignedCategory = 'coatColor';
+        } else if (isCoatType) {
+          result.genetics.coatType.push(locus);
+          assignedCategory = 'coatType';
+        } else if (isEyeColor) {
+          result.genetics.eyeColor.push(locus);
+          assignedCategory = 'eyeColor';
+        } else if (isPhysical) {
+          result.genetics.physicalTraits.push(locus);
+          assignedCategory = 'physicalTraits';
+        } else {
+          // Default: put in otherTraits
+          result.genetics.otherTraits.push(locus);
+          assignedCategory = 'otherTraits';
+        }
+
+        // Track as unmapped for admin review - data is imported but needs proper mapping added
+        result.genetics.unmapped.push(row);
+        result.warnings.push(`[AUTO-CREATED ${assignedCategory}] "${name}" → ${autoCode} (${value}) - needs mapping`);
       }
     }
+
+    // Assign collected extended data
+    if (Object.keys(dogIdentity).length > 0) {
+      result.extended.dogIdentity = dogIdentity;
+    }
+    if (Object.keys(lineage).length > 0) {
+      result.extended.lineage = lineage;
+    }
+    if (Object.keys(mhcDiversity).length > 0) {
+      result.extended.mhcDiversity = mhcDiversity;
+    }
+
+    // Sort breed composition by percentage descending
+    result.extended.breedComposition.sort((a, b) => b.percentage - a.percentage);
 
     // Check if we got any meaningful data
     const totalMapped =
@@ -1026,7 +1370,7 @@ export function parseEmbarkCSV(csvContent: string): EmbarkParseResult {
       result.genetics.eyeColor.length +
       result.genetics.health.length;
 
-    if (totalMapped === 0) {
+    if (totalMapped === 0 && result.extended.breedComposition.length === 0) {
       result.warnings.push('No recognized genetic markers found. The file may not be an Embark results file.');
     }
 

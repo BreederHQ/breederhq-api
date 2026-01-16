@@ -89,6 +89,74 @@ async function ensureTenantSlug(tenantId: number, businessName: string): Promise
   }
 }
 
+// ============================================================================
+// Breeding Programs Sync
+// ============================================================================
+
+/**
+ * Sync marketplace profile listedPrograms to BreedingProgram database records.
+ * This ensures rules can be managed at the PROGRAM level.
+ */
+async function syncBreedingPrograms(tenantId: number, profileData: any): Promise<void> {
+  const listedPrograms = profileData?.listedPrograms;
+  if (!Array.isArray(listedPrograms)) return;
+
+  for (const program of listedPrograms) {
+    if (!program.name || !program.species) continue;
+
+    const slug = generateSlug(program.name);
+
+    // Check if record exists
+    const existing = await prisma.breedingProgram.findFirst({
+      where: { tenantId, slug },
+      select: { id: true },
+    });
+
+    if (existing) {
+      // Update existing
+      await prisma.breedingProgram.update({
+        where: { id: existing.id },
+        data: {
+          name: program.name,
+          species: program.species,
+          breedText: program.breedText || null,
+          breedId: program.breedId || null,
+          description: program.description || null,
+          programStory: program.programStory || null,
+          coverImageUrl: program.coverImageUrl || null,
+          showCoverImage: program.showCoverImage !== false,
+          listed: true,
+          acceptInquiries: program.acceptInquiries !== false,
+          openWaitlist: program.openWaitlist === true,
+          acceptReservations: program.acceptReservations === true,
+          comingSoon: program.comingSoon === true,
+        },
+      });
+    } else {
+      // Create new
+      await prisma.breedingProgram.create({
+        data: {
+          tenantId,
+          slug,
+          name: program.name,
+          species: program.species,
+          breedText: program.breedText || null,
+          breedId: program.breedId || null,
+          description: program.description || null,
+          programStory: program.programStory || null,
+          coverImageUrl: program.coverImageUrl || null,
+          showCoverImage: program.showCoverImage !== false,
+          listed: true,
+          acceptInquiries: program.acceptInquiries !== false,
+          openWaitlist: program.openWaitlist === true,
+          acceptReservations: program.acceptReservations === true,
+          comingSoon: program.comingSoon === true,
+        },
+      });
+    }
+  }
+}
+
 // Fields that must be stripped from published data for privacy
 const ADDRESS_FIELDS_TO_STRIP = [
   "streetAddress",
@@ -179,6 +247,12 @@ function stripAddressFields(data: Record<string, unknown>): Record<string, unkno
 
 /**
  * Validate that minimum required fields are present for publishing.
+ *
+ * Optional branding fields:
+ * - logoUrl: URL to breeder logo (recommended 400x400px square)
+ * - bannerImageUrl: URL to banner image (recommended 1200x400px wide)
+ * - showLogo: boolean visibility flag for logo
+ * - showBanner: boolean visibility flag for banner
  */
 function validatePublishPayload(
   data: Record<string, unknown>
@@ -199,6 +273,20 @@ function validatePublishPayload(
   // Note: Frontend should warn if hiding all programs, but backend allows it
   if (!Array.isArray(data.listedPrograms)) {
     errors.push("listedPrograms must be an array");
+  }
+
+  // Optional branding fields - validate types if present
+  if (data.logoUrl !== undefined && data.logoUrl !== null && typeof data.logoUrl !== "string") {
+    errors.push("logoUrl must be a string if provided");
+  }
+  if (data.bannerImageUrl !== undefined && data.bannerImageUrl !== null && typeof data.bannerImageUrl !== "string") {
+    errors.push("bannerImageUrl must be a string if provided");
+  }
+  if (data.showLogo !== undefined && data.showLogo !== null && typeof data.showLogo !== "boolean") {
+    errors.push("showLogo must be a boolean if provided");
+  }
+  if (data.showBanner !== undefined && data.showBanner !== null && typeof data.showBanner !== "boolean") {
+    errors.push("showBanner must be a boolean if provided");
   }
 
   if (errors.length > 0) {
@@ -283,6 +371,9 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
     await writeProfileSetting(tenantId, updated, getActorId(req));
 
+    // Sync listedPrograms to BreedingProgram database records
+    await syncBreedingPrograms(tenantId, draftPayload);
+
     return reply.send({
       ok: true,
       draftUpdatedAt: now,
@@ -341,6 +432,10 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       ...existing,
       published: sanitizedPublished,
       publishedAt: now,
+      // Clear draft after publishing to prevent stale draft data from overriding published
+      // The frontend merges with { ...published, ...draft } so old draft values would win
+      draft: undefined,
+      draftUpdatedAt: undefined,
     };
 
     await writeProfileSetting(tenantId, updated, getActorId(req));
@@ -350,6 +445,44 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       publishedAt: now,
       tenantSlug,
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /profile/sync-programs - Sync breeding programs from profile to database
+  // --------------------------------------------------------------------------
+  app.post("/profile/sync-programs", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.code(400).send({
+        error: "tenant_required",
+        message: "X-Tenant-Id header required for profile endpoints",
+      });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    try {
+      const data = await readProfileSetting(tenantId);
+      const profile = data.draft || data.published;
+
+      if (profile) {
+        await syncBreedingPrograms(tenantId, profile);
+      }
+
+      return reply.send({ ok: true });
+    } catch (err) {
+      console.error("Error syncing breeding programs:", err);
+      return reply.code(500).send({
+        error: "internal_error",
+        message: err instanceof Error ? err.message : "Failed to sync programs",
+      });
+    }
   });
 
   // --------------------------------------------------------------------------

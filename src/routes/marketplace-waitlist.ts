@@ -577,7 +577,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
             product_data: {
               name: `Balance due on Invoice #${invoice.invoiceNumber}`,
             },
-            unit_amount: invoice.balanceCents,
+            unit_amount: Number(invoice.balanceCents),
           },
           quantity: 1,
         });
