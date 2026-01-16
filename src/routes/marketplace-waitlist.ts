@@ -16,6 +16,8 @@ import { parseVerifiedSession } from "../utils/session.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
 import { stripe } from "../services/stripe-service.js";
+import { sendWaitlistSignupNotificationEmail } from "../services/email-service.js";
+import { sendWaitlistConfirmationToUser } from "../services/marketplace-email-service.js";
 
 // ============================================================================
 // Constants
@@ -306,6 +308,41 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         // Log but don't fail the waitlist request if messaging fails
         console.error("Failed to create message thread for waitlist request:", e);
       }
+    }
+
+    // 9) Send email notification to breeder about the new waitlist signup
+    try {
+      await sendWaitlistSignupNotificationEmail(tenant.id, {
+        applicantName: body.name,
+        applicantEmail: body.email,
+        applicantPhone: body.phone,
+        programName: body.programName,
+        message: body.message?.trim() || undefined,
+        waitlistEntryId: entry.id,
+      });
+    } catch (e) {
+      // Log but don't fail the waitlist request if email fails
+      console.error("Failed to send waitlist signup notification email:", e);
+    }
+
+    // 10) Send confirmation email to the user
+    try {
+      // Get breeder name for the email
+      const breederOrg = await prisma.organization.findFirst({
+        where: { tenantId: tenant.id },
+        select: { name: true },
+      });
+
+      await sendWaitlistConfirmationToUser({
+        userEmail: body.email,
+        userName: body.name,
+        breederName: breederOrg?.name || "the breeder",
+        programName: body.programName,
+        message: body.message?.trim() || undefined,
+      });
+    } catch (e) {
+      // Log but don't fail the waitlist request if email fails
+      console.error("Failed to send waitlist confirmation email to user:", e);
     }
 
     const response: WaitlistRequestResponse = {

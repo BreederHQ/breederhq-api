@@ -509,6 +509,9 @@ import competitionsRoutes from "./routes/competitions.js"; // Competition entry 
 import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
 import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
 import templatesRoutes from "./routes/templates.js"; // Email/message templates
+import contractsRoutes from "./routes/contracts.js"; // Contract e-signatures (platform)
+import contractTemplatesRoutes from "./routes/contract-templates.js"; // Contract templates management
+import portalContractsRoutes from "./routes/portal-contracts.js"; // Contract signing (portal)
 import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
@@ -526,6 +529,7 @@ import notificationsRoutes from "./routes/notifications.js"; // Health & breedin
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
+import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -899,6 +903,8 @@ app.register(
     api.register(partiesRoutes);       // /api/v1/parties/*
     api.register(partyCrmRoutes);      // /api/v1/parties/:partyId/notes|events|milestones|emails|activity
     api.register(templatesRoutes);     // /api/v1/templates/* Email/message templates
+    api.register(contractsRoutes);     // /api/v1/contracts/* Contract e-signatures
+    api.register(contractTemplatesRoutes); // /api/v1/contract-templates/* Contract template management
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
@@ -930,6 +936,7 @@ app.register(
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
+    api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
@@ -1041,6 +1048,16 @@ app.register(
     });
   },
   { prefix: "/api/v1/public" }
+);
+
+// ---------- Sitemap: public sitemap data endpoint ----------
+// Used by build-time sitemap generation script
+// Returns only publicly visible entity URLs (no sensitive data)
+app.register(
+  async (api) => {
+    api.register(sitemapRoutes);
+  },
+  { prefix: "/api" }
 );
 
 // DEV: Log disabled public marketplace endpoint status at startup

@@ -686,3 +686,539 @@ export async function sendSubscriptionRenewedEmail(
     templateKey: "subscription_renewed",
   });
 }
+
+/** ───────────────────────── Marketplace Notifications ───────────────────────── */
+
+export interface WaitlistSignupNotificationData {
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone?: string;
+  programName: string;
+  message?: string;
+  waitlistEntryId: number;
+}
+
+/**
+ * Send notification email to breeder when someone joins their waitlist from the marketplace
+ */
+export async function sendWaitlistSignupNotificationEmail(
+  tenantId: number,
+  data: WaitlistSignupNotificationData
+): Promise<void> {
+  const recipient = await getTenantOwnerEmail(tenantId);
+  if (!recipient) return;
+
+  const subject = `New Waitlist Signup: ${data.applicantName} for ${data.programName}`;
+
+  const contactInfo = [
+    `<strong>Email:</strong> <a href="mailto:${data.applicantEmail}">${data.applicantEmail}</a>`,
+    data.applicantPhone ? `<strong>Phone:</strong> ${data.applicantPhone}` : null,
+  ].filter(Boolean).join("<br>");
+
+  const messageSection = data.message
+    ? `
+      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Message from applicant:</p>
+        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
+      </div>
+    `
+    : "";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #f97316;">New Waitlist Signup!</h2>
+      <p>Hi ${recipient.name},</p>
+      <p>Great news! Someone has joined your waitlist for <strong>${data.programName}</strong>.</p>
+
+      <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: #c2410c;">
+          ${data.applicantName}
+        </p>
+        ${contactInfo}
+      </div>
+
+      ${messageSection}
+
+      <p>
+        <a href="${APP_URL}/waitlist" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          View Waitlist
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        This applicant's request is pending your review. You can approve, reject, or message them from your waitlist dashboard.
+        <br><br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+New Waitlist Signup!
+
+Hi ${recipient.name},
+
+Great news! Someone has joined your waitlist for ${data.programName}.
+
+Applicant: ${data.applicantName}
+Email: ${data.applicantEmail}
+${data.applicantPhone ? `Phone: ${data.applicantPhone}` : ""}
+
+${data.message ? `Message from applicant:\n${data.message}\n` : ""}
+
+View and manage this request at: ${APP_URL}/waitlist
+
+This applicant's request is pending your review.
+
+The BreederHQ Team
+  `.trim();
+
+  await sendEmail({
+    tenantId,
+    to: recipient.email,
+    subject,
+    html,
+    text,
+    category: "transactional",
+    templateKey: "waitlist_signup_notification",
+  });
+}
+
+/** ───────────────────────── Contract/E-Signature Notifications ───────────────────────── */
+
+const PORTAL_URL = process.env.PORTAL_DOMAIN || "https://portal.breederhq.com";
+
+export interface ContractEmailData {
+  contractId: number;
+  contractTitle: string;
+  breederName: string;
+  recipientName: string;
+  recipientEmail: string;
+  expiresAt?: Date;
+  message?: string;
+}
+
+export interface ContractSignedEmailData extends ContractEmailData {
+  signedByName: string;
+  signedAt: Date;
+  allPartiesSigned: boolean;
+}
+
+export interface ContractDeclinedEmailData extends ContractEmailData {
+  declinedByName: string;
+  declinedAt: Date;
+  reason?: string;
+}
+
+/**
+ * Send contract to recipient for signing
+ */
+export async function sendContractSentEmail(
+  tenantId: number,
+  data: ContractEmailData
+): Promise<SendEmailResult> {
+  const signingUrl = `${PORTAL_URL}/contracts/${data.contractId}/sign`;
+
+  const expirationNote = data.expiresAt
+    ? `<p style="color: #b45309; font-size: 14px;">⏰ This contract expires on ${new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }).format(data.expiresAt)}.</p>`
+    : "";
+
+  const personalMessage = data.message
+    ? `
+      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Message from ${data.breederName}:</p>
+        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
+      </div>
+    `
+    : "";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #f97316;">Contract Ready for Your Signature</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p><strong>${data.breederName}</strong> has sent you a contract to review and sign.</p>
+
+      <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #c2410c;">
+          ${data.contractTitle}
+        </p>
+      </div>
+
+      ${personalMessage}
+      ${expirationNote}
+
+      <p>Please review the document and sign electronically to complete the agreement.</p>
+
+      <p>
+        <a href="${signingUrl}" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          Review & Sign Contract
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        If you have any questions about this contract, please contact ${data.breederName} directly.
+        <br><br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+Contract Ready for Your Signature
+
+Hi ${data.recipientName},
+
+${data.breederName} has sent you a contract to review and sign.
+
+Contract: ${data.contractTitle}
+
+${data.message ? `Message from ${data.breederName}:\n${data.message}\n` : ""}
+${data.expiresAt ? `This contract expires on ${new Intl.DateTimeFormat("en-US").format(data.expiresAt)}.\n` : ""}
+
+Please review and sign at: ${signingUrl}
+
+If you have questions, please contact ${data.breederName} directly.
+
+The BreederHQ Team
+  `.trim();
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Contract from ${data.breederName}: ${data.contractTitle}`,
+    html,
+    text,
+    category: "transactional",
+    templateKey: "contract_sent",
+    metadata: { contractId: data.contractId },
+  });
+}
+
+/**
+ * Send contract reminder email
+ */
+export async function sendContractReminderEmail(
+  tenantId: number,
+  data: ContractEmailData,
+  daysUntilExpiry?: number
+): Promise<SendEmailResult> {
+  const signingUrl = `${PORTAL_URL}/contracts/${data.contractId}/sign`;
+
+  const urgencyText = daysUntilExpiry !== undefined
+    ? daysUntilExpiry <= 1
+      ? "expires tomorrow"
+      : `expires in ${daysUntilExpiry} days`
+    : "is awaiting your signature";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #f59e0b;">Reminder: Contract Awaiting Your Signature</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p>This is a friendly reminder that the following contract from <strong>${data.breederName}</strong> ${urgencyText}.</p>
+
+      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #b45309;">
+          ${data.contractTitle}
+        </p>
+        ${data.expiresAt ? `
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #92400e;">
+          Expires: ${new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(data.expiresAt)}
+        </p>
+        ` : ""}
+      </div>
+
+      <p>
+        <a href="${signingUrl}" style="background: #f59e0b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          Review & Sign Now
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        If you've already signed or have questions, please contact ${data.breederName}.
+        <br><br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Reminder: Contract ${urgencyText} - ${data.contractTitle}`,
+    html,
+    category: "transactional",
+    templateKey: "contract_reminder",
+    metadata: { contractId: data.contractId, daysUntilExpiry },
+  });
+}
+
+/**
+ * Send notification when a party signs the contract
+ */
+export async function sendContractSignedEmail(
+  tenantId: number,
+  data: ContractSignedEmailData
+): Promise<SendEmailResult> {
+  const viewUrl = data.allPartiesSigned
+    ? `${APP_URL}/contracts/${data.contractId}`
+    : `${APP_URL}/contracts/${data.contractId}`;
+
+  const statusMessage = data.allPartiesSigned
+    ? `<p style="color: #059669; font-weight: 600;">✓ All parties have now signed. The contract is fully executed.</p>`
+    : `<p>There are still other parties who need to sign before the contract is complete.</p>`;
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10b981;">Contract Signed</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p><strong>${data.signedByName}</strong> has signed the following contract:</p>
+
+      <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #065f46;">
+          ${data.contractTitle}
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #047857;">
+          Signed on ${new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(data.signedAt)}
+        </p>
+      </div>
+
+      ${statusMessage}
+
+      <p>
+        <a href="${viewUrl}" style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          ${data.allPartiesSigned ? "View Signed Contract" : "View Contract Status"}
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        ${data.allPartiesSigned ? "A copy of the signed document will be sent to all parties." : ""}
+        <br><br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: data.allPartiesSigned
+      ? `Contract Fully Signed: ${data.contractTitle}`
+      : `Contract Update: ${data.signedByName} has signed`,
+    html,
+    category: "transactional",
+    templateKey: data.allPartiesSigned ? "contract_completed" : "contract_party_signed",
+    metadata: { contractId: data.contractId, signedBy: data.signedByName },
+  });
+}
+
+/**
+ * Send notification when a party declines the contract
+ */
+export async function sendContractDeclinedEmail(
+  tenantId: number,
+  data: ContractDeclinedEmailData
+): Promise<SendEmailResult> {
+  const viewUrl = `${APP_URL}/contracts/${data.contractId}`;
+
+  const reasonSection = data.reason
+    ? `
+      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason given:</p>
+        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.reason}</p>
+      </div>
+    `
+    : "";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">Contract Declined</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p><strong>${data.declinedByName}</strong> has declined to sign the following contract:</p>
+
+      <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #991b1b;">
+          ${data.contractTitle}
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #b91c1c;">
+          Declined on ${new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }).format(data.declinedAt)}
+        </p>
+      </div>
+
+      ${reasonSection}
+
+      <p>You may want to reach out to discuss their concerns or create a new contract with updated terms.</p>
+
+      <p>
+        <a href="${viewUrl}" style="background: #6b7280; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          View Contract Details
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Contract Declined: ${data.contractTitle}`,
+    html,
+    category: "transactional",
+    templateKey: "contract_declined",
+    metadata: { contractId: data.contractId, declinedBy: data.declinedByName },
+  });
+}
+
+/**
+ * Send notification when contract is voided by breeder
+ */
+export async function sendContractVoidedEmail(
+  tenantId: number,
+  data: ContractEmailData & { reason?: string }
+): Promise<SendEmailResult> {
+  const reasonSection = data.reason
+    ? `
+      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason:</p>
+        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.reason}</p>
+      </div>
+    `
+    : "";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #6b7280;">Contract Voided</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p><strong>${data.breederName}</strong> has voided the following contract:</p>
+
+      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #374151;">
+          ${data.contractTitle}
+        </p>
+      </div>
+
+      ${reasonSection}
+
+      <p>This contract is no longer valid and no action is required from you.</p>
+
+      <p>If you have questions, please contact ${data.breederName} directly.</p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Contract Voided: ${data.contractTitle}`,
+    html,
+    category: "transactional",
+    templateKey: "contract_voided",
+    metadata: { contractId: data.contractId },
+  });
+}
+
+/**
+ * Send notification when contract expires
+ */
+export async function sendContractExpiredEmail(
+  tenantId: number,
+  data: ContractEmailData
+): Promise<SendEmailResult> {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #b45309;">Contract Expired</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p>The following contract has expired and can no longer be signed:</p>
+
+      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #92400e;">
+          ${data.contractTitle}
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: #b45309;">
+          From: ${data.breederName}
+        </p>
+      </div>
+
+      <p>If you still wish to proceed with this agreement, please contact ${data.breederName} to request a new contract.</p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Contract Expired: ${data.contractTitle}`,
+    html,
+    category: "transactional",
+    templateKey: "contract_expired",
+    metadata: { contractId: data.contractId },
+  });
+}
+
+/**
+ * Send signed PDF to all parties after contract is fully executed
+ */
+export async function sendContractCompletedWithPdfEmail(
+  tenantId: number,
+  data: ContractEmailData & { pdfDownloadUrl: string }
+): Promise<SendEmailResult> {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10b981;">✓ Contract Fully Executed</h2>
+      <p>Hi ${data.recipientName},</p>
+      <p>Great news! All parties have signed the following contract:</p>
+
+      <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #065f46;">
+          ${data.contractTitle}
+        </p>
+      </div>
+
+      <p>Your signed copy is ready for download. This document includes all signatures and a certificate of completion for your records.</p>
+
+      <p>
+        <a href="${data.pdfDownloadUrl}" style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          Download Signed Contract (PDF)
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        Keep this document for your records. The signed contract is legally binding.
+        <br><br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    tenantId,
+    to: data.recipientEmail,
+    subject: `Signed Contract Ready: ${data.contractTitle}`,
+    html,
+    category: "transactional",
+    templateKey: "contract_completed_pdf",
+    metadata: { contractId: data.contractId },
+  });
+}

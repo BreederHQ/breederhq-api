@@ -1061,3 +1061,379 @@ View and reply: ${transactionUrl}
     category: "transactional",
   });
 }
+
+// ---------- Inquiry Email Notifications ----------
+
+/**
+ * Send confirmation email to user when they submit an inquiry
+ */
+export async function sendInquiryConfirmationToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+  listingTitle?: string;
+  message: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+  const subject = data.listingTitle
+    ? `Your inquiry about "${data.listingTitle}" has been sent`
+    : `Your inquiry to ${data.breederName} has been sent`;
+
+  const html = `
+<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #10b981;">Inquiry Sent Successfully!</h2>
+  <p>Hi ${userName},</p>
+  <p>Your inquiry to <strong>${data.breederName}</strong>${data.listingTitle ? ` about "${data.listingTitle}"` : ""} has been sent.</p>
+
+  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Your message:</p>
+    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
+  </div>
+
+  <p>The breeder will receive your message and respond as soon as possible. You'll get an email notification when they reply.</p>
+
+  <p>
+    <a href="${MARKETPLACE_URL}/inquiries" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
+      View Your Inquiries
+    </a>
+  </p>
+
+  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+    — The ${FROM_NAME} Team
+  </p>
+</div>
+  `;
+
+  const text = `
+Inquiry Sent Successfully!
+
+Hi ${userName},
+
+Your inquiry to ${data.breederName}${data.listingTitle ? ` about "${data.listingTitle}"` : ""} has been sent.
+
+Your message:
+${data.message}
+
+The breeder will receive your message and respond as soon as possible. You'll get an email notification when they reply.
+
+View your inquiries at: ${MARKETPLACE_URL}/inquiries
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.userEmail,
+    subject,
+    html,
+    text,
+    templateKey: "marketplace_inquiry_confirmation",
+    category: "transactional",
+  });
+}
+
+/**
+ * Send notification email to breeder when they receive a new inquiry
+ */
+export async function sendInquiryNotificationToBreeder(data: {
+  breederEmail: string;
+  breederName: string;
+  inquirerName: string;
+  inquirerEmail: string;
+  listingTitle?: string;
+  message: string;
+  threadId: number;
+  tenantId: number;
+}): Promise<void> {
+  const APP_URL = process.env.APP_URL || "https://app.breederhq.com";
+  const breederName = data.breederName || "there";
+  const subject = data.listingTitle
+    ? `New inquiry from ${data.inquirerName}: ${data.listingTitle}`
+    : `New inquiry from ${data.inquirerName}`;
+
+  const html = `
+<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #f97316;">New Inquiry Received!</h2>
+  <p>Hi ${breederName},</p>
+  <p>You have a new inquiry from the marketplace${data.listingTitle ? ` about <strong>"${data.listingTitle}"</strong>` : ""}.</p>
+
+  <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: #c2410c;">
+      ${data.inquirerName}
+    </p>
+    <strong>Email:</strong> <a href="mailto:${data.inquirerEmail}">${data.inquirerEmail}</a>
+  </div>
+
+  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
+    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Their message:</p>
+    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
+  </div>
+
+  <p>
+    <a href="${APP_URL}/messages/${data.threadId}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
+      Reply to Inquiry
+    </a>
+  </p>
+
+  <p style="color: #666; font-size: 14px; margin-top: 32px;">
+    Quick responses help build trust with potential buyers!
+    <br><br>
+    — The BreederHQ Team
+  </p>
+</div>
+  `;
+
+  const text = `
+New Inquiry Received!
+
+Hi ${breederName},
+
+You have a new inquiry from the marketplace${data.listingTitle ? ` about "${data.listingTitle}"` : ""}.
+
+From: ${data.inquirerName}
+Email: ${data.inquirerEmail}
+
+Their message:
+${data.message}
+
+Reply to this inquiry at: ${APP_URL}/messages/${data.threadId}
+
+Quick responses help build trust with potential buyers!
+
+— The BreederHQ Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: data.tenantId,
+    to: data.breederEmail,
+    subject,
+    html,
+    text,
+    templateKey: "marketplace_inquiry_to_breeder",
+    category: "transactional",
+  });
+}
+
+// ---------- Waitlist Email Notifications ----------
+
+/**
+ * Send confirmation email to user when they submit a waitlist request
+ */
+export async function sendWaitlistConfirmationToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+  programName: string;
+  message?: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+
+  const messageSection = data.message
+    ? `
+  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Your message:</p>
+    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
+  </div>
+    `
+    : "";
+
+  const html = `
+<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #10b981;">Waitlist Request Submitted!</h2>
+  <p>Hi ${userName},</p>
+  <p>Your request to join the waitlist for <strong>${data.programName}</strong> at <strong>${data.breederName}</strong> has been submitted.</p>
+
+  ${messageSection}
+
+  <div style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0; color: #1e40af;">
+      <strong>What happens next?</strong><br>
+      The breeder will review your request and may reach out with questions or next steps. You'll receive an email notification when your request is approved.
+    </p>
+  </div>
+
+  <p>
+    <a href="${MARKETPLACE_URL}/inquiries?tab=waitlist" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
+      View Your Waitlist Requests
+    </a>
+  </p>
+
+  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+    — The ${FROM_NAME} Team
+  </p>
+</div>
+  `;
+
+  const text = `
+Waitlist Request Submitted!
+
+Hi ${userName},
+
+Your request to join the waitlist for ${data.programName} at ${data.breederName} has been submitted.
+
+${data.message ? `Your message:\n${data.message}\n` : ""}
+
+What happens next?
+The breeder will review your request and may reach out with questions or next steps. You'll receive an email notification when your request is approved.
+
+View your waitlist requests at: ${MARKETPLACE_URL}/inquiries?tab=waitlist
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.userEmail,
+    subject: `Waitlist request submitted for ${data.programName}`,
+    html,
+    text,
+    templateKey: "marketplace_waitlist_confirmation",
+    category: "transactional",
+  });
+}
+
+/**
+ * Send approval email to user when their waitlist request is approved
+ */
+export async function sendWaitlistApprovalToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+  programName?: string;
+  tenantSlug?: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+  const programInfo = data.programName ? ` for <strong>${data.programName}</strong>` : "";
+  const programInfoText = data.programName ? ` for ${data.programName}` : "";
+  const viewUrl = data.tenantSlug
+    ? `${MARKETPLACE_URL}/breeders/${data.tenantSlug}`
+    : `${MARKETPLACE_URL}/inquiries?tab=waitlist`;
+
+  const html = `
+<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #10b981;">Great News - You've Been Approved!</h2>
+  <p>Hi ${userName},</p>
+  <p>Your waitlist request${programInfo} at <strong>${data.breederName}</strong> has been <span style="color: #10b981; font-weight: 600;">approved</span>!</p>
+
+  <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0; color: #065f46;">
+      <strong>You're on the list!</strong><br>
+      The breeder may reach out with next steps, including any deposit requirements or additional information needed.
+    </p>
+  </div>
+
+  <p>
+    <a href="${viewUrl}" style="display: inline-block; padding: 12px 24px; background: #10b981; color: #fff; text-decoration: none; border-radius: 6px;">
+      View Details
+    </a>
+  </p>
+
+  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+    — The ${FROM_NAME} Team
+  </p>
+</div>
+  `;
+
+  const text = `
+Great News - You've Been Approved!
+
+Hi ${userName},
+
+Your waitlist request${programInfoText} at ${data.breederName} has been approved!
+
+You're on the list!
+The breeder may reach out with next steps, including any deposit requirements or additional information needed.
+
+View details at: ${viewUrl}
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.userEmail,
+    subject: `Approved! Your waitlist request at ${data.breederName}`,
+    html,
+    text,
+    templateKey: "marketplace_waitlist_approved",
+    category: "transactional",
+  });
+}
+
+/**
+ * Send rejection email to user when their waitlist request is rejected
+ */
+export async function sendWaitlistRejectionToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+  programName?: string;
+  reason?: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+  const programInfo = data.programName ? ` for <strong>${data.programName}</strong>` : "";
+  const programInfoText = data.programName ? ` for ${data.programName}` : "";
+
+  const reasonSection = data.reason
+    ? `
+  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason provided:</p>
+    <p style="margin: 0; color: #4b5563;">${data.reason}</p>
+  </div>
+    `
+    : "";
+
+  const html = `
+<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #6b7280;">Waitlist Request Update</h2>
+  <p>Hi ${userName},</p>
+  <p>We wanted to let you know that your waitlist request${programInfo} at <strong>${data.breederName}</strong> was not approved at this time.</p>
+
+  ${reasonSection}
+
+  <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
+    <p style="margin: 0; color: #92400e;">
+      <strong>Don't be discouraged!</strong><br>
+      Breeders often have limited availability and receive many requests. You're welcome to explore other breeders on our marketplace or try again in the future.
+    </p>
+  </div>
+
+  <p>
+    <a href="${MARKETPLACE_URL}/breeders" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
+      Browse Other Breeders
+    </a>
+  </p>
+
+  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+    — The ${FROM_NAME} Team
+  </p>
+</div>
+  `;
+
+  const text = `
+Waitlist Request Update
+
+Hi ${userName},
+
+We wanted to let you know that your waitlist request${programInfoText} at ${data.breederName} was not approved at this time.
+
+${data.reason ? `Reason provided:\n${data.reason}\n` : ""}
+
+Don't be discouraged!
+Breeders often have limited availability and receive many requests. You're welcome to explore other breeders on our marketplace or try again in the future.
+
+Browse other breeders at: ${MARKETPLACE_URL}/breeders
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.userEmail,
+    subject: `Update on your waitlist request at ${data.breederName}`,
+    html,
+    text,
+    templateKey: "marketplace_waitlist_rejected",
+    category: "transactional",
+  });
+}
