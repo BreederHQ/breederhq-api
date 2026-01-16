@@ -19,15 +19,19 @@ datasource db {
 enum PartyType {
   CONTACT
   ORGANIZATION
+
   @@schema("public")
 }
+
 enum MembershipRole {
   OWNER
   ADMIN
   MEMBER
   VIEWER
+
   @@schema("public")
 }
+
 enum AnimalStatus {
   ACTIVE
   BREEDING
@@ -35,8 +39,10 @@ enum AnimalStatus {
   RETIRED
   DECEASED
   PROSPECT
+
   @@schema("public")
 }
+
 enum Species {
   DOG
   CAT
@@ -44,28 +50,36 @@ enum Species {
   GOAT
   RABBIT
   SHEEP
+
   @@schema("public")
 }
+
 enum TenantOperationType {
   HOBBY
   COMMERCIAL
   PERFORMANCE
+
   @@schema("public")
 }
+
 enum HorseIntendedUse {
   BREEDING
   SHOW
   RACING
+
   @@schema("public")
 }
+
 enum HorseValuationSource {
   PRIVATE_SALE
   AUCTION
   APPRAISAL
   INSURANCE
   OTHER
+
   @@schema("public")
 }
+
 enum OwnershipChangeKind {
   SALE
   SYNDICATION
@@ -73,15 +87,19 @@ enum OwnershipChangeKind {
   LEASE
   DEATH
   OTHER
+
   @@schema("public")
 }
+
 enum PaymentIntentStatus {
   PLANNED
   EXTERNAL
   COMPLETED
   CANCELED
+
   @@schema("public")
 }
+
 enum PaymentIntentPurpose {
   DEPOSIT
   PURCHASE
@@ -89,13 +107,17 @@ enum PaymentIntentPurpose {
   BOARDING
   TRAINING
   OTHER
+
   @@schema("public")
 }
+
 enum Sex {
   FEMALE
   MALE
+
   @@schema("public")
 }
+
 enum TagModule {
   CONTACT
   ORGANIZATION
@@ -106,59 +128,77 @@ enum TagModule {
   MESSAGE_THREAD
   DRAFT
   BREEDING_PLAN
+
   @@schema("public")
 }
+
 enum OwnerPartyType {
   Organization
   Contact
+
   @@schema("public")
 }
+
 enum TenantRole {
   OWNER
   ADMIN
   MEMBER
   BILLING
   VIEWER
+
   @@schema("public")
 }
+
 // New enums for unified tenant membership model (STAFF vs CLIENT)
 enum TenantMembershipRole {
   STAFF // Staff member (maps from OWNER/ADMIN/MEMBER/BILLING/VIEWER)
   CLIENT // Portal client (created via invite acceptance)
+
   @@schema("public")
 }
+
 enum TenantMembershipStatus {
   INVITED // Invite sent, not yet accepted
   ACTIVE // Full access
   SUSPENDED // Access revoked
+
   @@schema("public")
 }
+
 enum ShareScope {
   VIEW
   BREED_PLAN
+
   @@schema("public")
 }
+
 enum ShareStatus {
   PENDING
   ACCEPTED
   REVOKED
   EXPIRED
+
   @@schema("public")
 }
+
 enum VerificationPurpose {
   VERIFY_EMAIL
   RESET_PASSWORD
   INVITE
   OTHER
+
   @@schema("public")
 }
+
 enum PortalAccessStatus {
   NO_ACCESS
   INVITED
   ACTIVE
   SUSPENDED
+
   @@schema("public")
 }
+
 // User entitlement enums for marketplace and other feature access
 enum EntitlementKey {
   // Surface access
@@ -190,8 +230,10 @@ enum EntitlementKey {
   MARKETPLACE_LISTING_QUOTA
   STORAGE_QUOTA_GB
   SMS_QUOTA
+
   @@schema("public")
 }
+
 enum FeatureModule {
   GENETICS
   MARKETPLACE
@@ -205,26 +247,34 @@ enum FeatureModule {
   PORTAL
   REPORTING
   SETTINGS
+
   @@schema("public")
 }
+
 enum EntitlementStatus {
   ACTIVE // Entitlement granted and active
   REVOKED // Entitlement revoked
+
   @@schema("public")
 }
+
 // Subscription & Billing enums
 enum ProductType {
   SUBSCRIPTION // Recurring subscription plan
   ADD_ON // Add-on to subscription
   ONE_TIME // One-time purchase
+
   @@schema("public")
 }
+
 enum BillingInterval {
   MONTHLY
   YEARLY
   QUARTERLY
+
   @@schema("public")
 }
+
 enum SubscriptionStatus {
   TRIAL // In trial period
   ACTIVE // Paid and active
@@ -233,8 +283,10 @@ enum SubscriptionStatus {
   EXPIRED // Trial or subscription expired
   INCOMPLETE // Stripe payment pending
   PAUSED // Paused (future feature)
+
   @@schema("public")
 }
+
 enum UsageMetricKey {
   ANIMAL_COUNT
   CONTACT_COUNT
@@ -244,8 +296,10 @@ enum UsageMetricKey {
   STORAGE_BYTES
   SMS_SENT
   API_CALLS
+
   @@schema("public")
 }
+
 enum AnimalCategory {
   RABBIT
   SMALL_RODENT // Hamster, guinea pig, etc.
@@ -257,8 +311,10 @@ enum AnimalCategory {
   LIVESTOCK // Cattle, sheep, goats
   EXOTIC // Reptiles, etc.
   OTHER
+
   @@schema("public")
 }
+
 enum ListingType {
   BREEDING_PROGRAM // Breeder's main program profile
   STUD_SERVICE // Stud/breeding services
@@ -270,8 +326,10 @@ enum ListingType {
   BOARDING // Boarding/kennel
   PRODUCT // Equipment, supplies
   OTHER_SERVICE
+
   @@schema("public")
 }
+
 enum ListingStatus {
   DRAFT
   PENDING_REVIEW
@@ -279,33 +337,43 @@ enum ListingStatus {
   PAUSED
   EXPIRED
   REMOVED
+
   @@schema("public")
 }
+
 enum ListingTier {
   FREE // Basic listing
   PREMIUM // Featured, more photos
   BUSINESS // Top placement, analytics
+
   @@schema("public")
 }
+
 enum CommChannel {
   EMAIL
   SMS
   PHONE
   MAIL
   WHATSAPP
+
   @@schema("public")
 }
+
 enum PreferenceLevel {
   ALLOW
   NOT_PREFERRED
   NEVER
+
   @@schema("public")
 }
+
 enum ComplianceStatus {
   SUBSCRIBED
   UNSUBSCRIBED
+
   @@schema("public")
 }
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Trait system enums
@@ -319,36 +387,46 @@ enum TraitValueType {
   DATE
   TEXT
   JSON
+
   @@schema("public")
 }
+
 enum TraitSource {
   SELF_REPORTED
   VET
   LAB
   REGISTRY
+
   @@schema("public")
 }
+
 enum TraitStatus {
   NOT_PROVIDED
   PROVIDED
   PENDING
   PASS
   FAIL
+
   @@schema("public")
 }
+
 enum DocVisibility {
   PRIVATE
   BUYERS
   PUBLIC
+
   @@schema("public")
 }
+
 enum DocStatus {
   PLACEHOLDER
   UPLOADING
   READY
   FAILED
+
   @@schema("public")
 }
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
@@ -367,23 +445,29 @@ enum BreedingPlanStatus {
   PLACEMENT
   COMPLETE
   CANCELED
+
   @@schema("public")
 }
+
 enum BreedingMethod {
   NATURAL
   AI_TCI
   AI_SI
   AI_FROZEN
+
   @@schema("public")
 }
+
 enum PregnancyCheckMethod {
   PALPATION
   ULTRASOUND
   RELAXIN_TEST
   XRAY
   OTHER
+
   @@schema("public")
 }
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -394,8 +478,10 @@ enum WaitlistStatus {
   COMPLETED
   CANCELED
   REJECTED
+
   @@schema("public")
 }
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Cross-tenant animal linking enums
@@ -405,16 +491,20 @@ enum WaitlistStatus {
 enum ParentType {
   SIRE
   DAM
+
   @@schema("public")
 }
+
 enum LinkRequestStatus {
   PENDING
   APPROVED
   DENIED
   EXPIRED
   REVOKED
+
   @@schema("public")
 }
+
 enum LinkMethod {
   GAID
   EXCHANGE_CODE
@@ -422,14 +512,18 @@ enum LinkMethod {
   MICROCHIP_MATCH
   BREEDER_REQUEST
   OFFSPRING_DERIVED
+
   @@schema("public")
 }
+
 enum RevokedBy {
   CHILD_OWNER
   PARENT_OWNER
   SYSTEM
+
   @@schema("public")
 }
+
 /**
  * Offspring Group linking state
  */
@@ -437,8 +531,10 @@ enum OffspringLinkState {
   linked
   orphan
   pending
+
   @@schema("public")
 }
+
 enum OffspringLinkReason {
   legacy_import
   rescue
@@ -448,8 +544,10 @@ enum OffspringLinkReason {
   placeholder
   historical
   other
+
   @@schema("public")
 }
+
 /**
  * Offspring lifecycle
  */
@@ -459,13 +557,17 @@ enum OffspringStatus {
   WEANED
   PLACED
   DECEASED
+
   @@schema("public")
 }
+
 enum OffspringLifeState {
   ALIVE
   DECEASED
+
   @@schema("public")
 }
+
 enum OffspringPlacementState {
   UNASSIGNED
   OPTION_HOLD
@@ -473,15 +575,19 @@ enum OffspringPlacementState {
   PLACED
   RETURNED
   TRANSFERRED
+
   @@schema("public")
 }
+
 enum OffspringKeeperIntent {
   AVAILABLE
   UNDER_EVALUATION
   WITHHELD
   KEEP
+
   @@schema("public")
 }
+
 enum OffspringFinancialState {
   NONE
   DEPOSIT_PENDING
@@ -489,15 +595,19 @@ enum OffspringFinancialState {
   PAID_IN_FULL
   REFUNDED
   CHARGEBACK
+
   @@schema("public")
 }
+
 enum OffspringPaperworkState {
   NONE
   SENT
   SIGNED
   COMPLETE
+
   @@schema("public")
 }
+
 /**
  * Animal marketplace listing enums
  */
@@ -510,12 +620,15 @@ enum AnimalListingIntent {
   WORKING
   STARTED
   CO_OWNERSHIP
+
   @@schema("public")
 }
+
 enum AnimalListingStatus {
   DRAFT
   LIVE
   PAUSED
+
   @@schema("public")
 }
 
@@ -547,6 +660,16 @@ enum NotificationType {
   marketplace_inquiry
   marketplace_waitlist_signup
   system_announcement
+  // Contract / E-Signature notifications
+  contract_sent
+  contract_reminder_7d
+  contract_reminder_3d
+  contract_reminder_1d
+  contract_signed
+  contract_declined
+  contract_voided
+  contract_expired
+
   @@schema("public")
 }
 
@@ -555,6 +678,7 @@ enum NotificationPriority {
   MEDIUM
   HIGH
   URGENT
+
   @@schema("public")
 }
 
@@ -562,6 +686,7 @@ enum NotificationStatus {
   UNREAD
   READ
   DISMISSED
+
   @@schema("public")
 }
 
@@ -677,8 +802,11 @@ model User {
   assignedInquiries BreedingProgramInquiry[]
 
   // Notifications
-  notifications             Notification[]
-  notificationPreferences   UserNotificationPreferences?
+  notifications           Notification[]
+  notificationPreferences UserNotificationPreferences?
+
+  // Contract templates created by this user
+  contractTemplatesCreated ContractTemplate[] @relation("ContractTemplateCreatedBy")
 
   @@index([partyId])
   @@index([defaultTenantId])
@@ -831,10 +959,10 @@ model Tenant {
   operationType TenantOperationType @default(HOBBY)
 
   // Marketplace payment settings
-  marketplacePaymentMode            String  @default("manual")
-  stripeConnectAccountId            String? @unique
-  stripeConnectOnboardingComplete   Boolean @default(false)
-  stripeConnectPayoutsEnabled       Boolean @default(false)
+  marketplacePaymentMode          String  @default("manual")
+  stripeConnectAccountId          String? @unique
+  stripeConnectOnboardingComplete Boolean @default(false)
+  stripeConnectPayoutsEnabled     Boolean @default(false)
 
   memberships    TenantMembership[]
   organizations  Organization[]
@@ -852,23 +980,24 @@ model Tenant {
   CustomBreed    CustomBreed[]
 
   // breeding additions
-  breedingPlans       BreedingPlan[]
-  reproductiveCycles  ReproductiveCycle[]
-  planSharesSent      BreedingPlanShare[]   @relation("PlanShareFromTenant")
-  planSharesReceived  BreedingPlanShare[]   @relation("PlanShareToTenant")
-  planEvents          BreedingPlanEvent[]
-  testResults         TestResult[]
-  breedingAttempts    BreedingAttempt[]
-  pregnancyChecks     PregnancyCheck[]
-  litters             Litter[]
-  offspringGroups     OffspringGroup[]
-  offspring           Offspring[]
-  waitlist            WaitlistEntry[]
-  attachments         Attachment[]
-  planParties         PlanParty[]
-  planCodeCounters    PlanCodeCounter[]
-  foalingOutcomes     FoalingOutcome[]
-  breedingMilestones  BreedingMilestone[]
+  breedingPlans             BreedingPlan[]
+  reproductiveCycles        ReproductiveCycle[]
+  planSharesSent            BreedingPlanShare[]       @relation("PlanShareFromTenant")
+  planSharesReceived        BreedingPlanShare[]       @relation("PlanShareToTenant")
+  planEvents                BreedingPlanEvent[]
+  testResults               TestResult[]
+  breedingAttempts          BreedingAttempt[]
+  pregnancyChecks           PregnancyCheck[]
+  litters                   Litter[]
+  offspringGroups           OffspringGroup[]
+  offspring                 Offspring[]
+  waitlist                  WaitlistEntry[]
+  attachments               Attachment[]
+  planParties               PlanParty[]
+  planCodeCounters          PlanCodeCounter[]
+  foalingOutcomes           FoalingOutcome[]
+  breedingMilestones        BreedingMilestone[]
+  mareReproductiveHistories MareReproductiveHistory[]
 
   availabilityPrefs Json?
 
@@ -989,8 +1118,8 @@ model Tenant {
   drafts Draft[]
 
   // Notifications
-  notifications             Notification[]
-  notificationPreferences   UserNotificationPreferences[]
+  notifications           Notification[]
+  notificationPreferences UserNotificationPreferences[]
 
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
@@ -1033,37 +1162,37 @@ model TenantMembership {
  * MVP: Focus on vaccination and breeding timeline alerts
  */
 model Notification {
-  id              Int      @id @default(autoincrement())
-  tenantId        Int
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  userId          String?  // Target user (null = all tenant users)
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String? // Target user (null = all tenant users)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Notification content
-  type            NotificationType
-  title           String
-  message         String   @db.Text
-  linkUrl         String?  // Deep link to relevant entity (e.g., /animals/123)
+  type    NotificationType
+  title   String
+  message String           @db.Text
+  linkUrl String? // Deep link to relevant entity (e.g., /animals/123)
 
   // Priority & status
-  priority        NotificationPriority @default(MEDIUM)
-  status          NotificationStatus   @default(UNREAD)
+  priority NotificationPriority @default(MEDIUM)
+  status   NotificationStatus   @default(UNREAD)
 
   // Status timestamps
-  readAt          DateTime?
-  dismissedAt     DateTime?
+  readAt      DateTime?
+  dismissedAt DateTime?
 
   // Idempotency: prevent duplicate notifications
   // Format: "{type}:{entityType}:{entityId}:{date}"
   // Example: "vaccination_expiring_1d:VaccinationRecord:456:2026-01-14"
-  idempotencyKey  String?  @unique
+  idempotencyKey String? @unique
 
   // Metadata for context (e.g., animal name, dates, etc.)
-  metadata        Json?
+  metadata Json?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, userId, status])
   @@index([tenantId, status, createdAt])
@@ -1077,39 +1206,39 @@ model Notification {
  * MVP: Focus on toggles for alert types (email channel for Phase 2)
  */
 model UserNotificationPreferences {
-  id                    Int      @id @default(autoincrement())
-  tenantId              Int
-  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  userId                String   @unique
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // ─── Vaccination Alerts ────────────────────────────────────────
-  vaccinationExpiring   Boolean  @default(true)   // 7d, 3d, 1d warnings
-  vaccinationOverdue    Boolean  @default(true)   // Overdue alerts
+  vaccinationExpiring Boolean @default(true) // 7d, 3d, 1d warnings
+  vaccinationOverdue  Boolean @default(true) // Overdue alerts
 
   // ─── Breeding Timeline Alerts ──────────────────────────────────
-  breedingTimeline      Boolean  @default(true)   // Heat cycle, hormone testing
-  pregnancyCheck        Boolean  @default(true)   // Pregnancy check reminders
-  foalingApproaching    Boolean  @default(true)   // Foaling countdown (30d, 14d, 7d)
-  heatCycleExpected     Boolean  @default(true)   // Heat cycle prediction
+  breedingTimeline   Boolean @default(true) // Heat cycle, hormone testing
+  pregnancyCheck     Boolean @default(true) // Pregnancy check reminders
+  foalingApproaching Boolean @default(true) // Foaling countdown (30d, 14d, 7d)
+  heatCycleExpected  Boolean @default(true) // Heat cycle prediction
 
   // ─── Marketplace Alerts (Future) ───────────────────────────────
-  marketplaceInquiry    Boolean  @default(true)   // New inquiries
-  waitlistSignup        Boolean  @default(true)   // Waitlist signups
+  marketplaceInquiry Boolean @default(true) // New inquiries
+  waitlistSignup     Boolean @default(true) // Waitlist signups
 
   // ─── Channel Preferences (Phase 2) ─────────────────────────────
-  emailEnabled          Boolean  @default(true)   // Email delivery
-  smsEnabled            Boolean  @default(false)  // SMS delivery (Phase 2)
-  pushEnabled           Boolean  @default(true)   // Push notifications (Phase 2)
+  emailEnabled Boolean @default(true) // Email delivery
+  smsEnabled   Boolean @default(false) // SMS delivery (Phase 2)
+  pushEnabled  Boolean @default(true) // Push notifications (Phase 2)
 
   // ─── Phone Verification (Phase 2 - SMS) ───────────────────────
-  phoneNumber           String?
-  phoneVerified         Boolean  @default(false)
-  phoneVerifiedAt       DateTime?
+  phoneNumber     String?
+  phoneVerified   Boolean   @default(false)
+  phoneVerifiedAt DateTime?
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId])
   @@index([userId])
@@ -1822,8 +1951,8 @@ model Contact {
   // Marketplace integration
   marketplaceUserId            Int?
   marketplaceFirstContactedAt  DateTime?
-  marketplaceTotalTransactions Int    @default(0)
-  marketplaceTotalSpentCents   BigInt @default(0)
+  marketplaceTotalTransactions Int       @default(0)
+  marketplaceTotalSpentCents   BigInt    @default(0)
 
   // Soft delete
   deletedAt DateTime?
@@ -1859,21 +1988,27 @@ enum PartyEventKind {
   CALL
   VISIT
   CUSTOM
+
   @@schema("public")
 }
+
 enum PartyEventStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
+
   @@schema("public")
 }
+
 enum PartyMilestoneKind {
   BIRTHDAY
   CUSTOMER_ANNIVERSARY
   PLACEMENT_ANNIVERSARY
   CUSTOM
+
   @@schema("public")
 }
+
 enum PartyActivityKind {
   NOTE_ADDED
   NOTE_UPDATED
@@ -1896,8 +2031,10 @@ enum PartyActivityKind {
   EMAIL_CHANGE_REQUESTED // Client requested email change
   EMAIL_CHANGE_VERIFIED // Client verified new email
   EMAIL_CHANGE_EXPIRED // Email change request expired
+
   @@schema("public")
 }
+
 model PartyNote {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -2166,22 +2303,22 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments    TagAssignment[]
-  owners            AnimalOwner[]
+  tagAssignments      TagAssignment[]
+  owners              AnimalOwner[]
   registryIds         AnimalRegistryIdentifier[]
-  shares              AnimalShare[]                  @relation("ShareAnimal")
+  shares              AnimalShare[]              @relation("ShareAnimal")
   publicListing       AnimalPublicListing?
-  directListings      DirectAnimalListing[]          @relation("AnimalDirectListings")
-  programParticipants AnimalProgramParticipant[]     @relation("AnimalProgramParticipants")
-  createdAt           DateTime                       @default(now())
-  updatedAt         DateTime                   @updatedAt
-  archived          Boolean                    @default(false)
+  directListings      DirectAnimalListing[]      @relation("AnimalDirectListings")
+  programParticipants AnimalProgramParticipant[] @relation("AnimalProgramParticipants")
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  archived            Boolean                    @default(false)
 
   // Soft delete
-  deletedAt DateTime?
+  deletedAt         DateTime?
   TestResult        TestResult[]
   Attachment        Attachment[]
-  Offspring         Offspring[]                @relation("PromotedAnimal")
+  Offspring         Offspring[]         @relation("PromotedAnimal")
   PaymentIntent     PaymentIntent[]
   AnimalTraitValue  AnimalTraitValue[]
   VaccinationRecord VaccinationRecord[]
@@ -2197,6 +2334,12 @@ model Animal {
   // Cached title strings for display (computed and stored on title changes)
   titlePrefix String? // "GCH CH" - prefix titles in display order
   titleSuffix String? // "CD CGC" - suffix titles in display order
+
+  // Contracts (e.g., sales agreements for this animal)
+  contracts Contract[] @relation("ContractAnimal")
+
+  // Mare reproductive history (horses only)
+  mareReproductiveHistory MareReproductiveHistory?
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
@@ -2239,15 +2382,15 @@ model AnimalGenetics {
   otherTraitsData    Json?     @db.JsonB // Breed-specific traits
 
   // Extended Embark data
-  breedComposition       Json?     @db.JsonB // Array of { breed: string, percentage: number }
-  coi                    Json?     @db.JsonB // { coefficient, percentage, riskLevel, source }
-  mhcDiversity           Json?     @db.JsonB // { drb1Alleles, dqa1Dqb1Alleles, diversityScore }
-  lineage                Json?     @db.JsonB // { mtHaplotype, mtHaplogroup, yHaplotype, yHaplogroup }
-  predictedAdultWeight   Json?     @db.JsonB // { value, unit }
-  lifeStage              String?   @db.VarChar(100)
+  breedComposition     Json?   @db.JsonB // Array of { breed: string, percentage: number }
+  coi                  Json?   @db.JsonB // { coefficient, percentage, riskLevel, source }
+  mhcDiversity         Json?   @db.JsonB // { drb1Alleles, dqa1Dqb1Alleles, diversityScore }
+  lineage              Json?   @db.JsonB // { mtHaplotype, mtHaplogroup, yHaplotype, yHaplogroup }
+  predictedAdultWeight Json?   @db.JsonB // { value, unit }
+  lifeStage            String? @db.VarChar(100)
 
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([animalId])
   @@schema("public")
@@ -2284,6 +2427,7 @@ model Registry {
   updatedAt         DateTime                   @updatedAt
   identifiers       AnimalRegistryIdentifier[]
   BreedRegistryLink BreedRegistryLink[]
+
   @@schema("public")
 }
 
@@ -2407,7 +2551,7 @@ model DirectAnimalListing {
   listingContent Json? @db.JsonB // Template-specific fields (e.g., stud fee, guardian terms)
 
   // Pricing
-  priceModel    String  @db.VarChar(32) // "fixed" | "range" | "inquire"
+  priceModel    String @db.VarChar(32) // "fixed" | "range" | "inquire"
   priceCents    Int?
   priceMinCents Int?
   priceMaxCents Int?
@@ -2418,14 +2562,14 @@ model DirectAnimalListing {
   locationCountry String? @db.VarChar(2)
 
   // Publishing
-  status      String  @db.VarChar(32) @default("DRAFT") // DRAFT, ACTIVE, PAUSED
-  listed      Boolean @default(true) // true = public listing, false = unlisted (direct link only)
+  status      String    @default("DRAFT") @db.VarChar(32) // DRAFT, ACTIVE, PAUSED
+  listed      Boolean   @default(true) // true = public listing, false = unlisted (direct link only)
   publishedAt DateTime?
   pausedAt    DateTime?
 
   // Metadata
-  viewCount     Int      @default(0)
-  inquiryCount  Int      @default(0)
+  viewCount     Int       @default(0)
+  inquiryCount  Int       @default(0)
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
 
@@ -2453,7 +2597,7 @@ model AnimalProgram {
   description  String? @db.Text
 
   // Media
-  coverImageUrl String? @db.VarChar(500)
+  coverImageUrl String?              @db.VarChar(500)
   media         AnimalProgramMedia[]
 
   // Data Drawer Configuration (shared by all participants)
@@ -2463,7 +2607,7 @@ model AnimalProgram {
   programContent Json? @db.JsonB
 
   // Default Pricing (can be overridden per participant)
-  defaultPriceModel    String  @db.VarChar(32) @default("inquire")
+  defaultPriceModel    String @default("inquire") @db.VarChar(32)
   defaultPriceCents    Int?
   defaultPriceMinCents Int?
   defaultPriceMaxCents Int?
@@ -2481,8 +2625,8 @@ model AnimalProgram {
   participants AnimalProgramParticipant[]
 
   // Metadata
-  viewCount     Int      @default(0)
-  inquiryCount  Int      @default(0)
+  viewCount     Int       @default(0)
+  inquiryCount  Int       @default(0)
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
 
@@ -2496,11 +2640,11 @@ model AnimalProgram {
 }
 
 model AnimalProgramParticipant {
-  id        Int            @id @default(autoincrement())
+  id        Int           @id @default(autoincrement())
   programId Int
-  program   AnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   animalId  Int
-  animal    Animal         @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
+  animal    Animal        @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
 
   // Per-participant visibility settings
   status   String  @default("ACTIVE") // ACTIVE, PAUSED
@@ -2523,8 +2667,8 @@ model AnimalProgramParticipant {
   sortOrder Int @default(0)
 
   // Metadata
-  viewCount     Int      @default(0)
-  inquiryCount  Int      @default(0)
+  viewCount     Int       @default(0)
+  inquiryCount  Int       @default(0)
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
 
@@ -2542,11 +2686,11 @@ model AnimalProgramMedia {
   programId Int
   program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
 
-  type        String @db.VarChar(32) // "image" | "video"
-  url         String @db.VarChar(500)
-  caption     String? @db.Text
-  sortOrder   Int    @default(0)
-  isPrimary   Boolean @default(false)
+  type      String  @db.VarChar(32) // "image" | "video"
+  url       String  @db.VarChar(500)
+  caption   String? @db.Text
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2868,13 +3012,13 @@ model BreedingProgram {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Identity
-  slug        String // URL-friendly identifier, unique per tenant
-  name        String // "Goldendoodle Program"
-  description String? @db.Text
+  slug         String // URL-friendly identifier, unique per tenant
+  name         String // "Goldendoodle Program"
+  description  String? @db.Text
   programStory String? @db.Text // Extended story/narrative about the program
-  species     Species
-  breedText   String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
-  breedId     Int? // Optional link to Breed record for structured breed data
+  species      Species
+  breedText    String? // "Goldendoodle", "Bernedoodle (F1b)", etc.
+  breedId      Int? // Optional link to Breed record for structured breed data
 
   // Cover Image
   coverImageUrl  String? // Primary cover image URL
@@ -2888,11 +3032,11 @@ model BreedingProgram {
   comingSoon         Boolean @default(false) // Coming Soon badge for programs in development
 
   // Pricing & Details
-  pricingTiers    Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
-  whatsIncluded   String? @db.Text // What comes with each animal
+  pricingTiers      Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
+  whatsIncluded     String? @db.Text // What comes with each animal
   showWhatsIncluded Boolean @default(true) // Visibility toggle
-  typicalWaitTime String? // "3-6 months"
-  showWaitTime    Boolean @default(true) // Visibility toggle
+  typicalWaitTime   String? // "3-6 months"
+  showWaitTime      Boolean @default(true) // Visibility toggle
 
   // Timestamps
   createdAt   DateTime  @default(now())
@@ -2986,6 +3130,7 @@ enum InquiryStatus {
   CONVERTED
   NOT_INTERESTED
   SPAM
+
   @@schema("public")
 }
 
@@ -3315,6 +3460,56 @@ enum MarePostFoalingCondition {
   @@schema("public")
 }
 
+model MareReproductiveHistory {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  mareId Int    @unique
+  mare   Animal @relation(fields: [mareId], references: [id], onDelete: Cascade)
+
+  // Lifetime Statistics
+  totalFoalings                Int @default(0)
+  totalLiveFoals               Int @default(0)
+  totalComplicatedFoalings     Int @default(0)
+  totalVeterinaryInterventions Int @default(0)
+  totalRetainedPlacentas       Int @default(0)
+
+  // Last Foaling Information
+  lastFoalingDate          DateTime?
+  lastFoalingComplications Boolean?
+  lastMareCondition        String?
+  lastPlacentaPassed       Boolean?
+  lastPlacentaMinutes      Int?
+
+  // Post-Foaling Heat Patterns (averages)
+  avgPostFoalingHeatDays Float?
+  minPostFoalingHeatDays Int?
+  maxPostFoalingHeatDays Int?
+
+  // Breeding Readiness Tracking
+  lastPostFoalingHeatDate DateTime?
+  lastReadyForRebreeding  Boolean?
+  lastRebredDate          DateTime?
+
+  // Risk Indicators (derived from history)
+  riskScore   Int      @default(0)
+  riskFactors String[]
+
+  // Notes and metadata
+  notes                    String?
+  lastUpdatedFromPlanId    Int?
+  lastUpdatedFromBreedYear Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([mareId])
+  @@index([riskScore])
+  @@schema("public")
+}
+
 model BreedingMilestone {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -3518,12 +3713,12 @@ model Offspring {
 
   // health outcome tracking (foaling automation)
   birthWeight     Float?
-  healthStatus    FoalHealthStatus    @default(HEALTHY)
-  healthNotes     String?             @db.Text
-  nursingStatus   FoalNursingStatus   @default(UNKNOWN)
+  healthStatus    FoalHealthStatus  @default(HEALTHY)
+  healthNotes     String?           @db.Text
+  nursingStatus   FoalNursingStatus @default(UNKNOWN)
   standingMinutes Int?
   nursingMinutes  Int?
-  requiredVetCare Boolean             @default(false)
+  requiredVetCare Boolean           @default(false)
   vetCareDetails  String?
 
   // orthogonal lifecycle dimensions (production canonical state)
@@ -3733,6 +3928,9 @@ model WaitlistEntry {
   offspring   Offspring? @relation("WaitlistAllocationOffspring", fields: [offspringId], references: [id], onDelete: SetNull)
 
   groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerWaitlistEntry")
+
+  // Contracts tied to this waitlist entry (e.g., deposit agreements)
+  contracts Contract[]
 
   skipCount  Int?
   lastSkipAt DateTime?
@@ -3972,8 +4170,10 @@ enum FinanceScope {
   organization
   general
   waitlist
+
   @@schema("public")
 }
+
 enum InvoiceStatus {
   draft
   issued
@@ -3983,16 +4183,20 @@ enum InvoiceStatus {
   uncollectible
   refunded
   cancelled
+
   @@schema("public")
 }
+
 enum InvoiceCategory {
   DEPOSIT
   SERVICE
   GOODS
   MIXED
   OTHER
+
   @@schema("public")
 }
+
 enum LineItemKind {
   DEPOSIT
   SERVICE_FEE
@@ -4000,8 +4204,10 @@ enum LineItemKind {
   DISCOUNT
   TAX
   OTHER
+
   @@schema("public")
 }
+
 enum PaymentStatus {
   pending
   succeeded
@@ -4009,8 +4215,10 @@ enum PaymentStatus {
   refunded
   disputed
   cancelled
+
   @@schema("public")
 }
+
 enum ExpenseCategory {
   VETERINARY
   FEED
@@ -4024,8 +4232,10 @@ enum ExpenseCategory {
   FACILITIES
   INSURANCE
   OTHER
+
   @@schema("public")
 }
+
 enum CampaignChannel {
   email
   social
@@ -4033,20 +4243,26 @@ enum CampaignChannel {
   marketplace
   website
   other
+
   @@schema("public")
 }
+
 enum TaskScope {
   group
   offspring
+
   @@schema("public")
 }
+
 enum TaskStatus {
   open
   in_progress
   done
   cancelled
+
   @@schema("public")
 }
+
 enum HealthType {
   weight
   vaccine
@@ -4054,16 +4270,20 @@ enum HealthType {
   vet_visit
   treatment
   other
+
   @@schema("public")
 }
+
 enum DocumentScope {
   group
   offspring
   invoice
   contract
   animal
+
   @@schema("public")
 }
+
 enum DocumentKind {
   generic
   health_certificate
@@ -4077,16 +4297,20 @@ enum DocumentKind {
   lease_agreement
   insurance_policy
   vet_certificate
+
   @@schema("public")
 }
+
 enum SignatureProvider {
   internal
   docusign
   hellosign
   adobe
   other
+
   @@schema("public")
 }
+
 enum ContractStatus {
   draft
   sent
@@ -4095,8 +4319,10 @@ enum ContractStatus {
   declined
   voided
   expired
+
   @@schema("public")
 }
+
 enum SignatureStatus {
   pending
   viewed
@@ -4104,8 +4330,29 @@ enum SignatureStatus {
   declined
   voided
   expired
+
   @@schema("public")
 }
+
+enum ContractTemplateType {
+  SYSTEM // Pre-built, read-only for tenants (tenantId = null)
+  CUSTOM // User-created templates
+
+  @@schema("public")
+}
+
+enum ContractTemplateCategory {
+  SALES_AGREEMENT
+  DEPOSIT_AGREEMENT
+  CO_OWNERSHIP
+  GUARDIAN_HOME
+  STUD_SERVICE
+  HEALTH_GUARANTEE
+  CUSTOM
+
+  @@schema("public")
+}
+
 // ---------- Finance ----------
 
 /**
@@ -4195,18 +4442,18 @@ model Invoice {
   data  Json?
 
   // Marketplace integration
-  isMarketplaceInvoice     Boolean   @default(false)
+  isMarketplaceInvoice     Boolean @default(false)
   marketplaceTransactionId Int?
   paymentModeSnapshot      String?
   stripeInvoiceId          String?
   stripePaymentIntentId    String?
 
   // Manual payment tracking
-  buyerMarkedPaidAt    DateTime?
-  buyerPaymentMethod   String?
+  buyerMarkedPaidAt     DateTime?
+  buyerPaymentMethod    String?
   buyerPaymentReference String?
-  providerConfirmedAt  DateTime?
-  providerConfirmedBy  Int?
+  providerConfirmedAt   DateTime?
+  providerConfirmedBy   Int?
 
   // Partial refunds
   refundedCents BigInt @default(0)
@@ -4495,20 +4742,26 @@ enum EmailSendStatus {
   queued
   sent
   failed
+
   @@schema("public")
 }
+
 enum TemplateChannel {
   email
   dm
   social
+
   @@schema("public")
 }
+
 enum TemplateStatus {
   draft
   active
   archived
+
   @@schema("public")
 }
+
 enum TemplateCategory {
   auto_reply
   invoice_message
@@ -4516,24 +4769,32 @@ enum TemplateCategory {
   waitlist_update
   general_follow_up
   custom
+
   @@schema("public")
 }
+
 enum EmailSendCategory {
   transactional
   marketing
+
   @@schema("public")
 }
+
 enum AutoReplyTriggerType {
   dm_first_message_from_party
   dm_after_hours
+
   @@schema("public")
 }
+
 enum AutoReplyStatus {
   sent
   skipped
   failed
+
   @@schema("public")
 }
+
 model Template {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -4788,8 +5049,10 @@ model Message {
 enum DraftChannel {
   email
   dm
+
   @@schema("public")
 }
+
 model Draft {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -4963,23 +5226,46 @@ model Document {
 }
 
 model ContractTemplate {
-  id       Int    @id @default(autoincrement())
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int     @id @default(autoincrement())
+  tenantId Int? // NULL for system templates
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // Template identification
   name        String
-  body        String?
-  storageKey  String?
-  description String?
+  slug        String?                  @unique // Stable identifier for system templates (e.g., "sales-agreement-v1")
+  type        ContractTemplateType     @default(CUSTOM)
+  category    ContractTemplateCategory @default(CUSTOM)
+  description String?                  @db.Text
 
+  // Content storage
+  bodyHtml String? @db.Text // Rendered HTML with merge fields ({{field.key}})
+  bodyJson Json? // Structured content from rich editor (for editing state)
+
+  // Legacy fields (for migration compatibility)
+  body       String? // Deprecated: use bodyHtml
+  storageKey String? // Optional: store as file instead of DB
+
+  // Metadata
+  version  Int     @default(1)
   isActive Boolean @default(true)
-  data     Json?
+
+  // Merge field definitions used in this template
+  mergeFields         Json? // Array of { key, label, namespace, required }
+  conditionalSections Json? // Array of { id, condition, htmlContent }
+
+  // Audit
+  createdByUserId String?
+  createdBy       User?   @relation("ContractTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  data Json? // Extensible metadata
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   Contract  Contract[]
 
   @@index([tenantId])
+  @@index([type])
+  @@index([category])
   @@index([isActive])
   @@schema("public")
 }
@@ -4992,11 +5278,18 @@ model Contract {
   templateId Int?
   template   ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
+  // Related entities - what this contract is for
   offspringId Int?
   offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
 
   groupId Int?
   group   OffspringGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  animalId Int? // For sales of existing animals (not offspring)
+  animal   Animal? @relation("ContractAnimal", fields: [animalId], references: [id], onDelete: SetNull)
+
+  waitlistEntryId Int? // For deposit agreements tied to waitlist
+  waitlistEntry   WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: SetNull)
 
   invoiceId Int?     @unique
   invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
@@ -5013,11 +5306,13 @@ model Contract {
   voidedAt  DateTime?
   expiresAt DateTime?
 
+  // Relations
+  content   ContractContent? // Immutable rendered content snapshot
   documents Document[]
   parties   ContractParty[]
   events    SignatureEvent[]
 
-  data Json?
+  data Json? // Extensible: reminderDays, customTerms, etc.
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5025,8 +5320,11 @@ model Contract {
   @@index([tenantId])
   @@index([offspringId])
   @@index([groupId])
+  @@index([animalId])
+  @@index([waitlistEntryId])
   @@index([invoiceId])
   @@index([status])
+  @@index([expiresAt]) // For expiration scanning
   @@index([provider, providerEnvelopeId])
   @@schema("public")
 }
@@ -5095,20 +5393,48 @@ model SignatureEvent {
   @@schema("public")
 }
 
+/// Immutable snapshot of rendered contract content at time of creation/sending
+/// Ensures contract terms are preserved even if template changes later
+model ContractContent {
+  id         Int      @id @default(autoincrement())
+  contractId Int      @unique
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  // Snapshot of rendered content at time of creation
+  renderedHtml String @db.Text // Final HTML with all merge fields substituted
+
+  // Storage key for generated PDF (after signing)
+  renderedPdfKey String? // S3/storage key for the signed PDF
+
+  // Snapshot of merge field values used for rendering
+  mergeData Json // The actual values substituted: { "buyer.name": "John", ... }
+
+  // Version tracking - which template version was used
+  templateVersion Int
+
+  createdAt DateTime @default(now())
+
+  @@schema("public")
+}
+
 enum InvoiceRole {
   RESERVATION
   DEPOSIT
   FINAL
   MISC
+
   @@schema("public")
 }
+
 enum EsignProvider {
   DOCUSIGN
   HELLOSIGN
   ADOBE
   OTHER
+
   @@schema("public")
 }
+
 enum EsignStatus {
   DRAFT
   SENT
@@ -5117,8 +5443,10 @@ enum EsignStatus {
   DECLINED
   EXPIRED
   VOIDED
+
   @@schema("public")
 }
+
 model OffspringDocument {
   id       Int    @id @default(autoincrement())
   tenantId Int
@@ -5336,20 +5664,26 @@ model PortalInvite {
 enum AuditOutcome {
   SUCCESS
   FAILURE
+
   @@schema("public")
 }
+
 enum AuditSurface {
   PLATFORM
   PORTAL
   MARKETPLACE
+
   @@schema("public")
 }
+
 enum AuditActorContext {
   STAFF
   CLIENT
   PUBLIC
+
   @@schema("public")
 }
+
 model AuditEvent {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
@@ -5389,32 +5723,42 @@ enum SchedulingEventStatus {
   OPEN // Accepting bookings
   CLOSED // No longer accepting bookings
   CANCELLED // Event cancelled
+
   @@schema("public")
 }
+
 enum SchedulingSlotStatus {
   AVAILABLE // Open for booking
   FULL // Capacity reached
   CANCELLED // Slot cancelled
+
   @@schema("public")
 }
+
 enum SchedulingSlotMode {
   IN_PERSON
   VIRTUAL
+
   @@schema("public")
 }
+
 enum SchedulingBookingStatus {
   CONFIRMED
   CANCELLED
   RESCHEDULED
   NO_SHOW
+
   @@schema("public")
 }
+
 enum MarketplaceBlockLevel {
   LIGHT // Block waitlist requests only
   MEDIUM // Block waitlist + messages
   HEAVY // Block waitlist + messages + profile view
+
   @@schema("public")
 }
+
 /**
  * SchedulingEventTemplate - Reusable event configuration
  * Optional for MVP but provides future flexibility for recurring events
@@ -5694,6 +6038,7 @@ model PlatformSetting {
   namespace String   @unique @db.VarChar(64) // e.g., "marketplace-abuse"
   data      Json
   updatedAt DateTime @updatedAt
+
   @@schema("public")
 }
 
@@ -5707,19 +6052,24 @@ enum BreederReportReason {
   HARASSMENT
   MISREPRESENTATION
   OTHER
+
   @@schema("public")
 }
+
 enum BreederReportSeverity {
   LIGHT
   MEDIUM
   HEAVY
+
   @@schema("public")
 }
+
 enum BreederReportStatus {
   PENDING
   REVIEWED
   DISMISSED
   ACTIONED
+
   @@schema("public")
 }
 
@@ -5741,6 +6091,7 @@ enum BreederVerificationTier {
   IDENTITY_VERIFIED
   VERIFIED
   ACCREDITED
+
   @@schema("marketplace")
 }
 
@@ -5756,6 +6107,7 @@ enum ServiceProviderVerificationTier {
   IDENTITY_VERIFIED
   VERIFIED_PROFESSIONAL
   ACCREDITED_PROVIDER
+
   @@schema("marketplace")
 }
 
@@ -5763,11 +6115,12 @@ enum ServiceProviderVerificationTier {
  * VerificationRequestStatus - Status of verification package requests
  */
 enum VerificationRequestStatus {
-  PENDING       // Awaiting staff review
-  IN_REVIEW     // Staff actively reviewing
-  NEEDS_INFO    // Waiting for user to provide more info
-  APPROVED      // Verified, badge activated
-  DENIED        // Rejected
+  PENDING // Awaiting staff review
+  IN_REVIEW // Staff actively reviewing
+  NEEDS_INFO // Waiting for user to provide more info
+  APPROVED // Verified, badge activated
+  DENIED // Rejected
+
   @@schema("marketplace")
 }
 
@@ -5775,9 +6128,10 @@ enum VerificationRequestStatus {
  * TwoFactorMethod - Available 2FA methods for marketplace users
  */
 enum TwoFactorMethod {
-  PASSKEY       // WebAuthn/Passkey (recommended)
-  TOTP          // Authenticator app
-  SMS           // SMS OTP (fallback)
+  PASSKEY // WebAuthn/Passkey (recommended)
+  TOTP // Authenticator app
+  SMS // SMS OTP (fallback)
+
   @@schema("marketplace")
 }
 
@@ -5903,8 +6257,10 @@ enum IdentifierType {
   EAR_TAG // Ear tag number (livestock)
   USDA_SCRAPIE // USDA Scrapie ID (sheep/goats)
   OTHER // Other registry or identifier
+
   @@schema("public")
 }
+
 /**
  * GlobalAnimalIdentity - A canonical identity cluster for an animal across all tenants
  * When we're confident animals across tenants are the same individual, they share one of these.
@@ -6044,6 +6400,7 @@ model AnimalPrivacySettings {
   // Contact preferences
   allowInfoRequests  Boolean @default(true) // Can others request more info?
   allowDirectContact Boolean @default(false) // Show contact info directly?
+
   @@schema("public")
 }
 
@@ -6095,15 +6452,19 @@ enum LineageRequestStatus {
   APPROVED
   DENIED
   EXPIRED
+
   @@schema("public")
 }
+
 enum LineageAccessLevel {
   LINEAGE_ONLY // Just position in pedigree, no details
   BASIC // Name, breed, DOB year
   STANDARD // Name, breed, full DOB, registry (partial)
   FULL // Everything the owner has made shareable
+
   @@schema("public")
 }
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Cross-Tenant Animal Linking
@@ -6221,14 +6582,18 @@ enum TitleCategory {
   BREED_SPECIFIC // Breed club awards
   PERFORMANCE // Racing, working, etc.
   OTHER
+
   @@schema("public")
 }
+
 enum TitleStatus {
   IN_PROGRESS // Working toward (optional tracking)
   EARNED // Title completed
   VERIFIED // Confirmed by registry/org
+
   @@schema("public")
 }
+
 enum CompetitionType {
   CONFORMATION_SHOW
   OBEDIENCE_TRIAL
@@ -6241,8 +6606,10 @@ enum CompetitionType {
   PERFORMANCE_TEST
   BREED_SPECIALTY
   OTHER
+
   @@schema("public")
 }
+
 /**
  * TitleDefinition - Defines available titles (global or tenant-specific)
  * Global titles (tenantId=null) are seeded for common registries (AKC, UKC, etc.)
@@ -6443,8 +6810,10 @@ enum ChangeRequestStatus {
   APPROVED
   REJECTED
   CANCELLED // Client withdrew request
+
   @@schema("public")
 }
+
 /**
  * ContactChangeRequest - Tracks name change requests from clients
  * (firstName, lastName, nickname require breeder approval)
@@ -6485,8 +6854,10 @@ enum EmailChangeStatus {
   VERIFIED // Email verified, change applied
   EXPIRED // Verification token expired
   CANCELLED // Client cancelled
+
   @@schema("public")
 }
+
 /**
  * EmailChangeRequest - Tracks email change requests with verification
  */
@@ -6525,35 +6896,35 @@ model EmailChangeRequest {
 // ============================================================================
 
 model MarketplaceUser {
-  id               Int       @id @default(autoincrement())
-  email            String    @unique
-  emailVerified    Boolean   @default(false) @map("email_verified")
-  passwordHash     String    @map("password_hash")
+  id            Int     @id @default(autoincrement())
+  email         String  @unique
+  emailVerified Boolean @default(false) @map("email_verified")
+  passwordHash  String  @map("password_hash")
 
-  firstName        String?   @map("first_name")
-  lastName         String?   @map("last_name")
-  phone            String?
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  phone     String?
 
   // Shipping address
-  addressLine1     String?   @map("address_line1")
-  addressLine2     String?   @map("address_line2")
-  city             String?
-  state            String?
-  zip              String?
-  country          String?   @default("US")
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String?
+  state        String?
+  zip          String?
+  country      String? @default("US")
 
-  userType         String    @default("buyer") @map("user_type")
+  userType String @default("buyer") @map("user_type")
 
   // Link to breeder account (if they're also a breeder)
-  tenantId         Int?      @map("tenant_id")
-  tenantVerified   Boolean   @default(false) @map("tenant_verified")
+  tenantId       Int?    @map("tenant_id")
+  tenantVerified Boolean @default(false) @map("tenant_verified")
 
-  stripeCustomerId String?   @unique @map("stripe_customer_id")
+  stripeCustomerId String? @unique @map("stripe_customer_id")
 
   // Account status
-  status           String    @default("active")
-  suspendedAt      DateTime? @map("suspended_at")
-  suspendedReason  String?   @map("suspended_reason")
+  status          String    @default("active")
+  suspendedAt     DateTime? @map("suspended_at")
+  suspendedReason String?   @map("suspended_reason")
 
   // Email verification
   emailVerifyToken   String?   @unique @map("email_verify_token")
@@ -6563,74 +6934,74 @@ model MarketplaceUser {
   passwordResetToken   String?   @unique @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
 
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  lastLoginAt      DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  lastLoginAt DateTime? @map("last_login_at")
 
   // Soft delete
-  deletedAt        DateTime? @map("deleted_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // ============================================================================
   // Two-Factor Authentication (2FA)
   // ============================================================================
-  twoFactorEnabled              Boolean         @default(false) @map("two_factor_enabled")
-  twoFactorMethod               TwoFactorMethod? @map("two_factor_method")
-  twoFactorEnabledAt            DateTime?       @map("two_factor_enabled_at")
+  twoFactorEnabled   Boolean          @default(false) @map("two_factor_enabled")
+  twoFactorMethod    TwoFactorMethod? @map("two_factor_method")
+  twoFactorEnabledAt DateTime?        @map("two_factor_enabled_at")
 
   // TOTP (Authenticator App)
-  totpSecret                    String?         @map("totp_secret")
-  totpVerifiedAt                DateTime?       @map("totp_verified_at")
+  totpSecret     String?   @map("totp_secret")
+  totpVerifiedAt DateTime? @map("totp_verified_at")
 
   // Passkey (WebAuthn) - marketplace-specific
-  passkeyCredentialId           String?         @map("passkey_credential_id")
-  passkeyPublicKey              Bytes?          @map("passkey_public_key")
-  passkeyCounter                Int?            @map("passkey_counter")
-  passkeyCreatedAt              DateTime?       @map("passkey_created_at")
+  passkeyCredentialId String?   @map("passkey_credential_id")
+  passkeyPublicKey    Bytes?    @map("passkey_public_key")
+  passkeyCounter      Int?      @map("passkey_counter")
+  passkeyCreatedAt    DateTime? @map("passkey_created_at")
 
   // SMS verification for 2FA
-  smsPhoneNumber                String?         @map("sms_phone_number")
-  smsVerifiedAt                 DateTime?       @map("sms_verified_at")
-  smsVerificationToken          String?         @map("sms_verification_token")
-  smsVerificationTokenExpires   DateTime?       @map("sms_verification_token_expires")
+  smsPhoneNumber              String?   @map("sms_phone_number")
+  smsVerifiedAt               DateTime? @map("sms_verified_at")
+  smsVerificationToken        String?   @map("sms_verification_token")
+  smsVerificationTokenExpires DateTime? @map("sms_verification_token_expires")
 
   // ============================================================================
   // Service Provider Verification
   // ============================================================================
   serviceProviderTier           ServiceProviderVerificationTier? @map("service_provider_tier")
-  serviceProviderTierAchievedAt DateTime?       @map("service_provider_tier_achieved_at")
+  serviceProviderTierAchievedAt DateTime?                        @map("service_provider_tier_achieved_at")
 
   // Stripe Identity (for standalone $10 verification)
-  stripeIdentitySessionId       String?         @map("stripe_identity_session_id")
-  stripeIdentityStatus          String?         @map("stripe_identity_status") // pending, verified, failed
-  identityVerifiedAt            DateTime?       @map("identity_verified_at")
+  stripeIdentitySessionId String?   @map("stripe_identity_session_id")
+  stripeIdentityStatus    String?   @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt      DateTime? @map("identity_verified_at")
 
   // Paid verification packages - Verified Professional
-  verifiedProfessionalPurchasedAt DateTime?     @map("verified_professional_purchased_at")
-  verifiedProfessionalApprovedAt  DateTime?     @map("verified_professional_approved_at")
-  verifiedProfessionalApprovedBy  Int?          @map("verified_professional_approved_by")
-  verifiedProfessionalExpiresAt   DateTime?     @map("verified_professional_expires_at")
+  verifiedProfessionalPurchasedAt DateTime? @map("verified_professional_purchased_at")
+  verifiedProfessionalApprovedAt  DateTime? @map("verified_professional_approved_at")
+  verifiedProfessionalApprovedBy  Int?      @map("verified_professional_approved_by")
+  verifiedProfessionalExpiresAt   DateTime? @map("verified_professional_expires_at")
 
   // Paid verification packages - Accredited Provider
-  accreditedProviderPurchasedAt   DateTime?     @map("accredited_provider_purchased_at")
-  accreditedProviderApprovedAt    DateTime?     @map("accredited_provider_approved_at")
-  accreditedProviderApprovedBy    Int?          @map("accredited_provider_approved_by")
-  accreditedProviderExpiresAt     DateTime?     @map("accredited_provider_expires_at")
+  accreditedProviderPurchasedAt DateTime? @map("accredited_provider_purchased_at")
+  accreditedProviderApprovedAt  DateTime? @map("accredited_provider_approved_at")
+  accreditedProviderApprovedBy  Int?      @map("accredited_provider_approved_by")
+  accreditedProviderExpiresAt   DateTime? @map("accredited_provider_expires_at")
 
   // Platform-earned badges (service providers)
-  quickResponderBadge           Boolean         @default(false) @map("quick_responder_badge")
-  establishedProviderBadge      Boolean         @default(false) @map("established_provider_badge")
-  topRatedBadge                 Boolean         @default(false) @map("top_rated_badge")
-  trustedProviderBadge          Boolean         @default(false) @map("trusted_provider_badge")
-  acceptsPaymentsBadge          Boolean         @default(false) @map("accepts_payments_badge")
+  quickResponderBadge      Boolean @default(false) @map("quick_responder_badge")
+  establishedProviderBadge Boolean @default(false) @map("established_provider_badge")
+  topRatedBadge            Boolean @default(false) @map("top_rated_badge")
+  trustedProviderBadge     Boolean @default(false) @map("trusted_provider_badge")
+  acceptsPaymentsBadge     Boolean @default(false) @map("accepts_payments_badge")
 
   // Relations
-  provider         MarketplaceProvider?
-  sentMessages     MarketplaceMessage[]
-  clientThreads    MarketplaceMessageThread[] @relation("ClientThreads")
-  clientTransactions MarketplaceTransaction[] @relation("ClientTransactions")
-  clientInvoices   MarketplaceInvoice[] @relation("ClientInvoices")
-  reviews          MarketplaceReview[] @relation("ReviewsByClient")
-  verificationRequests VerificationRequest[] @relation("UserVerificationRequests")
+  provider             MarketplaceProvider?
+  sentMessages         MarketplaceMessage[]
+  clientThreads        MarketplaceMessageThread[] @relation("ClientThreads")
+  clientTransactions   MarketplaceTransaction[]   @relation("ClientTransactions")
+  clientInvoices       MarketplaceInvoice[]       @relation("ClientInvoices")
+  reviews              MarketplaceReview[]        @relation("ReviewsByClient")
+  verificationRequests VerificationRequest[]      @relation("UserVerificationRequests")
 
   @@index([email])
   @@index([tenantId])
@@ -6644,118 +7015,118 @@ model MarketplaceUser {
 }
 
 model MarketplaceProvider {
-  id                              Int       @id @default(autoincrement())
-  userId                          Int       @unique @map("user_id")
-  user                            MarketplaceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int             @id @default(autoincrement())
+  userId Int             @unique @map("user_id")
+  user   MarketplaceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  providerType                    String    @map("provider_type")
+  providerType String @map("provider_type")
 
   // Link to breeder tenant (if provider is a breeder)
-  tenantId                        Int?      @map("tenant_id")
+  tenantId Int? @map("tenant_id")
 
   // Business info
-  businessName                    String    @map("business_name")
-  businessDescription             String?   @map("business_description")
-  logoUrl                         String?   @map("logo_url")
-  coverImageUrl                   String?   @map("cover_image_url")
+  businessName        String  @map("business_name")
+  businessDescription String? @map("business_description")
+  logoUrl             String? @map("logo_url")
+  coverImageUrl       String? @map("cover_image_url")
 
   // Contact
-  publicEmail                     String?   @map("public_email")
-  publicPhone                     String?   @map("public_phone")
-  website                         String?
+  publicEmail String? @map("public_email")
+  publicPhone String? @map("public_phone")
+  website     String?
 
   // Location
-  city                            String?
-  state                           String?
-  zip                             String?
-  country                         String?   @default("US")
-  latitude                        Decimal?  @db.Decimal(10,8) @map("latitude")
-  longitude                       Decimal?  @db.Decimal(11,8) @map("longitude")
+  city      String?
+  state     String?
+  zip       String?
+  country   String?  @default("US")
+  latitude  Decimal? @map("latitude") @db.Decimal(10, 8)
+  longitude Decimal? @map("longitude") @db.Decimal(11, 8)
 
   // Stripe Connect for automated payouts
-  stripeConnectAccountId          String?   @unique @map("stripe_connect_account_id")
-  stripeConnectOnboardingComplete Boolean   @default(false) @map("stripe_connect_onboarding_complete")
-  stripeConnectPayoutsEnabled     Boolean   @default(false) @map("stripe_connect_payouts_enabled")
-  stripeConnectDetailsSubmitted   Boolean   @default(false) @map("stripe_connect_details_submitted")
+  stripeConnectAccountId          String? @unique @map("stripe_connect_account_id")
+  stripeConnectOnboardingComplete Boolean @default(false) @map("stripe_connect_onboarding_complete")
+  stripeConnectPayoutsEnabled     Boolean @default(false) @map("stripe_connect_payouts_enabled")
+  stripeConnectDetailsSubmitted   Boolean @default(false) @map("stripe_connect_details_submitted")
 
   // Payment settings
-  paymentMode                     String    @default("manual") @map("payment_mode")
-  paymentInstructions             String?   @map("payment_instructions")
+  paymentMode         String  @default("manual") @map("payment_mode")
+  paymentInstructions String? @map("payment_instructions")
 
   // Business hours (JSON)
-  businessHours                   Json?     @map("business_hours")
-  timeZone                        String?   @default("America/New_York") @map("time_zone")
+  businessHours Json?   @map("business_hours")
+  timeZone      String? @default("America/New_York") @map("time_zone")
 
   // Stats (updated by triggers/cron)
-  totalListings                   Int       @default(0) @map("total_listings")
-  activeListings                  Int       @default(0) @map("active_listings")
-  totalTransactions               Int       @default(0) @map("total_transactions")
-  completedTransactions           Int       @default(0) @map("completed_transactions")
-  totalRevenueCents               BigInt    @default(0) @map("total_revenue_cents")
-  lifetimePayoutCents             BigInt    @default(0) @map("lifetime_payout_cents")
-  averageRating                   Decimal   @default(0.00) @map("average_rating") @db.Decimal(3,2)
-  totalReviews                    Int       @default(0) @map("total_reviews")
+  totalListings         Int     @default(0) @map("total_listings")
+  activeListings        Int     @default(0) @map("active_listings")
+  totalTransactions     Int     @default(0) @map("total_transactions")
+  completedTransactions Int     @default(0) @map("completed_transactions")
+  totalRevenueCents     BigInt  @default(0) @map("total_revenue_cents")
+  lifetimePayoutCents   BigInt  @default(0) @map("lifetime_payout_cents")
+  averageRating         Decimal @default(0.00) @map("average_rating") @db.Decimal(3, 2)
+  totalReviews          Int     @default(0) @map("total_reviews")
 
   // Badge flags (legacy - kept for backwards compatibility)
-  verifiedProvider                Boolean   @default(false) @map("verified_provider")
-  premiumProvider                 Boolean   @default(false) @map("premium_provider")
-  quickResponder                  Boolean   @default(false) @map("quick_responder")
+  verifiedProvider Boolean @default(false) @map("verified_provider")
+  premiumProvider  Boolean @default(false) @map("premium_provider")
+  quickResponder   Boolean @default(false) @map("quick_responder")
 
   // ============================================================================
   // Breeder Verification System
   // ============================================================================
-  verificationTier                BreederVerificationTier @default(SUBSCRIBER) @map("verification_tier")
-  verificationTierAchievedAt      DateTime? @map("verification_tier_achieved_at")
+  verificationTier           BreederVerificationTier @default(SUBSCRIBER) @map("verification_tier")
+  verificationTierAchievedAt DateTime?               @map("verification_tier_achieved_at")
 
   // Phone verification (required for MARKETPLACE_ENABLED tier)
-  phoneVerifiedAt                 DateTime? @map("phone_verified_at")
-  phoneVerificationToken          String?   @map("phone_verification_token")
-  phoneVerificationTokenExpires   DateTime? @map("phone_verification_token_expires")
+  phoneVerifiedAt               DateTime? @map("phone_verified_at")
+  phoneVerificationToken        String?   @map("phone_verification_token")
+  phoneVerificationTokenExpires DateTime? @map("phone_verification_token_expires")
 
   // Stripe Identity verification (for IDENTITY_VERIFIED tier)
-  stripeIdentitySessionId         String?   @map("stripe_identity_session_id")
-  stripeIdentityStatus            String?   @map("stripe_identity_status") // pending, verified, failed
-  identityVerifiedAt              DateTime? @map("identity_verified_at")
+  stripeIdentitySessionId String?   @map("stripe_identity_session_id")
+  stripeIdentityStatus    String?   @map("stripe_identity_status") // pending, verified, failed
+  identityVerifiedAt      DateTime? @map("identity_verified_at")
 
   // Paid verification packages - BreederHQ Verified
-  verifiedPackagePurchasedAt      DateTime? @map("verified_package_purchased_at")
-  verifiedPackageApprovedAt       DateTime? @map("verified_package_approved_at")
-  verifiedPackageApprovedBy       Int?      @map("verified_package_approved_by")
-  verifiedPackageExpiresAt        DateTime? @map("verified_package_expires_at")
+  verifiedPackagePurchasedAt DateTime? @map("verified_package_purchased_at")
+  verifiedPackageApprovedAt  DateTime? @map("verified_package_approved_at")
+  verifiedPackageApprovedBy  Int?      @map("verified_package_approved_by")
+  verifiedPackageExpiresAt   DateTime? @map("verified_package_expires_at")
 
   // Paid verification packages - BreederHQ Accredited
-  accreditedPackagePurchasedAt    DateTime? @map("accredited_package_purchased_at")
-  accreditedPackageApprovedAt     DateTime? @map("accredited_package_approved_at")
-  accreditedPackageApprovedBy     Int?      @map("accredited_package_approved_by")
-  accreditedPackageExpiresAt      DateTime? @map("accredited_package_expires_at")
+  accreditedPackagePurchasedAt DateTime? @map("accredited_package_purchased_at")
+  accreditedPackageApprovedAt  DateTime? @map("accredited_package_approved_at")
+  accreditedPackageApprovedBy  Int?      @map("accredited_package_approved_by")
+  accreditedPackageExpiresAt   DateTime? @map("accredited_package_expires_at")
 
   // Additional platform-earned badges
-  establishedBadge                Boolean   @default(false) @map("established_badge")
-  establishedBadgeEarnedAt        DateTime? @map("established_badge_earned_at")
-  topRatedBadge                   Boolean   @default(false) @map("top_rated_badge")
-  topRatedBadgeEarnedAt           DateTime? @map("top_rated_badge_earned_at")
-  trustedBadge                    Boolean   @default(false) @map("trusted_badge")
-  trustedBadgeEarnedAt            DateTime? @map("trusted_badge_earned_at")
+  establishedBadge         Boolean   @default(false) @map("established_badge")
+  establishedBadgeEarnedAt DateTime? @map("established_badge_earned_at")
+  topRatedBadge            Boolean   @default(false) @map("top_rated_badge")
+  topRatedBadgeEarnedAt    DateTime? @map("top_rated_badge_earned_at")
+  trustedBadge             Boolean   @default(false) @map("trusted_badge")
+  trustedBadgeEarnedAt     DateTime? @map("trusted_badge_earned_at")
 
   // Status
-  status                          String    @default("pending")
-  activatedAt                     DateTime? @map("activated_at")
-  suspendedAt                     DateTime? @map("suspended_at")
-  suspendedReason                 String?   @map("suspended_reason")
+  status          String    @default("pending")
+  activatedAt     DateTime? @map("activated_at")
+  suspendedAt     DateTime? @map("suspended_at")
+  suspendedReason String?   @map("suspended_reason")
 
-  createdAt                       DateTime  @default(now()) @map("created_at")
-  updatedAt                       DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Soft delete
-  deletedAt                       DateTime? @map("deleted_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  listings                        MarketplaceServiceListing[]
-  providerThreads                 MarketplaceMessageThread[] @relation("ProviderThreads")
-  providerTransactions            MarketplaceTransaction[] @relation("ProviderTransactions")
-  providerInvoices                MarketplaceInvoice[] @relation("ProviderInvoices")
-  reviews                         MarketplaceReview[] @relation("ReviewsForProvider")
-  verificationRequests            VerificationRequest[] @relation("ProviderVerificationRequests")
+  listings             MarketplaceServiceListing[]
+  providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
+  providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
+  providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
+  reviews              MarketplaceReview[]         @relation("ReviewsForProvider")
+  verificationRequests VerificationRequest[]       @relation("ProviderVerificationRequests")
 
   @@index([userId])
   @@index([tenantId])
@@ -6773,45 +7144,45 @@ model MarketplaceProvider {
  * Handles both Breeder and Service Provider verification requests
  */
 model VerificationRequest {
-  id                          Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   // Who is being verified (polymorphic - one of these will be set)
-  userType                    String    @map("user_type") // "BREEDER" or "SERVICE_PROVIDER"
-  providerId                  Int?      @map("provider_id")
-  provider                    MarketplaceProvider? @relation("ProviderVerificationRequests", fields: [providerId], references: [id], onDelete: Cascade)
-  marketplaceUserId           Int?      @map("marketplace_user_id")
-  marketplaceUser             MarketplaceUser? @relation("UserVerificationRequests", fields: [marketplaceUserId], references: [id], onDelete: Cascade)
+  userType          String               @map("user_type") // "BREEDER" or "SERVICE_PROVIDER"
+  providerId        Int?                 @map("provider_id")
+  provider          MarketplaceProvider? @relation("ProviderVerificationRequests", fields: [providerId], references: [id], onDelete: Cascade)
+  marketplaceUserId Int?                 @map("marketplace_user_id")
+  marketplaceUser   MarketplaceUser?     @relation("UserVerificationRequests", fields: [marketplaceUserId], references: [id], onDelete: Cascade)
 
   // What package was requested
-  packageType                 String    @map("package_type") // "VERIFIED" or "ACCREDITED"
-  requestedTier               String    @map("requested_tier") // Full tier name for reference
+  packageType   String @map("package_type") // "VERIFIED" or "ACCREDITED"
+  requestedTier String @map("requested_tier") // Full tier name for reference
 
   // Request status
-  status                      VerificationRequestStatus @default(PENDING)
+  status VerificationRequestStatus @default(PENDING)
 
   // User-submitted verification info (flexible JSON storage)
   // Breeders: { registryName, registryMemberId, animalsToVerify, vetClinicName, vetClinicPhone, ... }
   // Service Providers: { certifications, professionalLicenseType, insuranceCompany, ... }
-  submittedInfo               Json?     @map("submitted_info")
+  submittedInfo Json? @map("submitted_info")
 
   // Staff review
-  reviewChecklist             Json?     @map("review_checklist") // Completed checklist items
-  reviewNotes                 String?   @map("review_notes")     // Internal notes
-  reviewedAt                  DateTime? @map("reviewed_at")
-  reviewedBy                  Int?      @map("reviewed_by")      // Admin user ID
+  reviewChecklist Json?     @map("review_checklist") // Completed checklist items
+  reviewNotes     String?   @map("review_notes") // Internal notes
+  reviewedAt      DateTime? @map("reviewed_at")
+  reviewedBy      Int?      @map("reviewed_by") // Admin user ID
 
   // If more info needed from user
-  infoRequestedAt             DateTime? @map("info_requested_at")
-  infoRequestNote             String?   @map("info_request_note")
-  infoProvidedAt              DateTime? @map("info_provided_at")
+  infoRequestedAt DateTime? @map("info_requested_at")
+  infoRequestNote String?   @map("info_request_note")
+  infoProvidedAt  DateTime? @map("info_provided_at")
 
   // Payment tracking
-  paymentIntentId             String?   @map("payment_intent_id") // Stripe PaymentIntent ID
-  amountPaidCents             Int?      @map("amount_paid_cents")
+  paymentIntentId String? @map("payment_intent_id") // Stripe PaymentIntent ID
+  amountPaidCents Int?    @map("amount_paid_cents")
 
   // Timestamps
-  createdAt                   DateTime  @default(now()) @map("created_at")
-  updatedAt                   DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([userType, status])
@@ -6823,32 +7194,32 @@ model VerificationRequest {
 }
 
 model MarketplaceServiceListing {
-  id           Int       @id @default(autoincrement())
-  providerId   Int       @map("provider_id")
-  provider     MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  id         Int                 @id @default(autoincrement())
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
-  slug         String    @unique
-  title        String
-  description  String?
+  slug        String  @unique
+  title       String
+  description String?
 
-  category     String
-  subcategory  String?
+  category    String
+  subcategory String?
 
   // Pricing
-  priceCents   BigInt?   @map("price_cents")
-  priceType    String?   @map("price_type")
-  priceText    String?   @map("price_text")
+  priceCents BigInt? @map("price_cents")
+  priceType  String? @map("price_type")
+  priceText  String? @map("price_text")
 
   // Images
-  images       Json?
-  coverImageUrl String?  @map("cover_image_url")
+  images        Json?
+  coverImageUrl String? @map("cover_image_url")
 
   // Location
-  city         String?
-  state        String?
-  zip          String?
-  latitude     Decimal?  @db.Decimal(10,8) @map("latitude")
-  longitude    Decimal?  @db.Decimal(11,8) @map("longitude")
+  city      String?
+  state     String?
+  zip       String?
+  latitude  Decimal? @map("latitude") @db.Decimal(10, 8)
+  longitude Decimal? @map("longitude") @db.Decimal(11, 8)
 
   // Service details
   duration     String?
@@ -6856,23 +7227,23 @@ model MarketplaceServiceListing {
 
   // SEO
   metaDescription String? @map("meta_description")
-  keywords     String?
+  keywords        String?
 
   // Stats
-  viewCount    Int       @default(0) @map("view_count")
-  inquiryCount Int       @default(0) @map("inquiry_count")
-  bookingCount Int       @default(0) @map("booking_count")
+  viewCount    Int @default(0) @map("view_count")
+  inquiryCount Int @default(0) @map("inquiry_count")
+  bookingCount Int @default(0) @map("booking_count")
 
   // Status
-  status       String    @default("draft")
-  publishedAt  DateTime? @map("published_at")
-  pausedAt     DateTime? @map("paused_at")
+  status      String    @default("draft")
+  publishedAt DateTime? @map("published_at")
+  pausedAt    DateTime? @map("paused_at")
 
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Soft delete
-  deletedAt    DateTime? @map("deleted_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
   transactions MarketplaceTransaction[]
@@ -6889,59 +7260,59 @@ model MarketplaceServiceListing {
 }
 
 model MarketplaceTransaction {
-  id                   BigInt    @id @default(autoincrement())
+  id BigInt @id @default(autoincrement())
 
-  clientId             Int       @map("client_id")
-  client               MarketplaceUser @relation("ClientTransactions", fields: [clientId], references: [id], onDelete: Restrict)
+  clientId Int             @map("client_id")
+  client   MarketplaceUser @relation("ClientTransactions", fields: [clientId], references: [id], onDelete: Restrict)
 
-  providerId           Int       @map("provider_id")
-  provider             MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
-  listingId            Int?      @map("listing_id")
-  listing              MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listingId Int?                       @map("listing_id")
+  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Transaction details
-  serviceDescription   String    @map("service_description")
-  serviceNotes         String?   @map("service_notes")
+  serviceDescription String  @map("service_description")
+  serviceNotes       String? @map("service_notes")
 
   // Pricing breakdown
-  servicePriceCents    BigInt    @map("service_price_cents")
-  platformFeeCents     BigInt    @default(0) @map("platform_fee_cents")
-  stripeFeesCents      BigInt    @default(0) @map("stripe_fees_cents")
-  totalCents           BigInt    @map("total_cents")
-  providerPayoutCents  BigInt?   @map("provider_payout_cents")
+  servicePriceCents   BigInt  @map("service_price_cents")
+  platformFeeCents    BigInt  @default(0) @map("platform_fee_cents")
+  stripeFeesCents     BigInt  @default(0) @map("stripe_fees_cents")
+  totalCents          BigInt  @map("total_cents")
+  providerPayoutCents BigInt? @map("provider_payout_cents")
 
   // Tax (if applicable)
-  taxCents             BigInt    @default(0) @map("tax_cents")
-  taxRate              Decimal?  @db.Decimal(5,4) @map("tax_rate")
+  taxCents BigInt   @default(0) @map("tax_cents")
+  taxRate  Decimal? @map("tax_rate") @db.Decimal(5, 4)
 
   // Invoice link (optional - can link to marketplace.invoices OR public.Invoice)
-  invoiceType          String?   @map("invoice_type")
-  tenantId             Int?      @map("tenant_id")
-  invoiceId            Int?      @map("invoice_id")
+  invoiceType String? @map("invoice_type")
+  tenantId    Int?    @map("tenant_id")
+  invoiceId   Int?    @map("invoice_id")
 
   // Status workflow
-  status               String    @default("pending")
+  status String @default("pending")
 
   // Timestamps
-  createdAt            DateTime  @default(now()) @map("created_at")
-  invoicedAt           DateTime? @map("invoiced_at")
-  paidAt               DateTime? @map("paid_at")
-  startedAt            DateTime? @map("started_at")
-  completedAt          DateTime? @map("completed_at")
-  cancelledAt          DateTime? @map("cancelled_at")
-  refundedAt           DateTime? @map("refunded_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  invoicedAt  DateTime? @map("invoiced_at")
+  paidAt      DateTime? @map("paid_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  refundedAt  DateTime? @map("refunded_at")
 
   // Cancellation/refund
-  cancellationReason   String?   @map("cancellation_reason")
-  cancelledBy          String?   @map("cancelled_by")
-  refundAmountCents    BigInt    @default(0) @map("refund_amount_cents")
-  refundReason         String?   @map("refund_reason")
+  cancellationReason String? @map("cancellation_reason")
+  cancelledBy        String? @map("cancelled_by")
+  refundAmountCents  BigInt  @default(0) @map("refund_amount_cents")
+  refundReason       String? @map("refund_reason")
 
   // Relations
-  marketplaceInvoice   MarketplaceInvoice?
-  threads              MarketplaceMessageThread[]
-  review               MarketplaceReview?
+  marketplaceInvoice MarketplaceInvoice?
+  threads            MarketplaceMessageThread[]
+  review             MarketplaceReview?
 
   @@index([clientId, status, createdAt(sort: Desc)])
   @@index([providerId, status, createdAt(sort: Desc)])
@@ -6953,65 +7324,65 @@ model MarketplaceTransaction {
 }
 
 model MarketplaceInvoice {
-  id                     Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  transactionId          BigInt    @unique @map("transaction_id")
-  transaction            MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  transactionId BigInt                 @unique @map("transaction_id")
+  transaction   MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
 
-  providerId             Int       @map("provider_id")
-  provider               MarketplaceProvider @relation("ProviderInvoices", fields: [providerId], references: [id], onDelete: Restrict)
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation("ProviderInvoices", fields: [providerId], references: [id], onDelete: Restrict)
 
-  clientId               Int       @map("client_id")
-  client                 MarketplaceUser @relation("ClientInvoices", fields: [clientId], references: [id], onDelete: Restrict)
+  clientId Int             @map("client_id")
+  client   MarketplaceUser @relation("ClientInvoices", fields: [clientId], references: [id], onDelete: Restrict)
 
-  invoiceNumber          String    @unique @map("invoice_number")
+  invoiceNumber String @unique @map("invoice_number")
 
   // Amounts
-  subtotalCents          BigInt    @map("subtotal_cents")
-  taxCents               BigInt    @default(0) @map("tax_cents")
-  totalCents             BigInt    @map("total_cents")
-  paidCents              BigInt    @default(0) @map("paid_cents")
-  balanceCents           BigInt    @map("balance_cents")
-  refundedCents          BigInt    @default(0) @map("refunded_cents")
+  subtotalCents BigInt @map("subtotal_cents")
+  taxCents      BigInt @default(0) @map("tax_cents")
+  totalCents    BigInt @map("total_cents")
+  paidCents     BigInt @default(0) @map("paid_cents")
+  balanceCents  BigInt @map("balance_cents")
+  refundedCents BigInt @default(0) @map("refunded_cents")
 
   // Status
-  status                 String    @default("draft")
+  status String @default("draft")
 
   // Payment
-  paymentMode            String    @default("stripe") @map("payment_mode")
-  paymentModeLockedAt    DateTime  @default(now()) @map("payment_mode_locked_at")
-  stripeInvoiceId        String?   @unique @map("stripe_invoice_id")
-  stripePaymentIntentId  String?   @unique @map("stripe_payment_intent_id")
-  stripeChargeId         String?   @map("stripe_charge_id")
+  paymentMode           String   @default("stripe") @map("payment_mode")
+  paymentModeLockedAt   DateTime @default(now()) @map("payment_mode_locked_at")
+  stripeInvoiceId       String?  @unique @map("stripe_invoice_id")
+  stripePaymentIntentId String?  @unique @map("stripe_payment_intent_id")
+  stripeChargeId        String?  @map("stripe_charge_id")
 
   // Manual payment confirmation
-  manualPaymentMarkedAt      DateTime? @map("manual_payment_marked_at")
-  manualPaymentMethod        String?   @map("manual_payment_method")
-  manualPaymentReference     String?   @map("manual_payment_reference")
-  manualPaymentConfirmedBy   Int?      @map("manual_payment_confirmed_by")
+  manualPaymentMarkedAt    DateTime? @map("manual_payment_marked_at")
+  manualPaymentMethod      String?   @map("manual_payment_method")
+  manualPaymentReference   String?   @map("manual_payment_reference")
+  manualPaymentConfirmedBy Int?      @map("manual_payment_confirmed_by")
 
   // Legacy fields (for backward compatibility)
-  buyerMarkedPaidAt      DateTime? @map("buyer_marked_paid_at")
-  buyerPaymentMethod     String?   @map("buyer_payment_method")
-  buyerPaymentReference  String?   @map("buyer_payment_reference")
-  providerConfirmedAt    DateTime? @map("provider_confirmed_at")
-  providerConfirmedById  Int?      @map("provider_confirmed_by")
+  buyerMarkedPaidAt     DateTime? @map("buyer_marked_paid_at")
+  buyerPaymentMethod    String?   @map("buyer_payment_method")
+  buyerPaymentReference String?   @map("buyer_payment_reference")
+  providerConfirmedAt   DateTime? @map("provider_confirmed_at")
+  providerConfirmedById Int?      @map("provider_confirmed_by")
 
   // Dates
-  issuedAt               DateTime? @map("issued_at")
-  sentAt                 DateTime? @map("sent_at")
-  viewedAt               DateTime? @map("viewed_at")
-  dueAt                  DateTime? @map("due_at")
-  paidAt                 DateTime? @map("paid_at")
-  refundedAt             DateTime? @map("refunded_at")
-  voidedAt               DateTime? @map("voided_at")
+  issuedAt   DateTime? @map("issued_at")
+  sentAt     DateTime? @map("sent_at")
+  viewedAt   DateTime? @map("viewed_at")
+  dueAt      DateTime? @map("due_at")
+  paidAt     DateTime? @map("paid_at")
+  refundedAt DateTime? @map("refunded_at")
+  voidedAt   DateTime? @map("voided_at")
 
   // Notes
-  notes                  String?
-  internalNotes          String?   @map("internal_notes")
+  notes         String?
+  internalNotes String? @map("internal_notes")
 
-  createdAt              DateTime  @default(now()) @map("created_at")
-  updatedAt              DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([transactionId])
   @@index([providerId, status, createdAt(sort: Desc)])
@@ -7025,28 +7396,28 @@ model MarketplaceInvoice {
 }
 
 model MarketplaceMessageThread {
-  id              Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  clientId        Int       @map("client_id")
-  client          MarketplaceUser @relation("ClientThreads", fields: [clientId], references: [id], onDelete: Cascade)
+  clientId Int             @map("client_id")
+  client   MarketplaceUser @relation("ClientThreads", fields: [clientId], references: [id], onDelete: Cascade)
 
-  providerId      Int       @map("provider_id")
-  provider        MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
-  listingId       Int?      @map("listing_id")
-  listing         MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listingId Int?                       @map("listing_id")
+  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
-  transactionId   BigInt?   @map("transaction_id")
-  transaction     MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  transactionId BigInt?                 @map("transaction_id")
+  transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
-  subject         String?
-  status          String    @default("active")
+  subject String?
+  status  String  @default("active")
 
-  lastMessageAt   DateTime  @default(now()) @map("last_message_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  lastMessageAt DateTime @default(now()) @map("last_message_at")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   // Relations
-  messages        MarketplaceMessage[]
+  messages MarketplaceMessage[]
 
   @@index([clientId, lastMessageAt(sort: Desc)])
   @@index([providerId, lastMessageAt(sort: Desc)])
@@ -7055,18 +7426,18 @@ model MarketplaceMessageThread {
 }
 
 model MarketplaceMessage {
-  id           BigInt    @id @default(autoincrement())
+  id BigInt @id @default(autoincrement())
 
-  threadId     Int       @map("thread_id")
-  thread       MarketplaceMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId Int                      @map("thread_id")
+  thread   MarketplaceMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
-  senderId     Int       @map("sender_id")
-  sender       MarketplaceUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderId Int             @map("sender_id")
+  sender   MarketplaceUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
-  messageText  String    @map("message_text")
-  readAt       DateTime? @map("read_at")
+  messageText String    @map("message_text")
+  readAt      DateTime? @map("read_at")
 
-  createdAt    DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([threadId, createdAt(sort: Desc)])
   @@map("messages")
@@ -7074,35 +7445,35 @@ model MarketplaceMessage {
 }
 
 model MarketplaceReview {
-  id             Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  transactionId  BigInt    @unique @map("transaction_id")
-  transaction    MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  transactionId BigInt                 @unique @map("transaction_id")
+  transaction   MarketplaceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
 
-  providerId     Int       @map("provider_id")
-  provider       MarketplaceProvider @relation("ReviewsForProvider", fields: [providerId], references: [id], onDelete: Restrict)
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation("ReviewsForProvider", fields: [providerId], references: [id], onDelete: Restrict)
 
-  clientId       Int       @map("client_id")
-  client         MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
+  clientId Int             @map("client_id")
+  client   MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
 
-  listingId      Int?      @map("listing_id")
-  listing        MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listingId Int?                       @map("listing_id")
+  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Rating & review
-  rating         Int       // 1-5 stars
-  title          String?
-  reviewText     String?   @map("review_text")
+  rating     Int // 1-5 stars
+  title      String?
+  reviewText String? @map("review_text")
 
   // Response from provider
-  providerResponse String? @map("provider_response")
-  respondedAt    DateTime? @map("responded_at")
+  providerResponse String?   @map("provider_response")
+  respondedAt      DateTime? @map("responded_at")
 
   // Moderation
-  status         String    @default("published") // "published" | "flagged" | "removed"
-  flaggedReason  String?   @map("flagged_reason")
+  status        String  @default("published") // "published" | "flagged" | "removed"
+  flaggedReason String? @map("flagged_reason")
 
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([providerId, status, createdAt(sort: Desc)])
   @@index([clientId])
@@ -7113,19 +7484,19 @@ model MarketplaceReview {
 }
 
 model MarketplaceSavedListing {
-  id          Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   // BHQ User ID (CUID string from main User table)
-  bhqUserId   String    @map("bhq_user_id") @db.VarChar(36)
-  bhqUser     User      @relation("UserSavedListings", fields: [bhqUserId], references: [id], onDelete: Cascade)
+  bhqUserId String @map("bhq_user_id") @db.VarChar(36)
+  bhqUser   User   @relation("UserSavedListings", fields: [bhqUserId], references: [id], onDelete: Cascade)
 
   // Listing type: offspring_group, animal, service
-  listingType String    @map("listing_type") @db.VarChar(20)
+  listingType String @map("listing_type") @db.VarChar(20)
 
   // Listing ID (references different tables based on listingType)
-  listingId   Int       @map("listing_id")
+  listingId Int @map("listing_id")
 
-  savedAt     DateTime  @default(now()) @map("saved_at")
+  savedAt DateTime @default(now()) @map("saved_at")
 
   @@unique([bhqUserId, listingType, listingId])
   @@index([bhqUserId, savedAt(sort: Desc)])
@@ -7147,6 +7518,7 @@ enum BreedingRuleCategory {
   BUYER_INTERACTION
   STATUS
   NOTIFICATIONS
+
   @@schema("public")
 }
 
@@ -7155,37 +7527,38 @@ enum BreedingRuleLevel {
   PLAN
   GROUP
   OFFSPRING
+
   @@schema("public")
 }
 
 model BreedingProgramRule {
-  id          Int      @id @default(autoincrement())
-  tenantId    Int
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Rule identity
   category    BreedingRuleCategory
-  ruleType    String   @db.VarChar(100) // Specific rule within category
-  name        String   @db.VarChar(255)
-  description String?  @db.Text
-  enabled     Boolean  @default(true)
+  ruleType    String               @db.VarChar(100) // Specific rule within category
+  name        String               @db.VarChar(255)
+  description String?              @db.Text
+  enabled     Boolean              @default(true)
 
   // Configuration (varies by rule type)
-  config      Json     @default("{}")
+  config Json @default("{}")
 
   // Hierarchy tracking
-  level       BreedingRuleLevel
-  levelId     String   @db.VarChar(50) // Program slug or entity ID
+  level          BreedingRuleLevel
+  levelId        String                @db.VarChar(50) // Program slug or entity ID
   inheritsFromId Int?
   inheritsFrom   BreedingProgramRule?  @relation("RuleInheritance", fields: [inheritsFromId], references: [id], onDelete: SetNull)
   overriddenBy   BreedingProgramRule[] @relation("RuleInheritance")
 
   // Metadata
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  executions  BreedingProgramRuleExecution[]
+  executions BreedingProgramRuleExecution[]
 
   @@unique([tenantId, level, levelId, ruleType])
   @@index([tenantId])
@@ -7197,24 +7570,24 @@ model BreedingProgramRule {
 }
 
 model BreedingProgramRuleExecution {
-  id          Int      @id @default(autoincrement())
-  tenantId    Int
-  ruleId      Int
-  rule        BreedingProgramRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  id       Int                 @id @default(autoincrement())
+  tenantId Int
+  ruleId   Int
+  rule     BreedingProgramRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
 
   // Execution context
-  triggeredBy String   @db.VarChar(50) // 'user_action', 'cron_job', 'webhook'
-  entityType  String   @db.VarChar(20) // 'offspring', 'group', 'plan'
+  triggeredBy String @db.VarChar(50) // 'user_action', 'cron_job', 'webhook'
+  entityType  String @db.VarChar(20) // 'offspring', 'group', 'plan'
   entityId    Int
 
   // Result
-  success     Boolean
-  action      String?  @db.VarChar(100) // 'set_marketplace_listed', 'update_price', etc.
-  changes     Json?    // What actually changed
-  error       String?  @db.Text
+  success Boolean
+  action  String? @db.VarChar(100) // 'set_marketplace_listed', 'update_price', etc.
+  changes Json? // What actually changed
+  error   String? @db.Text
 
   // Metadata
-  executedAt  DateTime @default(now())
+  executedAt DateTime @default(now())
 
   @@index([tenantId])
   @@index([ruleId])
