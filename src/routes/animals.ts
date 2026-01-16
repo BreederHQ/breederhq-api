@@ -464,6 +464,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         createdAt: true,
         updatedAt: true,
         femaleCycleLenOverrideDays: true,
+        // Valuation fields (primarily for horses)
+        intendedUse: true,
+        declaredValueCents: true,
+        declaredValueCurrency: true,
+        valuationDate: true,
+        valuationSource: true,
+        forSale: true,
+        inSyndication: true,
+        isLeased: true,
       },
     });
     if (!rec) return reply.code(404).send({ error: "not_found" });
@@ -687,6 +696,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       archived: boolean;
       photoUrl: string | null;
       femaleCycleLenOverrideDays: number | null;
+      // Valuation fields
+      intendedUse: string | null;
+      declaredValueCents: number | null;
+      declaredValueCurrency: string | null;
+      valuationDate: string | null;
+      valuationSource: string | null;
+      forSale: boolean;
+      inSyndication: boolean;
+      isLeased: boolean;
     }>;
 
 
@@ -765,6 +783,51 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.femaleCycleLenOverrideDays = value;
     }
 
+    // Valuation fields
+    if (b.intendedUse !== undefined) {
+      if (b.intendedUse !== null && !["BREEDING", "SHOW", "RACING"].includes(b.intendedUse)) {
+        return reply.code(400).send({ error: "intendedUse_invalid", detail: "must be BREEDING, SHOW, or RACING" });
+      }
+      data.intendedUse = b.intendedUse;
+    }
+    if (b.declaredValueCents !== undefined) {
+      if (b.declaredValueCents !== null) {
+        if (!Number.isInteger(b.declaredValueCents) || b.declaredValueCents < 0) {
+          return reply.code(400).send({ error: "declaredValueCents_invalid", detail: "must be a non-negative integer" });
+        }
+      }
+      data.declaredValueCents = b.declaredValueCents;
+    }
+    if (b.declaredValueCurrency !== undefined) {
+      if (b.declaredValueCurrency !== null) {
+        const currency = String(b.declaredValueCurrency).toUpperCase().trim();
+        if (currency.length !== 3) {
+          return reply.code(400).send({ error: "declaredValueCurrency_invalid", detail: "must be a 3-character ISO 4217 currency code" });
+        }
+        data.declaredValueCurrency = currency;
+      } else {
+        data.declaredValueCurrency = null;
+      }
+    }
+    if (b.valuationDate !== undefined) {
+      if (b.valuationDate !== null) {
+        const d = parseDateIso(b.valuationDate);
+        if (d === null) return reply.code(400).send({ error: "valuationDate_invalid" });
+        data.valuationDate = d;
+      } else {
+        data.valuationDate = null;
+      }
+    }
+    if (b.valuationSource !== undefined) {
+      if (b.valuationSource !== null && !["PRIVATE_SALE", "AUCTION", "APPRAISAL", "INSURANCE", "OTHER"].includes(b.valuationSource)) {
+        return reply.code(400).send({ error: "valuationSource_invalid", detail: "must be PRIVATE_SALE, AUCTION, APPRAISAL, INSURANCE, or OTHER" });
+      }
+      data.valuationSource = b.valuationSource;
+    }
+    if (b.forSale !== undefined) data.forSale = !!b.forSale;
+    if (b.inSyndication !== undefined) data.inSyndication = !!b.inSyndication;
+    if (b.isLeased !== undefined) data.isLeased = !!b.isLeased;
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -789,6 +852,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           updatedAt: true,
           photoUrl: true,
           femaleCycleLenOverrideDays: true,
+          // Valuation fields
+          intendedUse: true,
+          declaredValueCents: true,
+          declaredValueCurrency: true,
+          valuationDate: true,
+          valuationSource: true,
+          forSale: true,
+          inSyndication: true,
+          isLeased: true,
         },
       });
       reply.send(updated);

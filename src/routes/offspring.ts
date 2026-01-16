@@ -1070,6 +1070,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             lockedCycleStart: true,
             expectedBirthDate: true,
             expectedWeaned: true,
+            // Foaling outcome for horses
+            foalingOutcome: true,
           },
         },
       },
@@ -1152,6 +1154,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               lockedCycleStart: true,
               expectedBirthDate: true,
               expectedWeaned: true,
+              // Foaling outcome for horses
+              foalingOutcome: true,
             },
           },
         },
