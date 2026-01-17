@@ -935,7 +935,7 @@ export default async function marketplaceV2Routes(
           // Privacy settings
           privacySettings: true,
           // Registry identifiers
-          registryIdentifiers: {
+          registryIds: {
             select: {
               id: true,
               identifier: true,
@@ -943,7 +943,7 @@ export default async function marketplaceV2Routes(
                 select: {
                   id: true,
                   name: true,
-                  abbreviation: true,
+                  code: true,
                 },
               },
             },
@@ -1001,7 +1001,7 @@ export default async function marketplaceV2Routes(
               id: true,
               titleDefinition: {
                 select: {
-                  name: true,
+                  fullName: true,
                   abbreviation: true,
                   organization: true,
                 },
@@ -1035,7 +1035,7 @@ export default async function marketplaceV2Routes(
             take: 50, // Limit to recent competitions
           },
           // Attachments/Media
-          attachments: {
+          Attachment: {
             where: {
               kind: { in: ["photo", "video", "image"] },
             },
@@ -1043,21 +1043,20 @@ export default async function marketplaceV2Routes(
               id: true,
               kind: true,
               filename: true,
-              caption: true,
               storageKey: true,
             },
             orderBy: { createdAt: "desc" },
             take: 50,
           },
           // Documents
-          documents: {
+          Document: {
             where: {
-              status: "ACTIVE",
+              status: "READY",
             },
             select: {
               id: true,
               kind: true,
-              filename: true,
+              title: true,
               visibility: true,
             },
             orderBy: { createdAt: "desc" },
@@ -1163,7 +1162,7 @@ export default async function marketplaceV2Routes(
         .filter((t) => t.isPublic === true)
         .map((t) => ({
           id: t.id,
-          name: t.titleDefinition.name,
+          name: t.titleDefinition.fullName,
           abbreviation: t.titleDefinition.abbreviation,
           organization: t.titleDefinition.organization,
           dateEarned: t.dateEarned,
@@ -1217,11 +1216,11 @@ export default async function marketplaceV2Routes(
         },
         privacySettings: privacy,
         // Registrations
-        registrations: animal.registryIdentifiers.map((r) => ({
+        registrations: animal.registryIds.map((r) => ({
           id: r.id,
           registryId: r.registry?.id,
           registryName: r.registry?.name,
-          registryAbbr: r.registry?.abbreviation,
+          registryCode: r.registry?.code,
           identifier: r.identifier,
         })),
         // Health - only marketplace visible traits available
@@ -1266,22 +1265,21 @@ export default async function marketplaceV2Routes(
         // Media
         media: {
           enabled: privacy.enableMediaSharing,
-          items: animal.attachments.map((a) => ({
+          items: animal.Attachment.map((a) => ({
             id: a.id,
             kind: a.kind,
             filename: a.filename,
-            caption: a.caption,
           })),
         },
         // Documents
         documents: {
           enabled: privacy.enableDocumentSharing,
-          items: animal.documents
+          items: animal.Document
             .filter((d) => d.visibility !== "PRIVATE")
             .map((d) => ({
               id: d.id,
               kind: d.kind,
-              filename: d.filename,
+              title: d.title,
             })),
         },
         // Lineage
