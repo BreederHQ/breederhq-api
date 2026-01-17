@@ -501,6 +501,12 @@ import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Ad
 import adminSubscriptionRoutes from "./routes/admin-subscriptions.js"; // Admin subscription management
 import adminFeatureRoutes from "./routes/admin-features.js"; // Admin feature registry & analytics
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
+import marketplaceServiceTagsRoutes from "./routes/marketplace-service-tags.js"; // Marketplace service tags
+import marketplaceImageUploadRoutes from "./routes/marketplace-image-upload.js"; // Marketplace image uploads (S3 presigned URLs)
+import marketplaceServiceDetailRoutes from "./routes/marketplace-service-detail.js"; // Marketplace service detail (public)
+import marketplaceAbuseReportsRoutes from "./routes/marketplace-abuse-reports.js"; // Marketplace abuse reporting
+import marketplaceIdentityVerificationRoutes from "./routes/marketplace-identity-verification.js"; // Marketplace identity verification (Stripe)
+import marketplaceAdminModerationRoutes from "./routes/marketplace-admin-moderation.js"; // Marketplace admin moderation queue
 import usageRoutes from "./routes/usage.js"; // Usage and quota dashboard
 import billingRoutes from "./routes/billing.js"; // Billing and Stripe integration
 import settingsRoutes from "./routes/settings.js"; // User settings (genetics disclaimer, etc.)
@@ -570,6 +576,12 @@ app.register(
     api.register(marketplaceNotificationsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/notifications/* (Notification counts)
     api.register(marketplaceVerificationRoutes, { prefix: "/marketplace/verification" }); // /api/v1/marketplace/verification/* (Phone, identity, packages)
     api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
+    api.register(marketplaceServiceTagsRoutes, { prefix: "/marketplace/service-tags" }); // /api/v1/marketplace/service-tags/* (Service tags for provider portal)
+    api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload)
+    api.register(marketplaceServiceDetailRoutes, { prefix: "/marketplace/services" }); // /api/v1/marketplace/services/:slugOrId (Public service detail)
+    api.register(marketplaceAbuseReportsRoutes, { prefix: "/marketplace/listings" }); // /api/v1/marketplace/listings/report (Abuse reporting)
+    api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
+    api.register(marketplaceAdminModerationRoutes, { prefix: "/marketplace/admin" }); // /api/v1/marketplace/admin/* (Admin moderation queue)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },

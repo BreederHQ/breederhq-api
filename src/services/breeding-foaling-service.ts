@@ -271,8 +271,9 @@ export async function addFoalingOutcome(params: {
     try {
       await updateMareReproductiveHistory(plan.damId, tenantId, breedingPlanId);
     } catch (err) {
+      // Log the error but don't fail the outcome save
       console.error("[Foaling] Failed to update mare reproductive history:", err);
-      // Don't fail the outcome save if history update fails
+      // Note: History will be auto-generated when user views the mare's breeding history tab
     }
   }
 

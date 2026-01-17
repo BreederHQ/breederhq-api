@@ -7202,8 +7202,9 @@ model MarketplaceServiceListing {
   title       String
   description String?
 
-  category    String
-  subcategory String?
+  category          String
+  subcategory       String?
+  customServiceType String? @map("custom_service_type") @db.VarChar(50)
 
   // Pricing
   priceCents BigInt? @map("price_cents")
@@ -7238,6 +7239,10 @@ model MarketplaceServiceListing {
   status      String    @default("draft")
   publishedAt DateTime? @map("published_at")
   pausedAt    DateTime? @map("paused_at")
+
+  // Moderation
+  flagged     Boolean   @default(false)
+  flaggedAt   DateTime? @map("flagged_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -7502,6 +7507,103 @@ model MarketplaceSavedListing {
   @@index([bhqUserId, savedAt(sort: Desc)])
   @@index([listingType, listingId])
   @@map("saved_listings")
+  @@schema("marketplace")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Service Provider Portal - Tags, Reports, Verification
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model MarketplaceServiceTag {
+  id Int @id @default(autoincrement())
+
+  name         String  @db.VarChar(100)
+  slug         String  @unique @db.VarChar(100)
+  usageCount   Int     @default(0) @map("usage_count")
+  suggested    Boolean @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  assignments MarketplaceServiceTagAssignment[]
+
+  @@index([suggested])
+  @@index([usageCount(sort: Desc)])
+  @@index([name])
+  @@map("service_tags")
+  @@schema("marketplace")
+}
+
+model MarketplaceServiceTagAssignment {
+  listingId Int @map("listing_id")
+  tagId     Int @map("tag_id")
+  tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([listingId, tagId])
+  @@index([listingId])
+  @@index([tagId])
+  @@map("service_tag_assignments")
+  @@schema("marketplace")
+}
+
+model MarketplaceListingReport {
+  id        Int      @id @default(autoincrement())
+
+  listingId        Int       @map("listing_id")
+  reporterUserId   Int?      @map("reporter_user_id")
+  reason           String    @db.VarChar(50)
+  description      String    @db.Text
+  status           String    @default("PENDING") @db.VarChar(50) // PENDING, REVIEWED, ACTIONED, DISMISSED
+
+  // Review tracking
+  reviewedBy       Int?      @map("reviewed_by")
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewNotes      String?   @map("review_notes") @db.Text
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([listingId])
+  @@index([reporterUserId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("listing_reports")
+  @@schema("marketplace")
+}
+
+model StripeIdentitySession {
+  id               Int       @id @default(autoincrement())
+
+  userId           Int       @map("user_id")
+  stripeSessionId  String    @unique @map("stripe_session_id") @db.VarChar(255)
+  clientSecret     String    @map("client_secret") @db.Text
+  status           String    @default("pending") @db.VarChar(50) // pending, verified, requires_input, canceled, failed
+
+  verifiedAt       DateTime? @map("verified_at")
+  stripeResponse   Json?     @map("stripe_response")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("stripe_identity_sessions")
+  @@schema("marketplace")
+}
+
+model AdminActionLog {
+  id           Int      @id @default(autoincrement())
+
+  adminUserId  Int?     @map("admin_user_id")
+  action       String   @db.VarChar(100)
+  entityType   String?  @map("entity_type") @db.VarChar(50)
+  entityId     Int?     @map("entity_id")
+  details      Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([adminUserId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("admin_action_logs")
   @@schema("marketplace")
 }
 
