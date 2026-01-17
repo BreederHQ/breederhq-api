@@ -948,15 +948,31 @@ export default async function marketplaceV2Routes(
               },
             },
           },
-          // Health traits (filtered by marketplaceVisible on client)
+          // Health traits (filtered by networkVisible on client)
+          // Include all health-related categories as defined in trait definitions
           AnimalTraitValue: {
             where: {
               traitDefinition: {
-                category: { in: ["health", "health_testing"] },
+                category: {
+                  in: [
+                    "Orthopedic",
+                    "Eyes",
+                    "Cardiac",
+                    "Genetic",
+                    "Infectious",
+                    "Preventative",
+                    "Reproductive",
+                    "General",
+                    // Legacy category names (if any)
+                    "health",
+                    "health_testing",
+                  ],
+                },
               },
             },
             select: {
               id: true,
+              traitDefinitionId: true,
               valueBoolean: true,
               valueNumber: true,
               valueText: true,
@@ -966,12 +982,15 @@ export default async function marketplaceV2Routes(
               performedAt: true,
               verified: true,
               marketplaceVisible: true,
+              networkVisible: true,
               traitDefinition: {
                 select: {
+                  id: true,
                   key: true,
                   displayName: true,
                   category: true,
                   valueType: true,
+                  supportsHistory: true,
                 },
               },
             },
@@ -1134,27 +1153,75 @@ export default async function marketplaceV2Routes(
 
       const privacy = animal.privacySettings || defaultPrivacy;
 
-      // Filter health traits to only marketplaceVisible ones
-      const healthTraits = animal.AnimalTraitValue
-        .filter((t) => t.marketplaceVisible === true)
-        .map((t) => ({
-          id: t.id,
-          key: t.traitDefinition.key,
-          displayName: t.traitDefinition.displayName,
-          category: t.traitDefinition.category,
-          valueType: t.traitDefinition.valueType,
-          value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
-          status: t.status,
-          performedAt: t.performedAt,
-          verified: t.verified,
-        }));
+      // Get trait definition IDs that support history and are networkVisible
+      const historyTraitDefinitionIds = animal.AnimalTraitValue
+        .filter((t) => t.networkVisible === true && t.traitDefinition.supportsHistory)
+        .map((t) => t.traitDefinitionId);
 
-      // All health traits (for reference, to show what's not marketplace visible)
+      // Fetch history entries for traits that support it
+      const historyEntries = historyTraitDefinitionIds.length > 0
+        ? await prisma.animalTraitEntry.findMany({
+            where: {
+              tenantId,
+              animalId: animal.id,
+              traitDefinitionId: { in: historyTraitDefinitionIds },
+            },
+            orderBy: { recordedAt: "desc" },
+            select: {
+              id: true,
+              traitDefinitionId: true,
+              recordedAt: true,
+              data: true,
+              performedBy: true,
+              location: true,
+              notes: true,
+            },
+          })
+        : [];
+
+      // Group history entries by trait definition ID
+      const historyByTraitDefId = new Map<number, typeof historyEntries>();
+      for (const entry of historyEntries) {
+        const existing = historyByTraitDefId.get(entry.traitDefinitionId) || [];
+        existing.push(entry);
+        historyByTraitDefId.set(entry.traitDefinitionId, existing);
+      }
+
+      // Filter health traits to ones marked as public (networkVisible)
+      // The Health tab "Public" toggle controls networkVisible, not marketplaceVisible
+      const healthTraits = animal.AnimalTraitValue
+        .filter((t) => t.networkVisible === true)
+        .map((t) => {
+          const traitHistory = historyByTraitDefId.get(t.traitDefinitionId) || [];
+          return {
+            id: t.id,
+            key: t.traitDefinition.key,
+            displayName: t.traitDefinition.displayName,
+            category: t.traitDefinition.category,
+            valueType: t.traitDefinition.valueType,
+            value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
+            status: t.status,
+            performedAt: t.performedAt,
+            verified: t.verified,
+            supportsHistory: t.traitDefinition.supportsHistory,
+            history: t.traitDefinition.supportsHistory ? traitHistory.map((h) => ({
+              id: h.id,
+              recordedAt: h.recordedAt,
+              data: h.data,
+              performedBy: h.performedBy,
+              location: h.location,
+              notes: h.notes,
+            })) : undefined,
+            historyCount: t.traitDefinition.supportsHistory ? traitHistory.length : undefined,
+          };
+        });
+
+      // All health traits (for reference, to show what's not public)
       const allHealthTraits = animal.AnimalTraitValue.map((t) => ({
         id: t.id,
         key: t.traitDefinition.key,
         displayName: t.traitDefinition.displayName,
-        marketplaceVisible: t.marketplaceVisible,
+        marketplaceVisible: t.networkVisible, // Using networkVisible since that's what the "Public" toggle controls
       }));
 
       // Filter titles based on isPublic
@@ -2031,6 +2098,168 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
 // ============================================================================
 
   /**
+   * GET /api/v2/marketplace/listings - PUBLIC browse endpoint for direct animal listings
+   *
+   * Returns paginated list of ACTIVE, listed DirectAnimalListing records.
+   * Used by the public marketplace to browse individual animal listings.
+   */
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      templateType?: string;
+      location?: string;
+      priceMin?: string;
+      priceMax?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/listings", async (req, reply) => {
+    const { search, species, breed, templateType, location, priceMin, priceMax } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause - only ACTIVE status listings that are listed publicly
+    const where: any = {
+      status: "ACTIVE",
+      listed: true,
+    };
+
+    if (templateType) {
+      where.templateType = templateType.toUpperCase();
+    }
+
+    if (species) {
+      where.animal = { ...where.animal, species: species.toUpperCase() };
+    }
+
+    if (breed && breed.trim()) {
+      where.animal = { ...where.animal, breed: { contains: breed.trim(), mode: "insensitive" } };
+    }
+
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { headline: { contains: searchTerm, mode: "insensitive" } },
+        { title: { contains: searchTerm, mode: "insensitive" } },
+        { summary: { contains: searchTerm, mode: "insensitive" } },
+        { animal: { name: { contains: searchTerm, mode: "insensitive" } } },
+        { animal: { breed: { contains: searchTerm, mode: "insensitive" } } },
+      ];
+    }
+
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { locationCity: { contains: locationTerm, mode: "insensitive" } },
+            { locationRegion: { contains: locationTerm, mode: "insensitive" } },
+            { locationCountry: { contains: locationTerm, mode: "insensitive" } },
+            { tenant: { organizations: { some: { city: { contains: locationTerm, mode: "insensitive" } } } } },
+            { tenant: { organizations: { some: { state: { contains: locationTerm, mode: "insensitive" } } } } },
+          ],
+        },
+      ];
+    }
+
+    if (priceMin || priceMax) {
+      const minCents = priceMin ? Math.round(Number(priceMin) * 100) : undefined;
+      const maxCents = priceMax ? Math.round(Number(priceMax) * 100) : undefined;
+      const priceConditions: any[] = [];
+      if (minCents) {
+        priceConditions.push({ OR: [{ priceCents: { gte: minCents } }, { priceMinCents: { gte: minCents } }] });
+      }
+      if (maxCents) {
+        priceConditions.push({ OR: [{ priceCents: { lte: maxCents } }, { priceMaxCents: { lte: maxCents } }, { priceModel: "inquire" }] });
+      }
+      if (priceConditions.length > 0) {
+        where.AND = [...(where.AND || []), ...priceConditions];
+      }
+    }
+
+    try {
+      const [listings, total] = await Promise.all([
+        prisma.directAnimalListing.findMany({
+          where,
+          orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+          skip: offset,
+          take: limit,
+          include: {
+            animal: {
+              select: {
+                id: true,
+                name: true,
+                photoUrl: true,
+                birthDate: true,
+                species: true,
+                breed: true,
+                sex: true,
+              },
+            },
+            tenant: {
+              select: {
+                id: true,
+                slug: true,
+                name: true,
+                organizations: {
+                  where: { isPublicProgram: true },
+                  take: 1,
+                  select: {
+                    city: true,
+                    state: true,
+                    programSlug: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        prisma.directAnimalListing.count({ where }),
+      ]);
+
+      const items = listings.map((listing) => {
+        const org = listing.tenant?.organizations?.[0];
+        return {
+          id: listing.id,
+          slug: listing.slug,
+          templateType: listing.templateType,
+          headline: listing.headline,
+          title: listing.title || listing.animal?.name,
+          summary: listing.summary,
+          priceModel: listing.priceModel,
+          priceCents: listing.priceCents,
+          priceMinCents: listing.priceMinCents,
+          priceMaxCents: listing.priceMaxCents,
+          locationCity: listing.locationCity || org?.city,
+          locationRegion: listing.locationRegion || org?.state,
+          publishedAt: listing.publishedAt?.toISOString() || null,
+          animalId: listing.animal?.id,
+          animalName: listing.animal?.name,
+          animalPhotoUrl: listing.animal?.photoUrl,
+          animalSpecies: listing.animal?.species || null,
+          animalBreed: listing.animal?.breed || null,
+          animalSex: listing.animal?.sex || null,
+          animalBirthDate: listing.animal?.birthDate?.toISOString() || null,
+          breeder: {
+            id: listing.tenant?.id,
+            slug: listing.tenant?.slug || org?.programSlug,
+            name: listing.tenant?.name,
+            location: [org?.city, org?.state].filter(Boolean).join(", ") || null,
+          },
+        };
+      });
+
+      reply.send({ items, total, limit, offset });
+    } catch (err: any) {
+      req.log.error({ err, where }, "Failed to fetch public direct listings");
+      reply.code(500).send({ error: "server_error", message: "Failed to fetch listings" });
+    }
+  });
+
+  /**
    * GET /api/v2/marketplace/listings/:slug
    * Public endpoint to view a direct animal listing with data drawer filtering
    */
@@ -2170,17 +2399,16 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           },
           animal: {
             id: animal.id,
-            name: config.identity?.showName ? animal.name : null,
+            // Identity is always included based on animal-level privacy settings
+            name: privacy?.showName ? animal.name : null,
             species: animal.species?.name,
             breed: animal.breed?.name,
             sex: animal.sex?.displayName,
-            birthDate: config.identity?.showDob ? animal.birthDate : null,
-            photoUrl: config.identity?.showPhoto ? animal.photoUrl : null,
+            birthDate: privacy?.showFullDob ? animal.birthDate : null,
+            photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
           },
           data: {} as any,
         };
-
-        // IDENTITY - already handled above in animal object
 
         // REGISTRY
         if (isSectionEnabled(privacy?.showRegistryFull, config.registry)) {

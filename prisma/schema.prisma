@@ -1042,6 +1042,7 @@ model Tenant {
   AnimalOwnershipChange  AnimalOwnershipChange[]
   PaymentIntent          PaymentIntent[]
   AnimalTraitValue       AnimalTraitValue[]
+  AnimalTraitEntry       AnimalTraitEntry[]
   Template               Template[]
   AutoReplyRule          AutoReplyRule[]
   AutoReplyLog           AutoReplyLog[]
@@ -2321,6 +2322,7 @@ model Animal {
   Offspring         Offspring[]         @relation("PromotedAnimal")
   PaymentIntent     PaymentIntent[]
   AnimalTraitValue  AnimalTraitValue[]
+  AnimalTraitEntry  AnimalTraitEntry[]
   VaccinationRecord VaccinationRecord[]
   Document          Document[]
   Invoice           Invoice[]
@@ -2706,7 +2708,7 @@ model AnimalProgramMedia {
  */
 
 model TraitDefinition {
-  id                        Int                @id @default(autoincrement())
+  id                        Int                 @id @default(autoincrement())
   tenantId                  Int?
   species                   Species
   key                       String
@@ -2714,12 +2716,14 @@ model TraitDefinition {
   category                  String
   valueType                 TraitValueType
   enumValues                Json?
-  requiresDocument          Boolean            @default(false)
-  marketplaceVisibleDefault Boolean            @default(false)
+  requiresDocument          Boolean             @default(false)
+  marketplaceVisibleDefault Boolean             @default(false)
+  supportsHistory           Boolean             @default(false) // If true, trait supports multiple historical entries
   sortOrder                 Int?
-  createdAt                 DateTime           @default(now())
-  updatedAt                 DateTime           @updatedAt
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
   animalTraitValues         AnimalTraitValue[]
+  animalTraitEntries        AnimalTraitEntry[]
 
   @@unique([species, key, tenantId])
   @@index([species])
@@ -2772,6 +2776,42 @@ model AnimalTraitValueDocument {
   @@index([tenantId, animalId])
   @@index([tenantId, animalTraitValueId])
   @@index([tenantId, documentId])
+  @@schema("public")
+}
+
+// Historical entries for traits that support multiple records over time
+// (e.g., Vet Wellness Exams, Weight measurements, Body Condition Scores)
+model AnimalTraitEntry {
+  id                Int             @id @default(autoincrement())
+  tenantId          Int
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId          Int
+  animal            Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  traitDefinitionId Int
+  traitDefinition   TraitDefinition @relation(fields: [traitDefinitionId], references: [id])
+
+  // The recorded date/time of this entry (when the measurement/exam occurred)
+  recordedAt        DateTime
+
+  // Flexible JSON storage for entry data (structure depends on trait type)
+  // e.g., { lbs: 45, oz: 8 } for weight, { outcome: "Normal", notes: "..." } for wellness exam
+  data              Json
+
+  // Optional metadata
+  performedBy       String?         @db.VarChar(255) // Who performed (vet name, clinic, etc.)
+  location          String?         @db.VarChar(255) // Where it was performed
+  notes             String?         @db.Text
+
+  // Optional document attachment
+  documentId        Int?
+  document          Document?       @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([tenantId, animalId])
+  @@index([tenantId, animalId, traitDefinitionId])
+  @@index([tenantId, animalId, recordedAt])
   @@schema("public")
 }
 
@@ -5212,6 +5252,9 @@ model Document {
 
   // Vaccination record links
   vaccinationRecords VaccinationRecord[]
+
+  // Trait history entry links
+  traitEntries AnimalTraitEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
