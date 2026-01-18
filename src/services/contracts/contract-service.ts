@@ -171,9 +171,9 @@ export async function buildRenderContext(
     },
     buyer: {
       name: buyerParty?.name || "",
-      address: buyerParty?.party?.addressLine1
+      address: buyerParty?.party?.street
         ? [
-            buyerParty.party.addressLine1,
+            buyerParty.party.street,
             buyerParty.party.city,
             buyerParty.party.state,
             buyerParty.party.postalCode,
@@ -185,14 +185,14 @@ export async function buildRenderContext(
       email: buyerParty?.email || "",
     },
     transaction: {
-      totalPrice: contract.invoice?.totalCents
-        ? (contract.invoice.totalCents / 100).toFixed(2)
+      totalPrice: contract.invoice?.amountCents
+        ? (Number(contract.invoice.amountCents) / 100).toFixed(2)
         : "0",
       depositAmount: contract.invoice?.depositCents
-        ? (contract.invoice.depositCents / 100).toFixed(2)
+        ? (Number(contract.invoice.depositCents) / 100).toFixed(2)
         : undefined,
-      balanceDue: contract.invoice?.balanceDueCents
-        ? (contract.invoice.balanceDueCents / 100).toFixed(2)
+      balanceDue: contract.invoice?.balanceCents
+        ? (Number(contract.invoice.balanceCents) / 100).toFixed(2)
         : undefined,
     },
     contract: {
@@ -218,7 +218,7 @@ export async function buildRenderContext(
       name: contract.offspring.name || undefined,
       collarColor: contract.offspring.collarColorName || undefined,
       sex: contract.offspring.sex || undefined,
-      dateOfBirth: contract.offspring.birthDate?.toISOString().split("T")[0],
+      dateOfBirth: contract.offspring.bornAt?.toISOString().split("T")[0],
     };
 
     // If no animal but offspring has parents, use dam info
@@ -344,13 +344,13 @@ export async function sendContract(
         contractId: contract.id,
         contractTitle: contract.title,
         breederName,
-        recipientName: party.name,
-        recipientEmail: party.email,
+        recipientName: party.name || "Recipient",
+        recipientEmail: party.email || "",
         expiresAt: contract.expiresAt || undefined,
         message,
       });
     } catch (err) {
-      console.error(`[contract-service] Failed to send contract email to ${party.email}:`, err);
+      console.error(`[contract-service] Failed to send contract email to ${party.email || "unknown"}:`, err);
       // Don't fail the whole operation if email fails
     }
   }
@@ -542,14 +542,14 @@ export async function signContract(
         contractId: contract.id,
         contractTitle: contract.title,
         breederName: contract.tenant.name,
-        recipientName: party.name,
-        recipientEmail: party.email,
-        signedByName: signingParty.name,
+        recipientName: party.name || "Recipient",
+        recipientEmail: party.email || "",
+        signedByName: signingParty.name || "Signer",
         signedAt: new Date(),
         allPartiesSigned: allSigned,
       });
     } catch (err) {
-      console.error(`[contract-service] Failed to send signed notification to ${party.email}:`, err);
+      console.error(`[contract-service] Failed to send signed notification to ${party.email || "unknown"}:`, err);
     }
   }
 }
@@ -616,14 +616,14 @@ export async function declineContract(
         contractId: contract.id,
         contractTitle: contract.title,
         breederName: contract.tenant.name,
-        recipientName: party.name,
-        recipientEmail: party.email,
-        declinedByName: decliningParty.name,
+        recipientName: party.name || "Recipient",
+        recipientEmail: party.email || "",
+        declinedByName: decliningParty.name || "Party",
         declinedAt: new Date(),
         reason,
       });
     } catch (err) {
-      console.error(`[contract-service] Failed to send declined notification to ${party.email}:`, err);
+      console.error(`[contract-service] Failed to send declined notification to ${party.email || "unknown"}:`, err);
     }
   }
 }
@@ -679,12 +679,12 @@ export async function voidContract(
         contractId: contract.id,
         contractTitle: contract.title,
         breederName: contract.tenant.name,
-        recipientName: party.name,
-        recipientEmail: party.email,
+        recipientName: party.name || "Recipient",
+        recipientEmail: party.email || "",
         reason,
       });
     } catch (err) {
-      console.error(`[contract-service] Failed to send voided notification to ${party.email}:`, err);
+      console.error(`[contract-service] Failed to send voided notification to ${party.email || "unknown"}:`, err);
     }
   }
 }

@@ -49,6 +49,9 @@ async function detectTenantSupport(): Promise<boolean> {
 type ResolvedUser = {
   isSuperAdmin?: boolean | null;
   defaultTenantId?: number | null;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   tenantMemberships?: Array<{ tenantId: number; role?: string | null }>;
 };
 
@@ -58,6 +61,9 @@ async function fetchUserBasic(userId: string) {
     where: { id: userId },
     select: {
       id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
       // These may or may not exist; Prisma will ignore unknown selects at build time,
       // so we use runtime-safe fallbacks below via any-casts.
       // We keep TS happy by reading them via `any` from the returned object.
@@ -120,9 +126,12 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       return reply.code(401).send({ user: null, tenant: null, memberships: [] });
     }
 
-    // FE may hint a tenant via header; we DO NOT mutate cookie here.
+    // Priority for tenant resolution:
+    // 1. tenantId from session cookie (set by POST /session/tenant)
+    // 2. X-Tenant-Id header (legacy/override)
+    // 3. User's defaultTenantId or first membership (fallback in resolveActiveTenant)
     const hdrTenant = req.headers["x-tenant-id"];
-    const requestedTenantId = hdrTenant ? Number(hdrTenant) : undefined;
+    const requestedTenantId = sess.tenantId ?? (hdrTenant ? Number(hdrTenant) : undefined);
 
     const { hasTenants, user, activeTenantId, isMember } = await resolveActiveTenant(sess.userId, requestedTenantId);
     if (!user) return reply.code(401).send({ user: null, tenant: null, memberships: [] });
@@ -178,11 +187,31 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       tenant = null;
     }
 
-    // Fetch tenant names for all memberships (for tenant switcher UI)
+    // For super admins, fetch ALL tenants; for regular users, only their memberships
+    const isSuperAdmin = !!(user as any).isSuperAdmin;
     const membershipTenantIds = (user.tenantMemberships ?? []).map((m) => m.tenantId);
     let tenantInfoMap: Map<number, { name: string; slug: string | null }> = new Map();
-    if (membershipTenantIds.length > 0) {
-      try {
+    let allTenants: Array<{ tenantId: number; tenantName: string; tenantSlug: string | null; role: string | null }> = [];
+
+    try {
+      if (isSuperAdmin) {
+        // Super admins can switch to any tenant - fetch all tenants
+        const tenants = await (prisma as any).tenant.findMany({
+          select: { id: true, name: true, slug: true },
+          orderBy: { name: "asc" },
+        });
+        allTenants = tenants.map((t: any) => ({
+          tenantId: t.id,
+          tenantName: t.name,
+          tenantSlug: t.slug ?? null,
+          role: "Admin", // Super admins have admin access to all tenants
+        }));
+        // Also populate the map for any lookups
+        for (const t of tenants) {
+          tenantInfoMap.set(t.id, { name: t.name, slug: t.slug ?? null });
+        }
+      } else if (membershipTenantIds.length > 0) {
+        // Regular users only see their memberships
         const tenants = await (prisma as any).tenant.findMany({
           where: { id: { in: membershipTenantIds } },
           select: { id: true, name: true, slug: true },
@@ -190,25 +219,36 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
         for (const t of tenants) {
           tenantInfoMap.set(t.id, { name: t.name, slug: t.slug ?? null });
         }
-      } catch {
-        // ignore errors, memberships will just have null names
       }
+    } catch {
+      // ignore errors, memberships will just have null names
     }
 
+    // Build memberships list
+    const memberships = isSuperAdmin
+      ? allTenants
+      : (user.tenantMemberships ?? []).map((m) => {
+          const tenantInfo = tenantInfoMap.get(m.tenantId);
+          return {
+            tenantId: m.tenantId,
+            tenantName: tenantInfo?.name ?? null,
+            tenantSlug: tenantInfo?.slug ?? null,
+            role: m.role ?? null,
+            membershipRole: (m as any).membershipRole ?? null,
+            membershipStatus: (m as any).membershipStatus ?? null,
+          };
+        });
+
     return reply.send({
-      user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
+      user: {
+        id: sess.userId,
+        email: user.email ?? null,
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
+        isSuperAdmin,
+      },
       tenant,
-      memberships: (user.tenantMemberships ?? []).map((m) => {
-        const tenantInfo = tenantInfoMap.get(m.tenantId);
-        return {
-          tenantId: m.tenantId,
-          tenantName: tenantInfo?.name ?? null,
-          tenantSlug: tenantInfo?.slug ?? null,
-          role: m.role ?? null,
-          membershipRole: (m as any).membershipRole ?? null,
-          membershipStatus: (m as any).membershipStatus ?? null,
-        };
-      }),
+      memberships,
       tos,
     });
   });

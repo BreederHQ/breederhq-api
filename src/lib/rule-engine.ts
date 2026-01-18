@@ -357,9 +357,9 @@ async function executeAutoListAvailable(
   }
 
   // Check age condition
-  if (offspring.dateOfBirth) {
+  if (offspring.bornAt) {
     const ageInWeeks = Math.floor(
-      (Date.now() - offspring.dateOfBirth.getTime()) / (1000 * 60 * 60 * 24 * 7)
+      (Date.now() - offspring.bornAt.getTime()) / (1000 * 60 * 60 * 24 * 7)
     );
     if (ageInWeeks < minAgeWeeks) {
       return {

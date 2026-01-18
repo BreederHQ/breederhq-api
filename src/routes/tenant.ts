@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { getActorId } from "../utils/session.js";
+import { sendTenantWelcomeEmail } from "../services/email-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -978,6 +979,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         makeDefault?: boolean;
         tempPassword?: string;
         generateTempPassword?: boolean;
+        sendWelcomeEmail?: boolean;
       };
       billing?: {
         provider?: string | null;
@@ -1129,6 +1131,19 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           tempPassword,
         };
       });
+
+      // Send welcome email if requested (outside transaction, non-blocking)
+      if (owner.sendWelcomeEmail) {
+        sendTenantWelcomeEmail({
+          ownerEmail: ownerEmail,
+          ownerFirstName: owner.firstName,
+          ownerLastName: owner.lastName,
+          tenantName: tenant.name,
+          tempPassword: tempPassword || undefined,
+        }).catch((err) => {
+          req.log?.error?.({ err, email: ownerEmail }, "Failed to send tenant welcome email");
+        });
+      }
 
       return reply.status(201).send(result);
     } catch (err) {
@@ -1836,6 +1851,194 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       });
     } catch (err) {
       console.error("[demo-reset] Error resetting demo tenant:", err);
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * DELETE /admin/tenants/:id
+   * SUPER ADMIN ONLY - Permanently delete a tenant and ALL associated data.
+   * This is an extremely destructive action that cannot be undone.
+   */
+  fastify.delete<{
+    Params: { id: string };
+    Body: { confirmationName: string };
+  }>("/admin/tenants/:id", async (req, reply) => {
+    try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId) || tenantId <= 0) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      }
+
+      // Fetch tenant to verify it exists and get its name for confirmation
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          _count: {
+            select: {
+              animals: true,
+              contacts: true,
+              organizations: true,
+              memberships: true,
+            },
+          },
+        },
+      });
+
+      if (!tenant) {
+        return reply.status(404).send({ error: "not_found", detail: "Tenant not found" });
+      }
+
+      // Require confirmation by matching tenant name exactly
+      const { confirmationName } = req.body || {};
+      if (!confirmationName || confirmationName !== tenant.name) {
+        return reply.status(400).send({
+          error: "confirmation_required",
+          detail: "You must provide the exact tenant name to confirm deletion",
+          tenantName: tenant.name,
+        });
+      }
+
+      console.log(`[tenant-delete] Starting permanent deletion of tenant ${tenantId} (${tenant.name}) by user ${actorId}`);
+      console.log(`[tenant-delete] Tenant stats: ${tenant._count.animals} animals, ${tenant._count.contacts} contacts, ${tenant._count.organizations} orgs, ${tenant._count.memberships} users`);
+
+      // Delete all tenant data in the correct order (respecting FK constraints)
+      // Then delete the tenant itself
+      await prisma.$transaction(async (tx) => {
+        // Communications & CRM
+        await tx.partyActivity.deleteMany({ where: { tenantId } });
+        await tx.partyEmail.deleteMany({ where: { tenantId } });
+        await tx.partyEvent.deleteMany({ where: { tenantId } });
+        await tx.partyMilestone.deleteMany({ where: { tenantId } });
+        await tx.partyNote.deleteMany({ where: { tenantId } });
+        await tx.unlinkedEmail.deleteMany({ where: { tenantId } });
+        await tx.draft.deleteMany({ where: { tenantId } });
+        await tx.messageThread.deleteMany({ where: { tenantId } });
+        await tx.notification.deleteMany({ where: { tenantId } });
+
+        // Contracts & Documents
+        await tx.signatureEvent.deleteMany({ where: { tenantId } });
+        await tx.contractParty.deleteMany({ where: { tenantId } });
+        await tx.offspringContract.deleteMany({ where: { tenantId } });
+        await tx.offspringDocument.deleteMany({ where: { tenantId } });
+        await tx.contract.deleteMany({ where: { tenantId } });
+        await tx.contractTemplate.deleteMany({ where: { tenantId } });
+        await tx.document.deleteMany({ where: { tenantId } });
+
+        // Finance
+        await tx.offspringInvoiceLink.deleteMany({ where: { tenantId } });
+        await tx.invoiceLineItem.deleteMany({ where: { tenantId } });
+        await tx.payment.deleteMany({ where: { tenantId } });
+        await tx.invoice.deleteMany({ where: { tenantId } });
+        await tx.expense.deleteMany({ where: { tenantId } });
+        await tx.paymentIntent.deleteMany({ where: { tenantId } });
+
+        // Offspring
+        await tx.offspringGroupEvent.deleteMany({ where: { tenantId } });
+        await tx.offspringGroupBuyer.deleteMany({ where: { tenantId } });
+        await tx.offspringEvent.deleteMany({ where: { tenantId } });
+        await tx.offspring.deleteMany({ where: { tenantId } });
+        await tx.offspringGroup.deleteMany({ where: { tenantId } });
+
+        // Breeding
+        await tx.breedingMilestone.deleteMany({ where: { tenantId } });
+        await tx.foalingOutcome.deleteMany({ where: { tenantId } });
+        await tx.breedingPlanEvent.deleteMany({ where: { tenantId } });
+        await tx.breedingAttempt.deleteMany({ where: { tenantId } });
+        await tx.pregnancyCheck.deleteMany({ where: { tenantId } });
+        await tx.litter.deleteMany({ where: { tenantId } });
+        await tx.litterEvent.deleteMany({ where: { tenantId } });
+        await tx.waitlistEntry.deleteMany({ where: { tenantId } });
+        await tx.planParty.deleteMany({ where: { tenantId } });
+        await tx.reproductiveCycle.deleteMany({ where: { tenantId } });
+        await tx.testResult.deleteMany({ where: { tenantId } });
+        await tx.mareReproductiveHistory.deleteMany({ where: { tenantId } });
+        await tx.breedingPlan.deleteMany({ where: { tenantId } });
+        await tx.planCodeCounter.deleteMany({ where: { tenantId } });
+
+        // Animals & Health
+        await tx.vaccinationRecord.deleteMany({ where: { tenantId } });
+        await tx.healthEvent.deleteMany({ where: { tenantId } });
+        await tx.animalTraitEntry.deleteMany({ where: { tenantId } });
+        await tx.animalTraitValue.deleteMany({ where: { tenantId } });
+        await tx.competitionEntry.deleteMany({ where: { tenantId } });
+        await tx.animalTitle.deleteMany({ where: { tenantId } });
+        await tx.animalOwnershipChange.deleteMany({ where: { tenantId } });
+        await tx.animal.deleteMany({ where: { tenantId } });
+
+        // Tags
+        await tx.tag.deleteMany({ where: { tenantId } });
+
+        // Contacts & Organizations
+        await tx.contactChangeRequest.deleteMany({ where: { tenantId } });
+        await tx.emailChangeRequest.deleteMany({ where: { tenantId } });
+        await tx.portalInvite.deleteMany({ where: { tenantId } });
+        await tx.portalAccess.deleteMany({ where: { tenantId } });
+        await tx.contact.deleteMany({ where: { tenantId } });
+
+        // Clear party table (which holds contact/org records)
+        await tx.party.deleteMany({ where: { tenantId } });
+
+        // Organizations (after parties since orgs reference party)
+        await tx.organization.deleteMany({ where: { tenantId } });
+
+        // Attachments
+        await tx.attachment.deleteMany({ where: { tenantId } });
+
+        // Tasks
+        await tx.task.deleteMany({ where: { tenantId } });
+
+        // Marketing
+        await tx.campaignAttribution.deleteMany({ where: { tenantId } });
+        await tx.campaign.deleteMany({ where: { tenantId } });
+        await tx.emailSendLog.deleteMany({ where: { tenantId } });
+        await tx.autoReplyLog.deleteMany({ where: { tenantId } });
+        await tx.autoReplyRule.deleteMany({ where: { tenantId } });
+        await tx.template.deleteMany({ where: { tenantId } });
+
+        // Scheduling
+        await tx.schedulingBooking.deleteMany({ where: { tenantId } });
+        await tx.schedulingSlot.deleteMany({ where: { tenantId } });
+        await tx.schedulingAvailabilityBlock.deleteMany({ where: { tenantId } });
+        await tx.schedulingEventTemplate.deleteMany({ where: { tenantId } });
+
+        // Marketplace
+        await tx.marketplaceListing.deleteMany({ where: { tenantId } });
+
+        // Sequences and idempotency keys
+        await tx.sequence.deleteMany({ where: { tenantId } });
+        await tx.idempotencyKey.deleteMany({ where: { tenantId } });
+
+        // Subscriptions (tenant-level)
+        await tx.subscription.deleteMany({ where: { tenantId } });
+
+        // Billing account
+        await tx.billingAccount.deleteMany({ where: { tenantId } });
+
+        // Tenant memberships (user associations)
+        await tx.tenantMembership.deleteMany({ where: { tenantId } });
+
+        // Finally, delete the tenant itself
+        await tx.tenant.delete({ where: { id: tenantId } });
+      });
+
+      console.log(`[tenant-delete] Successfully deleted tenant ${tenantId} (${tenant.name})`);
+
+      return reply.send({
+        ok: true,
+        message: `Tenant "${tenant.name}" (ID: ${tenantId}) has been permanently deleted`,
+        deletedTenantId: tenantId,
+        deletedTenantName: tenant.name,
+      });
+    } catch (err) {
+      console.error("[tenant-delete] Error deleting tenant:", err);
       const { status, payload } = errorReply(err);
       return reply.status(status).send(payload);
     }

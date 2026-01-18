@@ -289,6 +289,6 @@ export async function getContractEvents(
     ipAddress: e.ipAddress,
     userAgent: e.userAgent,
     message: e.message,
-    partyName: e.party?.name || e.party?.email,
+    partyName: e.party?.name || e.party?.email || undefined,
   }));
 }

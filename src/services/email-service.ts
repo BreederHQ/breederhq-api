@@ -1222,3 +1222,111 @@ export async function sendContractCompletedWithPdfEmail(
     metadata: { contractId: data.contractId },
   });
 }
+
+/** ───────────────────────── Tenant Provisioning Notifications ───────────────────────── */
+
+export interface TenantWelcomeEmailData {
+  ownerEmail: string;
+  ownerFirstName: string;
+  ownerLastName?: string | null;
+  tenantName: string;
+  tempPassword?: string;
+  loginUrl?: string;
+}
+
+/**
+ * Send welcome email to new tenant owner with login credentials
+ */
+export async function sendTenantWelcomeEmail(
+  data: TenantWelcomeEmailData
+): Promise<SendEmailResult> {
+  const loginUrl = data.loginUrl || APP_URL;
+  const ownerName = data.ownerFirstName + (data.ownerLastName ? ` ${data.ownerLastName}` : "");
+
+  // If we have a temp password, show credentials section
+  const credentialsSection = data.tempPassword
+    ? `
+      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0 0 12px 0; font-weight: 600; color: #92400e;">Your Login Credentials</p>
+        <p style="margin: 0 0 8px 0;"><strong>Email:</strong> ${data.ownerEmail}</p>
+        <p style="margin: 0;"><strong>Temporary Password:</strong> <code style="background: #fff; padding: 2px 8px; border-radius: 4px; font-family: monospace;">${data.tempPassword}</code></p>
+        <p style="margin: 12px 0 0 0; font-size: 13px; color: #b45309;">⚠️ Please change your password after logging in.</p>
+      </div>
+    `
+    : `
+      <div style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0; color: #1e40af;">Your account has been created with your existing password, or you can use the "Forgot Password" link on the login page to set a new one.</p>
+      </div>
+    `;
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #f97316;">Welcome to BreederHQ! 🎉</h2>
+      <p>Hi ${ownerName},</p>
+      <p>Great news! Your BreederHQ account for <strong>${data.tenantName}</strong> has been created and is ready to use.</p>
+
+      ${credentialsSection}
+
+      <p>
+        <a href="${loginUrl}" style="display: inline-block; background: #f97316; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+          Log In to BreederHQ
+        </a>
+      </p>
+
+      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+        <h3 style="color: #374151; font-size: 16px; margin: 0 0 16px 0;">Getting Started</h3>
+        <ul style="color: #4b5563; padding-left: 20px; margin: 0;">
+          <li style="margin-bottom: 8px;">Add your animals to start tracking your breeding program</li>
+          <li style="margin-bottom: 8px;">Set up your contacts and client management</li>
+          <li style="margin-bottom: 8px;">Configure your marketplace profile to attract new clients</li>
+          <li style="margin-bottom: 8px;">Explore the dashboard for insights into your operation</li>
+        </ul>
+      </div>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        If you have any questions or need help getting started, our support team is here to assist.
+        <br><br>
+        Welcome aboard!<br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+Welcome to BreederHQ!
+
+Hi ${ownerName},
+
+Great news! Your BreederHQ account for ${data.tenantName} has been created and is ready to use.
+
+${data.tempPassword ? `Your Login Credentials:
+Email: ${data.ownerEmail}
+Temporary Password: ${data.tempPassword}
+
+Please change your password after logging in.` : `Your account has been created. Use the "Forgot Password" link on the login page if you need to set a new password.`}
+
+Log in at: ${loginUrl}
+
+Getting Started:
+- Add your animals to start tracking your breeding program
+- Set up your contacts and client management
+- Configure your marketplace profile to attract new clients
+- Explore the dashboard for insights into your operation
+
+If you have questions, our support team is here to help.
+
+Welcome aboard!
+The BreederHQ Team
+  `.trim();
+
+  return sendEmail({
+    tenantId: 0, // System-level email, no tenant context
+    to: data.ownerEmail,
+    subject: `Welcome to BreederHQ - Your ${data.tenantName} Account is Ready!`,
+    html,
+    text,
+    category: "transactional",
+    templateKey: "tenant_welcome",
+    metadata: { tenantName: data.tenantName },
+  });
+}

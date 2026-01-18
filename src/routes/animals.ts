@@ -49,6 +49,72 @@ function normalizeIsoDateOnly(v: unknown): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Checks for potential duplicate animals within a tenant.
+ * Returns matching animals if duplicates are found.
+ */
+async function findPotentialDuplicates(
+  tenantId: number,
+  name: string,
+  species: Species,
+  sex: Sex,
+  birthDate?: Date | null,
+  microchip?: string | null,
+  excludeId?: number | null
+): Promise<Array<{ id: number; name: string; species: string; sex: string; birthDate: Date | null; microchip: string | null }>> {
+  const normalizedName = name.trim().toLowerCase();
+
+  // Build query conditions
+  const conditions: any[] = [
+    { tenantId },
+    { archived: false },
+    { species },
+    { sex },
+  ];
+
+  // Exclude specific animal (for updates)
+  if (excludeId) {
+    conditions.push({ id: { not: excludeId } });
+  }
+
+  // Find animals with same name (case-insensitive)
+  const candidates = await prisma.animal.findMany({
+    where: {
+      AND: conditions,
+    },
+    select: {
+      id: true,
+      name: true,
+      species: true,
+      sex: true,
+      birthDate: true,
+      microchip: true,
+    },
+  });
+
+  // Filter to those with matching names (case-insensitive)
+  const matches = candidates.filter((a) => {
+    const candidateName = a.name.trim().toLowerCase();
+
+    // Exact name match
+    if (candidateName === normalizedName) {
+      return true;
+    }
+
+    // Also check for very similar names (one contains the other, for kennel name variations)
+    // e.g., "Padfoot's Pride" vs "Padfoots Pride" (apostrophe difference)
+    const normalizedCandidate = candidateName.replace(/[''`]/g, "").replace(/\s+/g, " ");
+    const normalizedInput = normalizedName.replace(/[''`]/g, "").replace(/\s+/g, " ");
+    if (normalizedCandidate === normalizedInput) {
+      return true;
+    }
+
+    return false;
+  });
+
+  return matches;
+}
+
 type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "birth";
 
 type ReproEvent = {
@@ -552,6 +618,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Lineage fields
       damId: number | null;
       sireId: number | null;
+      // Duplicate check bypass
+      skipDuplicateCheck: boolean;
     }>;
 
 
@@ -562,6 +630,34 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if (!b.sex || !["FEMALE", "MALE"].includes(b.sex)) {
       return reply.code(400).send({ error: "sex_required" });
+    }
+
+    // Check for potential duplicates unless explicitly bypassed
+    if (!b.skipDuplicateCheck) {
+      const parsedBirthDate = b.birthDate ? new Date(b.birthDate) : null;
+      const duplicates = await findPotentialDuplicates(
+        tenantId,
+        name,
+        b.species,
+        b.sex,
+        parsedBirthDate,
+        b.microchip?.trim() || null
+      );
+
+      if (duplicates.length > 0) {
+        return reply.code(409).send({
+          error: "potential_duplicate",
+          message: "An animal with the same name, species, and sex already exists",
+          duplicates: duplicates.map((d) => ({
+            id: d.id,
+            name: d.name,
+            species: d.species,
+            sex: d.sex,
+            birthDate: d.birthDate,
+            microchip: d.microchip,
+          })),
+        });
+      }
     }
 
     const data: any = {

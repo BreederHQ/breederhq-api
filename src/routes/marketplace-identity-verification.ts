@@ -8,7 +8,7 @@ import Stripe from "stripe";
 
 // Initialize Stripe (only if API key is configured)
 const stripeKey = process.env.STRIPE_SECRET_KEY;
-const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2024-12-18.acacia" }) : null;
+const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" }) : null;
 
 /**
  * POST /api/v1/marketplace/identity/verify
@@ -62,12 +62,12 @@ async function startVerification(
     }
 
     // Check if provider exists
-    const provider = await prisma.marketplaceServiceProvider.findUnique({
+    const provider = await prisma.marketplaceProvider.findUnique({
       where: { userId },
       select: {
         id: true,
         verificationTier: true,
-        stripeVerificationSessionId: true,
+        stripeIdentitySessionId: true,
       },
     });
 
@@ -79,7 +79,7 @@ async function startVerification(
     }
 
     // Check if already verified at tier 2
-    if (provider.verificationTier === "tier_2_identity_verified") {
+    if (provider.verificationTier === "IDENTITY_VERIFIED") {
       return reply.status(400).send({
         error: "already_verified",
         message: "Your identity is already verified.",
@@ -105,10 +105,10 @@ async function startVerification(
     });
 
     // Store session ID in provider record
-    await prisma.marketplaceServiceProvider.update({
+    await prisma.marketplaceProvider.update({
       where: { id: provider.id },
       data: {
-        stripeVerificationSessionId: verificationSession.id,
+        stripeIdentitySessionId: verificationSession.id,
       },
     });
 
@@ -153,12 +153,12 @@ async function getVerificationStatus(
   }
 
   try {
-    const provider = await prisma.marketplaceServiceProvider.findUnique({
+    const provider = await prisma.marketplaceProvider.findUnique({
       where: { userId },
       select: {
         verificationTier: true,
         verifiedProvider: true,
-        stripeVerificationSessionId: true,
+        stripeIdentitySessionId: true,
       },
     });
 
@@ -172,10 +172,10 @@ async function getVerificationStatus(
     let sessionStatus = null;
 
     // If there's an active Stripe session, fetch its status
-    if (stripe && provider.stripeVerificationSessionId) {
+    if (stripe && provider.stripeIdentitySessionId) {
       try {
         const session = await stripe.identity.verificationSessions.retrieve(
-          provider.stripeVerificationSessionId
+          provider.stripeIdentitySessionId
         );
         sessionStatus = {
           id: session.id,
@@ -184,7 +184,7 @@ async function getVerificationStatus(
         };
       } catch (error) {
         request.log.warn(
-          { error, sessionId: provider.stripeVerificationSessionId },
+          { error, sessionId: provider.stripeIdentitySessionId },
           "Failed to retrieve Stripe verification session"
         );
       }
@@ -256,10 +256,10 @@ async function handleStripeWebhook(
       }
 
       // Update provider verification tier
-      await prisma.marketplaceServiceProvider.update({
+      await prisma.marketplaceProvider.update({
         where: { id: providerId },
         data: {
-          verificationTier: "tier_2_identity_verified",
+          verificationTier: "IDENTITY_VERIFIED",
           verifiedProvider: true,
         },
       });
