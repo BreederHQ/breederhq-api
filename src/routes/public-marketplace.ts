@@ -776,6 +776,211 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
+  // GET /direct-listings/:slug - Direct Listing detail - PUBLIC
+  // --------------------------------------------------------------------------
+  app.get<{ Params: { slug: string } }>(
+    "/direct-listings/:slug",
+    async (req, reply) => {
+      // PUBLIC: No auth required - this is a public browsing endpoint
+
+      const { slug } = req.params;
+
+      if (!isValidSlug(slug)) {
+        return reply.code(404).send({ error: "not_found", message: "Listing not found" });
+      }
+
+      try {
+        const listing = await prisma.directAnimalListing.findFirst({
+          where: {
+            slug,
+            status: "ACTIVE",
+            listed: true,
+          },
+          select: {
+            id: true,
+            slug: true,
+            templateType: true,
+            headline: true,
+            title: true,
+            summary: true,
+            description: true,
+            priceModel: true,
+            priceCents: true,
+            priceMinCents: true,
+            priceMaxCents: true,
+            locationCity: true,
+            locationRegion: true,
+            locationCountry: true,
+            publishedAt: true,
+            viewCount: true,
+            inquiryCount: true,
+            dataDrawerConfig: true,
+            animal: {
+              select: {
+                id: true,
+                name: true,
+                species: true,
+                breed: true,
+                sex: true,
+                birthDate: true,
+                photoUrl: true,
+                canonicalBreed: { select: { name: true } },
+                privacySettings: true,
+                sire: { select: { id: true, name: true, photoUrl: true } },
+                dam: { select: { id: true, name: true, photoUrl: true } },
+                registryIds: {
+                  include: { registry: { select: { name: true } } },
+                },
+                titles: {
+                  include: { titleDefinition: { select: { abbreviation: true, name: true } } },
+                },
+                AnimalTraitValue: {
+                  where: {
+                    traitDefinition: {
+                      category: { in: ["health", "health_testing", "genetics", "coat_color", "performance"] },
+                    },
+                  },
+                  include: {
+                    traitDefinition: { select: { key: true, displayName: true, category: true } },
+                  },
+                },
+                Attachment: { orderBy: { createdAt: "asc" as const } },
+              },
+            },
+            tenant: {
+              select: {
+                id: true,
+                slug: true,
+                name: true,
+                city: true,
+                region: true,
+                country: true,
+                organizations: {
+                  where: { isPublicProgram: true },
+                  take: 1,
+                  select: { programSlug: true, name: true, logoAssetId: true },
+                },
+              },
+            },
+          },
+        });
+
+        if (!listing) {
+          return reply.code(404).send({ error: "not_found", message: "Listing not found" });
+        }
+
+        const { animal, tenant, dataDrawerConfig } = listing;
+        const config = dataDrawerConfig as any;
+        const privacy = animal.privacySettings;
+        const org = tenant.organizations?.[0] || null;
+
+        // Helper: Check if section is enabled in privacy settings and data drawer config
+        const isSectionEnabled = (privacyFlag: boolean | null | undefined, configSection: any): boolean => {
+          return privacyFlag === true && configSection?.enabled === true;
+        };
+
+        // Build response with data filtered by privacy and dataDrawerConfig
+        const response: any = {
+          listing: {
+            id: listing.id,
+            slug: listing.slug,
+            templateType: listing.templateType,
+            headline: listing.headline,
+            title: listing.title,
+            summary: listing.summary,
+            description: listing.description,
+            priceModel: listing.priceModel,
+            priceCents: listing.priceCents,
+            priceMinCents: listing.priceMinCents,
+            priceMaxCents: listing.priceMaxCents,
+            locationCity: listing.locationCity,
+            locationRegion: listing.locationRegion,
+            locationCountry: listing.locationCountry,
+            publishedAt: listing.publishedAt?.toISOString() || null,
+            viewCount: listing.viewCount,
+          },
+          breeder: {
+            id: tenant.id,
+            slug: tenant.slug || org?.programSlug || null,
+            name: org?.name || tenant.name,
+            city: tenant.city,
+            region: tenant.region,
+            country: tenant.country,
+            logoAssetId: org?.logoAssetId || null,
+          },
+          animal: {
+            id: animal.id,
+            name: privacy?.showName ? animal.name : null,
+            species: animal.species,
+            breed: animal.canonicalBreed?.name || animal.breed,
+            sex: animal.sex,
+            birthDate: privacy?.showFullDob ? animal.birthDate?.toISOString() : null,
+            photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
+            sire: privacy?.showPedigree && animal.sire ? { id: animal.sire.id, name: animal.sire.name, photoUrl: animal.sire.photoUrl } : null,
+            dam: privacy?.showPedigree && animal.dam ? { id: animal.dam.id, name: animal.dam.name, photoUrl: animal.dam.photoUrl } : null,
+          },
+          data: {} as any,
+        };
+
+        // Registry
+        if (isSectionEnabled(privacy?.showRegistryFull, config?.registry)) {
+          const selectedIds = config.registry.registryIds || [];
+          response.data.registrations = animal.registryIds
+            .filter((r: { id: number }) => selectedIds.length === 0 || selectedIds.includes(r.id))
+            .map((r: { id: number; registry: { name: string }; identifier: string }) => ({
+              id: r.id,
+              registryName: r.registry.name,
+              identifier: r.identifier,
+            }));
+        }
+
+        // Titles
+        if (isSectionEnabled(privacy?.showTitles, config?.titles)) {
+          response.data.titles = animal.titles.map((t: { id: number; titleDefinition: { abbreviation: string; name: string } }) => ({
+            id: t.id,
+            abbreviation: t.titleDefinition.abbreviation,
+            name: t.titleDefinition.name,
+          }));
+        }
+
+        // Health testing
+        if (isSectionEnabled(privacy?.showHealthTesting, config?.healthTesting)) {
+          const healthTraits = animal.AnimalTraitValue.filter(
+            (tv: { traitDefinition: { category: string } }) => tv.traitDefinition.category === "health_testing"
+          );
+          response.data.healthTesting = healthTraits.map((tv: { id: number; traitDefinition: { key: string; displayName: string }; value: string }) => ({
+            key: tv.traitDefinition.key,
+            name: tv.traitDefinition.displayName,
+            value: tv.value,
+          }));
+        }
+
+        // Photos/gallery
+        if (privacy?.showPhoto && config?.gallery?.enabled) {
+          response.data.gallery = animal.Attachment
+            .filter((a: { type: string }) => a.type === "PHOTO")
+            .map((a: { id: number; url: string; caption: string | null }) => ({
+              id: a.id,
+              url: a.url,
+              caption: a.caption,
+            }));
+        }
+
+        // Increment view count asynchronously
+        prisma.directAnimalListing.update({
+          where: { id: listing.id },
+          data: { viewCount: { increment: 1 } },
+        }).catch((err) => req.log.warn({ err }, "Failed to increment view count"));
+
+        return reply.send(response);
+      } catch (err: any) {
+        req.log.error({ err, slug }, "Failed to fetch direct listing detail");
+        return reply.code(500).send({ error: "server_error", message: "Failed to fetch listing" });
+      }
+    }
+  );
+
+  // --------------------------------------------------------------------------
   // GET /animal-programs/:slug - Animal Program detail - PUBLIC
   // --------------------------------------------------------------------------
   app.get<{ Params: { slug: string } }>(
