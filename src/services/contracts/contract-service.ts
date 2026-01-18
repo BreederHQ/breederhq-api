@@ -89,14 +89,14 @@ export async function createContract(
         customContent,
       },
       parties: {
-        create: parties.map((p, index) => ({
+        create: parties.map((p) => ({
           tenantId,
           role: p.role,
           partyId: p.partyId,
           email: p.email,
           name: p.name,
           signer: p.signer,
-          order: p.order ?? index + 1,
+          order: p.order ?? null, // Default to parallel signing (null = any order)
           status: "pending",
         })),
       },

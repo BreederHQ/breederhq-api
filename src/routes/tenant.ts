@@ -1095,6 +1095,20 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
           create: { tenantId: createdTenant.id, namespace: BREEDING_NS, data: DEFAULT_BREEDING_PROGRAM, version: 1, updatedBy: actorId },
         });
 
+        // Auto-add ALL super admins to this new tenant (so they can access it)
+        const superAdmins = await tx.user.findMany({
+          where: { isSuperAdmin: true, id: { not: user.id } }, // Exclude owner if they're already super admin
+          select: { id: true },
+        });
+
+        for (const sa of superAdmins) {
+          await tx.tenantMembership.upsert({
+            where: { userId_tenantId: { userId: sa.id, tenantId: createdTenant.id } },
+            update: {}, // Don't change if already exists
+            create: { userId: sa.id, tenantId: createdTenant.id, role: "ADMIN" },
+          });
+        }
+
         return {
           tenant: {
             id: createdTenant.id,
@@ -1303,6 +1317,303 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   );
 
+  /* ─────────────────────────────────────────────────────────────────────────────
+   * SUPER ADMIN MANAGEMENT ENDPOINTS
+   * ───────────────────────────────────────────────────────────────────────────── */
+
+  /** GET /admin/super-admins - List all super admin users */
+  fastify.get("/admin/super-admins", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const superAdmins = await prisma.user.findMany({
+        where: { isSuperAdmin: true },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          name: true,
+          createdAt: true,
+          emailVerifiedAt: true,
+          tenantMemberships: {
+            select: { tenantId: true, role: true },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      const items = superAdmins.map((u) => ({
+        id: u.id,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        name: u.name ?? `${u.firstName} ${u.lastName}`.trim(),
+        verified: !!u.emailVerifiedAt,
+        createdAt: u.createdAt.toISOString(),
+        tenantCount: u.tenantMemberships.length,
+      }));
+
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** POST /admin/super-admins - Create a new super admin user */
+  fastify.post<{
+    Body: {
+      email: string;
+      firstName: string;
+      lastName?: string | null;
+      verify?: boolean;
+      generateTempPassword?: boolean;
+      tempPassword?: string;
+    };
+  }>("/admin/super-admins", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const { email, firstName, lastName, verify, generateTempPassword, tempPassword: providedPassword } = req.body || {};
+
+      if (!email || !firstName) {
+        return reply.status(400).send({ error: "bad_request", detail: "email and firstName are required" });
+      }
+
+      const normalizedEmail = normEmail(email);
+
+      // Check if user already exists
+      const existing = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, isSuperAdmin: true },
+      });
+
+      if (existing?.isSuperAdmin) {
+        return reply.status(409).send({ error: "conflict", detail: "User is already a super admin" });
+      }
+
+      // Generate or use provided temp password
+      let tempPassword = "";
+      if (generateTempPassword) {
+        tempPassword = makeRawToken(16);
+      } else if (providedPassword) {
+        tempPassword = providedPassword;
+      }
+
+      const passwordData: any = {};
+      if (tempPassword) {
+        passwordData.passwordHash = await bcrypt.hash(tempPassword, 12);
+        passwordData.passwordUpdatedAt = new Date();
+      }
+
+      // Create or update user as super admin
+      const user = await prisma.user.upsert({
+        where: { email: normalizedEmail },
+        update: {
+          isSuperAdmin: true,
+          firstName,
+          lastName: lastName ?? null,
+          name: [firstName, lastName].filter(Boolean).join(" ") || null,
+          ...(verify ? { emailVerifiedAt: new Date() } : {}),
+          ...passwordData,
+        },
+        create: {
+          email: normalizedEmail,
+          isSuperAdmin: true,
+          firstName,
+          lastName: lastName ?? null,
+          name: [firstName, lastName].filter(Boolean).join(" ") || null,
+          ...(verify ? { emailVerifiedAt: new Date() } : {}),
+          ...passwordData,
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          name: true,
+          createdAt: true,
+          emailVerifiedAt: true,
+        },
+      });
+
+      // Add super admin to ALL existing tenants as ADMIN role
+      const allTenants = await prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of allTenants) {
+        await prisma.tenantMembership.upsert({
+          where: { userId_tenantId: { userId: user.id, tenantId: tenant.id } },
+          update: {}, // Don't change role if already a member
+          create: { userId: user.id, tenantId: tenant.id, role: "ADMIN" },
+        });
+      }
+
+      return reply.status(201).send({
+        ok: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          name: user.name ?? `${user.firstName} ${user.lastName}`.trim(),
+          verified: !!user.emailVerifiedAt,
+          createdAt: user.createdAt.toISOString(),
+        },
+        tempPassword: tempPassword || undefined,
+        tenantsAdded: allTenants.length,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** POST /admin/super-admins/:userId/grant - Grant super admin status to existing user */
+  fastify.post<{ Params: { userId: string } }>("/admin/super-admins/:userId/grant", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const { userId } = req.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, isSuperAdmin: true, email: true },
+      });
+
+      if (!user) {
+        return reply.status(404).send({ error: "not_found", detail: "User not found" });
+      }
+
+      if (user.isSuperAdmin) {
+        return reply.status(409).send({ error: "conflict", detail: "User is already a super admin" });
+      }
+
+      // Grant super admin status
+      await prisma.user.update({
+        where: { id: userId },
+        data: { isSuperAdmin: true },
+      });
+
+      // Add to all existing tenants as ADMIN
+      const allTenants = await prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of allTenants) {
+        await prisma.tenantMembership.upsert({
+          where: { userId_tenantId: { userId, tenantId: tenant.id } },
+          update: {}, // Don't change existing role
+          create: { userId, tenantId: tenant.id, role: "ADMIN" },
+        });
+      }
+
+      return reply.send({
+        ok: true,
+        userId,
+        tenantsAdded: allTenants.length,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** POST /admin/super-admins/:userId/revoke - Revoke super admin status */
+  fastify.post<{ Params: { userId: string } }>("/admin/super-admins/:userId/revoke", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const { userId } = req.params;
+
+      // Prevent revoking your own super admin status
+      if (userId === actorId) {
+        return reply.status(400).send({ error: "bad_request", detail: "Cannot revoke your own super admin status" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, isSuperAdmin: true },
+      });
+
+      if (!user) {
+        return reply.status(404).send({ error: "not_found", detail: "User not found" });
+      }
+
+      if (!user.isSuperAdmin) {
+        return reply.status(409).send({ error: "conflict", detail: "User is not a super admin" });
+      }
+
+      // Check if this is the last super admin
+      const superAdminCount = await prisma.user.count({ where: { isSuperAdmin: true } });
+      if (superAdminCount <= 1) {
+        return reply.status(409).send({ error: "conflict", detail: "Cannot revoke the last super admin" });
+      }
+
+      // Revoke super admin status (keep tenant memberships - they can still access tenants they're members of)
+      await prisma.user.update({
+        where: { id: userId },
+        data: { isSuperAdmin: false },
+      });
+
+      return reply.send({ ok: true, userId });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** POST /admin/super-admins/:userId/sync-tenants - Sync super admin to all tenants */
+  fastify.post<{ Params: { userId: string } }>("/admin/super-admins/:userId/sync-tenants", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const { userId } = req.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, isSuperAdmin: true },
+      });
+
+      if (!user) {
+        return reply.status(404).send({ error: "not_found", detail: "User not found" });
+      }
+
+      if (!user.isSuperAdmin) {
+        return reply.status(400).send({ error: "bad_request", detail: "User is not a super admin" });
+      }
+
+      // Add to all tenants they're not already a member of
+      const allTenants = await prisma.tenant.findMany({ select: { id: true } });
+      let added = 0;
+
+      for (const tenant of allTenants) {
+        const existing = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId, tenantId: tenant.id } },
+        });
+        if (!existing) {
+          await prisma.tenantMembership.create({
+            data: { userId, tenantId: tenant.id, role: "ADMIN" },
+          });
+          added++;
+        }
+      }
+
+      return reply.send({
+        ok: true,
+        userId,
+        totalTenants: allTenants.length,
+        tenantsAdded: added,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
   /** POST /admin/tenants/:id/owner/reset-password */
   fastify.post<{
     Params: { id: string };
@@ -1348,6 +1659,183 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
       return reply.send({ ok: true, tempPassword });
     } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * POST /tenants/:id/reset
+   * Reset a demo tenant to its initial state.
+   *
+   * Requirements:
+   * - User must be a super admin
+   * - Tenant must have isDemoTenant=true
+   *
+   * This endpoint:
+   * 1. Validates the tenant is a demo tenant
+   * 2. Deletes all tenant data (preserving tenant record and owner)
+   * 3. Triggers re-seeding based on demoResetType
+   */
+  fastify.post<{
+    Params: { id: string };
+  }>("/tenants/:id/reset", async (req, reply) => {
+    try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId) || tenantId <= 0) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+      }
+
+      // Fetch tenant and verify it's a demo tenant
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          isDemoTenant: true,
+          demoResetType: true,
+        },
+      });
+
+      if (!tenant) {
+        return reply.status(404).send({ error: "not_found", detail: "Tenant not found" });
+      }
+
+      if (!tenant.isDemoTenant) {
+        return reply.status(403).send({
+          error: "forbidden",
+          detail: "Only demo tenants can be reset",
+        });
+      }
+
+      // Clear all tenant data (in order due to foreign key constraints)
+      // This is a comprehensive clear of all tenant-scoped data
+
+      await prisma.$transaction(async (tx) => {
+        // Communications & CRM
+        await tx.partyActivity.deleteMany({ where: { tenantId } });
+        await tx.partyEmail.deleteMany({ where: { tenantId } });
+        await tx.partyEvent.deleteMany({ where: { tenantId } });
+        await tx.partyMilestone.deleteMany({ where: { tenantId } });
+        await tx.partyNote.deleteMany({ where: { tenantId } });
+        await tx.unlinkedEmail.deleteMany({ where: { tenantId } });
+        await tx.draft.deleteMany({ where: { tenantId } });
+        await tx.messageThread.deleteMany({ where: { tenantId } });
+        await tx.notification.deleteMany({ where: { tenantId } });
+
+        // Contracts & Documents
+        await tx.signatureEvent.deleteMany({ where: { tenantId } });
+        await tx.contractParty.deleteMany({ where: { tenantId } });
+        await tx.offspringContract.deleteMany({ where: { tenantId } });
+        await tx.offspringDocument.deleteMany({ where: { tenantId } });
+        await tx.contract.deleteMany({ where: { tenantId } });
+        await tx.contractTemplate.deleteMany({ where: { tenantId } });
+        await tx.document.deleteMany({ where: { tenantId } });
+
+        // Finance
+        await tx.offspringInvoiceLink.deleteMany({ where: { tenantId } });
+        await tx.invoiceLineItem.deleteMany({ where: { tenantId } });
+        await tx.payment.deleteMany({ where: { tenantId } });
+        await tx.invoice.deleteMany({ where: { tenantId } });
+        await tx.expense.deleteMany({ where: { tenantId } });
+        await tx.paymentIntent.deleteMany({ where: { tenantId } });
+
+        // Offspring
+        await tx.offspringGroupEvent.deleteMany({ where: { tenantId } });
+        await tx.offspringGroupBuyer.deleteMany({ where: { tenantId } });
+        await tx.offspringEvent.deleteMany({ where: { tenantId } });
+        await tx.offspring.deleteMany({ where: { tenantId } });
+        await tx.offspringGroup.deleteMany({ where: { tenantId } });
+
+        // Breeding
+        await tx.breedingMilestone.deleteMany({ where: { tenantId } });
+        await tx.foalingOutcome.deleteMany({ where: { tenantId } });
+        await tx.breedingPlanEvent.deleteMany({ where: { tenantId } });
+        await tx.breedingAttempt.deleteMany({ where: { tenantId } });
+        await tx.pregnancyCheck.deleteMany({ where: { tenantId } });
+        await tx.litter.deleteMany({ where: { tenantId } });
+        await tx.litterEvent.deleteMany({ where: { tenantId } });
+        await tx.waitlistEntry.deleteMany({ where: { tenantId } });
+        await tx.planParty.deleteMany({ where: { tenantId } });
+        await tx.reproductiveCycle.deleteMany({ where: { tenantId } });
+        await tx.testResult.deleteMany({ where: { tenantId } });
+        await tx.mareReproductiveHistory.deleteMany({ where: { tenantId } });
+        await tx.breedingPlan.deleteMany({ where: { tenantId } });
+        await tx.planCodeCounter.deleteMany({ where: { tenantId } });
+
+        // Animals & Health
+        await tx.vaccinationRecord.deleteMany({ where: { tenantId } });
+        await tx.healthEvent.deleteMany({ where: { tenantId } });
+        await tx.animalTraitEntry.deleteMany({ where: { tenantId } });
+        await tx.animalTraitValue.deleteMany({ where: { tenantId } });
+        await tx.competitionEntry.deleteMany({ where: { tenantId } });
+        await tx.animalTitle.deleteMany({ where: { tenantId } });
+        await tx.animalOwnershipChange.deleteMany({ where: { tenantId } });
+        await tx.animal.deleteMany({ where: { tenantId } });
+
+        // Tags
+        await tx.tag.deleteMany({ where: { tenantId } });
+
+        // Contacts & Organizations
+        await tx.contactChangeRequest.deleteMany({ where: { tenantId } });
+        await tx.emailChangeRequest.deleteMany({ where: { tenantId } });
+        await tx.portalInvite.deleteMany({ where: { tenantId } });
+        await tx.portalAccess.deleteMany({ where: { tenantId } });
+        await tx.contact.deleteMany({ where: { tenantId } });
+
+        // Clear party table (which holds contact/org records)
+        await tx.party.deleteMany({ where: { tenantId } });
+
+        // Organizations (after parties since orgs reference party)
+        await tx.organization.deleteMany({ where: { tenantId } });
+
+        // Attachments
+        await tx.attachment.deleteMany({ where: { tenantId } });
+
+        // Tasks
+        await tx.task.deleteMany({ where: { tenantId } });
+
+        // Marketing
+        await tx.campaignAttribution.deleteMany({ where: { tenantId } });
+        await tx.campaign.deleteMany({ where: { tenantId } });
+        await tx.emailSendLog.deleteMany({ where: { tenantId } });
+        await tx.autoReplyLog.deleteMany({ where: { tenantId } });
+        await tx.autoReplyRule.deleteMany({ where: { tenantId } });
+        await tx.template.deleteMany({ where: { tenantId } });
+
+        // Scheduling
+        await tx.schedulingBooking.deleteMany({ where: { tenantId } });
+        await tx.schedulingSlot.deleteMany({ where: { tenantId } });
+        await tx.schedulingAvailabilityBlock.deleteMany({ where: { tenantId } });
+        await tx.schedulingEventTemplate.deleteMany({ where: { tenantId } });
+
+        // Marketplace
+        await tx.marketplaceListing.deleteMany({ where: { tenantId } });
+
+        // Settings (keep some, clear others as needed)
+        // We preserve tenant settings like theme but clear operational settings
+        // await tx.tenantSetting.deleteMany({ where: { tenantId, namespace: { notIn: ['theme'] } } });
+
+        // Clear sequences (so IDs restart fresh)
+        await tx.sequence.deleteMany({ where: { tenantId } });
+        await tx.idempotencyKey.deleteMany({ where: { tenantId } });
+      });
+
+      // Log the reset
+      console.log(`[demo-reset] Tenant ${tenantId} (${tenant.slug}) data cleared by user ${actorId}`);
+
+      return reply.send({
+        ok: true,
+        message: `Demo tenant "${tenant.name}" has been reset successfully`,
+        resetType: tenant.demoResetType ?? "fresh",
+        note: "Seed data will be applied on next server startup or via manual seed script",
+      });
+    } catch (err) {
+      console.error("[demo-reset] Error resetting demo tenant:", err);
       const { status, payload } = errorReply(err);
       return reply.status(status).send(payload);
     }
