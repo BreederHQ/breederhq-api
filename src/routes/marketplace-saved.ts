@@ -129,7 +129,7 @@ export default async function marketplaceSavedRoutes(
                 status: offspringGroup.published ? "live" : "draft",
                 isAvailable: offspringGroup.published,
                 priceCents: offspringGroup.marketplaceDefaultPriceCents ? Number(offspringGroup.marketplaceDefaultPriceCents) : null,
-                breederName: offspringGroup.tenant?.businessName,
+                breederName: offspringGroup.tenant?.name,
                 breederSlug: offspringGroup.tenant?.slug,
               };
             }
@@ -151,7 +151,7 @@ export default async function marketplaceSavedRoutes(
                 priceCents: animal.publicListing?.priceCents ? Number(animal.publicListing.priceCents) : null,
                 species: animal.species,
                 breed: animal.breed,
-                breederName: animal.tenant?.businessName,
+                breederName: animal.tenant?.name,
                 breederSlug: animal.tenant?.slug,
               };
             }

@@ -718,12 +718,12 @@ export default async function marketplaceV2Routes(
     try {
       // Delete participants first (cascade)
       await prisma.animalProgramParticipant.deleteMany({
-        where: { animalProgramId: id },
+        where: { programId: id },
       });
 
       // Delete media
       await prisma.animalProgramMedia.deleteMany({
-        where: { animalProgramId: id },
+        where: { programId: id },
       });
 
       // Delete program
@@ -782,7 +782,7 @@ export default async function marketplaceV2Routes(
       // Add participants
       await prisma.animalProgramParticipant.createMany({
         data: animalIds.map((animalId) => ({
-          animalProgramId: programId,
+          programId: programId,
           animalId,
           status: "ACTIVE",
         })),
@@ -827,7 +827,7 @@ export default async function marketplaceV2Routes(
       await prisma.animalProgramParticipant.deleteMany({
         where: {
           id: participantId,
-          animalProgramId: programId,
+          programId: programId,
         },
       });
 
@@ -2285,9 +2285,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             },
             animal: {
               include: {
-                species: true,
-                breed: true,
-                sex: true,
+                canonicalBreed: true,
                 privacySettings: true,
                 AnimalTraitValue: {
                   where: {
@@ -2308,21 +2306,17 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
                     },
                   },
                 },
-                AnimalTitle: {
+                titles: {
                   include: {
-                    title: true,
+                    titleDefinition: true,
                   },
                 },
-                AnimalCompetitionResult: {
-                  include: {
-                    competition: true,
-                  },
+                competitionEntries: true,
+                Attachment: {
+                  orderBy: { createdAt: "asc" },
                 },
-                AnimalMedia: {
-                  orderBy: { displayOrder: "asc" },
-                },
-                AnimalDocument: true,
-                AnimalRegistration: {
+                Document: true,
+                registryIds: {
                   include: {
                     registry: true,
                   },
@@ -2401,9 +2395,9 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             id: animal.id,
             // Identity is always included based on animal-level privacy settings
             name: privacy?.showName ? animal.name : null,
-            species: animal.species?.name,
-            breed: animal.breed?.name,
-            sex: animal.sex?.displayName,
+            species: animal.species,
+            breed: animal.canonicalBreed?.name || animal.breed,
+            sex: animal.sex,
             birthDate: privacy?.showFullDob ? animal.birthDate : null,
             photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
           },
@@ -2413,9 +2407,9 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
         // REGISTRY
         if (isSectionEnabled(privacy?.showRegistryFull, config.registry)) {
           const selectedIds = config.registry.registryIds || [];
-          response.data.registrations = animal.AnimalRegistration
-            .filter((r) => selectedIds.length === 0 || selectedIds.includes(r.id))
-            .map((r) => ({
+          response.data.registrations = animal.registryIds
+            .filter((r: { id: number }) => selectedIds.length === 0 || selectedIds.includes(r.id))
+            .map((r: { id: number; registry: { name: string }; identifier: string }) => ({
               id: r.id,
               registryName: r.registry.name,
               identifier: r.identifier,
@@ -2435,7 +2429,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               id: t.id,
               key: t.traitDefinition.key,
               displayName: t.traitDefinition.displayName,
-              value: t.value,
+              value: t.valueText || t.valueNumber?.toString() || (t.valueBoolean !== null ? String(t.valueBoolean) : null),
             }));
         }
 
@@ -2451,36 +2445,36 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               id: t.id,
               key: t.traitDefinition.key,
               displayName: t.traitDefinition.displayName,
-              value: t.value,
+              value: t.valueText || t.valueNumber?.toString() || (t.valueBoolean !== null ? String(t.valueBoolean) : null),
             }));
         }
 
         // ACHIEVEMENTS (TITLES)
         if (isSectionEnabled(privacy?.showTitles, config.achievements)) {
           const selectedTitleIds = config.achievements.titleIds || [];
-          response.data.titles = animal.AnimalTitle
+          response.data.titles = animal.titles
             .filter((at) =>
               at.isPublic === true &&
               (selectedTitleIds.length === 0 || selectedTitleIds.includes(at.id))
             )
             .map((at) => ({
               id: at.id,
-              name: at.title.name,
-              abbreviation: at.title.abbreviation,
+              name: at.titleDefinition.fullName,
+              abbreviation: at.titleDefinition.abbreviation,
               dateEarned: at.dateEarned,
             }));
 
           // ACHIEVEMENTS (COMPETITIONS)
           const selectedCompIds = config.achievements.competitionIds || [];
-          response.data.competitions = animal.AnimalCompetitionResult
+          response.data.competitions = animal.competitionEntries
             .filter((ac) =>
               ac.isPublic === true &&
               (selectedCompIds.length === 0 || selectedCompIds.includes(ac.id))
             )
             .map((ac) => ({
               id: ac.id,
-              eventName: ac.competition?.name || "Competition",
-              placement: ac.placement,
+              eventName: ac.eventName,
+              placement: ac.placement?.toString() || ac.placementLabel || null,
               date: ac.eventDate,
             }));
         }
@@ -2488,25 +2482,25 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
         // MEDIA
         if (isSectionEnabled(privacy?.enableMediaSharing, config.media)) {
           const selectedIds = config.media.mediaIds || [];
-          response.data.media = animal.AnimalMedia
+          response.data.media = animal.Attachment
             .filter((m) => selectedIds.length === 0 || selectedIds.includes(m.id))
             .map((m) => ({
               id: m.id,
-              type: m.mediaType,
-              url: m.url,
-              caption: m.caption,
+              type: m.kind,
+              filename: m.filename,
+              mime: m.mime,
             }));
         }
 
         // DOCUMENTS
         if (isSectionEnabled(privacy?.enableDocumentSharing, config.documents)) {
           const selectedIds = config.documents.documentIds || [];
-          response.data.documents = animal.AnimalDocument
+          response.data.documents = animal.Document
             .filter((d) => selectedIds.length === 0 || selectedIds.includes(d.id))
             .map((d) => ({
               id: d.id,
               kind: d.kind,
-              filename: d.filename,
+              title: d.title,
               url: d.url,
             }));
         }

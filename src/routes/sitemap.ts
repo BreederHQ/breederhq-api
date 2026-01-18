@@ -74,7 +74,7 @@ const sitemapRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           published: true,
           listed: true,
-          slug: { not: null },
+          slug: { not: { equals: undefined } },
         },
         select: {
           slug: true,
@@ -87,7 +87,7 @@ const sitemapRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       prisma.breedingProgram.findMany({
         where: {
           listed: true,
-          slug: { not: null },
+          slug: { not: { equals: undefined } },
         },
         select: {
           slug: true,

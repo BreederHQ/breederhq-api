@@ -770,6 +770,8 @@ model User {
   lastPasswordChangeAt DateTime?
   isSuperAdmin         Boolean   @default(false)
   emailVerifiedAt      DateTime?
+  role                 String    @default("user")
+  twoFactorEnabled     Boolean   @default(false)
 
   // profile / contact fields (user-scoped)
   phoneE164    String? @db.VarChar(32)
@@ -1012,6 +1014,11 @@ model Tenant {
   name         String
   slug         String? @unique
   primaryEmail String?
+
+  // Location
+  city    String?
+  region  String?
+  country String? @db.Char(2)
 
   operationType TenantOperationType @default(HOBBY)
 
@@ -5501,7 +5508,8 @@ model ContractParty {
 
   providerRecipientId String?
 
-  data Json?
+  data          Json?
+  signatureData Json?
 
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -7100,10 +7108,12 @@ model MarketplaceUser {
   totpVerifiedAt DateTime? @map("totp_verified_at")
 
   // Passkey (WebAuthn) - marketplace-specific
-  passkeyCredentialId String?   @map("passkey_credential_id")
-  passkeyPublicKey    Bytes?    @map("passkey_public_key")
-  passkeyCounter      Int?      @map("passkey_counter")
-  passkeyCreatedAt    DateTime? @map("passkey_created_at")
+  passkeyCredentialId     String?   @map("passkey_credential_id")
+  passkeyPublicKey        Bytes?    @map("passkey_public_key")
+  passkeyCounter          Int?      @map("passkey_counter")
+  passkeyCreatedAt        DateTime? @map("passkey_created_at")
+  passkeyChallenge        String?   @map("passkey_challenge")
+  passkeyChallengeExpires DateTime? @map("passkey_challenge_expires")
 
   // SMS verification for 2FA
   smsPhoneNumber              String?   @map("sms_phone_number")
@@ -7401,6 +7411,8 @@ model MarketplaceServiceListing {
   transactions MarketplaceTransaction[]
   threads      MarketplaceMessageThread[]
   reviews      MarketplaceReview[]
+  abuseReports MarketplaceAbuseReport[]
+  assignments  MarketplaceServiceTagAssignment[]
 
   @@index([providerId, status])
   @@index([category, status, publishedAt(sort: Desc)])
@@ -7408,6 +7420,29 @@ model MarketplaceServiceListing {
   @@index([deletedAt])
   @@index([slug])
   @@map("service_listings")
+  @@schema("marketplace")
+}
+
+model MarketplaceAbuseReport {
+  id        Int      @id @default(autoincrement())
+  listingId Int      @map("listing_id")
+  listing   MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  reason        String
+  details       String?   @db.Text
+  reporterEmail String?   @map("reporter_email")
+  status        String    @default("pending") // pending, reviewed, dismissed, action_taken
+  adminNotes    String?   @map("admin_notes") @db.Text
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedById  Int?      @map("resolved_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([listingId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("abuse_reports")
   @@schema("marketplace")
 }
 
@@ -7683,9 +7718,10 @@ model MarketplaceServiceTag {
 }
 
 model MarketplaceServiceTagAssignment {
-  listingId Int @map("listing_id")
-  tagId     Int @map("tag_id")
-  tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  listingId Int                       @map("listing_id")
+  listing   MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  tagId     Int                       @map("tag_id")
+  tag       MarketplaceServiceTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([listingId, tagId])
   @@index([listingId])

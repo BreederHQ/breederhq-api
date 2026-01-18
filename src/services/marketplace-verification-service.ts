@@ -224,8 +224,7 @@ export async function verifyUserSMSCode(
 
 // ---------- TOTP (Authenticator App) ----------
 
-import * as OTPAuth from "otplib";
-const authenticator = OTPAuth.authenticator;
+import { generateSecret, generateURI, verifySync as verifyTOTPSync } from "otplib";
 
 /**
  * Generate TOTP secret for a user
@@ -234,7 +233,7 @@ export async function generateTOTPSecret(userId: number): Promise<{
   secret: string;
   otpauthUrl: string;
 }> {
-  const secret = authenticator.generateSecret();
+  const secret = generateSecret();
 
   // Get user email for the TOTP URI
   const user = await prisma.marketplaceUser.findUnique({
@@ -252,7 +251,14 @@ export async function generateTOTPSecret(userId: number): Promise<{
     data: { totpSecret: secret },
   });
 
-  const otpauthUrl = authenticator.keyuri(user.email, "BreederHQ", secret);
+  const otpauthUrl = generateURI({
+    issuer: "BreederHQ",
+    label: user.email,
+    secret,
+    algorithm: "sha1",
+    digits: 6,
+    period: 30,
+  });
 
   return { secret, otpauthUrl };
 }
@@ -273,7 +279,7 @@ export async function verifyAndEnableTOTP(
     return { success: false, error: "totp_not_setup" };
   }
 
-  const isValid = authenticator.verify({ token: code, secret: user.totpSecret });
+  const isValid = verifyTOTPSync({ token: code, secret: user.totpSecret }).valid;
 
   if (!isValid) {
     return { success: false, error: "invalid_code" };
@@ -308,7 +314,7 @@ export async function verifyTOTPCode(
     return false;
   }
 
-  return authenticator.verify({ token: code, secret: user.totpSecret });
+  return verifyTOTPSync({ token: code, secret: user.totpSecret }).valid;
 }
 
 // ---------- Provider Verification Status ----------
@@ -604,7 +610,7 @@ export async function createVerificationRequest(
       packageType: input.packageType,
       requestedTier,
       status: "PENDING",
-      submittedInfo: input.submittedInfo,
+      submittedInfo: input.submittedInfo as Record<string, unknown> & object,
       paymentIntentId: input.paymentIntentId,
       amountPaidCents: input.amountPaidCents,
     },
