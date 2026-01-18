@@ -114,12 +114,12 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         }),
 
-        // Upcoming breedings (plans in PLANNING or COMMITTED status with expected dates in next 30 days)
+        // Upcoming breedings (plans in PLANNING or CYCLE status with expected dates in next 30 days)
         prisma.breedingPlan.count({
           where: {
             tenantId,
             archived: false,
-            status: { in: ["PLANNING", "COMMITTED"] },
+            status: { in: ["PLANNING", "CYCLE", "COMMITTED"] },
             expectedBreedDate: {
               gte: new Date(),
               lte: addDays(new Date(), 30),
@@ -214,7 +214,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           archived: false,
-          status: { in: ["PLANNING", "COMMITTED"] },
+          status: { in: ["PLANNING", "CYCLE", "COMMITTED"] },
           lockedCycleStart: {
             gte: addDays(now, -3),
             lte: addDays(now, 7),
@@ -539,7 +539,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           archived: false,
-          status: { in: ["COMMITTED", "BRED", "PREGNANT"] },
+          status: { in: ["CYCLE", "COMMITTED", "BRED", "PREGNANT"] },
           expectedBirthDate: {
             gte: new Date(),
             lte: addDays(new Date(), 90),
