@@ -58,7 +58,7 @@ export function __makeOffspringGroupsService({
     return [damName || "Unnamed Dam", season].join(" • ");
   }
 
-  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+  async function ensureGroupForBredPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
     const { tenantId, planId, actorId } = args;
 
     const plan = await db.breedingPlan.findFirst({
@@ -95,7 +95,7 @@ export function __makeOffspringGroupsService({
         field: "planId",
         before: Prisma.DbNull,
         after: { planId: plan.id },
-        notes: `Group ensured for committed plan${actorId ? ` by ${actorId}` : ""}`,
+        notes: `Group ensured for bred plan${actorId ? ` by ${actorId}` : ""}`,
         recordedByUserId: null,
       },
     });
@@ -232,7 +232,7 @@ export function __makeOffspringGroupsService({
       .slice(0, limit);
   }
 
-  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+  return { ensureGroupForBredPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
 }
 // [OG-SERVICE-END]
 // src/routes/breeding.ts
@@ -1732,20 +1732,20 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Ensure offspring group exists when plan reaches CYCLE status
-      // This handles cases where the plan was committed before offspring group auto-creation was added
-      const isCycleStatus = String(updated.status) === "CYCLE" || String(updated.status) === "COMMITTED";
-      if (isCycleStatus) {
+      // Ensure offspring group exists when plan reaches BRED status
+      // This is when breeding has actually occurred and offspring are expected
+      const isBredStatus = String(updated.status) === "BRED";
+      if (isBredStatus) {
         try {
           const ogSvc = __makeOffspringGroupsService({ prisma, authorizer: __og_authorizer });
-          await ogSvc.ensureGroupForCommittedPlan({
+          await ogSvc.ensureGroupForBredPlan({
             tenantId,
             planId: id,
             actorId: (req as any).user?.id ?? "system",
           });
         } catch (ogErr) {
           // Log but don't fail the update - offspring group creation is secondary
-          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for cycle plan");
+          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for bred plan");
         }
       }
 
@@ -1871,27 +1871,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // If actorId is provided, also ensure an offspring group and return that payload
-        if (b.actorId) {
-          const ogSvc = __makeOffspringGroupsService({ prisma: tx as any, authorizer: __og_authorizer });
-          const group = await ogSvc.ensureGroupForCommittedPlan({
-            tenantId,
-            planId: plan.id,
-            actorId: b.actorId,
-          });
-          return { mode: "ensure", payload: { planId: plan.id, group } };
-        }
+        // NOTE: Offspring group creation has been moved to BRED phase (when breedDateActual is set)
+        // This commit endpoint only locks the cycle timeline; offspring groups are created when breeding occurs
 
         // Sync animal breeding statuses for dam and sire
         if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId, tx);
         if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId, tx);
 
-        // Legacy response, return the updated plan
-        return { mode: "legacy", payload: saved };
+        return saved;
       });
 
-      if (result.mode === "ensure") return reply.send(result.payload);
-      return reply.send(result.payload);
+      return reply.send(result);
     } catch (err) {
       req.log.error({ err }, "commit failed");
       const { status, payload } = errorReply(err);

@@ -91,7 +91,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
     return [damName || "Unnamed Dam", season].join(" • ");
   }
 
-  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+  async function ensureGroupForBredPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
     const { tenantId, planId, actorId } = args;
     return prisma.$transaction(async (tx) => {
       const plan = await tx.breedingPlan.findFirst({
@@ -128,7 +128,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
           occurredAt: new Date(),
           before: Prisma.DbNull,
           after: { planId: plan.id },
-          notes: "Group ensured for committed plan",
+          notes: "Group ensured for bred plan",
           recordedByUserId: actorId,
         },
       });
@@ -286,7 +286,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       .slice(0, limit);
   }
 
-  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+  return { ensureGroupForBredPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
 }
 // [OG-SERVICE-END]
 
