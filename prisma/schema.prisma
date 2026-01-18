@@ -435,9 +435,10 @@ enum DocStatus {
 
 enum BreedingPlanStatus {
   PLANNING
-  COMMITTED
-  CYCLE_EXPECTED
-  HORMONE_TESTING
+  CYCLE              // New: renamed from COMMITTED - tracking the dam's heat cycle
+  COMMITTED          // Deprecated: use CYCLE instead (kept for migration compatibility)
+  CYCLE_EXPECTED     // Sub-status: waiting for cycle to start
+  HORMONE_TESTING    // Sub-status: progesterone testing in progress
   BRED
   PREGNANT
   BIRTHED
@@ -445,6 +446,8 @@ enum BreedingPlanStatus {
   PLACEMENT
   COMPLETE
   CANCELED
+  UNSUCCESSFUL       // Terminal: breeding was attempted but failed (distinct from CANCELED)
+  ON_HOLD            // Semi-terminal: plan is paused but can be resumed
 
   @@schema("public")
 }
@@ -3327,8 +3330,24 @@ model BreedingPlan {
   placementCompletedDateActual  DateTime?
   completedDateActual           DateTime?
 
+  /// Unknown date flags - for surprise pregnancies where breeder doesn't know exact dates
+  /// When true, the corresponding date is unknown and phase can progress without it
+  cycleStartDateUnknown Boolean @default(false)
+  ovulationDateUnknown  Boolean @default(false)
+  breedDateUnknown      Boolean @default(false)
+
   status BreedingPlanStatus @default(PLANNING)
   notes  String?
+
+  /// For ON_HOLD status: stores the previous status so plan can resume
+  statusBeforeHold BreedingPlanStatus?
+
+  /// Optional reason for terminal status (CANCELED, UNSUCCESSFUL, ON_HOLD)
+  statusReason String?
+
+  /// User intent flag: breeder has mentally committed to this plan (set during PLANNING phase)
+  /// This is separate from the CYCLE phase - indicates serious intent without locking cycle dates
+  isCommittedIntent Boolean @default(false)
 
   committedAt       DateTime?
   committedByUserId String?

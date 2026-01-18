@@ -1313,7 +1313,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (planId) {
       plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
       if (!plan) return reply.code(404).send({ error: "plan not found" });
-      if ((plan as any).status && (plan as any).status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
+      const planStatus = (plan as any).status;
+      if (planStatus && planStatus !== "CYCLE" && planStatus !== "COMMITTED") return reply.code(409).send({ error: "plan must be in CYCLE status" });
 
       existing = await prisma.offspringGroup.findFirst({ where: { planId: plan.id, tenantId } });
     }
@@ -1338,7 +1339,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId,
           name: identifier.trim(),
           species: resolvedSpecies,
-          status: "COMMITTED",
+          status: "CYCLE",
           committedAt: now,
         },
       });

@@ -293,7 +293,7 @@ export async function getFoalingCalendar(params: {
   const where: any = {
     tenantId,
     expectedBirthDate: { not: null },
-    status: { in: ["COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING", "BRED", "PREGNANT", "BIRTHED"] },
+    status: { in: ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING", "BRED", "PREGNANT", "BIRTHED"] },
   };
 
   if (startDate) {

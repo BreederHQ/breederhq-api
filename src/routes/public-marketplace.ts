@@ -832,7 +832,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
                   include: { registry: { select: { name: true } } },
                 },
                 titles: {
-                  include: { titleDefinition: { select: { abbreviation: true, name: true } } },
+                  include: { titleDefinition: { select: { abbreviation: true, fullName: true } } },
                 },
                 AnimalTraitValue: {
                   where: {
@@ -858,7 +858,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
                 organizations: {
                   where: { isPublicProgram: true },
                   take: 1,
-                  select: { programSlug: true, name: true, logoAssetId: true },
+                  select: { programSlug: true, name: true },
                 },
               },
             },
@@ -906,7 +906,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             city: tenant.city,
             region: tenant.region,
             country: tenant.country,
-            logoAssetId: org?.logoAssetId || null,
           },
           animal: {
             id: animal.id,
@@ -936,10 +935,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
         // Titles
         if (isSectionEnabled(privacy?.showTitles, config?.titles)) {
-          response.data.titles = animal.titles.map((t: { id: number; titleDefinition: { abbreviation: string; name: string } }) => ({
+          response.data.titles = animal.titles.map((t: { id: number; titleDefinition: { abbreviation: string; fullName: string } }) => ({
             id: t.id,
             abbreviation: t.titleDefinition.abbreviation,
-            name: t.titleDefinition.name,
+            name: t.titleDefinition.fullName,
           }));
         }
 
@@ -1876,7 +1875,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
                 },
               },
             },
@@ -2475,7 +2474,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
                 },
               },
             },

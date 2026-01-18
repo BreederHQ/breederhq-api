@@ -277,10 +277,11 @@ function toNum(v: any): number | null {
  *   revert to ACTIVE
  * - Never downgrade from RETIRED, DECEASED, or manually set statuses
  *
- * Active breeding phases: COMMITTED, CYCLE_EXPECTED, HORMONE_TESTING, BRED, PREGNANT, BIRTHED, WEANED, PLACEMENT
+ * Active breeding phases: CYCLE, COMMITTED (deprecated), CYCLE_EXPECTED, HORMONE_TESTING, BRED, PREGNANT, BIRTHED, WEANED, PLACEMENT
  */
 const ACTIVE_BREEDING_STATUSES = new Set([
-  "COMMITTED",
+  "CYCLE",       // New: renamed from COMMITTED
+  "COMMITTED",   // Deprecated: kept for backward compatibility
   "CYCLE_EXPECTED",
   "HORMONE_TESTING",
   "BRED",
@@ -676,7 +677,9 @@ class ImmutabilityError extends Error {
 function validateImmutability(existingPlan: any, updates: any): void {
   const status = String(existingPlan.status);
   const lockedStatuses = ["BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
-  const postCommitStatuses = ["COMMITTED", ...lockedStatuses];
+  // CYCLE is the new name, COMMITTED is deprecated but still supported
+  const postCycleStatuses = ["CYCLE", "COMMITTED", ...lockedStatuses];
+  const isCyclePhase = status === "CYCLE" || status === "COMMITTED";
 
   // CANCELED status - no date changes allowed
   if (status === "CANCELED") {
@@ -694,15 +697,15 @@ function validateImmutability(existingPlan: any, updates: any): void {
   }
 
   // reproAnchorMode validation
-  // Anchor mode cannot be changed directly via PATCH in COMMITTED or later statuses.
+  // Anchor mode cannot be changed directly via PATCH in CYCLE or later statuses.
   // Upgrades (CYCLE_START -> OVULATION) must go through the /upgrade-to-ovulation endpoint.
   if (updates.reproAnchorMode !== undefined && updates.reproAnchorMode !== existingPlan.reproAnchorMode) {
     if (lockedStatuses.includes(status)) {
       throw new ImmutabilityError("reproAnchorMode", "Cannot change anchor mode after breeding has begun");
     }
-    // In COMMITTED status, anchor mode changes must use upgrade endpoint
-    if (status === "COMMITTED") {
-      throw new ImmutabilityError("reproAnchorMode", "Anchor mode locked in COMMITTED status. Use the upgrade endpoint to upgrade from CYCLE_START to OVULATION.");
+    // In CYCLE status, anchor mode changes must use upgrade endpoint
+    if (isCyclePhase) {
+      throw new ImmutabilityError("reproAnchorMode", "Anchor mode locked in CYCLE status. Use the upgrade endpoint to upgrade from CYCLE_START to OVULATION.");
     }
   }
 
@@ -710,16 +713,16 @@ function validateImmutability(existingPlan: any, updates: any): void {
   // Tolerance is measured from the ORIGINAL locked value (lockedCycleStart), not the current value
   if (updates.cycleStartObserved !== undefined && existingPlan.cycleStartObserved) {
     if (lockedStatuses.includes(status)) {
-      throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after COMMITTED status");
+      throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after CYCLE status");
     }
-    if (status === "COMMITTED") {
+    if (isCyclePhase) {
       // Use lockedCycleStart as reference if available, otherwise fall back to current value
       const referenceDate = existingPlan.lockedCycleStart || existingPlan.cycleStartObserved;
       const oldDate = new Date(referenceDate);
       const newDate = new Date(updates.cycleStartObserved);
       const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays > 3) {
-        throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in COMMITTED status (attempted ${Math.round(diffDays)} days)`);
+        throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
       }
     }
   }
@@ -728,16 +731,16 @@ function validateImmutability(existingPlan: any, updates: any): void {
   // Tolerance is measured from the ORIGINAL locked value (lockedOvulationDate), not the current value
   if (updates.ovulationConfirmed !== undefined && existingPlan.ovulationConfirmed) {
     if (lockedStatuses.includes(status)) {
-      throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after COMMITTED status");
+      throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
     }
-    if (status === "COMMITTED") {
+    if (isCyclePhase) {
       // Use lockedOvulationDate as reference if available, otherwise fall back to current value
       const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
       const oldDate = new Date(referenceDate);
       const newDate = new Date(updates.ovulationConfirmed);
       const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays > 2) {
-        throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in COMMITTED status (attempted ${Math.round(diffDays)} days)`);
+        throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
       }
     }
   }
@@ -878,7 +881,8 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
 
 const PlanStatus = new Set<string>([
   "PLANNING",
-  "COMMITTED",
+  "CYCLE",         // New: renamed from COMMITTED
+  "COMMITTED",     // Deprecated: kept for backward compatibility
   "CYCLE_EXPECTED",
   "HORMONE_TESTING",
   "BRED",
@@ -888,6 +892,8 @@ const PlanStatus = new Set<string>([
   "PLACEMENT",
   "COMPLETE",
   "CANCELED",
+  "UNSUCCESSFUL",  // Terminal: breeding was attempted but failed
+  "ON_HOLD",       // Semi-terminal: plan is paused but can be resumed
 ]);
 
 function normalizePlanStatus(s: any) {
@@ -1237,6 +1243,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (b.nickname !== undefined) data.nickname = b.nickname ?? null;
       if (b.species !== undefined) data.species = b.species;
+      if (b.breedText !== undefined) data.breedText = b.breedText ?? null;
+      if (b.notes !== undefined) data.notes = b.notes ?? null;
+
+      // Committed intent flag - breeder has mentally committed to this plan (PLANNING phase feature)
+      if (b.isCommittedIntent !== undefined) data.isCommittedIntent = Boolean(b.isCommittedIntent);
+
+      // Unknown date flags - for surprise pregnancies where breeder doesn't know exact dates
+      if (b.cycleStartDateUnknown !== undefined) data.cycleStartDateUnknown = Boolean(b.cycleStartDateUnknown);
+      if (b.ovulationDateUnknown !== undefined) data.ovulationDateUnknown = Boolean(b.ovulationDateUnknown);
+      if (b.breedDateUnknown !== undefined) data.breedDateUnknown = Boolean(b.breedDateUnknown);
 
       const targetSpecies = (b.species ?? existing.species) as string;
       if (b.damId !== undefined) {
@@ -1515,15 +1531,53 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // BUSINESS RULE: Status regression validation
         // Define the progression order of statuses (index = progression level)
+        // Note: CANCELED, UNSUCCESSFUL, ON_HOLD are terminal/semi-terminal statuses that can be set from any phase
         const STATUS_ORDER = [
-          "PLANNING", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
+          "PLANNING", "CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
           "BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"
         ];
+        const TERMINAL_STATUSES = ["CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
         const currentStatusIndex = STATUS_ORDER.indexOf(String(existing.status));
         const newStatusIndex = STATUS_ORDER.indexOf(s);
 
-        // Check if this is a regression (moving backwards in the lifecycle)
-        if (currentStatusIndex > -1 && newStatusIndex > -1 && newStatusIndex < currentStatusIndex) {
+        // Allow transitions to terminal/semi-terminal statuses from any phase
+        const isMovingToTerminal = TERMINAL_STATUSES.includes(s);
+        const isCurrentlyTerminal = TERMINAL_STATUSES.includes(String(existing.status));
+
+        // Handle resuming from ON_HOLD - can only resume to the phase that was active before hold
+        // The statusBeforeHold field should be set when transitioning to ON_HOLD
+        if (isCurrentlyTerminal && !isMovingToTerminal) {
+          // Resuming from a terminal/semi-terminal status
+          if (String(existing.status) === "ON_HOLD") {
+            // ON_HOLD can resume - clear the statusBeforeHold and statusReason fields
+            data.statusBeforeHold = null;
+            data.statusReason = null;
+            // Status validation is handled by the normal flow below
+          } else {
+            // CANCELED and UNSUCCESSFUL are truly terminal - cannot resume
+            return reply.code(400).send({
+              error: "cannot_resume_terminal_status",
+              detail: `Cannot change status from ${existing.status} to ${s}. ${existing.status} is a terminal status and cannot be resumed.`,
+            });
+          }
+        }
+
+        // Skip regression validation when moving to terminal statuses
+        // (they can be set from any phase)
+        if (isMovingToTerminal) {
+          // No date validation needed for terminal statuses
+          data.status = s as any;
+
+          // When moving to ON_HOLD, store the current status so we can resume
+          if (s === "ON_HOLD") {
+            data.statusBeforeHold = existing.status;
+          }
+
+          // Store status reason if provided
+          if (b.statusReason !== undefined) {
+            data.statusReason = b.statusReason || null;
+          }
+        } else if (currentStatusIndex > -1 && newStatusIndex > -1 && newStatusIndex < currentStatusIndex) {
           // Regression detected - validate data consistency
 
           // Cannot regress past BIRTHED if offspring exist
@@ -1678,10 +1732,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Ensure offspring group exists when plan reaches COMMITTED status
+      // Ensure offspring group exists when plan reaches CYCLE status
       // This handles cases where the plan was committed before offspring group auto-creation was added
-      const isCommitted = String(updated.status) === "COMMITTED";
-      if (isCommitted) {
+      const isCycleStatus = String(updated.status) === "CYCLE" || String(updated.status) === "COMMITTED";
+      if (isCycleStatus) {
         try {
           const ogSvc = __makeOffspringGroupsService({ prisma, authorizer: __og_authorizer });
           await ogSvc.ensureGroupForCommittedPlan({
@@ -1691,7 +1745,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           });
         } catch (ogErr) {
           // Log but don't fail the update - offspring group creation is secondary
-          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for committed plan");
+          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for cycle plan");
         }
       }
 
@@ -1736,7 +1790,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
       const terminal = new Set<string>([
-        "COMMITTED",
+        "CYCLE",       // New: renamed from COMMITTED
+        "COMMITTED",   // Deprecated: kept for backward compatibility
         "BRED",
         "PREGNANT",
         "BIRTHED",
@@ -1744,6 +1799,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "PLACEMENT",
         "COMPLETE",
         "CANCELED",
+        "UNSUCCESSFUL",
+        "ON_HOLD",
       ]);
       if (terminal.has(String(plan.status))) {
         return reply.code(409).send({ error: "already_in_terminal_state" });
@@ -1779,7 +1836,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: plan.id },
           data: {
             code,
-            status: BreedingPlanStatus.COMMITTED,
+            status: BreedingPlanStatus.CYCLE,
             expectedBirthDate,
             expectedPlacementStart,
             committedAt: new Date(),
@@ -1791,9 +1848,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: {
             tenantId: plan.tenantId,
             planId: plan.id,
-            type: "PLAN_COMMITTED",
+            type: "PLAN_CYCLE_STARTED",
             occurredAt: new Date(),
-            label: "Plan committed",
+            label: "Plan cycle started",
             data: {
               code,
               fromStatus: String(plan.status),
@@ -1863,11 +1920,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      // Only allow uncommit if status is COMMITTED
-      if (String(plan.status) !== "COMMITTED") {
+      // Only allow uncommit if status is CYCLE (or deprecated COMMITTED)
+      const planStatus = String(plan.status);
+      if (planStatus !== "CYCLE" && planStatus !== "COMMITTED") {
         return reply.code(409).send({
-          error: "not_committed",
-          detail: `Plan must be in COMMITTED status to uncommit. Current status: ${plan.status}`
+          error: "not_in_cycle",
+          detail: `Plan must be in CYCLE status to uncommit. Current status: ${plan.status}`
         });
       }
 
@@ -2134,8 +2192,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Build update payload
       const updateData: any = {
-        // Lock the plan (change status to COMMITTED)
-        status: BreedingPlanStatus.COMMITTED,
+        // Lock the plan (change status to CYCLE)
+        status: BreedingPlanStatus.CYCLE,
         committedAt: new Date(),
         committedByUserId: userId,
 
@@ -2221,17 +2279,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // Create audit event for plan commit (status change to COMMITTED)
+        // Create audit event for plan cycle start (status change to CYCLE)
         await tx.breedingPlanEvent.create({
           data: {
             tenantId,
             planId: id,
-            type: "PLAN_COMMITTED",
+            type: "PLAN_CYCLE_STARTED",
             occurredAt: new Date(),
-            label: "Plan committed",
+            label: "Plan cycle started",
             data: {
               previousStatus: "PLANNING",
-              newStatus: "COMMITTED",
+              newStatus: "CYCLE",
             },
             recordedByUserId: userId,
           },
@@ -2348,11 +2406,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      // Validate: Plan must be COMMITTED or later (not PLANNING)
+      // Validate: Plan must be CYCLE or later (not PLANNING)
       if (String(plan.status) === "PLANNING") {
         return reply.code(400).send({
           error: "plan_not_locked",
-          detail: "Plan must be locked (COMMITTED or later) before upgrading to ovulation anchor. Use /lock endpoint first."
+          detail: "Plan must be locked (CYCLE or later) before upgrading to ovulation anchor. Use /lock endpoint first."
         });
       }
 
