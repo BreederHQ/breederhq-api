@@ -255,6 +255,7 @@ import {
   getMareReproductiveHistory,
   getMareDetailedFoalingHistory,
   recalculateMareHistory,
+  getFoalingAnalytics,
 } from "../services/mare-reproductive-history-service.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
@@ -598,6 +599,9 @@ async function getLitterInTenant(litterId: number, tenantId: number) {
 function errorReply(err: any) {
   if (err?.code === "P2002") return { status: 409, payload: { error: "duplicate", detail: err?.meta?.target } };
   if (err?.code === "P2003") return { status: 409, payload: { error: "foreign_key_conflict", meta: err?.meta } };
+  if (err instanceof ImmutabilityError) {
+    return { status: 400, payload: { error: "immutability_violation", field: err.field, detail: err.message } };
+  }
   if (err?.statusCode) return { status: err.statusCode, payload: { error: err.message } };
 
   // Show details when not in production
@@ -608,6 +612,222 @@ function errorReply(err: any) {
       ? { error: "internal_error", code: err?.code, message: err?.message, meta: err?.meta, stack: err?.stack }
       : { error: "internal_error" },
   };
+}
+
+/* ───────────────────────── Anchor Mode System Types & Validation ───────────────────────── */
+
+type ReproAnchorMode = "CYCLE_START" | "OVULATION" | "BREEDING_DATE";
+type OvulationMethod = "CALCULATED" | "PROGESTERONE_TEST" | "LH_TEST" | "ULTRASOUND" | "VAGINAL_CYTOLOGY" | "PALPATION" | "AT_HOME_TEST" | "VETERINARY_EXAM" | "BREEDING_INDUCED";
+type ConfidenceLevel = "HIGH" | "MEDIUM" | "LOW";
+
+const VALID_ANCHOR_MODES = new Set<ReproAnchorMode>(["CYCLE_START", "OVULATION", "BREEDING_DATE"]);
+const VALID_OVULATION_METHODS = new Set<OvulationMethod>([
+  "PROGESTERONE_TEST", "LH_TEST", "ULTRASOUND", "VAGINAL_CYTOLOGY",
+  "PALPATION", "AT_HOME_TEST", "VETERINARY_EXAM", "BREEDING_INDUCED"
+]);
+
+// Species defaults for timeline calculations (subset of reproEngine defaults)
+const SPECIES_DEFAULTS: Record<string, { ovulationOffsetDays: number; gestationDays: number; offspringCareDurationWeeks: number; placementStartWeeksDefault: number; placementExtendedWeeks: number }> = {
+  DOG: { ovulationOffsetDays: 12, gestationDays: 63, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+  CAT: { ovulationOffsetDays: 0, gestationDays: 63, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 12, placementExtendedWeeks: 4 },
+  HORSE: { ovulationOffsetDays: 5, gestationDays: 340, offspringCareDurationWeeks: 20, placementStartWeeksDefault: 24, placementExtendedWeeks: 8 },
+  RABBIT: { ovulationOffsetDays: 0, gestationDays: 31, offspringCareDurationWeeks: 4, placementStartWeeksDefault: 8, placementExtendedWeeks: 2 },
+  GOAT: { ovulationOffsetDays: 2, gestationDays: 150, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+  SHEEP: { ovulationOffsetDays: 2, gestationDays: 147, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+};
+
+function getSpeciesDefaults(species: string) {
+  return SPECIES_DEFAULTS[String(species).toUpperCase()] || SPECIES_DEFAULTS.DOG;
+}
+
+// Check if species is an induced ovulator (breeding triggers ovulation)
+function isInducedOvulator(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "CAT" || s === "RABBIT";
+}
+
+// Check if species supports ovulation upgrade (cycle start -> ovulation)
+function supportsOvulationUpgrade(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "DOG" || s === "HORSE";
+}
+
+// Check if species supports ovulation testing/anchor
+// GOAT and SHEEP don't have commercial ovulation testing available
+function supportsOvulationTesting(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "DOG" || s === "HORSE";
+}
+
+/**
+ * ImmutabilityError - thrown when attempting to modify locked fields
+ */
+class ImmutabilityError extends Error {
+  constructor(public field: string, message: string) {
+    super(message);
+    this.name = "ImmutabilityError";
+  }
+}
+
+/**
+ * Validate immutability rules for breeding plan updates.
+ * Enforces the immutability matrix from Phase 1.4 of the anchor mode spec.
+ */
+function validateImmutability(existingPlan: any, updates: any): void {
+  const status = String(existingPlan.status);
+  const lockedStatuses = ["BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+  const postCommitStatuses = ["COMMITTED", ...lockedStatuses];
+
+  // CANCELED status - no date changes allowed
+  if (status === "CANCELED") {
+    const dateFields = [
+      "cycleStartObserved", "ovulationConfirmed", "breedDateActual",
+      "birthDateActual", "weanedDateActual", "cycleStartDateActual",
+      "hormoneTestingStartDateActual", "placementStartDateActual",
+      "placementCompletedDateActual",
+    ];
+    for (const field of dateFields) {
+      if (updates[field] !== undefined) {
+        throw new ImmutabilityError(field, "Cannot modify dates on a CANCELED breeding plan. The plan is permanently locked.");
+      }
+    }
+  }
+
+  // reproAnchorMode validation
+  // Anchor mode cannot be changed directly via PATCH in COMMITTED or later statuses.
+  // Upgrades (CYCLE_START -> OVULATION) must go through the /upgrade-to-ovulation endpoint.
+  if (updates.reproAnchorMode !== undefined && updates.reproAnchorMode !== existingPlan.reproAnchorMode) {
+    if (lockedStatuses.includes(status)) {
+      throw new ImmutabilityError("reproAnchorMode", "Cannot change anchor mode after breeding has begun");
+    }
+    // In COMMITTED status, anchor mode changes must use upgrade endpoint
+    if (status === "COMMITTED") {
+      throw new ImmutabilityError("reproAnchorMode", "Anchor mode locked in COMMITTED status. Use the upgrade endpoint to upgrade from CYCLE_START to OVULATION.");
+    }
+  }
+
+  // cycleStartObserved validation
+  // Tolerance is measured from the ORIGINAL locked value (lockedCycleStart), not the current value
+  if (updates.cycleStartObserved !== undefined && existingPlan.cycleStartObserved) {
+    if (lockedStatuses.includes(status)) {
+      throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after COMMITTED status");
+    }
+    if (status === "COMMITTED") {
+      // Use lockedCycleStart as reference if available, otherwise fall back to current value
+      const referenceDate = existingPlan.lockedCycleStart || existingPlan.cycleStartObserved;
+      const oldDate = new Date(referenceDate);
+      const newDate = new Date(updates.cycleStartObserved);
+      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 3) {
+        throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in COMMITTED status (attempted ${Math.round(diffDays)} days)`);
+      }
+    }
+  }
+
+  // ovulationConfirmed validation
+  // Tolerance is measured from the ORIGINAL locked value (lockedOvulationDate), not the current value
+  if (updates.ovulationConfirmed !== undefined && existingPlan.ovulationConfirmed) {
+    if (lockedStatuses.includes(status)) {
+      throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after COMMITTED status");
+    }
+    if (status === "COMMITTED") {
+      // Use lockedOvulationDate as reference if available, otherwise fall back to current value
+      const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
+      const oldDate = new Date(referenceDate);
+      const newDate = new Date(updates.ovulationConfirmed);
+      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 2) {
+        throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in COMMITTED status (attempted ${Math.round(diffDays)} days)`);
+      }
+    }
+  }
+
+  // breedDateActual validation
+  if (updates.breedDateActual !== undefined && existingPlan.breedDateActual) {
+    const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+    if (postBreedStatuses.includes(status)) {
+      throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
+    }
+    if (status === "BRED") {
+      const oldDate = new Date(existingPlan.breedDateActual);
+      const newDate = new Date(updates.breedDateActual);
+      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 2) {
+        throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+      }
+    }
+  }
+
+  // birthDateActual - STRICT immutability (most critical date)
+  if (updates.birthDateActual !== undefined && existingPlan.birthDateActual) {
+    // Birth date cannot be changed once set (except via admin override)
+    throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+  }
+
+  // weanedDateActual validation
+  if (updates.weanedDateActual !== undefined && existingPlan.weanedDateActual) {
+    const postWeenStatuses = ["PLACEMENT", "COMPLETE"];
+    if (postWeenStatuses.includes(status)) {
+      const oldDate = new Date(existingPlan.weanedDateActual);
+      const newDate = new Date(updates.weanedDateActual);
+      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) {
+        throw new ImmutabilityError("weanedDateActual", `Cannot change weaning date by more than 7 days after WEANED status (attempted ${Math.round(diffDays)} days)`);
+      }
+    }
+  }
+}
+
+/**
+ * Calculate expected dates from an anchor date using species defaults.
+ * Used by unified lock and upgrade endpoints.
+ */
+function calculateExpectedDatesFromAnchor(
+  anchorMode: ReproAnchorMode,
+  anchorDate: Date,
+  species: string
+): {
+  cycleStart: Date;
+  ovulation: Date;
+  dueDate: Date;
+  weanedDate: Date;
+  placementStart: Date;
+  placementCompleted: Date;
+} {
+  const d = getSpeciesDefaults(species);
+
+  let cycleStart: Date;
+  let ovulation: Date;
+
+  if (anchorMode === "OVULATION" || anchorMode === "BREEDING_DATE") {
+    // Ovulation is the anchor - work backward for cycle start
+    ovulation = new Date(anchorDate);
+    cycleStart = new Date(anchorDate);
+    cycleStart.setUTCDate(cycleStart.getUTCDate() - d.ovulationOffsetDays);
+  } else {
+    // Cycle start is the anchor - work forward for ovulation
+    cycleStart = new Date(anchorDate);
+    ovulation = new Date(anchorDate);
+    ovulation.setUTCDate(ovulation.getUTCDate() + d.ovulationOffsetDays);
+  }
+
+  // Calculate birth from ovulation (gestation days)
+  const dueDate = new Date(ovulation);
+  dueDate.setUTCDate(dueDate.getUTCDate() + d.gestationDays);
+
+  // Calculate weaned from birth
+  const weanedDate = new Date(dueDate);
+  weanedDate.setUTCDate(weanedDate.getUTCDate() + (d.offspringCareDurationWeeks * 7));
+
+  // Calculate placement start from birth
+  const placementStart = new Date(dueDate);
+  placementStart.setUTCDate(placementStart.getUTCDate() + (d.placementStartWeeksDefault * 7));
+
+  // Calculate placement completed
+  const placementCompleted = new Date(placementStart);
+  placementCompleted.setUTCDate(placementCompleted.getUTCDate() + (d.placementExtendedWeeks * 7));
+
+  return { cycleStart, ovulation, dueDate, weanedDate, placementStart, placementCompleted };
 }
 
 function buildCodeFromId(planId: number, d = new Date()) {
@@ -963,7 +1183,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const existing = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
-        select: { species: true, code: true, status: true, damId: true, sireId: true },
+        select: {
+          species: true,
+          code: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          // Fields needed for immutability validation
+          reproAnchorMode: true,
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+          cycleStartObserved: true,
+          ovulationConfirmed: true,
+          breedDateActual: true,
+          birthDateActual: true,
+          weanedDateActual: true,
+        },
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
@@ -1049,6 +1284,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "expectedPlacementStart",
         "expectedWeaned",
         "expectedPlacementCompleted",
+        "cycleStartObserved",
+        "ovulationConfirmed",
         "cycleStartDateActual",
         "hormoneTestingStartDateActual",
         "breedDateActual",
@@ -1119,6 +1356,35 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               });
             }
           }
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // BUSINESS RULE: Cannot clear date if downstream date is recorded
+      // Each date in the breeding timeline depends on previous dates existing
+      // ═══════════════════════════════════════════════════════════════════════════
+
+      // Cannot clear cycleStartDateActual if breedDateActual is set
+      if (b.cycleStartDateActual === null) {
+        const breedDateWillExist = b.breedDateActual !== null &&
+          (b.breedDateActual !== undefined || existingPlanDates?.breedDateActual);
+        if (breedDateWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual cycle start date because the actual breeding date is recorded. Clear the downstream date first.",
+          });
+        }
+      }
+
+      // Cannot clear breedDateActual if birthDateActual is set
+      if (b.breedDateActual === null) {
+        const birthDateWillExist = b.birthDateActual !== null &&
+          (b.birthDateActual !== undefined || existingPlanDates?.birthDateActual);
+        if (birthDateWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual breeding date because the actual birth date is recorded. Clear the downstream date first.",
+          });
         }
       }
 
@@ -1370,6 +1636,23 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(status).send(payload);
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // IMMUTABILITY VALIDATION (Phase 1.4 of anchor mode spec)
+      // Validates that fields can be modified based on current status
+      // ═══════════════════════════════════════════════════════════════════════════
+      try {
+        validateImmutability(existing, b);
+      } catch (err) {
+        if (err instanceof ImmutabilityError) {
+          return reply.code(400).send({
+            error: "immutable_field",
+            field: err.field,
+            detail: err.message,
+          });
+        }
+        throw err;
+      }
+
       // Track dam/sire changes for status sync
       const damChanged = data.damId !== undefined;
       const sireChanged = data.sireId !== undefined;
@@ -1436,6 +1719,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: true,
           damId: true,
           sireId: true,
+          // Anchor mode system fields
+          reproAnchorMode: true,
+          ovulationConfirmed: true,
+          cycleStartObserved: true,
+          dateConfidenceLevel: true,
+          // Legacy locked fields
           lockedCycleStart: true,
           lockedOvulationDate: true,
           lockedDueDate: true,
@@ -1464,6 +1753,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "dam_sire_required" });
       }
 
+      // Validate locked dates - anchor mode system populates all of these via /lock endpoint
       const missingLock: string[] = [];
       if (!plan.lockedCycleStart) missingLock.push("lockedCycleStart");
       if (!plan.lockedOvulationDate) missingLock.push("lockedOvulationDate");
@@ -1472,7 +1762,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (missingLock.length) {
         return reply.code(400).send({
           error: "full_lock_required",
-          detail: `Commit requires a locked cycle with all fields present. Missing: ${missingLock.join(", ")}`,
+          detail: `Commit requires a locked cycle with all fields present. Use POST /breeding/plans/:id/lock to lock the plan first. Missing: ${missingLock.join(", ")}`,
         });
       }
 
@@ -1507,6 +1797,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             data: {
               code,
               fromStatus: String(plan.status),
+              // Anchor mode system data
+              anchorMode: plan.reproAnchorMode ?? "CYCLE_START",
+              confidenceLevel: plan.dateConfidenceLevel ?? "MEDIUM",
+              ovulationConfirmed: plan.ovulationConfirmed,
+              cycleStartObserved: plan.cycleStartObserved,
+              // Legacy locked dates
               lockedCycleStart: plan.lockedCycleStart,
               lockedOvulationDate: plan.lockedOvulationDate,
               lockedDueDate: plan.lockedDueDate,
@@ -1677,6 +1973,546 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.send({ ok: true });
     } catch (err) {
       req.log.error({ err }, "uncommit failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────────────────── Anchor Mode System Endpoints ───────────────────────── */
+
+  /**
+   * POST /breeding/plans/:id/lock
+   *
+   * Unified lock endpoint for the anchor mode system.
+   * Locks a plan using the specified anchor mode and date.
+   * Replaces separate cycle/ovulation lock methods.
+   *
+   * Body:
+   * - anchorMode: "CYCLE_START" | "OVULATION" | "BREEDING_DATE"
+   * - anchorDate: ISO date string (YYYY-MM-DD)
+   * - confirmationMethod?: OvulationMethod (required for OVULATION mode)
+   * - testResultId?: number (optional link to TestResult for ovulation)
+   * - notes?: string
+   */
+  app.post("/breeding/plans/:id/lock", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as {
+        anchorMode: string;
+        anchorDate: string;
+        confirmationMethod?: string;
+        testResultId?: number;
+        notes?: string;
+      };
+
+      // Validate required fields
+      if (!b.anchorMode) {
+        return reply.code(400).send({ error: "anchor_mode_required", detail: "anchorMode is required" });
+      }
+      if (!b.anchorDate) {
+        return reply.code(400).send({ error: "anchor_date_required", detail: "anchorDate is required" });
+      }
+
+      // Validate anchor mode
+      const anchorMode = String(b.anchorMode).toUpperCase() as ReproAnchorMode;
+      if (!VALID_ANCHOR_MODES.has(anchorMode)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_mode",
+          detail: `anchorMode must be one of: ${Array.from(VALID_ANCHOR_MODES).join(", ")}`
+        });
+      }
+
+      // Parse anchor date
+      const anchorDate = toDateOrNull(b.anchorDate);
+      if (!anchorDate) {
+        return reply.code(400).send({
+          error: "invalid_anchor_date",
+          detail: "anchorDate must be a valid date in YYYY-MM-DD format"
+        });
+      }
+
+      // Get existing plan
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          species: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          reproAnchorMode: true,
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Validate: Plan must be in PLANNING status to lock (use upgrade endpoint for COMMITTED plans)
+      if (String(plan.status) !== "PLANNING") {
+        return reply.code(400).send({
+          error: "plan_already_locked",
+          detail: `Plan is in ${plan.status} status. Use /upgrade-to-ovulation to upgrade an already-locked plan.`
+        });
+      }
+
+      // Validate: Dam and Sire required for locking
+      if (!plan.damId || !plan.sireId) {
+        return reply.code(400).send({
+          error: "dam_sire_required",
+          detail: "Both dam and sire must be set before locking a plan"
+        });
+      }
+
+      const species = String(plan.species);
+
+      // Species-specific anchor mode validation
+      if (anchorMode === "BREEDING_DATE" && !isInducedOvulator(species)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_for_species",
+          detail: `BREEDING_DATE anchor mode is only valid for induced ovulators (CAT, RABBIT). ${species} should use CYCLE_START or OVULATION.`
+        });
+      }
+
+      if (anchorMode === "OVULATION" && isInducedOvulator(species)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_for_species",
+          detail: `OVULATION anchor mode is not valid for induced ovulators. ${species} uses BREEDING_DATE (breeding triggers ovulation).`
+        });
+      }
+
+      // GOAT and SHEEP don't support ovulation testing
+      if (anchorMode === "OVULATION" && !supportsOvulationTesting(species)) {
+        return reply.code(400).send({
+          error: "ovulation_not_supported",
+          detail: `OVULATION anchor mode is not available for ${species}. Commercial ovulation testing is not available for this species. Use CYCLE_START instead.`
+        });
+      }
+
+      // Validate confirmation method for OVULATION mode
+      let confirmationMethod: OvulationMethod | null = null;
+      if (anchorMode === "OVULATION") {
+        if (!b.confirmationMethod) {
+          return reply.code(400).send({
+            error: "confirmation_method_required",
+            detail: "confirmationMethod is required when anchorMode is OVULATION"
+          });
+        }
+        confirmationMethod = String(b.confirmationMethod).toUpperCase() as OvulationMethod;
+        if (!VALID_OVULATION_METHODS.has(confirmationMethod)) {
+          return reply.code(400).send({
+            error: "invalid_confirmation_method",
+            detail: `confirmationMethod must be one of: ${Array.from(VALID_OVULATION_METHODS).join(", ")}`
+          });
+        }
+      }
+
+      // Validate test result if provided
+      if (b.testResultId) {
+        const testResult = await prisma.testResult.findFirst({
+          where: { id: Number(b.testResultId), tenantId },
+          select: { id: true },
+        });
+        if (!testResult) {
+          return reply.code(400).send({
+            error: "test_result_not_found",
+            detail: "Specified testResultId not found or does not belong to this tenant"
+          });
+        }
+      }
+
+      // Calculate all expected dates from the anchor
+      const calculated = calculateExpectedDatesFromAnchor(anchorMode, anchorDate, species);
+
+      // Determine confidence level based on anchor mode
+      const confidence: ConfidenceLevel = anchorMode === "OVULATION" ? "HIGH" : "MEDIUM";
+
+      const userId = (req as any).user?.id ?? null;
+
+      // Build update payload
+      const updateData: any = {
+        // Lock the plan (change status to COMMITTED)
+        status: BreedingPlanStatus.COMMITTED,
+        committedAt: new Date(),
+        committedByUserId: userId,
+
+        // Anchor mode system fields
+        reproAnchorMode: anchorMode,
+        primaryAnchor: anchorMode,
+        dateConfidenceLevel: confidence,
+        dateSourceNotes: b.notes ?? null,
+
+        // Set anchor-specific observed/confirmed dates
+        ...(anchorMode === "CYCLE_START" && {
+          cycleStartObserved: anchorDate,
+          cycleStartSource: "OBSERVED",
+          cycleStartConfidence: confidence,
+          ovulationConfirmedMethod: "CALCULATED",
+        }),
+
+        ...(anchorMode === "OVULATION" && {
+          ovulationConfirmed: anchorDate,
+          ovulationConfirmedMethod: confirmationMethod,
+          ovulationConfidence: "HIGH",
+          ovulationTestResultId: b.testResultId ?? null,
+          // Derive cycle start from ovulation (estimated)
+          cycleStartObserved: calculated.cycleStart,
+          cycleStartSource: "DERIVED",
+          cycleStartConfidence: "MEDIUM",
+        }),
+
+        ...(anchorMode === "BREEDING_DATE" && {
+          // For induced ovulators, breeding date = ovulation date
+          breedDateActual: anchorDate,
+          ovulationConfirmed: anchorDate,
+          ovulationConfirmedMethod: "BREEDING_INDUCED",
+          ovulationConfidence: "MEDIUM",
+        }),
+
+        // Locked dates (backward compatibility with existing system)
+        lockedCycleStart: calculated.cycleStart,
+        lockedOvulationDate: calculated.ovulation,
+        lockedDueDate: calculated.dueDate,
+        lockedPlacementStartDate: calculated.placementStart,
+
+        // Expected dates
+        expectedCycleStart: calculated.cycleStart,
+        expectedBreedDate: calculated.ovulation,
+        expectedBirthDate: calculated.dueDate,
+        expectedWeaned: calculated.weanedDate,
+        expectedPlacementStart: calculated.placementStart,
+        expectedPlacementCompleted: calculated.placementCompleted,
+      };
+
+      // Perform update within transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.breedingPlan.update({
+          where: { id },
+          data: updateData,
+        });
+
+        // Create audit event for anchor lock
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: `${anchorMode}_LOCKED`,
+            occurredAt: new Date(),
+            label: `Plan locked with ${anchorMode.toLowerCase().replace("_", " ")} anchor`,
+            data: {
+              anchorMode,
+              anchorDate: anchorDate.toISOString().slice(0, 10),
+              confirmationMethod,
+              testResultId: b.testResultId ?? null,
+              confidence,
+              calculatedDates: {
+                cycleStart: calculated.cycleStart.toISOString().slice(0, 10),
+                ovulation: calculated.ovulation.toISOString().slice(0, 10),
+                dueDate: calculated.dueDate.toISOString().slice(0, 10),
+                weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+                placementStart: calculated.placementStart.toISOString().slice(0, 10),
+                placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+              },
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        // Create audit event for plan commit (status change to COMMITTED)
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "PLAN_COMMITTED",
+            occurredAt: new Date(),
+            label: "Plan committed",
+            data: {
+              previousStatus: "PLANNING",
+              newStatus: "COMMITTED",
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return updated;
+      });
+
+      reply.send({
+        success: true,
+        plan: result,
+        anchorMode,
+        anchorDate: anchorDate.toISOString().slice(0, 10),
+        confidence,
+        calculatedDates: {
+          cycleStart: calculated.cycleStart.toISOString().slice(0, 10),
+          ovulation: calculated.ovulation.toISOString().slice(0, 10),
+          dueDate: calculated.dueDate.toISOString().slice(0, 10),
+          weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+          placementStart: calculated.placementStart.toISOString().slice(0, 10),
+          placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+        },
+      });
+    } catch (err) {
+      req.log.error({ err }, "lock failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * POST /breeding/plans/:id/upgrade-to-ovulation
+   *
+   * Progressive enhancement: upgrade from CYCLE_START to OVULATION anchor.
+   * Used when breeder obtains hormone test results after initially locking with cycle start.
+   *
+   * Body:
+   * - ovulationDate: ISO date string (YYYY-MM-DD)
+   * - confirmationMethod: OvulationMethod (required)
+   * - testResultId?: number (optional link to TestResult)
+   * - notes?: string
+   */
+  app.post("/breeding/plans/:id/upgrade-to-ovulation", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as {
+        ovulationDate: string;
+        confirmationMethod: string;
+        testResultId?: number;
+        notes?: string;
+      };
+
+      // Validate required fields
+      if (!b.ovulationDate) {
+        return reply.code(400).send({ error: "ovulation_date_required", detail: "ovulationDate is required" });
+      }
+      if (!b.confirmationMethod) {
+        return reply.code(400).send({ error: "confirmation_method_required", detail: "confirmationMethod is required" });
+      }
+
+      // Parse ovulation date
+      const ovulationDate = toDateOrNull(b.ovulationDate);
+      if (!ovulationDate) {
+        return reply.code(400).send({
+          error: "invalid_ovulation_date",
+          detail: "ovulationDate must be a valid date in YYYY-MM-DD format"
+        });
+      }
+
+      // Validate confirmation method
+      const confirmationMethod = String(b.confirmationMethod).toUpperCase() as OvulationMethod;
+      if (!VALID_OVULATION_METHODS.has(confirmationMethod)) {
+        return reply.code(400).send({
+          error: "invalid_confirmation_method",
+          detail: `confirmationMethod must be one of: ${Array.from(VALID_OVULATION_METHODS).join(", ")}`
+        });
+      }
+
+      // Get existing plan with all needed fields
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          species: true,
+          status: true,
+          reproAnchorMode: true,
+          cycleStartObserved: true,
+          lockedCycleStart: true,
+          ovulationConfirmed: true,
+          expectedPlacementStart: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      const species = String(plan.species);
+
+      // Validate: Can only upgrade from CYCLE_START mode
+      if (plan.reproAnchorMode !== "CYCLE_START") {
+        return reply.code(400).send({
+          error: "cannot_upgrade",
+          detail: `Plan is using ${plan.reproAnchorMode} anchor mode. Only CYCLE_START plans can be upgraded to OVULATION.`
+        });
+      }
+
+      // Validate: Species must support ovulation upgrade
+      if (!supportsOvulationUpgrade(species)) {
+        return reply.code(400).send({
+          error: "species_not_supported",
+          detail: `${species} does not support ovulation upgrade. Only DOG and HORSE support this feature.`
+        });
+      }
+
+      // Validate: Plan must be COMMITTED or later (not PLANNING)
+      if (String(plan.status) === "PLANNING") {
+        return reply.code(400).send({
+          error: "plan_not_locked",
+          detail: "Plan must be locked (COMMITTED or later) before upgrading to ovulation anchor. Use /lock endpoint first."
+        });
+      }
+
+      // Validate: Cannot upgrade plans that have progressed past BRED
+      const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBreedStatuses.includes(String(plan.status))) {
+        return reply.code(400).send({
+          error: "plan_too_advanced",
+          detail: `Plan is in ${plan.status} status. Cannot upgrade to ovulation anchor after breeding outcome is recorded.`
+        });
+      }
+
+      // Validate: Ovulation date must be after cycle start
+      const cycleStart = plan.cycleStartObserved || plan.lockedCycleStart;
+      if (cycleStart) {
+        const cycleDate = new Date(cycleStart);
+        if (ovulationDate <= cycleDate) {
+          return reply.code(400).send({
+            error: "invalid_ovulation_date",
+            detail: "Ovulation date must be after cycle start date"
+          });
+        }
+      }
+
+      // Validate test result if provided
+      if (b.testResultId) {
+        const testResult = await prisma.testResult.findFirst({
+          where: { id: Number(b.testResultId), tenantId },
+          select: { id: true },
+        });
+        if (!testResult) {
+          return reply.code(400).send({
+            error: "test_result_not_found",
+            detail: "Specified testResultId not found or does not belong to this tenant"
+          });
+        }
+      }
+
+      // Calculate new expected dates from ovulation
+      const calculated = calculateExpectedDatesFromAnchor("OVULATION", ovulationDate, species);
+
+      // Calculate variance from expected (for ML tracking)
+      let actualOffset: number | null = null;
+      let expectedOffset: number | null = null;
+      let variance: number | null = null;
+
+      if (cycleStart) {
+        const cycleDate = new Date(cycleStart);
+        actualOffset = Math.floor((ovulationDate.getTime() - cycleDate.getTime()) / (1000 * 60 * 60 * 24));
+        expectedOffset = getSpeciesDefaults(species).ovulationOffsetDays;
+        variance = actualOffset - expectedOffset;
+      }
+
+      // Calculate placement window shift
+      let placementShift = 0;
+      if (plan.expectedPlacementStart) {
+        const oldPlacement = new Date(plan.expectedPlacementStart);
+        placementShift = Math.abs(Math.floor((calculated.placementStart.getTime() - oldPlacement.getTime()) / (1000 * 60 * 60 * 24)));
+      }
+
+      const userId = (req as any).user?.id ?? null;
+
+      // Build update payload
+      const updateData: any = {
+        // Upgrade anchor mode
+        reproAnchorMode: "OVULATION",
+        primaryAnchor: "OVULATION",
+        dateConfidenceLevel: "HIGH",
+        dateSourceNotes: b.notes ?? null,
+
+        // Ovulation confirmed data
+        ovulationConfirmed: ovulationDate,
+        ovulationConfirmedMethod: confirmationMethod,
+        ovulationConfidence: "HIGH",
+        ovulationTestResultId: b.testResultId ?? null,
+
+        // Variance tracking (for ML)
+        actualOvulationOffset: actualOffset,
+        expectedOvulationOffset: expectedOffset,
+        varianceFromExpected: variance,
+
+        // Update locked dates
+        lockedOvulationDate: ovulationDate,
+        lockedDueDate: calculated.dueDate,
+        lockedPlacementStartDate: calculated.placementStart,
+
+        // Update expected dates
+        expectedBreedDate: ovulationDate,
+        expectedBirthDate: calculated.dueDate,
+        expectedWeaned: calculated.weanedDate,
+        expectedPlacementStart: calculated.placementStart,
+        expectedPlacementCompleted: calculated.placementCompleted,
+      };
+
+      // Perform update within transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.breedingPlan.update({
+          where: { id },
+          data: updateData,
+        });
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "ANCHOR_UPGRADED",
+            occurredAt: new Date(),
+            label: "Upgraded to ovulation anchor",
+            data: {
+              from: "CYCLE_START",
+              to: "OVULATION",
+              ovulationDate: ovulationDate.toISOString().slice(0, 10),
+              confirmationMethod,
+              testResultId: b.testResultId ?? null,
+              cycleStartDate: cycleStart ? new Date(cycleStart).toISOString().slice(0, 10) : null,
+              actualOffset,
+              expectedOffset,
+              variance,
+              placementShift,
+              calculatedDates: {
+                dueDate: calculated.dueDate.toISOString().slice(0, 10),
+                weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+                placementStart: calculated.placementStart.toISOString().slice(0, 10),
+                placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+              },
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return updated;
+      });
+
+      reply.send({
+        success: true,
+        plan: result,
+        upgrade: {
+          from: "CYCLE_START",
+          to: "OVULATION",
+        },
+        ovulationDate: ovulationDate.toISOString().slice(0, 10),
+        confirmationMethod,
+        confidence: "HIGH",
+        variance: variance !== null ? {
+          actualOffset,
+          expectedOffset,
+          variance,
+          analysis: variance === 0 ? "on-time" : variance > 0 ? "late" : "early",
+        } : null,
+        placementShift,
+        calculatedDates: {
+          dueDate: calculated.dueDate.toISOString().slice(0, 10),
+          weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+          placementStart: calculated.placementStart.toISOString().slice(0, 10),
+          placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+        },
+      });
+    } catch (err) {
+      req.log.error({ err }, "upgrade-to-ovulation failed");
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
@@ -2681,6 +3517,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/foaling-analytics - Get aggregate foaling analytics
+  app.get("/breeding/foaling-analytics", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      const { year } = req.query as { year?: string };
+
+      const analytics = await getFoalingAnalytics(tenantId, {
+        year: year ? parseInt(year, 10) : undefined,
+      });
+      reply.send(analytics);
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

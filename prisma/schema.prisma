@@ -449,6 +449,63 @@ enum BreedingPlanStatus {
   @@schema("public")
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Anchor Mode System Enums (Ovulation Anchor Breeding System)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// User-selected primary anchor mode for a breeding plan
+enum ReproAnchorMode {
+  CYCLE_START   // Traditional: heat/cycle observation only
+  OVULATION     // Professional: hormone-tested ovulation
+  BREEDING_DATE // For induced ovulators (cats/rabbits)
+
+  @@schema("public")
+}
+
+/// Anchor type used for timeline calculations
+enum AnchorType {
+  CYCLE_START   // Primary calculation from cycle start
+  OVULATION     // Primary calculation from ovulation
+  BREEDING_DATE // For induced ovulators (cats/rabbits)
+  BIRTH         // Post-birth timeline
+  LOCKED_CYCLE  // Legacy fallback
+
+  @@schema("public")
+}
+
+/// How the ovulation date was determined
+enum OvulationMethod {
+  CALCULATED        // Derived from cycle start + species offset
+  PROGESTERONE_TEST // Blood progesterone testing (day 5-14 of cycle)
+  LH_TEST           // Luteinizing hormone test
+  ULTRASOUND        // Veterinary ultrasound (common for horses)
+  VAGINAL_CYTOLOGY  // Microscopic cell analysis
+  PALPATION         // Physical exam for horses
+  AT_HOME_TEST      // Consumer ovulation test kit
+  VETERINARY_EXAM   // Physical examination by vet
+  BREEDING_INDUCED  // For cats/rabbits
+
+  @@schema("public")
+}
+
+/// Confidence level for date accuracy
+enum ConfidenceLevel {
+  HIGH   // Hormone-tested ovulation (±1-2 days)
+  MEDIUM // Observed cycle start (±2-5 days)
+  LOW    // Estimated/guessed dates (±5+ days)
+
+  @@schema("public")
+}
+
+/// How a date was determined (observed vs calculated)
+enum DataSource {
+  OBSERVED  // Breeder directly observed (cycle start, breeding date)
+  DERIVED   // Calculated from another date (cycle start derived from ovulation)
+  ESTIMATED // User's best guess (low confidence)
+
+  @@schema("public")
+}
+
 enum BreedingMethod {
   NATURAL
   AI_TCI
@@ -1124,6 +1181,11 @@ model Tenant {
 
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
+
+  // Demo tenant configuration
+  // Demo tenants can be reset to a known state via the reset endpoint
+  isDemoTenant  Boolean @default(false)
+  demoResetType String? // 'fresh' | 'lived-in' - determines which seed script to run on reset
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -3209,6 +3271,38 @@ model BreedingPlan {
   lockedDueDate            DateTime?
   lockedPlacementStartDate DateTime?
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Anchor Mode System (Ovulation Anchor Breeding System)
+  // Stores BOTH cycle start AND ovulation when available for validation/ML
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /// User-selected primary anchor mode for this plan
+  reproAnchorMode ReproAnchorMode @default(CYCLE_START)
+
+  /// Cycle start tracking (observed or derived from ovulation)
+  cycleStartObserved   DateTime?       // When breeder observed heat signs
+  cycleStartSource     DataSource?     // How cycle start was determined
+  cycleStartConfidence ConfidenceLevel?
+
+  /// Ovulation tracking (confirmed via hormone test or calculated)
+  ovulationConfirmed       DateTime?       // When ovulation was hormone-confirmed
+  ovulationConfirmedMethod OvulationMethod?
+  ovulationTestResultId    Int?
+  ovulationTestResult      TestResult?     @relation("OvulationAnchor", fields: [ovulationTestResultId], references: [id], onDelete: SetNull)
+  ovulationConfidence      ConfidenceLevel?
+
+  /// System-determined primary anchor based on data quality
+  primaryAnchor AnchorType @default(CYCLE_START)
+
+  /// Variance tracking for machine learning and validation
+  expectedOvulationOffset Int? // Species default offset (e.g., 12 days for dogs)
+  actualOvulationOffset   Int? // Calculated: ovulationConfirmed - cycleStartObserved
+  varianceFromExpected    Int? // actualOffset - expectedOffset (e.g., +2 = 2 days late)
+
+  /// General date confidence metadata
+  dateConfidenceLevel ConfidenceLevel? @default(MEDIUM)
+  dateSourceNotes     String?
+
   expectedCycleStart          DateTime?
   expectedHormoneTestingStart DateTime?
   expectedBreedDate           DateTime?
@@ -3277,6 +3371,12 @@ model BreedingPlan {
   @@index([expectedHormoneTestingStart])
   @@index([expectedBreedDate])
   @@index([cycleStartDateActual])
+  // Anchor Mode System indexes
+  @@index([reproAnchorMode])
+  @@index([ovulationConfirmed])
+  @@index([cycleStartObserved])
+  @@index([primaryAnchor])
+  @@index([ovulationTestResultId])
   @@schema("public")
 }
 
@@ -3382,6 +3482,10 @@ model TestResult {
   resultAt    DateTime?
   notes       String?
   data        Json?
+
+  // Anchor Mode System: track which plans use this test for ovulation anchor
+  anchoredPlans        BreedingPlan[]   @relation("OvulationAnchor")
+  indicatesOvulationDate DateTime?      // When test indicates ovulation occurred
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

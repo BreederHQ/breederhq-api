@@ -10,6 +10,7 @@ import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
 import type { IdentifierType } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
+import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 
 const AVATAR_SIZE = 256;
 
@@ -273,7 +274,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where.archived = false;
     }
     if (species) {
-      if (!["DOG", "CAT", "HORSE"].includes(species)) return reply.code(400).send({ error: "species_invalid" });
+      if (!["DOG", "CAT", "HORSE", "GOAT", "RABBIT", "SHEEP"].includes(species)) return reply.code(400).send({ error: "species_invalid" });
       where.species = species;
     }
     if (sex) {
@@ -425,6 +426,28 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const cycleStartDates = extractCycleStartDates(rec);
     reply.send({ ...rec, cycleStartDates });
+  });
+
+  // GET /animals/:id/cycle-analysis
+  // Returns ovulation pattern analysis and cycle history for a female
+  app.get("/animals/:id/cycle-analysis", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    try {
+      const analysis = await calculateCycleAnalysis(id, tenantId);
+      reply.send(analysis);
+    } catch (err: any) {
+      if (err.message === "Animal not found") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      throw err;
+    }
   });
 
 

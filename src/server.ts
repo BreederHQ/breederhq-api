@@ -536,6 +536,7 @@ import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notifi
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
+import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -578,6 +579,7 @@ app.register(
     api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
     api.register(marketplaceServiceTagsRoutes, { prefix: "/marketplace/service-tags" }); // /api/v1/marketplace/service-tags/* (Service tags for provider portal)
     api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload)
+    api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access)
     api.register(marketplaceServiceDetailRoutes, { prefix: "/marketplace/services" }); // /api/v1/marketplace/services/:slugOrId (Public service detail)
     api.register(marketplaceAbuseReportsRoutes, { prefix: "/marketplace/listings" }); // /api/v1/marketplace/listings/report (Abuse reporting)
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
@@ -697,10 +699,12 @@ app.register(
         "/marketplace/animal-programs",
         "/marketplace/animals",
         "/marketplace/services",
+        "/marketplace/direct-listings",
         "/api/v1/marketplace/offspring-groups",
         "/api/v1/marketplace/animal-programs",
         "/api/v1/marketplace/animals",
         "/api/v1/marketplace/services",
+        "/api/v1/marketplace/direct-listings",
       ];
 
       // Check if path matches public browse patterns (including detail pages like /animal-programs/:slug)

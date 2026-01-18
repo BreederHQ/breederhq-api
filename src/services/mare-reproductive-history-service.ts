@@ -289,3 +289,191 @@ export async function recalculateMareHistory(mareId: number, tenantId: number) {
 
   return await updateMareReproductiveHistory(mareId, tenantId, latestPlan.id);
 }
+
+/**
+ * Get aggregate foaling analytics for a tenant
+ * Returns overall statistics, trends, and success rates
+ */
+export async function getFoalingAnalytics(tenantId: number, options?: { year?: number }) {
+  const currentYear = new Date().getFullYear();
+  const targetYear = options?.year ?? currentYear;
+
+  // Get all completed foalings for the tenant
+  const completedBreedings = await prisma.breedingPlan.findMany({
+    where: {
+      tenantId,
+      species: "HORSE",
+      birthDateActual: { not: null },
+    },
+    include: {
+      foalingOutcome: true,
+      dam: { select: { id: true, name: true } },
+      sire: { select: { id: true, name: true } },
+      offspringGroup: {
+        include: {
+          Offspring: { select: { id: true, lifeState: true, sex: true } },
+        },
+      },
+    },
+    orderBy: { birthDateActual: "desc" },
+  });
+
+  // Filter by year if specified
+  const yearlyBreedings = completedBreedings.filter((b) => {
+    const birthYear = new Date(b.birthDateActual!).getFullYear();
+    return birthYear === targetYear;
+  });
+
+  // Calculate overall statistics
+  const totalFoalings = completedBreedings.length;
+  const foalingsThisYear = yearlyBreedings.length;
+
+  // Live foal stats
+  let totalLiveFoals = 0;
+  let totalFoalsThisYear = 0;
+  let coltsThisYear = 0;
+  let filliesThisYear = 0;
+
+  // Complication stats
+  let totalComplications = 0;
+  let complicationsThisYear = 0;
+  let totalVetCalls = 0;
+  let vetCallsThisYear = 0;
+
+  // Gestation stats
+  const gestationLengths: number[] = [];
+
+  // Monthly distribution for current year
+  const monthlyDistribution: Record<number, number> = {};
+  for (let m = 0; m < 12; m++) monthlyDistribution[m] = 0;
+
+  for (const plan of completedBreedings) {
+    const birthYear = new Date(plan.birthDateActual!).getFullYear();
+    const birthMonth = new Date(plan.birthDateActual!).getMonth();
+    const isThisYear = birthYear === targetYear;
+
+    // Count live foals
+    const liveFoals = plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE") ?? [];
+    totalLiveFoals += liveFoals.length;
+    if (isThisYear) {
+      totalFoalsThisYear += liveFoals.length;
+      coltsThisYear += liveFoals.filter((o) => o.sex === "MALE").length;
+      filliesThisYear += liveFoals.filter((o) => o.sex === "FEMALE").length;
+      monthlyDistribution[birthMonth]++;
+    }
+
+    // Complication tracking
+    if (plan.foalingOutcome?.hadComplications) {
+      totalComplications++;
+      if (isThisYear) complicationsThisYear++;
+    }
+    if (plan.foalingOutcome?.veterinarianCalled) {
+      totalVetCalls++;
+      if (isThisYear) vetCallsThisYear++;
+    }
+
+    // Gestation length calculation
+    if (plan.breedDateActual && plan.birthDateActual) {
+      const breedDate = new Date(plan.breedDateActual);
+      const birthDate = new Date(plan.birthDateActual);
+      const gestationDays = Math.round(
+        (birthDate.getTime() - breedDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      if (gestationDays > 300 && gestationDays < 400) {
+        // Reasonable horse gestation range
+        gestationLengths.push(gestationDays);
+      }
+    }
+  }
+
+  // Calculate averages
+  const avgGestationLength =
+    gestationLengths.length > 0
+      ? Math.round(gestationLengths.reduce((sum, g) => sum + g, 0) / gestationLengths.length)
+      : null;
+  const minGestationLength =
+    gestationLengths.length > 0 ? Math.min(...gestationLengths) : null;
+  const maxGestationLength =
+    gestationLengths.length > 0 ? Math.max(...gestationLengths) : null;
+
+  // Success rate (live foals / total foalings)
+  const successRate = totalFoalings > 0 ? Math.round((totalLiveFoals / totalFoalings) * 100) : 0;
+  const complicationRate = totalFoalings > 0 ? Math.round((totalComplications / totalFoalings) * 100) : 0;
+
+  // Year-over-year comparison
+  const lastYearBreedings = completedBreedings.filter((b) => {
+    const birthYear = new Date(b.birthDateActual!).getFullYear();
+    return birthYear === targetYear - 1;
+  });
+  const foalingsLastYear = lastYearBreedings.length;
+  const yoyChange = foalingsLastYear > 0
+    ? Math.round(((foalingsThisYear - foalingsLastYear) / foalingsLastYear) * 100)
+    : null;
+
+  // Top producing mares (by total foalings)
+  const mareStats: Record<number, { id: number; name: string; foalings: number; liveFoals: number }> = {};
+  for (const plan of completedBreedings) {
+    if (!plan.dam) continue;
+    if (!mareStats[plan.dam.id]) {
+      mareStats[plan.dam.id] = { id: plan.dam.id, name: plan.dam.name, foalings: 0, liveFoals: 0 };
+    }
+    mareStats[plan.dam.id].foalings++;
+    mareStats[plan.dam.id].liveFoals += plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
+  }
+  const topMares = Object.values(mareStats)
+    .sort((a, b) => b.foalings - a.foalings)
+    .slice(0, 5);
+
+  // Top producing sires
+  const sireStats: Record<number, { id: number; name: string; foalings: number; liveFoals: number }> = {};
+  for (const plan of completedBreedings) {
+    if (!plan.sire) continue;
+    if (!sireStats[plan.sire.id]) {
+      sireStats[plan.sire.id] = { id: plan.sire.id, name: plan.sire.name, foalings: 0, liveFoals: 0 };
+    }
+    sireStats[plan.sire.id].foalings++;
+    sireStats[plan.sire.id].liveFoals += plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
+  }
+  const topSires = Object.values(sireStats)
+    .sort((a, b) => b.foalings - a.foalings)
+    .slice(0, 5);
+
+  return {
+    summary: {
+      totalFoalings,
+      foalingsThisYear,
+      foalingsLastYear,
+      yoyChange,
+      totalLiveFoals,
+      totalFoalsThisYear,
+      coltsThisYear,
+      filliesThisYear,
+      successRate,
+      complicationRate,
+    },
+    gestation: {
+      avgDays: avgGestationLength,
+      minDays: minGestationLength,
+      maxDays: maxGestationLength,
+      sampleSize: gestationLengths.length,
+    },
+    complications: {
+      total: totalComplications,
+      thisYear: complicationsThisYear,
+      vetCalls: totalVetCalls,
+      vetCallsThisYear,
+    },
+    seasonality: {
+      year: targetYear,
+      monthlyDistribution: Object.entries(monthlyDistribution).map(([month, count]) => ({
+        month: parseInt(month),
+        monthName: new Date(2000, parseInt(month)).toLocaleString("en-US", { month: "short" }),
+        count,
+      })),
+    },
+    topProducers: {
+      mares: topMares,
+      sires: topSires,
+    },
+  };
+}

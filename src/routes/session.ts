@@ -161,26 +161,54 @@ export default async function sessionRoutes(app: FastifyInstance, _opts: Fastify
       });
     }
 
-    let tenant: { id: number; name: string; slug: string | null } | null = null;
+    let tenant: { id: number; name: string; slug: string | null; isDemoTenant?: boolean; demoResetType?: string | null } | null = null;
     try {
       const t = await (prisma as any).tenant.findUnique({
         where: { id: activeTenantId },
-        select: { id: true, name: true, slug: true },
+        select: { id: true, name: true, slug: true, isDemoTenant: true, demoResetType: true },
       });
-      tenant = t ? { id: t.id, name: t.name, slug: t.slug ?? null } : null;
+      tenant = t ? {
+        id: t.id,
+        name: t.name,
+        slug: t.slug ?? null,
+        isDemoTenant: t.isDemoTenant ?? false,
+        demoResetType: t.demoResetType ?? null,
+      } : null;
     } catch {
       tenant = null;
+    }
+
+    // Fetch tenant names for all memberships (for tenant switcher UI)
+    const membershipTenantIds = (user.tenantMemberships ?? []).map((m) => m.tenantId);
+    let tenantInfoMap: Map<number, { name: string; slug: string | null }> = new Map();
+    if (membershipTenantIds.length > 0) {
+      try {
+        const tenants = await (prisma as any).tenant.findMany({
+          where: { id: { in: membershipTenantIds } },
+          select: { id: true, name: true, slug: true },
+        });
+        for (const t of tenants) {
+          tenantInfoMap.set(t.id, { name: t.name, slug: t.slug ?? null });
+        }
+      } catch {
+        // ignore errors, memberships will just have null names
+      }
     }
 
     return reply.send({
       user: { id: sess.userId, isSuperAdmin: !!(user as any).isSuperAdmin },
       tenant,
-      memberships: (user.tenantMemberships ?? []).map((m) => ({
-        tenantId: m.tenantId,
-        role: m.role ?? null,
-        membershipRole: (m as any).membershipRole ?? null,
-        membershipStatus: (m as any).membershipStatus ?? null,
-      })),
+      memberships: (user.tenantMemberships ?? []).map((m) => {
+        const tenantInfo = tenantInfoMap.get(m.tenantId);
+        return {
+          tenantId: m.tenantId,
+          tenantName: tenantInfo?.name ?? null,
+          tenantSlug: tenantInfo?.slug ?? null,
+          role: m.role ?? null,
+          membershipRole: (m as any).membershipRole ?? null,
+          membershipStatus: (m as any).membershipStatus ?? null,
+        };
+      }),
       tos,
     });
   });
