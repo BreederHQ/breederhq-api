@@ -2223,6 +2223,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             primaryAnchor: "CYCLE_START",
             dateConfidenceLevel: null,
             dateSourceNotes: null,
+            // Clear all downstream actual dates in case they were entered ahead of status
+            cycleStartDateActual: null,
+            cycleStartDateUnknown: false,
+            hormoneTestingStartDateActual: null,
+            ovulationDateUnknown: false,
+            breedDateActual: null,
+            breedDateUnknown: false,
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.PLANNING,
           },
           validation: async () => {
@@ -2282,6 +2294,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             primaryAnchor: "CYCLE_START",
             dateConfidenceLevel: null,
             dateSourceNotes: null,
+            // Clear downstream dates in case they were entered ahead of status
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.CYCLE,
           },
         },
@@ -2289,10 +2307,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         BIRTHED: {
           // Rewind BIRTHED -> BRED: Clear breed date that advanced us to BIRTHED
           // BIRTHED phase = has breed date, working on birth date
+          // Also clear any downstream dates that may have been entered but not yet advanced
           targetPhase: "BRED",
           clearFields: {
             breedDateActual: null,
             breedDateUnknown: false,
+            // Clear downstream dates in case they were entered ahead of status
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.BRED,
           },
         },
@@ -2300,9 +2325,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         WEANED: {
           // Rewind WEANED -> BIRTHED: Clear birth date that advanced us to WEANED
           // WEANED phase = has birth date, working on weaned date
+          // Also clear any downstream dates that may have been entered but not yet advanced
           targetPhase: "BIRTHED",
           clearFields: {
             birthDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.BIRTHED,
           },
           validation: async () => {
@@ -2334,9 +2365,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         PLACEMENT_STARTED: {
           // Rewind PLACEMENT_STARTED -> WEANED: Clear weaned date that advanced us to PLACEMENT_STARTED
           // PLACEMENT_STARTED phase = has weaned date, working on placement start date
+          // Also clear any downstream dates that may have been entered but not yet advanced
           targetPhase: "WEANED",
           clearFields: {
             weanedDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.WEANED,
           },
         },
@@ -2344,9 +2380,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         PLACEMENT_COMPLETED: {
           // Rewind PLACEMENT_COMPLETED -> PLACEMENT_STARTED: Clear placement start date that advanced us
           // PLACEMENT_COMPLETED phase = has placement start date, working on placement completed date
+          // Also clear any downstream dates that may have been entered but not yet advanced
           targetPhase: "PLACEMENT_STARTED",
           clearFields: {
             placementStartDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            placementCompletedDateActual: null,
+            completedDateActual: null,
             status: BreedingPlanStatus.PLACEMENT,
           },
         },
