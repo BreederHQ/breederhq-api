@@ -2034,6 +2034,348 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  /* ───────────────────────── Phase Rewind Endpoint ───────────────────────── */
+
+  /**
+   * POST /breeding/plans/:id/rewind
+   *
+   * Rewinds a breeding plan back one phase by clearing the date(s) that
+   * advanced it to the current phase. Includes validation to prevent
+   * data integrity issues (e.g., can't rewind past birth if offspring exist).
+   *
+   * Body:
+   * - actorId?: string (for audit trail)
+   *
+   * Returns:
+   * - { ok: true, fromPhase, toPhase } on success
+   * - 400 with error code if validation fails
+   * - 409 with blockers if blocked by downstream data
+   */
+  app.post("/breeding/plans/:id/rewind", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as Partial<{ actorId: string }>;
+      const userId = (req as any).user?.id ?? null;
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          // Lock fields (CYCLE phase)
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+          lockedDueDate: true,
+          lockedPlacementStartDate: true,
+          committedAt: true,
+          committedByUserId: true,
+          ovulationConfirmed: true,
+          ovulationConfirmedMethod: true,
+          // Actual dates
+          cycleStartDateActual: true,
+          hormoneTestingStartDateActual: true,
+          breedDateActual: true,
+          birthDateActual: true,
+          weanedDateActual: true,
+          placementStartDateActual: true,
+          placementCompletedDateActual: true,
+          completedDateActual: true,
+          // Unknown flags
+          cycleStartDateUnknown: true,
+          ovulationDateUnknown: true,
+          breedDateUnknown: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Determine current phase based on dates (working backward from most advanced)
+      // Phase order: PLANNING -> CYCLE -> BRED -> BIRTHED -> WEANED -> PLACEMENT_STARTED -> PLACEMENT_COMPLETED -> COMPLETE
+      //
+      // The phase represents where the plan currently IS (what milestone has been reached):
+      // - PLANNING: Basic info only, not yet committed
+      // - CYCLE: Plan is committed (locked dates), waiting for cycle start actual
+      // - BRED: Cycle start actual entered, waiting for breed date actual
+      // - BIRTHED: Breed date actual entered, waiting for birth date actual
+      // - WEANED: Birth date actual entered, waiting for weaned date actual
+      // - PLACEMENT_STARTED: Weaned date entered, waiting for placement start date
+      // - PLACEMENT_COMPLETED: Placement start date entered, waiting for placement completed
+      // - COMPLETE: All dates recorded, plan is complete
+      //
+      // Note: Unknown flags (cycleStartDateUnknown, breedDateUnknown) act as placeholders
+      // that allow advancing without the actual date (for surprise pregnancies)
+      type Phase = "PLANNING" | "CYCLE" | "BRED" | "BIRTHED" | "WEANED" | "PLACEMENT_STARTED" | "PLACEMENT_COMPLETED" | "COMPLETE";
+
+      const deriveCurrentPhase = (): Phase => {
+        // Work backward from most advanced phase
+        // Each check asks: "Has this milestone been completed?" If yes, we're in the NEXT phase
+        // Phase names represent what task you're working on, not what you've completed
+        if (plan.completedDateActual && plan.placementCompletedDateActual) return "COMPLETE";
+        if (plan.placementCompletedDateActual) return "COMPLETE"; // Has placement completed, working on plan completion
+        if (plan.placementStartDateActual) return "PLACEMENT_COMPLETED"; // Has placement start, working on placement completed
+        if (plan.weanedDateActual) return "PLACEMENT_STARTED"; // Has weaned, working on placement start
+        if (plan.birthDateActual) return "WEANED"; // Has birth, working on weaned date
+        // Has breed date (or unknown), working on birth date → BIRTHED phase
+        if (plan.breedDateActual || plan.breedDateUnknown) return "BIRTHED";
+        // Has cycle start (or unknown), working on breed date → BRED phase
+        // Note: ovulationConfirmed is part of CYCLE commitment, not advancement to BRED
+        if (plan.cycleStartDateActual || plan.cycleStartDateUnknown) return "BRED";
+        // Plan is committed/locked (via cycle start lock OR ovulation confirmation), working on cycle start actual → CYCLE phase
+        if (plan.lockedCycleStart || plan.lockedOvulationDate || plan.ovulationConfirmed) return "CYCLE";
+        return "PLANNING";
+      };
+
+      const currentPhase = deriveCurrentPhase();
+
+      // Cannot rewind from PLANNING - nothing to rewind
+      if (currentPhase === "PLANNING") {
+        return reply.code(400).send({
+          error: "cannot_rewind_planning",
+          detail: "Plan is already in PLANNING phase. Nothing to rewind.",
+        });
+      }
+
+      // Define what each rewind operation clears and its target phase
+      const rewindConfig: Record<Phase, {
+        targetPhase: Phase;
+        clearFields: Record<string, null | false>;
+        validation?: () => Promise<{ blocked: boolean; error?: string; detail?: string; blockers?: any }>;
+      } | null> = {
+        PLANNING: null, // Can't rewind from PLANNING
+
+        CYCLE: {
+          // Rewind CYCLE -> PLANNING: Clear lock fields, reset anchor mode, delete offspring group if exists
+          targetPhase: "PLANNING",
+          clearFields: {
+            lockedCycleStart: null,
+            lockedOvulationDate: null,
+            lockedDueDate: null,
+            lockedPlacementStartDate: null,
+            committedAt: null,
+            committedByUserId: null,
+            ovulationConfirmed: null,
+            ovulationConfirmedMethod: null,
+            // Reset anchor mode back to default - breeder must re-enable ovulation anchors if desired
+            reproAnchorMode: "CYCLE_START",
+            primaryAnchor: "CYCLE_START",
+            dateConfidenceLevel: null,
+            dateSourceNotes: null,
+            status: BreedingPlanStatus.PLANNING,
+          },
+          validation: async () => {
+            // Check for offspring group blockers (same as uncommit)
+            const group = await prisma.offspringGroup.findFirst({
+              where: { tenantId, planId: plan.id },
+              select: { id: true },
+            });
+            if (group) {
+              const blockers: any = {};
+              const offspringCount = await prisma.animal.count({
+                where: { tenantId, offspringGroupId: group.id },
+              });
+              if (offspringCount > 0) blockers.hasOffspring = true;
+
+              try {
+                const buyersCount = await prisma.waitlistEntry.count({
+                  where: {
+                    tenantId,
+                    OR: [{ offspringGroupId: group.id }, { planId: plan.id }],
+                  },
+                });
+                if (buyersCount > 0) blockers.hasBuyers = true;
+              } catch (e) {
+                // Table may not exist
+              }
+
+              if (Object.keys(blockers).length > 0) {
+                return { blocked: true, blockers };
+              }
+            }
+            return { blocked: false };
+          },
+        },
+
+        BRED: {
+          // Rewind BRED -> CYCLE: Clear cycle start date that advanced us to BRED
+          // BRED phase = has cycle start, working on breed date
+          targetPhase: "CYCLE",
+          clearFields: {
+            cycleStartDateActual: null,
+            hormoneTestingStartDateActual: null,
+            cycleStartDateUnknown: false,
+            ovulationDateUnknown: false,
+            status: BreedingPlanStatus.CYCLE,
+          },
+        },
+
+        BIRTHED: {
+          // Rewind BIRTHED -> BRED: Clear breed date that advanced us to BIRTHED
+          // BIRTHED phase = has breed date, working on birth date
+          targetPhase: "BRED",
+          clearFields: {
+            breedDateActual: null,
+            breedDateUnknown: false,
+            status: BreedingPlanStatus.BRED,
+          },
+        },
+
+        WEANED: {
+          // Rewind WEANED -> BIRTHED: Clear birth date that advanced us to WEANED
+          // WEANED phase = has birth date, working on weaned date
+          targetPhase: "BIRTHED",
+          clearFields: {
+            birthDateActual: null,
+            status: BreedingPlanStatus.BIRTHED,
+          },
+          validation: async () => {
+            // Cannot rewind if offspring exist in linked group
+            const linkedGroup = await prisma.offspringGroup.findFirst({
+              where: { planId: id, tenantId },
+              select: { id: true },
+            });
+            if (linkedGroup) {
+              const animalCount = await prisma.animal.count({
+                where: { tenantId, offspringGroupId: linkedGroup.id },
+              });
+              const offspringCount = await prisma.offspring.count({
+                where: { tenantId, groupId: linkedGroup.id },
+              });
+              if (animalCount > 0 || offspringCount > 0) {
+                return {
+                  blocked: true,
+                  error: "offspring_exist",
+                  detail: "Cannot rewind because offspring have been recorded in the linked offspring group. Remove all offspring first.",
+                  blockers: { hasOffspring: true },
+                };
+              }
+            }
+            return { blocked: false };
+          },
+        },
+
+        PLACEMENT_STARTED: {
+          // Rewind PLACEMENT_STARTED -> WEANED: Clear weaned date that advanced us to PLACEMENT_STARTED
+          // PLACEMENT_STARTED phase = has weaned date, working on placement start date
+          targetPhase: "WEANED",
+          clearFields: {
+            weanedDateActual: null,
+            status: BreedingPlanStatus.WEANED,
+          },
+        },
+
+        PLACEMENT_COMPLETED: {
+          // Rewind PLACEMENT_COMPLETED -> PLACEMENT_STARTED: Clear placement start date that advanced us
+          // PLACEMENT_COMPLETED phase = has placement start date, working on placement completed date
+          targetPhase: "PLACEMENT_STARTED",
+          clearFields: {
+            placementStartDateActual: null,
+            status: BreedingPlanStatus.PLACEMENT,
+          },
+        },
+
+        COMPLETE: {
+          // Rewind COMPLETE -> PLACEMENT_COMPLETED: Clear placement completed date that advanced us
+          // COMPLETE phase = has placement completed date, plan is done
+          targetPhase: "PLACEMENT_COMPLETED",
+          clearFields: {
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.PLACEMENT,
+          },
+        },
+      };
+
+      const config = rewindConfig[currentPhase];
+      if (!config) {
+        return reply.code(400).send({
+          error: "cannot_rewind",
+          detail: `Cannot rewind from phase: ${currentPhase}`,
+        });
+      }
+
+      // Run validation if defined
+      if (config.validation) {
+        const validationResult = await config.validation();
+        if (validationResult.blocked) {
+          if (validationResult.blockers) {
+            return reply.code(409).send({ blockers: validationResult.blockers });
+          }
+          return reply.code(400).send({
+            error: validationResult.error || "validation_failed",
+            detail: validationResult.detail,
+          });
+        }
+      }
+
+      // Execute the rewind in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        // Special handling for CYCLE -> PLANNING: delete offspring group
+        if (currentPhase === "CYCLE") {
+          const group = await tx.offspringGroup.findFirst({
+            where: { tenantId, planId: plan.id },
+            select: { id: true },
+          });
+          if (group) {
+            try {
+              await tx.offspringGroupEvent.deleteMany({
+                where: { tenantId, offspringGroupId: group.id },
+              });
+            } catch (e) {
+              // Events may not exist
+            }
+            await tx.offspringGroup.delete({
+              where: { id: group.id },
+            });
+          }
+        }
+
+        // Update plan with cleared fields
+        const updated = await tx.breedingPlan.update({
+          where: { id: plan.id },
+          data: config.clearFields as any,
+        });
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId: plan.tenantId,
+            planId: plan.id,
+            type: "PLAN_PHASE_REWOUND",
+            occurredAt: new Date(),
+            label: `Phase rewound from ${currentPhase} to ${config.targetPhase}`,
+            data: {
+              fromPhase: currentPhase,
+              toPhase: config.targetPhase,
+              clearedFields: Object.keys(config.clearFields),
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return { plan: updated, targetPhase: config.targetPhase };
+      });
+
+      // Sync animal breeding statuses after rewind
+      if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
+      if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
+
+      reply.send({
+        ok: true,
+        fromPhase: currentPhase,
+        toPhase: result.targetPhase,
+      });
+    } catch (err) {
+      req.log.error({ err }, "rewind failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
   /* ───────────────────────── Anchor Mode System Endpoints ───────────────────────── */
 
   /**
