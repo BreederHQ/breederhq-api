@@ -537,6 +537,7 @@ import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // 
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
+import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -913,6 +914,9 @@ app.register(
 
     // Dashboard Mission Control
     api.register(dashboardRoutes);     // /api/v1/dashboard/*
+
+    // Platform-wide search (Command Palette)
+    api.register(searchRoutes);        // /api/v1/search
 
     // Tenant-scoped resources
     api.register(contactsRoutes);      // /api/v1/contacts/*
