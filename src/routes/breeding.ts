@@ -681,6 +681,12 @@ function validateImmutability(existingPlan: any, updates: any): void {
   const postCycleStatuses = ["CYCLE", "COMMITTED", ...lockedStatuses];
   const isCyclePhase = status === "CYCLE" || status === "COMMITTED";
 
+  // RESET OPERATION: When status is being changed to PLANNING, skip immutability checks
+  // This allows the Reset Plan feature to clear all dates and start fresh
+  if (updates.status === "PLANNING") {
+    return; // Allow all date clears when resetting to PLANNING
+  }
+
   // CANCELED status - no date changes allowed
   if (status === "CANCELED") {
     const dateFields = [
@@ -1509,12 +1515,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        const finalCycleStart = effectiveCycleStart ?? existingPlan?.cycleStartDateActual;
-        const finalBreedDate = effectiveBreedDate ?? existingPlan?.breedDateActual;
-        const finalBirthDate = effectiveBirthDate ?? existingPlan?.birthDateActual;
-        const finalWeanedDate = effectiveWeanedDate ?? existingPlan?.weanedDateActual;
-        const finalPlacementStart = effectivePlacementStart ?? existingPlan?.placementStartDateActual;
-        const finalPlacementCompleted = effectivePlacementCompleted ?? existingPlan?.placementCompletedDateActual;
+        // Use undefined check instead of ?? so explicit null values are preserved
+        // (null ?? x returns x, but we want null to mean "clear this date")
+        const finalCycleStart = effectiveCycleStart !== undefined ? effectiveCycleStart : existingPlan?.cycleStartDateActual;
+        const finalBreedDate = effectiveBreedDate !== undefined ? effectiveBreedDate : existingPlan?.breedDateActual;
+        const finalBirthDate = effectiveBirthDate !== undefined ? effectiveBirthDate : existingPlan?.birthDateActual;
+        const finalWeanedDate = effectiveWeanedDate !== undefined ? effectiveWeanedDate : existingPlan?.weanedDateActual;
+        const finalPlacementStart = effectivePlacementStart !== undefined ? effectivePlacementStart : existingPlan?.placementStartDateActual;
+        const finalPlacementCompleted = effectivePlacementCompleted !== undefined ? effectivePlacementCompleted : existingPlan?.placementCompletedDateActual;
         const finalOvulationConfirmed = existingPlan?.ovulationConfirmed;
         const isOvulationAnchor = existingPlan?.reproAnchorMode === "OVULATION";
 
@@ -2178,7 +2186,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       };
 
       const derivedPhase = derivePhaseFromDates();
-      const storedStatus = String(plan.status) as Phase;
+      let storedStatus = String(plan.status) as Phase;
+
+      // Map database PLACEMENT status to frontend PLACEMENT_STARTED or PLACEMENT_COMPLETED
+      // The database uses a single PLACEMENT status, but we differentiate by dates
+      if (storedStatus === ("PLACEMENT" as Phase)) {
+        // If placementStartDateActual exists, we're in PLACEMENT_COMPLETED (working on completed date)
+        // Otherwise, we're in PLACEMENT_STARTED (working on start date)
+        storedStatus = plan.placementStartDateActual ? "PLACEMENT_COMPLETED" : "PLACEMENT_STARTED";
+      }
 
       // Use the stored status as the authoritative phase for rewind purposes.
       // The derived phase tells us what dates have been entered, but the user may not have
