@@ -712,17 +712,21 @@ function validateImmutability(existingPlan: any, updates: any): void {
   // cycleStartObserved validation
   // Tolerance is measured from the ORIGINAL locked value (lockedCycleStart), not the current value
   if (updates.cycleStartObserved !== undefined && existingPlan.cycleStartObserved) {
-    if (lockedStatuses.includes(status)) {
-      throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after CYCLE status");
-    }
-    if (isCyclePhase) {
-      // Use lockedCycleStart as reference if available, otherwise fall back to current value
-      const referenceDate = existingPlan.lockedCycleStart || existingPlan.cycleStartObserved;
-      const oldDate = new Date(referenceDate);
-      const newDate = new Date(updates.cycleStartObserved);
-      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays > 3) {
-        throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+    // Check if value is actually changing (allow same-value passthrough)
+    const existingDate = new Date(existingPlan.cycleStartObserved).toISOString().split("T")[0];
+    const newDate = new Date(updates.cycleStartObserved).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      if (lockedStatuses.includes(status)) {
+        throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after CYCLE status");
+      }
+      if (isCyclePhase) {
+        // Use lockedCycleStart as reference if available, otherwise fall back to current value
+        const referenceDate = existingPlan.lockedCycleStart || existingPlan.cycleStartObserved;
+        const oldDate = new Date(referenceDate);
+        const diffDays = Math.abs((new Date(updates.cycleStartObserved).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 3) {
+          throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+        }
       }
     }
   }
@@ -730,41 +734,54 @@ function validateImmutability(existingPlan: any, updates: any): void {
   // ovulationConfirmed validation
   // Tolerance is measured from the ORIGINAL locked value (lockedOvulationDate), not the current value
   if (updates.ovulationConfirmed !== undefined && existingPlan.ovulationConfirmed) {
-    if (lockedStatuses.includes(status)) {
-      throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
-    }
-    if (isCyclePhase) {
-      // Use lockedOvulationDate as reference if available, otherwise fall back to current value
-      const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
-      const oldDate = new Date(referenceDate);
-      const newDate = new Date(updates.ovulationConfirmed);
-      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays > 2) {
-        throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+    // Check if value is actually changing (allow same-value passthrough)
+    const existingDate = new Date(existingPlan.ovulationConfirmed).toISOString().split("T")[0];
+    const newDate = new Date(updates.ovulationConfirmed).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      if (lockedStatuses.includes(status)) {
+        throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
+      }
+      if (isCyclePhase) {
+        // Use lockedOvulationDate as reference if available, otherwise fall back to current value
+        const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
+        const oldDate = new Date(referenceDate);
+        const diffDays = Math.abs((new Date(updates.ovulationConfirmed).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 2) {
+          throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+        }
       }
     }
   }
 
   // breedDateActual validation
   if (updates.breedDateActual !== undefined && existingPlan.breedDateActual) {
-    const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
-    if (postBreedStatuses.includes(status)) {
-      throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
-    }
-    if (status === "BRED") {
-      const oldDate = new Date(existingPlan.breedDateActual);
-      const newDate = new Date(updates.breedDateActual);
-      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays > 2) {
-        throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+    // Check if value is actually changing (allow same-value passthrough)
+    const existingDate = new Date(existingPlan.breedDateActual).toISOString().split("T")[0];
+    const newDate = new Date(updates.breedDateActual).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBreedStatuses.includes(status)) {
+        throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
+      }
+      if (status === "BRED") {
+        const oldDate = new Date(existingPlan.breedDateActual);
+        const diffDays = Math.abs((new Date(updates.breedDateActual).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 2) {
+          throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+        }
       }
     }
   }
 
   // birthDateActual - STRICT immutability (most critical date)
   if (updates.birthDateActual !== undefined && existingPlan.birthDateActual) {
-    // Birth date cannot be changed once set (except via admin override)
-    throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+    // Allow sending the same value (no actual change) - only error if actually changing
+    const existingDate = new Date(existingPlan.birthDateActual).toISOString().split("T")[0];
+    const newDate = new Date(updates.birthDateActual).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      // Birth date cannot be changed once set (except via admin override)
+      throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+    }
   }
 
   // weanedDateActual validation
@@ -1757,6 +1774,32 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Delete offspring group when plan status changes to terminal state or resets to CYCLE
+      // These actions indicate the breeding attempt is over and the offspring group is no longer relevant
+      const isTerminalOrReset = ["UNSUCCESSFUL", "CANCELED", "CYCLE"].includes(String(updated.status));
+      if (isTerminalOrReset && statusChanged) {
+        try {
+          const group = await prisma.offspringGroup.findFirst({
+            where: { tenantId, planId: id },
+            select: { id: true },
+          });
+          if (group) {
+            // Delete events first (foreign key constraint)
+            await prisma.offspringGroupEvent.deleteMany({
+              where: { tenantId, offspringGroupId: group.id },
+            });
+            // Delete the group
+            await prisma.offspringGroup.delete({
+              where: { id: group.id },
+            });
+            req.log?.info?.({ planId: id, groupId: group.id }, "Deleted offspring group due to plan status change");
+          }
+        } catch (ogErr) {
+          // Log but don't fail the update
+          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to delete offspring group on status change");
+        }
+      }
+
       reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -2110,8 +2153,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Note: Unknown flags (cycleStartDateUnknown, breedDateUnknown) act as placeholders
       // that allow advancing without the actual date (for surprise pregnancies)
       type Phase = "PLANNING" | "CYCLE" | "BRED" | "BIRTHED" | "WEANED" | "PLACEMENT_STARTED" | "PLACEMENT_COMPLETED" | "COMPLETE";
+      const PHASE_ORDER: Phase[] = ["PLANNING", "CYCLE", "BRED", "BIRTHED", "WEANED", "PLACEMENT_STARTED", "PLACEMENT_COMPLETED", "COMPLETE"];
 
-      const deriveCurrentPhase = (): Phase => {
+      const derivePhaseFromDates = (): Phase => {
         // Work backward from most advanced phase
         // Each check asks: "Has this milestone been completed?" If yes, we're in the NEXT phase
         // Phase names represent what task you're working on, not what you've completed
@@ -2133,7 +2177,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return "PLANNING";
       };
 
-      const currentPhase = deriveCurrentPhase();
+      const derivedPhase = derivePhaseFromDates();
+      const storedStatus = String(plan.status) as Phase;
+
+      // Use the stored status as the authoritative phase for rewind purposes.
+      // The derived phase tells us what dates have been entered, but the user may not have
+      // explicitly advanced yet (e.g., entered breed date but still in BRED status).
+      // Rewind should respect where the user actually IS (stored status), not where they
+      // COULD be based on entered data.
+      // However, if derived phase is LESS than stored status, use derived (data was cleared somehow).
+      const storedIdx = PHASE_ORDER.indexOf(storedStatus);
+      const derivedIdx = PHASE_ORDER.indexOf(derivedPhase);
+      const currentPhase = storedIdx >= 0 && storedIdx <= derivedIdx ? storedStatus : derivedPhase;
 
       // Cannot rewind from PLANNING - nothing to rewind
       if (currentPhase === "PLANNING") {
@@ -2204,14 +2259,29 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
 
         BRED: {
-          // Rewind BRED -> CYCLE: Clear cycle start date that advanced us to BRED
-          // BRED phase = has cycle start, working on breed date
+          // Rewind BRED -> CYCLE: Clear cycle start date and/or ovulation data that advanced us to BRED
+          // BRED phase = has cycle start OR ovulation confirmed, working on breed date
+          // Also clear any breed date that may have been entered but not yet advanced
+          // NOTE: Offspring group is NOT deleted here - only when rewinding all the way to PLANNING
+          // This allows user to continue with the plan and use the existing offspring group
           targetPhase: "CYCLE",
           clearFields: {
             cycleStartDateActual: null,
             hormoneTestingStartDateActual: null,
             cycleStartDateUnknown: false,
             ovulationDateUnknown: false,
+            breedDateActual: null, // Clear any entered breed date
+            breedDateUnknown: false,
+            // Clear ovulation anchor data (plan may have been advanced via ovulation confirmation)
+            ovulationConfirmed: null,
+            ovulationConfirmedMethod: null,
+            ovulationConfidence: null,
+            ovulationTestResultId: null,
+            // Reset anchor mode back to CYCLE_START - breeder must re-enable ovulation anchors if desired
+            reproAnchorMode: "CYCLE_START",
+            primaryAnchor: "CYCLE_START",
+            dateConfidenceLevel: null,
+            dateSourceNotes: null,
             status: BreedingPlanStatus.CYCLE,
           },
         },
@@ -2317,7 +2387,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Execute the rewind in a transaction
       const result = await prisma.$transaction(async (tx) => {
-        // Special handling for CYCLE -> PLANNING: delete offspring group
+        // Special handling: Only delete offspring group when rewinding all the way to PLANNING
+        // For other rewinds, keep the group - user will likely continue with the plan
         if (currentPhase === "CYCLE") {
           const group = await tx.offspringGroup.findFirst({
             where: { tenantId, planId: plan.id },
@@ -2692,9 +2763,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!b.ovulationDate) {
         return reply.code(400).send({ error: "ovulation_date_required", detail: "ovulationDate is required" });
       }
-      if (!b.confirmationMethod) {
-        return reply.code(400).send({ error: "confirmation_method_required", detail: "confirmationMethod is required" });
-      }
 
       // Parse ovulation date
       const ovulationDate = toDateOrNull(b.ovulationDate);
@@ -2705,7 +2773,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      // Validate confirmation method
+      // Validate confirmation method (required)
+      if (!b.confirmationMethod) {
+        return reply.code(400).send({
+          error: "confirmation_method_required",
+          detail: "confirmationMethod is required for ovulation confirmation"
+        });
+      }
       const confirmationMethod = String(b.confirmationMethod).toUpperCase() as OvulationMethod;
       if (!VALID_OVULATION_METHODS.has(confirmationMethod)) {
         return reply.code(400).send({
