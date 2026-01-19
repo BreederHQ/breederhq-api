@@ -1487,6 +1487,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             weanedDateActual: true,
             placementStartDateActual: true,
             placementCompletedDateActual: true,
+            ovulationConfirmed: true,
+            reproAnchorMode: true,
           },
         });
 
@@ -1496,12 +1498,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const finalWeanedDate = effectiveWeanedDate ?? existingPlan?.weanedDateActual;
         const finalPlacementStart = effectivePlacementStart ?? existingPlan?.placementStartDateActual;
         const finalPlacementCompleted = effectivePlacementCompleted ?? existingPlan?.placementCompletedDateActual;
+        const finalOvulationConfirmed = existingPlan?.ovulationConfirmed;
+        const isOvulationAnchor = existingPlan?.reproAnchorMode === "OVULATION";
 
         // Validate required dates for each status
-        if (s === "BRED" && !finalCycleStart) {
+        // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
+        const hasRequiredCycleData = finalCycleStart || (isOvulationAnchor && finalOvulationConfirmed);
+        if (s === "BRED" && !hasRequiredCycleData) {
           return reply.code(400).send({
             error: "date_required_for_status",
-            detail: "cycleStartDateActual is required to set status to BRED"
+            detail: isOvulationAnchor
+              ? "ovulationConfirmed date is required to set status to BRED when using ovulation anchor mode"
+              : "cycleStartDateActual is required to set status to BRED"
           });
         }
         if (s === "BIRTHED" && !finalBreedDate) {
