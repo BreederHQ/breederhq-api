@@ -2123,8 +2123,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Has breed date (or unknown), working on birth date → BIRTHED phase
         if (plan.breedDateActual || plan.breedDateUnknown) return "BIRTHED";
         // Has cycle start (or unknown), working on breed date → BRED phase
-        // Note: ovulationConfirmed is part of CYCLE commitment, not advancement to BRED
+        // For ovulation-anchored plans: status=BRED means we advanced via ovulation (cycle start may be null)
         if (plan.cycleStartDateActual || plan.cycleStartDateUnknown) return "BRED";
+        // Check if plan was advanced to BRED via ovulation confirmation (ovulation-anchored workflow)
+        // In this case, cycleStartDateActual may be null but status is BRED
+        if (String(plan.status) === "BRED" && plan.ovulationConfirmed) return "BRED";
         // Plan is committed/locked (via cycle start lock OR ovulation confirmation), working on cycle start actual → CYCLE phase
         if (plan.lockedCycleStart || plan.lockedOvulationDate || plan.ovulationConfirmed) return "CYCLE";
         return "PLANNING";
@@ -2911,6 +2914,66 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
     } catch (err) {
       req.log.error({ err }, "upgrade-to-ovulation failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * POST /breeding/plans/:id/clear-ovulation
+   *
+   * Clears ovulation confirmation and reverts plan back to CYCLE_START anchor mode.
+   * Used when breeder entered an incorrect ovulation date by mistake.
+   *
+   * Only allowed when:
+   * - Plan is in CYCLE status (hasn't advanced to BRED yet)
+   * - Plan currently has OVULATION anchor mode
+   */
+  app.post("/breeding/plans/:id/clear-ovulation", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Only allow clearing ovulation in CYCLE phase
+      if (String(plan.status) !== "CYCLE") {
+        return reply.code(400).send({
+          error: "invalid_status",
+          detail: `Can only clear ovulation in CYCLE phase. Current status: ${plan.status}`,
+        });
+      }
+
+      // Must currently be in OVULATION anchor mode
+      if (plan.reproAnchorMode !== "OVULATION") {
+        return reply.code(400).send({
+          error: "not_ovulation_mode",
+          detail: "Plan is not using ovulation anchors. Nothing to clear.",
+        });
+      }
+
+      // Clear ovulation fields and revert to CYCLE_START
+      const updated = await prisma.breedingPlan.update({
+        where: { id },
+        data: {
+          ovulationConfirmed: null,
+          ovulationConfirmedMethod: null,
+          reproAnchorMode: "CYCLE_START",
+          // Note: We keep lockedOvulationDate as it was calculated from cycle start
+          // and can still be useful as an estimate
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        plan: updated,
+      });
+    } catch (err) {
+      req.log.error({ err }, "clear-ovulation failed");
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
