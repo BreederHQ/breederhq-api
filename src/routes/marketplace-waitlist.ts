@@ -221,7 +221,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       ? published.listedPrograms
       : [];
 
-    const program = listedPrograms.find(
+    const programFromProfile = listedPrograms.find(
       (p: any) =>
         p &&
         typeof p === "object" &&
@@ -229,9 +229,20 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         p.openWaitlist === true
     );
 
-    if (!program) {
+    if (!programFromProfile) {
       return reply.code(400).send({ error: "program_waitlist_not_open" });
     }
+
+    // 5b) Look up the actual BreedingProgram to get its ID for buyer matching
+    const breedingProgram = await prisma.breedingProgram.findFirst({
+      where: {
+        tenantId: tenant.id,
+        name: body.programName,
+        listed: true,
+        openWaitlist: true,
+      },
+      select: { id: true },
+    });
 
     // 6) Find or create a Contact in the breeder's tenant for this marketplace user
     const clientPartyId = await findOrCreateContactParty(tenant.id, {
@@ -250,6 +261,8 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         status: "INQUIRY",
         notes,
         clientPartyId,
+        // Direct program link for buyer matching
+        programId: breedingProgram?.id || null,
         // Origin tracking
         originSource: body.origin?.source || null,
         originReferrer: body.origin?.referrer || null,

@@ -12,6 +12,7 @@ import {
   sendWaitlistApprovalToUser,
   sendWaitlistRejectionToUser,
 } from "../services/marketplace-email-service.js";
+import { refreshMatchingPlansForEntry } from "../services/plan-buyer-matching.js";
 
 /* ───────── helpers ───────── */
 
@@ -890,6 +891,15 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     } catch (err) {
       // Don't fail the approval if email fails
       console.error("[waitlist/approve] Failed to send approval email:", err);
+    }
+
+    // Refresh matches for breeding plans under the same program
+    // This allows the approved entry to appear as a possible match
+    try {
+      await refreshMatchingPlansForEntry(prisma, id, tenantId);
+    } catch (err) {
+      // Don't fail the approval if matching fails
+      console.error("[waitlist/approve] Failed to refresh matches:", err);
     }
 
     reply.send({
