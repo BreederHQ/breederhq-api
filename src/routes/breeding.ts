@@ -739,21 +739,30 @@ function validateImmutability(existingPlan: any, updates: any): void {
 
   // ovulationConfirmed validation
   // Tolerance is measured from the ORIGINAL locked value (lockedOvulationDate), not the current value
+  // Allow clearing (null) in CYCLE phase - this is for the "Change" button flow
   if (updates.ovulationConfirmed !== undefined && existingPlan.ovulationConfirmed) {
-    // Check if value is actually changing (allow same-value passthrough)
-    const existingDate = new Date(existingPlan.ovulationConfirmed).toISOString().split("T")[0];
-    const newDate = new Date(updates.ovulationConfirmed).toISOString().split("T")[0];
-    if (existingDate !== newDate) {
+    // Allow clearing the date in CYCLE phase (user wants to re-enter it)
+    if (updates.ovulationConfirmed === null) {
       if (lockedStatuses.includes(status)) {
-        throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
+        throw new ImmutabilityError("ovulationConfirmed", "Ovulation date cannot be cleared after CYCLE status");
       }
-      if (isCyclePhase) {
-        // Use lockedOvulationDate as reference if available, otherwise fall back to current value
-        const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
-        const oldDate = new Date(referenceDate);
-        const diffDays = Math.abs((new Date(updates.ovulationConfirmed).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (diffDays > 2) {
-          throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+      // Allow clearing in CYCLE phase - skip further validation
+    } else {
+      // Check if value is actually changing (allow same-value passthrough)
+      const existingDate = new Date(existingPlan.ovulationConfirmed).toISOString().split("T")[0];
+      const newDate = new Date(updates.ovulationConfirmed).toISOString().split("T")[0];
+      if (existingDate !== newDate) {
+        if (lockedStatuses.includes(status)) {
+          throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
+        }
+        if (isCyclePhase) {
+          // Use lockedOvulationDate as reference if available, otherwise fall back to current value
+          const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
+          const oldDate = new Date(referenceDate);
+          const diffDays = Math.abs((new Date(updates.ovulationConfirmed).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 2) {
+            throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+          }
         }
       }
     }
@@ -779,14 +788,24 @@ function validateImmutability(existingPlan: any, updates: any): void {
     }
   }
 
-  // birthDateActual - STRICT immutability (most critical date)
+  // birthDateActual validation
+  // Allow clearing (null) in BIRTHED phase - this is for the "Change" button flow
   if (updates.birthDateActual !== undefined && existingPlan.birthDateActual) {
-    // Allow sending the same value (no actual change) - only error if actually changing
-    const existingDate = new Date(existingPlan.birthDateActual).toISOString().split("T")[0];
-    const newDate = new Date(updates.birthDateActual).toISOString().split("T")[0];
-    if (existingDate !== newDate) {
-      // Birth date cannot be changed once set (except via admin override)
-      throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+    // Allow clearing the date in BIRTHED phase (user wants to re-enter it)
+    if (updates.birthDateActual === null) {
+      const postBirthStatuses = ["WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBirthStatuses.includes(status)) {
+        throw new ImmutabilityError("birthDateActual", "Birth date cannot be cleared after BIRTHED status");
+      }
+      // Allow clearing in BIRTHED phase - skip further validation
+    } else {
+      // Allow sending the same value (no actual change) - only error if actually changing
+      const existingDate = new Date(existingPlan.birthDateActual).toISOString().split("T")[0];
+      const newDate = new Date(updates.birthDateActual).toISOString().split("T")[0];
+      if (existingDate !== newDate) {
+        // Birth date cannot be changed once set (except via admin override)
+        throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+      }
     }
   }
 
