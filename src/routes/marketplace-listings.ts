@@ -95,6 +95,7 @@ function toListingDTO(listing: any): any {
     description: listing.description,
     category: listing.category,
     subcategory: listing.subcategory,
+    customServiceType: listing.customServiceType,
     priceCents: listing.priceCents ? listing.priceCents.toString() : null,
     priceType: listing.priceType,
     priceText: listing.priceText,
@@ -114,6 +115,11 @@ function toListingDTO(listing: any): any {
     publishedAt: listing.publishedAt ? listing.publishedAt.toISOString() : null,
     createdAt: listing.createdAt.toISOString(),
     updatedAt: listing.updatedAt.toISOString(),
+    tags: listing.assignments?.map((a: any) => ({
+      id: a.tag.id,
+      name: a.tag.name,
+      slug: a.tag.slug,
+    })) || [],
   };
 }
 
@@ -138,6 +144,7 @@ export default async function marketplaceListingsRoutes(
     const description = body.description !== undefined ? String(body.description).trim() : null;
     const category = String(body.category || "").trim();
     const subcategory = body.subcategory !== undefined ? String(body.subcategory).trim() : null;
+    const customServiceType = body.customServiceType !== undefined ? String(body.customServiceType).trim() : null;
     const priceCents = body.priceCents !== undefined && body.priceCents !== null
       ? BigInt(body.priceCents)
       : null;
@@ -152,6 +159,7 @@ export default async function marketplaceListingsRoutes(
     const availability = body.availability !== undefined ? String(body.availability).trim() : null;
     const metaDescription = body.metaDescription !== undefined ? String(body.metaDescription).trim() : null;
     const keywords = body.keywords !== undefined ? String(body.keywords).trim() : null;
+    const tagIds = body.tagIds && Array.isArray(body.tagIds) ? body.tagIds : null;
 
     // Validation
     if (!title || title.length === 0) {
@@ -203,44 +211,130 @@ export default async function marketplaceListingsRoutes(
       });
     }
 
+    // Validate customServiceType (only for category "other")
+    if (customServiceType) {
+      if (category !== "other") {
+        return reply.code(400).send({
+          error: "invalid_custom_service_type",
+          message: "customServiceType can only be used when category is 'other'.",
+        });
+      }
+      if (customServiceType.length > 50) {
+        return reply.code(400).send({
+          error: "custom_service_type_too_long",
+          message: "customServiceType must be 50 characters or less.",
+        });
+      }
+    }
+
+    // Validate tagIds
+    if (tagIds) {
+      if (!Array.isArray(tagIds) || tagIds.length > 5) {
+        return reply.code(400).send({
+          error: "invalid_tag_ids",
+          message: "tagIds must be an array with a maximum of 5 tags.",
+        });
+      }
+      // Ensure all are numbers
+      if (!tagIds.every((id: any) => typeof id === "number" && !isNaN(id))) {
+        return reply.code(400).send({
+          error: "invalid_tag_ids",
+          message: "All tag IDs must be valid numbers.",
+        });
+      }
+    }
+
     try {
-      // Create listing with draft status
-      const listing = await prisma.marketplaceServiceListing.create({
-        data: {
-          providerId: provider.id,
-          slug: "",  // Will be generated after creation
-          title,
-          description,
-          category,
-          subcategory,
-          priceCents,
-          priceType,
-          priceText,
-          images,
-          coverImageUrl,
-          city,
-          state,
-          zip,
-          duration,
-          availability,
-          metaDescription,
-          keywords,
-          status: "draft",
-        },
+      // Use transaction to create listing and assign tags atomically
+      const result = await prisma.$transaction(async (tx) => {
+        // 1. Create listing with draft status
+        const listing = await tx.marketplaceServiceListing.create({
+          data: {
+            providerId: provider.id,
+            slug: "",  // Will be generated after creation
+            title,
+            description,
+            category,
+            subcategory,
+            customServiceType,
+            priceCents,
+            priceType,
+            priceText,
+            images,
+            coverImageUrl,
+            city,
+            state,
+            zip,
+            duration,
+            availability,
+            metaDescription,
+            keywords,
+            status: "draft",
+          },
+        });
+
+        // 2. Generate slug from title + id
+        const slug = generateSlug(title, listing.id);
+
+        // 3. Update with generated slug
+        const updated = await tx.marketplaceServiceListing.update({
+          where: { id: listing.id },
+          data: { slug },
+        });
+
+        // 4. Assign tags if provided
+        if (tagIds && tagIds.length > 0) {
+          // Verify all tags exist
+          const existingTags = await tx.marketplaceServiceTag.findMany({
+            where: { id: { in: tagIds } },
+            select: { id: true },
+          });
+
+          if (existingTags.length !== tagIds.length) {
+            throw new Error("One or more tag IDs are invalid.");
+          }
+
+          // Create tag assignments
+          await tx.marketplaceServiceTagAssignment.createMany({
+            data: tagIds.map((tagId: number) => ({
+              listingId: listing.id,
+              tagId,
+            })),
+          });
+
+          // Increment usage counts
+          await tx.marketplaceServiceTag.updateMany({
+            where: { id: { in: tagIds } },
+            data: { usageCount: { increment: 1 } },
+          });
+        }
+
+        // 5. Fetch final listing with tags
+        const finalListing = await tx.marketplaceServiceListing.findUnique({
+          where: { id: listing.id },
+          include: {
+            assignments: {
+              include: {
+                tag: true,
+              },
+            },
+          },
+        });
+
+        return finalListing;
       });
 
-      // Generate slug from title + id
-      const slug = generateSlug(title, listing.id);
-
-      // Update with generated slug
-      const updated = await prisma.marketplaceServiceListing.update({
-        where: { id: listing.id },
-        data: { slug },
-      });
-
-      return reply.code(201).send(toListingDTO(updated));
+      return reply.code(201).send(toListingDTO(result));
     } catch (err: any) {
       req.log?.error?.({ err, providerId: provider.id }, "Failed to create listing");
+
+      if (err.message === "One or more tag IDs are invalid.") {
+        return reply.code(400).send({
+          error: "invalid_tag_ids",
+          message: err.message,
+        });
+      }
+
       return reply.code(500).send({
         error: "create_failed",
         message: "Failed to create listing. Please try again.",
@@ -279,6 +373,13 @@ export default async function marketplaceListingsRoutes(
           orderBy,
           skip,
           take: limit,
+          include: {
+            assignments: {
+              include: {
+                tag: true,
+              },
+            },
+          },
         }),
         prisma.marketplaceServiceListing.count({ where }),
       ]);
@@ -323,6 +424,13 @@ export default async function marketplaceListingsRoutes(
           id: listingId,
           providerId: provider.id,
           deletedAt: null,
+        },
+        include: {
+          assignments: {
+            include: {
+              tag: true,
+            },
+          },
         },
       });
 
@@ -492,15 +600,160 @@ export default async function marketplaceListingsRoutes(
       updateData.keywords = body.keywords ? String(body.keywords).trim() : null;
     }
 
-    try {
-      const updated = await prisma.marketplaceServiceListing.update({
-        where: { id: listingId },
-        data: updateData,
-      });
+    if (body.customServiceType !== undefined) {
+      const customServiceType = body.customServiceType ? String(body.customServiceType).trim() : null;
 
-      return reply.send(toListingDTO(updated));
+      // If setting customServiceType, verify category is "other"
+      const finalCategory = body.category !== undefined ? String(body.category).trim() : existing.category;
+      if (customServiceType && finalCategory !== "other") {
+        return reply.code(400).send({
+          error: "invalid_custom_service_type",
+          message: "customServiceType can only be used when category is 'other'.",
+        });
+      }
+
+      if (customServiceType && customServiceType.length > 50) {
+        return reply.code(400).send({
+          error: "custom_service_type_too_long",
+          message: "customServiceType must be 50 characters or less.",
+        });
+      }
+
+      updateData.customServiceType = customServiceType;
+    }
+
+    // Validate tagIds if provided
+    let tagIds: number[] | null = null;
+    if (body.tagIds !== undefined) {
+      if (body.tagIds === null) {
+        tagIds = [];  // Clear all tags
+      } else if (Array.isArray(body.tagIds)) {
+        if (body.tagIds.length > 5) {
+          return reply.code(400).send({
+            error: "invalid_tag_ids",
+            message: "Maximum of 5 tags allowed per listing.",
+          });
+        }
+        if (!body.tagIds.every((id: any) => typeof id === "number" && !isNaN(id))) {
+          return reply.code(400).send({
+            error: "invalid_tag_ids",
+            message: "All tag IDs must be valid numbers.",
+          });
+        }
+        tagIds = body.tagIds;
+      } else {
+        return reply.code(400).send({
+          error: "invalid_tag_ids",
+          message: "tagIds must be an array or null.",
+        });
+      }
+    }
+
+    try {
+      // Use transaction if tags are being updated
+      if (tagIds !== null) {
+        const result = await prisma.$transaction(async (tx) => {
+          // 1. Update listing fields
+          const updated = await tx.marketplaceServiceListing.update({
+            where: { id: listingId },
+            data: updateData,
+          });
+
+          // 2. Get current tag assignments
+          const currentAssignments = await tx.marketplaceServiceTagAssignment.findMany({
+            where: { listingId },
+            select: { tagId: true },
+          });
+          const currentTagIds = currentAssignments.map(a => a.tagId);
+
+          // 3. Calculate tags to add and remove
+          const tagsToAdd = tagIds.filter(id => !currentTagIds.includes(id));
+          const tagsToRemove = currentTagIds.filter(id => !tagIds.includes(id));
+
+          // 4. Remove old tag assignments
+          if (tagsToRemove.length > 0) {
+            await tx.marketplaceServiceTagAssignment.deleteMany({
+              where: {
+                listingId,
+                tagId: { in: tagsToRemove },
+              },
+            });
+
+            // Decrement usage counts
+            await tx.marketplaceServiceTag.updateMany({
+              where: { id: { in: tagsToRemove } },
+              data: { usageCount: { decrement: 1 } },
+            });
+          }
+
+          // 5. Add new tag assignments
+          if (tagsToAdd.length > 0) {
+            // Verify all new tags exist
+            const existingTags = await tx.marketplaceServiceTag.findMany({
+              where: { id: { in: tagsToAdd } },
+              select: { id: true },
+            });
+
+            if (existingTags.length !== tagsToAdd.length) {
+              throw new Error("One or more tag IDs are invalid.");
+            }
+
+            await tx.marketplaceServiceTagAssignment.createMany({
+              data: tagsToAdd.map(tagId => ({
+                listingId,
+                tagId,
+              })),
+            });
+
+            // Increment usage counts
+            await tx.marketplaceServiceTag.updateMany({
+              where: { id: { in: tagsToAdd } },
+              data: { usageCount: { increment: 1 } },
+            });
+          }
+
+          // 6. Fetch final listing with tags
+          const finalListing = await tx.marketplaceServiceListing.findUnique({
+            where: { id: listingId },
+            include: {
+              assignments: {
+                include: {
+                  tag: true,
+                },
+              },
+            },
+          });
+
+          return finalListing;
+        });
+
+        return reply.send(toListingDTO(result));
+      } else {
+        // No tag updates, just update listing fields
+        const updated = await prisma.marketplaceServiceListing.update({
+          where: { id: listingId },
+          data: updateData,
+          include: {
+            assignments: {
+              include: {
+                tag: true,
+              },
+            },
+          },
+        });
+
+        return reply.send(toListingDTO(updated));
+      }
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to update listing");
+
+      if (err.message === "One or more tag IDs are invalid.") {
+        return reply.code(400).send({
+          error: "invalid_tag_ids",
+          message: err.message,
+        });
+      }
+
       return reply.code(500).send({
         error: "update_failed",
         message: "Failed to update listing. Please try again.",
@@ -861,6 +1114,11 @@ export default async function marketplaceListingsRoutes(
                 longitude: includeLatLng,
               },
             },
+            assignments: {
+              include: {
+                tag: true,
+              },
+            },
           },
         }),
         prisma.marketplaceServiceListing.count({ where }),
@@ -979,6 +1237,11 @@ export default async function marketplaceListingsRoutes(
               totalReviews: true,
               verifiedProvider: true,
               premiumProvider: true,
+            },
+          },
+          assignments: {
+            include: {
+              tag: true,
             },
           },
         },

@@ -6,7 +6,7 @@
  * Uses pdf-lib for PDF generation with no binary dependencies.
  */
 
-import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont, degrees } from "pdf-lib";
 import prisma from "../../../prisma.js";
 import { createAuditFooter, formatAuditFooterText, type AuditFooterData } from "./audit-footer.js";
 import { embedSignatureImage, generateTypedSignatureText } from "./signature-embedder.js";
@@ -90,10 +90,10 @@ export async function generateContractPdf(
     .filter((cp) => cp.status === "signed" && cp.signedAt)
     .map((cp) => ({
       partyId: cp.id,
-      partyName: cp.name,
+      partyName: cp.name || "Party",
       signatureType: (cp.signatureData as any)?.type || "typed",
       signatureData: (cp.signatureData as any)?.imageData,
-      typedName: (cp.signatureData as any)?.typedName || cp.name,
+      typedName: (cp.signatureData as any)?.typedName || cp.name || "Party",
       signedAt: cp.signedAt!,
     }));
 
@@ -277,7 +277,7 @@ export async function generateContractPdfBuffer(
         size: 50,
         font: boldFont,
         color: rgb(0.9, 0.9, 0.9),
-        rotate: { type: "degrees" as const, angle: -45 },
+        rotate: degrees(-45),
         opacity: 0.3,
       });
     }

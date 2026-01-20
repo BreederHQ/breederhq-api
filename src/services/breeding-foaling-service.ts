@@ -271,8 +271,9 @@ export async function addFoalingOutcome(params: {
     try {
       await updateMareReproductiveHistory(plan.damId, tenantId, breedingPlanId);
     } catch (err) {
+      // Log the error but don't fail the outcome save
       console.error("[Foaling] Failed to update mare reproductive history:", err);
-      // Don't fail the outcome save if history update fails
+      // Note: History will be auto-generated when user views the mare's breeding history tab
     }
   }
 
@@ -292,7 +293,7 @@ export async function getFoalingCalendar(params: {
   const where: any = {
     tenantId,
     expectedBirthDate: { not: null },
-    status: { in: ["COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING", "BRED", "PREGNANT", "BIRTHED"] },
+    status: { in: ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING", "BRED", "PREGNANT", "BIRTHED"] },
   };
 
   if (startDate) {
@@ -332,10 +333,47 @@ export async function getFoalingCalendar(params: {
 }
 
 /**
+ * Get the anchor date for milestone calculation.
+ * Priority: ovulationConfirmed (highest accuracy) > breedDateActual (standard)
+ *
+ * Returns: { anchorDate, anchorMode, gestationDays }
+ * - OVULATION anchor: 340 days gestation (±3 days accuracy)
+ * - BREEDING_DATE anchor: 340 days gestation (±5-7 days accuracy)
+ */
+function getAnchorDateForMilestones(plan: {
+  breedDateActual: Date | null;
+  ovulationConfirmed?: Date | null;
+  reproAnchorMode?: string | null;
+}): { anchorDate: Date; anchorMode: "OVULATION" | "BREEDING_DATE"; gestationDays: number } | null {
+  // Priority 1: Confirmed ovulation (highest accuracy)
+  if (plan.ovulationConfirmed) {
+    return {
+      anchorDate: plan.ovulationConfirmed,
+      anchorMode: "OVULATION",
+      gestationDays: 340, // Horse gestation from ovulation
+    };
+  }
+
+  // Priority 2: Actual breed date (standard accuracy)
+  if (plan.breedDateActual) {
+    return {
+      anchorDate: plan.breedDateActual,
+      anchorMode: "BREEDING_DATE",
+      gestationDays: 340, // Horse gestation from breeding
+    };
+  }
+
+  return null;
+}
+
+/**
  * Auto-generate milestones when breeding is confirmed (breedDateActual is set)
  *
- * Milestones are calculated from the actual breed date, not expected dates.
- * Horse gestation is approximately 340 days.
+ * Anchor Mode Priority:
+ * 1. ovulationConfirmed - Use confirmed ovulation date for highest accuracy (±3 days)
+ * 2. breedDateActual - Use breeding date as anchor (±5-7 days accuracy)
+ *
+ * Horse gestation is approximately 340 days from either anchor.
  */
 export async function createBreedingMilestones(
   breedingPlanId: number,
@@ -349,9 +387,11 @@ export async function createBreedingMilestones(
     throw new Error("Breeding plan not found");
   }
 
-  // Milestones require actual breed date - they should not be created from speculative expected dates
-  if (!plan.breedDateActual) {
-    throw new Error("Cannot create milestones: the actual breeding date must be recorded first. Milestones are calculated from the confirmed breeding date.");
+  // Get anchor date using priority logic
+  const anchor = getAnchorDateForMilestones(plan as any);
+
+  if (!anchor) {
+    throw new Error("Cannot create milestones: the actual breeding date or ovulation date must be recorded first. Milestones are calculated from the confirmed anchor date.");
   }
 
   // Check if milestones already exist
@@ -363,42 +403,42 @@ export async function createBreedingMilestones(
     throw new Error("Milestones already exist for this breeding plan");
   }
 
-  // Horse gestation is ~340 days from breeding
-  const GESTATION_DAYS = 340;
+  // Horse gestation - days are from the anchor date
+  const GESTATION_DAYS = anchor.gestationDays;
 
-  // Milestones are defined as days AFTER breeding
+  // Milestones are defined as days AFTER the anchor date (ovulation or breeding)
   const milestones = [
     {
       milestoneType: "VET_PREGNANCY_CHECK_15D",
-      daysAfterBreeding: 15,
+      daysAfterAnchor: 15,
     },
     {
       milestoneType: "VET_ULTRASOUND_45D",
-      daysAfterBreeding: 45,
+      daysAfterAnchor: 45,
     },
     {
       milestoneType: "VET_ULTRASOUND_90D",
-      daysAfterBreeding: 90,
+      daysAfterAnchor: 90,
     },
     {
       milestoneType: "BEGIN_MONITORING_300D",
-      daysAfterBreeding: 300,
+      daysAfterAnchor: 300,
     },
     {
       milestoneType: "PREPARE_FOALING_AREA_320D",
-      daysAfterBreeding: 320,
+      daysAfterAnchor: 320,
     },
     {
       milestoneType: "DAILY_CHECKS_330D",
-      daysAfterBreeding: 330,
+      daysAfterAnchor: 330,
     },
     {
       milestoneType: "DUE_DATE_340D",
-      daysAfterBreeding: GESTATION_DAYS,
+      daysAfterAnchor: GESTATION_DAYS,
     },
     {
       milestoneType: "OVERDUE_VET_CALL_350D",
-      daysAfterBreeding: 350,
+      daysAfterAnchor: 350,
     },
   ];
 
@@ -409,7 +449,7 @@ export async function createBreedingMilestones(
           tenantId,
           breedingPlanId,
           milestoneType: m.milestoneType as any,
-          scheduledDate: addDays(plan.breedDateActual!, m.daysAfterBreeding),
+          scheduledDate: addDays(anchor.anchorDate, m.daysAfterAnchor),
         },
       })
     )
@@ -439,8 +479,10 @@ export async function deleteBreedingMilestones(
 }
 
 /**
- * Recalculate milestone dates based on actual breed date
+ * Recalculate milestone dates based on anchor date (ovulation or breed date)
  * This updates existing milestones rather than deleting and recreating
+ *
+ * Uses anchor date priority: ovulationConfirmed > breedDateActual
  */
 export async function recalculateMilestones(
   breedingPlanId: number,
@@ -457,11 +499,14 @@ export async function recalculateMilestones(
     throw new Error("Breeding plan not found");
   }
 
-  if (!plan.breedDateActual) {
-    throw new Error("Cannot recalculate milestones: no actual breeding date recorded");
+  // Get anchor date using priority logic
+  const anchor = getAnchorDateForMilestones(plan as any);
+
+  if (!anchor) {
+    throw new Error("Cannot recalculate milestones: no actual breeding date or ovulation date recorded");
   }
 
-  // Milestone days after breeding (same as createBreedingMilestones)
+  // Milestone days after anchor (same as createBreedingMilestones)
   const MILESTONE_DAYS: Record<string, number> = {
     VET_PREGNANCY_CHECK_15D: 15,
     VET_ULTRASOUND_45D: 45,
@@ -475,10 +520,10 @@ export async function recalculateMilestones(
 
   const updates = await Promise.all(
     plan.breedingMilestones.map((m) => {
-      const daysAfterBreeding = MILESTONE_DAYS[m.milestoneType];
-      if (daysAfterBreeding === undefined) return m; // Unknown type, skip
+      const daysAfterAnchor = MILESTONE_DAYS[m.milestoneType];
+      if (daysAfterAnchor === undefined) return m; // Unknown type, skip
 
-      const newScheduledDate = addDays(plan.breedDateActual!, daysAfterBreeding);
+      const newScheduledDate = addDays(anchor.anchorDate, daysAfterAnchor);
 
       return prisma.breedingMilestone.update({
         where: { id: m.id },

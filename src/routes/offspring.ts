@@ -91,7 +91,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
     return [damName || "Unnamed Dam", season].join(" • ");
   }
 
-  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+  async function ensureGroupForBredPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
     const { tenantId, planId, actorId } = args;
     return prisma.$transaction(async (tx) => {
       const plan = await tx.breedingPlan.findFirst({
@@ -128,7 +128,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
           occurredAt: new Date(),
           before: Prisma.DbNull,
           after: { planId: plan.id },
-          notes: "Group ensured for committed plan",
+          notes: "Group ensured for bred plan",
           recordedByUserId: actorId,
         },
       });
@@ -286,7 +286,7 @@ export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: P
       .slice(0, limit);
   }
 
-  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+  return { ensureGroupForBredPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
 }
 // [OG-SERVICE-END]
 
@@ -1048,6 +1048,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       take: limit + 1,
       include: {
         plan: {
+          where: { deletedAt: null },
           select: {
             id: true,
             code: true,
@@ -1134,6 +1135,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where,
         include: {
           plan: {
+            where: { deletedAt: null },
             select: {
               id: true,
               code: true,
@@ -1313,7 +1315,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (planId) {
       plan = await prisma.breedingPlan.findFirst({ where: { id: Number(planId), tenantId } });
       if (!plan) return reply.code(404).send({ error: "plan not found" });
-      if ((plan as any).status && (plan as any).status !== "COMMITTED") return reply.code(409).send({ error: "plan must be COMMITTED" });
+      const planStatus = (plan as any).status;
+      if (planStatus && planStatus !== "CYCLE" && planStatus !== "COMMITTED") return reply.code(409).send({ error: "plan must be in CYCLE status" });
 
       existing = await prisma.offspringGroup.findFirst({ where: { planId: plan.id, tenantId } });
     }
@@ -1338,7 +1341,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId,
           name: identifier.trim(),
           species: resolvedSpecies,
-          status: "COMMITTED",
+          status: "CYCLE",
           committedAt: now,
         },
       });
@@ -1403,6 +1406,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id: created.id, tenantId },
       include: {
         plan: {
+          where: { deletedAt: null },
           select: {
             id: true,
             code: true,
@@ -1606,6 +1610,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id, tenantId },
       include: {
         plan: {
+          where: { deletedAt: null },
           select: {
             id: true,
             code: true,
@@ -1913,7 +1918,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const group = await prisma.offspringGroup.findFirst({
       where: { id: groupId, tenantId },
       include: {
-        plan: true,
+        plan: { where: { deletedAt: null } },
         dam: {
           include: {
             canonicalBreed: true,
@@ -2184,6 +2189,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 name: true,
                 actualBirthOn: true,
                 plan: {
+                  where: { deletedAt: null },
                   select: {
                     id: true,
                     code: true,
@@ -2256,7 +2262,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const targetGroup = await prisma.offspringGroup.findFirst({
           where: { id: targetGroupId, tenantId },
           include: {
-            plan: true,
+            plan: { where: { deletedAt: null } },
             dam: {
               include: {
                 canonicalBreed: true,
@@ -2310,7 +2316,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const group = await prisma.offspringGroup.findFirst({
           where: { id: existing.groupId, tenantId },
           include: {
-            plan: true,
+            plan: { where: { deletedAt: null } },
             dam: {
               include: {
                 canonicalBreed: true,
@@ -2511,7 +2517,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           select: {
             id: true,
             planId: true,
-            plan: { select: { birthDateActual: true } },
+            plan: { where: { deletedAt: null }, select: { birthDateActual: true } },
           },
         },
       },
@@ -2654,7 +2660,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const G = await prisma.offspringGroup.findFirst({
       where: { id, tenantId },
-      include: { plan: { select: { id: true, birthDateActual: true, species: true, damId: true, sireId: true } } },
+      include: { plan: { where: { deletedAt: null }, select: { id: true, birthDateActual: true, species: true, damId: true, sireId: true } } },
     });
     if (!G) return reply.code(404).send({ error: "group not found" });
 
@@ -3022,6 +3028,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: group.id, tenantId },
         include: {
           plan: {
+            where: { deletedAt: null },
             select: {
               id: true,
               code: true,

@@ -27,7 +27,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Invalid level. Must be: OFFSPRING, GROUP, PLAN, or PROGRAM' });
       }
 
-      const rules = await getEffectiveRules(level as BreedingRuleLevel, id as string, tenantId);
+      const rules = await getEffectiveRules(level as BreedingRuleLevel, String(id), tenantId);
 
       return reply.send({
         level,
@@ -35,7 +35,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
         rules
       });
     } catch (error) {
-      req.log.error('Error fetching effective rules:', error);
+      req.log.error({ err: error }, 'Error fetching effective rules');
       return reply.code(500).send({ error: 'Failed to fetch effective rules' });
     }
   });
@@ -83,7 +83,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ rules });
     } catch (error) {
-      req.log.error('Error fetching rules:', error);
+      req.log.error({ err: error }, 'Error fetching rules');
       return reply.code(500).send({ error: 'Failed to fetch rules' });
     }
   });
@@ -123,7 +123,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ rule });
     } catch (error) {
-      req.log.error('Error fetching rule:', error);
+      req.log.error({ err: error }, 'Error fetching rule');
       return reply.code(500).send({ error: 'Failed to fetch rule' });
     }
   });
@@ -225,7 +225,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ rule });
     } catch (error) {
-      req.log.error('Error creating/updating rule:', error);
+      req.log.error({ err: error }, 'Error creating/updating rule');
       return reply.code(500).send({ error: 'Failed to create/update rule' });
     }
   });
@@ -317,7 +317,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ override });
     } catch (error) {
-      req.log.error('Error creating override:', error);
+      req.log.error({ err: error }, 'Error creating override');
       return reply.code(500).send({ error: 'Failed to create override' });
     }
   });
@@ -353,7 +353,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ success: true, message: 'Rule deleted' });
     } catch (error) {
-      req.log.error('Error deleting rule:', error);
+      req.log.error({ err: error }, 'Error deleting rule');
       return reply.code(500).send({ error: 'Failed to delete rule' });
     }
   });
@@ -390,7 +390,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ rule: updated });
     } catch (error) {
-      req.log.error('Error toggling rule:', error);
+      req.log.error({ err: error }, 'Error toggling rule');
       return reply.code(500).send({ error: 'Failed to toggle rule' });
     }
   });
@@ -422,7 +422,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send(result);
     } catch (error) {
-      req.log.error('Error executing rules:', error);
+      req.log.error({ err: error }, 'Error executing rules');
       return reply.code(500).send({ error: 'Failed to execute rules' });
     }
   });
@@ -472,7 +472,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
         offset: parseInt(offset as string)
       });
     } catch (error) {
-      req.log.error('Error fetching executions:', error);
+      req.log.error({ err: error }, 'Error fetching executions');
       return reply.code(500).send({ error: 'Failed to fetch executions' });
     }
   });
@@ -503,7 +503,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
 
       return reply.send({ chain });
     } catch (error) {
-      req.log.error('Error building chain:', error);
+      req.log.error({ err: error }, 'Error building chain');
       return reply.code(500).send({ error: 'Failed to build inheritance chain' });
     }
   });
@@ -612,7 +612,7 @@ export default async function breedingProgramRulesRoutes(app: FastifyInstance) {
         overrides
       });
     } catch (error) {
-      req.log.error('Error disabling inheritance:', error);
+      req.log.error({ err: error }, 'Error disabling inheritance');
       return reply.code(500).send({ error: 'Failed to disable inheritance' });
     }
   });

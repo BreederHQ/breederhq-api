@@ -372,7 +372,7 @@ export default async function marketplace2faRoutes(
         where: { id: userId },
         data: {
           passkeyCredentialId: credential.id,
-          passkeyPublicKey: credential.response.attestationObject, // Should be extracted public key
+          passkeyPublicKey: Buffer.from(credential.response.attestationObject, "base64"), // Should be extracted public key
           passkeyCreatedAt: new Date(),
           passkeyChallenge: null,
           passkeyChallengeExpires: null,
