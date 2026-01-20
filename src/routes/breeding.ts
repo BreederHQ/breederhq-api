@@ -1277,6 +1277,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.ovulationDateUnknown !== undefined) data.ovulationDateUnknown = Boolean(b.ovulationDateUnknown);
       if (b.breedDateUnknown !== undefined) data.breedDateUnknown = Boolean(b.breedDateUnknown);
 
+      // Ovulation confirmation method - can be set independently of ovulationConfirmed date
+      // Both are required to advance from CYCLE phase, but can be entered in any order
+      if (b.ovulationConfirmedMethod !== undefined) data.ovulationConfirmedMethod = b.ovulationConfirmedMethod ?? null;
+
       const targetSpecies = (b.species ?? existing.species) as string;
       if (b.damId !== undefined) {
         // Allow null to clear dam (only valid in PLANNING status - enforced at commit)
