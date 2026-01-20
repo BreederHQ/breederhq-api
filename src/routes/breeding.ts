@@ -1320,6 +1320,19 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.breedText !== undefined) data.breedText = b.breedText ?? null;
       if (b.notes !== undefined) data.notes = b.notes ?? null;
 
+      // Expected litter/offspring size for capacity tracking
+      if (b.expectedLitterSize !== undefined) {
+        if (b.expectedLitterSize === null) {
+          data.expectedLitterSize = null;
+        } else {
+          const size = Number(b.expectedLitterSize);
+          if (!Number.isInteger(size) || size < 0) {
+            return reply.code(400).send({ error: "invalid_expected_litter_size" });
+          }
+          data.expectedLitterSize = size;
+        }
+      }
+
       // Committed intent flag - breeder has mentally committed to this plan (PLANNING phase feature)
       if (b.isCommittedIntent !== undefined) data.isCommittedIntent = Boolean(b.isCommittedIntent);
 
