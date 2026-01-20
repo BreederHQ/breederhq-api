@@ -58,7 +58,7 @@ export function __makeOffspringGroupsService({
     return [damName || "Unnamed Dam", season].join(" • ");
   }
 
-  async function ensureGroupForCommittedPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
+  async function ensureGroupForBredPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
     const { tenantId, planId, actorId } = args;
 
     const plan = await db.breedingPlan.findFirst({
@@ -95,7 +95,7 @@ export function __makeOffspringGroupsService({
         field: "planId",
         before: Prisma.DbNull,
         after: { planId: plan.id },
-        notes: `Group ensured for committed plan${actorId ? ` by ${actorId}` : ""}`,
+        notes: `Group ensured for bred plan${actorId ? ` by ${actorId}` : ""}`,
         recordedByUserId: null,
       },
     });
@@ -232,7 +232,7 @@ export function __makeOffspringGroupsService({
       .slice(0, limit);
   }
 
-  return { ensureGroupForCommittedPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
+  return { ensureGroupForBredPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
 }
 // [OG-SERVICE-END]
 // src/routes/breeding.ts
@@ -255,6 +255,7 @@ import {
   getMareReproductiveHistory,
   getMareDetailedFoalingHistory,
   recalculateMareHistory,
+  getFoalingAnalytics,
 } from "../services/mare-reproductive-history-service.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
@@ -276,10 +277,11 @@ function toNum(v: any): number | null {
  *   revert to ACTIVE
  * - Never downgrade from RETIRED, DECEASED, or manually set statuses
  *
- * Active breeding phases: COMMITTED, CYCLE_EXPECTED, HORMONE_TESTING, BRED, PREGNANT, BIRTHED, WEANED, PLACEMENT
+ * Active breeding phases: CYCLE, COMMITTED (deprecated), CYCLE_EXPECTED, HORMONE_TESTING, BRED, PREGNANT, BIRTHED, WEANED, PLACEMENT
  */
 const ACTIVE_BREEDING_STATUSES = new Set([
-  "COMMITTED",
+  "CYCLE",       // New: renamed from COMMITTED
+  "COMMITTED",   // Deprecated: kept for backward compatibility
   "CYCLE_EXPECTED",
   "HORMONE_TESTING",
   "BRED",
@@ -598,6 +600,9 @@ async function getLitterInTenant(litterId: number, tenantId: number) {
 function errorReply(err: any) {
   if (err?.code === "P2002") return { status: 409, payload: { error: "duplicate", detail: err?.meta?.target } };
   if (err?.code === "P2003") return { status: 409, payload: { error: "foreign_key_conflict", meta: err?.meta } };
+  if (err instanceof ImmutabilityError) {
+    return { status: 400, payload: { error: "immutability_violation", field: err.field, detail: err.message } };
+  }
   if (err?.statusCode) return { status: err.statusCode, payload: { error: err.message } };
 
   // Show details when not in production
@@ -608,6 +613,266 @@ function errorReply(err: any) {
       ? { error: "internal_error", code: err?.code, message: err?.message, meta: err?.meta, stack: err?.stack }
       : { error: "internal_error" },
   };
+}
+
+/* ───────────────────────── Anchor Mode System Types & Validation ───────────────────────── */
+
+type ReproAnchorMode = "CYCLE_START" | "OVULATION" | "BREEDING_DATE";
+type OvulationMethod = "CALCULATED" | "PROGESTERONE_TEST" | "LH_TEST" | "ULTRASOUND" | "VAGINAL_CYTOLOGY" | "PALPATION" | "AT_HOME_TEST" | "VETERINARY_EXAM" | "BREEDING_INDUCED";
+type ConfidenceLevel = "HIGH" | "MEDIUM" | "LOW";
+
+const VALID_ANCHOR_MODES = new Set<ReproAnchorMode>(["CYCLE_START", "OVULATION", "BREEDING_DATE"]);
+const VALID_OVULATION_METHODS = new Set<OvulationMethod>([
+  "PROGESTERONE_TEST", "LH_TEST", "ULTRASOUND", "VAGINAL_CYTOLOGY",
+  "PALPATION", "AT_HOME_TEST", "VETERINARY_EXAM", "BREEDING_INDUCED"
+]);
+
+// Species defaults for timeline calculations (subset of reproEngine defaults)
+const SPECIES_DEFAULTS: Record<string, { ovulationOffsetDays: number; gestationDays: number; offspringCareDurationWeeks: number; placementStartWeeksDefault: number; placementExtendedWeeks: number }> = {
+  DOG: { ovulationOffsetDays: 12, gestationDays: 63, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+  CAT: { ovulationOffsetDays: 0, gestationDays: 63, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 12, placementExtendedWeeks: 4 },
+  HORSE: { ovulationOffsetDays: 5, gestationDays: 340, offspringCareDurationWeeks: 20, placementStartWeeksDefault: 24, placementExtendedWeeks: 8 },
+  RABBIT: { ovulationOffsetDays: 0, gestationDays: 31, offspringCareDurationWeeks: 4, placementStartWeeksDefault: 8, placementExtendedWeeks: 2 },
+  GOAT: { ovulationOffsetDays: 2, gestationDays: 150, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+  SHEEP: { ovulationOffsetDays: 2, gestationDays: 147, offspringCareDurationWeeks: 8, placementStartWeeksDefault: 8, placementExtendedWeeks: 4 },
+};
+
+function getSpeciesDefaults(species: string) {
+  return SPECIES_DEFAULTS[String(species).toUpperCase()] || SPECIES_DEFAULTS.DOG;
+}
+
+// Check if species is an induced ovulator (breeding triggers ovulation)
+function isInducedOvulator(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "CAT" || s === "RABBIT";
+}
+
+// Check if species supports ovulation upgrade (cycle start -> ovulation)
+function supportsOvulationUpgrade(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "DOG" || s === "HORSE";
+}
+
+// Check if species supports ovulation testing/anchor
+// GOAT and SHEEP don't have commercial ovulation testing available
+function supportsOvulationTesting(species: string): boolean {
+  const s = String(species).toUpperCase();
+  return s === "DOG" || s === "HORSE";
+}
+
+/**
+ * ImmutabilityError - thrown when attempting to modify locked fields
+ */
+class ImmutabilityError extends Error {
+  constructor(public field: string, message: string) {
+    super(message);
+    this.name = "ImmutabilityError";
+  }
+}
+
+/**
+ * Validate immutability rules for breeding plan updates.
+ * Enforces the immutability matrix from Phase 1.4 of the anchor mode spec.
+ */
+function validateImmutability(existingPlan: any, updates: any): void {
+  const status = String(existingPlan.status);
+  const lockedStatuses = ["BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+  // CYCLE is the new name, COMMITTED is deprecated but still supported
+  const postCycleStatuses = ["CYCLE", "COMMITTED", ...lockedStatuses];
+  const isCyclePhase = status === "CYCLE" || status === "COMMITTED";
+
+  // RESET OPERATION: When status is being changed to PLANNING, skip immutability checks
+  // This allows the Reset Plan feature to clear all dates and start fresh
+  if (updates.status === "PLANNING") {
+    return; // Allow all date clears when resetting to PLANNING
+  }
+
+  // CANCELED status - no date changes allowed
+  if (status === "CANCELED") {
+    const dateFields = [
+      "cycleStartObserved", "ovulationConfirmed", "breedDateActual",
+      "birthDateActual", "weanedDateActual", "cycleStartDateActual",
+      "hormoneTestingStartDateActual", "placementStartDateActual",
+      "placementCompletedDateActual",
+    ];
+    for (const field of dateFields) {
+      if (updates[field] !== undefined) {
+        throw new ImmutabilityError(field, "Cannot modify dates on a CANCELED breeding plan. The plan is permanently locked.");
+      }
+    }
+  }
+
+  // reproAnchorMode validation
+  // Anchor mode cannot be changed directly via PATCH in CYCLE or later statuses.
+  // Upgrades (CYCLE_START -> OVULATION) must go through the /upgrade-to-ovulation endpoint.
+  if (updates.reproAnchorMode !== undefined && updates.reproAnchorMode !== existingPlan.reproAnchorMode) {
+    if (lockedStatuses.includes(status)) {
+      throw new ImmutabilityError("reproAnchorMode", "Cannot change anchor mode after breeding has begun");
+    }
+    // In CYCLE status, anchor mode changes must use upgrade endpoint
+    if (isCyclePhase) {
+      throw new ImmutabilityError("reproAnchorMode", "Anchor mode locked in CYCLE status. Use the upgrade endpoint to upgrade from CYCLE_START to OVULATION.");
+    }
+  }
+
+  // cycleStartObserved validation
+  // Tolerance is measured from the ORIGINAL locked value (lockedCycleStart), not the current value
+  if (updates.cycleStartObserved !== undefined && existingPlan.cycleStartObserved) {
+    // Check if value is actually changing (allow same-value passthrough)
+    const existingDate = new Date(existingPlan.cycleStartObserved).toISOString().split("T")[0];
+    const newDate = new Date(updates.cycleStartObserved).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      if (lockedStatuses.includes(status)) {
+        throw new ImmutabilityError("cycleStartObserved", "Cycle start date is locked after CYCLE status");
+      }
+      if (isCyclePhase) {
+        // Use lockedCycleStart as reference if available, otherwise fall back to current value
+        const referenceDate = existingPlan.lockedCycleStart || existingPlan.cycleStartObserved;
+        const oldDate = new Date(referenceDate);
+        const diffDays = Math.abs((new Date(updates.cycleStartObserved).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 3) {
+          throw new ImmutabilityError("cycleStartObserved", `Cannot change cycle start by more than 3 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+        }
+      }
+    }
+  }
+
+  // ovulationConfirmed validation
+  // Tolerance is measured from the ORIGINAL locked value (lockedOvulationDate), not the current value
+  // Allow clearing (null) in CYCLE phase - this is for the "Change" button flow
+  if (updates.ovulationConfirmed !== undefined && existingPlan.ovulationConfirmed) {
+    // Allow clearing the date in CYCLE phase (user wants to re-enter it)
+    if (updates.ovulationConfirmed === null) {
+      if (lockedStatuses.includes(status)) {
+        throw new ImmutabilityError("ovulationConfirmed", "Ovulation date cannot be cleared after CYCLE status");
+      }
+      // Allow clearing in CYCLE phase - skip further validation
+    } else {
+      // Check if value is actually changing (allow same-value passthrough)
+      const existingDate = new Date(existingPlan.ovulationConfirmed).toISOString().split("T")[0];
+      const newDate = new Date(updates.ovulationConfirmed).toISOString().split("T")[0];
+      if (existingDate !== newDate) {
+        if (lockedStatuses.includes(status)) {
+          throw new ImmutabilityError("ovulationConfirmed", "Ovulation date is locked after CYCLE status");
+        }
+        if (isCyclePhase) {
+          // Use lockedOvulationDate as reference if available, otherwise fall back to current value
+          const referenceDate = existingPlan.lockedOvulationDate || existingPlan.ovulationConfirmed;
+          const oldDate = new Date(referenceDate);
+          const diffDays = Math.abs((new Date(updates.ovulationConfirmed).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 2) {
+            throw new ImmutabilityError("ovulationConfirmed", `Cannot change ovulation date by more than 2 days in CYCLE status (attempted ${Math.round(diffDays)} days)`);
+          }
+        }
+      }
+    }
+  }
+
+  // breedDateActual validation
+  if (updates.breedDateActual !== undefined && existingPlan.breedDateActual) {
+    // Check if value is actually changing (allow same-value passthrough)
+    const existingDate = new Date(existingPlan.breedDateActual).toISOString().split("T")[0];
+    const newDate = new Date(updates.breedDateActual).toISOString().split("T")[0];
+    if (existingDate !== newDate) {
+      const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBreedStatuses.includes(status)) {
+        throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
+      }
+      if (status === "BRED") {
+        const oldDate = new Date(existingPlan.breedDateActual);
+        const diffDays = Math.abs((new Date(updates.breedDateActual).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 2) {
+          throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+        }
+      }
+    }
+  }
+
+  // birthDateActual validation
+  // Allow clearing (null) in BIRTHED phase - this is for the "Change" button flow
+  if (updates.birthDateActual !== undefined && existingPlan.birthDateActual) {
+    // Allow clearing the date in BIRTHED phase (user wants to re-enter it)
+    if (updates.birthDateActual === null) {
+      const postBirthStatuses = ["WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBirthStatuses.includes(status)) {
+        throw new ImmutabilityError("birthDateActual", "Birth date cannot be cleared after BIRTHED status");
+      }
+      // Allow clearing in BIRTHED phase - skip further validation
+    } else {
+      // Allow sending the same value (no actual change) - only error if actually changing
+      const existingDate = new Date(existingPlan.birthDateActual).toISOString().split("T")[0];
+      const newDate = new Date(updates.birthDateActual).toISOString().split("T")[0];
+      if (existingDate !== newDate) {
+        // Birth date cannot be changed once set (except via admin override)
+        throw new ImmutabilityError("birthDateActual", "Birth date is strictly immutable once set. Contact support if correction needed.");
+      }
+    }
+  }
+
+  // weanedDateActual validation
+  if (updates.weanedDateActual !== undefined && existingPlan.weanedDateActual) {
+    const postWeenStatuses = ["PLACEMENT", "COMPLETE"];
+    if (postWeenStatuses.includes(status)) {
+      const oldDate = new Date(existingPlan.weanedDateActual);
+      const newDate = new Date(updates.weanedDateActual);
+      const diffDays = Math.abs((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) {
+        throw new ImmutabilityError("weanedDateActual", `Cannot change weaning date by more than 7 days after WEANED status (attempted ${Math.round(diffDays)} days)`);
+      }
+    }
+  }
+}
+
+/**
+ * Calculate expected dates from an anchor date using species defaults.
+ * Used by unified lock and upgrade endpoints.
+ */
+function calculateExpectedDatesFromAnchor(
+  anchorMode: ReproAnchorMode,
+  anchorDate: Date,
+  species: string
+): {
+  cycleStart: Date;
+  ovulation: Date;
+  dueDate: Date;
+  weanedDate: Date;
+  placementStart: Date;
+  placementCompleted: Date;
+} {
+  const d = getSpeciesDefaults(species);
+
+  let cycleStart: Date;
+  let ovulation: Date;
+
+  if (anchorMode === "OVULATION" || anchorMode === "BREEDING_DATE") {
+    // Ovulation is the anchor - work backward for cycle start
+    ovulation = new Date(anchorDate);
+    cycleStart = new Date(anchorDate);
+    cycleStart.setUTCDate(cycleStart.getUTCDate() - d.ovulationOffsetDays);
+  } else {
+    // Cycle start is the anchor - work forward for ovulation
+    cycleStart = new Date(anchorDate);
+    ovulation = new Date(anchorDate);
+    ovulation.setUTCDate(ovulation.getUTCDate() + d.ovulationOffsetDays);
+  }
+
+  // Calculate birth from ovulation (gestation days)
+  const dueDate = new Date(ovulation);
+  dueDate.setUTCDate(dueDate.getUTCDate() + d.gestationDays);
+
+  // Calculate weaned from birth
+  const weanedDate = new Date(dueDate);
+  weanedDate.setUTCDate(weanedDate.getUTCDate() + (d.offspringCareDurationWeeks * 7));
+
+  // Calculate placement start from birth
+  const placementStart = new Date(dueDate);
+  placementStart.setUTCDate(placementStart.getUTCDate() + (d.placementStartWeeksDefault * 7));
+
+  // Calculate placement completed
+  const placementCompleted = new Date(placementStart);
+  placementCompleted.setUTCDate(placementCompleted.getUTCDate() + (d.placementExtendedWeeks * 7));
+
+  return { cycleStart, ovulation, dueDate, weanedDate, placementStart, placementCompleted };
 }
 
 function buildCodeFromId(planId: number, d = new Date()) {
@@ -658,7 +923,8 @@ async function buildFriendlyPlanCode(tenantId: number, planId: number) {
 
 const PlanStatus = new Set<string>([
   "PLANNING",
-  "COMMITTED",
+  "CYCLE",         // New: renamed from COMMITTED
+  "COMMITTED",     // Deprecated: kept for backward compatibility
   "CYCLE_EXPECTED",
   "HORMONE_TESTING",
   "BRED",
@@ -668,6 +934,8 @@ const PlanStatus = new Set<string>([
   "PLACEMENT",
   "COMPLETE",
   "CANCELED",
+  "UNSUCCESSFUL",  // Terminal: breeding was attempted but failed
+  "ON_HOLD",       // Semi-terminal: plan is paused but can be resumed
 ]);
 
 function normalizePlanStatus(s: any) {
@@ -963,7 +1231,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const existing = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
-        select: { species: true, code: true, status: true, damId: true, sireId: true },
+        select: {
+          species: true,
+          code: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          // Fields needed for immutability validation
+          reproAnchorMode: true,
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+          cycleStartObserved: true,
+          ovulationConfirmed: true,
+          breedDateActual: true,
+          birthDateActual: true,
+          weanedDateActual: true,
+        },
       });
       if (!existing) return reply.code(404).send({ error: "not_found" });
 
@@ -1002,6 +1285,20 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (b.nickname !== undefined) data.nickname = b.nickname ?? null;
       if (b.species !== undefined) data.species = b.species;
+      if (b.breedText !== undefined) data.breedText = b.breedText ?? null;
+      if (b.notes !== undefined) data.notes = b.notes ?? null;
+
+      // Committed intent flag - breeder has mentally committed to this plan (PLANNING phase feature)
+      if (b.isCommittedIntent !== undefined) data.isCommittedIntent = Boolean(b.isCommittedIntent);
+
+      // Unknown date flags - for surprise pregnancies where breeder doesn't know exact dates
+      if (b.cycleStartDateUnknown !== undefined) data.cycleStartDateUnknown = Boolean(b.cycleStartDateUnknown);
+      if (b.ovulationDateUnknown !== undefined) data.ovulationDateUnknown = Boolean(b.ovulationDateUnknown);
+      if (b.breedDateUnknown !== undefined) data.breedDateUnknown = Boolean(b.breedDateUnknown);
+
+      // Ovulation confirmation method - can be set independently of ovulationConfirmed date
+      // Both are required to advance from CYCLE phase, but can be entered in any order
+      if (b.ovulationConfirmedMethod !== undefined) data.ovulationConfirmedMethod = b.ovulationConfirmedMethod ?? null;
 
       const targetSpecies = (b.species ?? existing.species) as string;
       if (b.damId !== undefined) {
@@ -1049,6 +1346,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "expectedPlacementStart",
         "expectedWeaned",
         "expectedPlacementCompleted",
+        "cycleStartObserved",
+        "ovulationConfirmed",
         "cycleStartDateActual",
         "hormoneTestingStartDateActual",
         "breedDateActual",
@@ -1119,6 +1418,35 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               });
             }
           }
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // BUSINESS RULE: Cannot clear date if downstream date is recorded
+      // Each date in the breeding timeline depends on previous dates existing
+      // ═══════════════════════════════════════════════════════════════════════════
+
+      // Cannot clear cycleStartDateActual if breedDateActual is set
+      if (b.cycleStartDateActual === null) {
+        const breedDateWillExist = b.breedDateActual !== null &&
+          (b.breedDateActual !== undefined || existingPlanDates?.breedDateActual);
+        if (breedDateWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual cycle start date because the actual breeding date is recorded. Clear the downstream date first.",
+          });
+        }
+      }
+
+      // Cannot clear breedDateActual if birthDateActual is set
+      if (b.breedDateActual === null) {
+        const birthDateWillExist = b.birthDateActual !== null &&
+          (b.birthDateActual !== undefined || existingPlanDates?.birthDateActual);
+        if (birthDateWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual breeding date because the actual birth date is recorded. Clear the downstream date first.",
+          });
         }
       }
 
@@ -1205,21 +1533,31 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             weanedDateActual: true,
             placementStartDateActual: true,
             placementCompletedDateActual: true,
+            ovulationConfirmed: true,
+            reproAnchorMode: true,
           },
         });
 
-        const finalCycleStart = effectiveCycleStart ?? existingPlan?.cycleStartDateActual;
-        const finalBreedDate = effectiveBreedDate ?? existingPlan?.breedDateActual;
-        const finalBirthDate = effectiveBirthDate ?? existingPlan?.birthDateActual;
-        const finalWeanedDate = effectiveWeanedDate ?? existingPlan?.weanedDateActual;
-        const finalPlacementStart = effectivePlacementStart ?? existingPlan?.placementStartDateActual;
-        const finalPlacementCompleted = effectivePlacementCompleted ?? existingPlan?.placementCompletedDateActual;
+        // Use undefined check instead of ?? so explicit null values are preserved
+        // (null ?? x returns x, but we want null to mean "clear this date")
+        const finalCycleStart = effectiveCycleStart !== undefined ? effectiveCycleStart : existingPlan?.cycleStartDateActual;
+        const finalBreedDate = effectiveBreedDate !== undefined ? effectiveBreedDate : existingPlan?.breedDateActual;
+        const finalBirthDate = effectiveBirthDate !== undefined ? effectiveBirthDate : existingPlan?.birthDateActual;
+        const finalWeanedDate = effectiveWeanedDate !== undefined ? effectiveWeanedDate : existingPlan?.weanedDateActual;
+        const finalPlacementStart = effectivePlacementStart !== undefined ? effectivePlacementStart : existingPlan?.placementStartDateActual;
+        const finalPlacementCompleted = effectivePlacementCompleted !== undefined ? effectivePlacementCompleted : existingPlan?.placementCompletedDateActual;
+        const finalOvulationConfirmed = existingPlan?.ovulationConfirmed;
+        const isOvulationAnchor = existingPlan?.reproAnchorMode === "OVULATION";
 
         // Validate required dates for each status
-        if (s === "BRED" && !finalCycleStart) {
+        // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
+        const hasRequiredCycleData = finalCycleStart || (isOvulationAnchor && finalOvulationConfirmed);
+        if (s === "BRED" && !hasRequiredCycleData) {
           return reply.code(400).send({
             error: "date_required_for_status",
-            detail: "cycleStartDateActual is required to set status to BRED"
+            detail: isOvulationAnchor
+              ? "ovulationConfirmed date is required to set status to BRED when using ovulation anchor mode"
+              : "cycleStartDateActual is required to set status to BRED"
           });
         }
         if (s === "BIRTHED" && !finalBreedDate) {
@@ -1249,15 +1587,53 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // BUSINESS RULE: Status regression validation
         // Define the progression order of statuses (index = progression level)
+        // Note: CANCELED, UNSUCCESSFUL, ON_HOLD are terminal/semi-terminal statuses that can be set from any phase
         const STATUS_ORDER = [
-          "PLANNING", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
+          "PLANNING", "CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
           "BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"
         ];
+        const TERMINAL_STATUSES = ["CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
         const currentStatusIndex = STATUS_ORDER.indexOf(String(existing.status));
         const newStatusIndex = STATUS_ORDER.indexOf(s);
 
-        // Check if this is a regression (moving backwards in the lifecycle)
-        if (currentStatusIndex > -1 && newStatusIndex > -1 && newStatusIndex < currentStatusIndex) {
+        // Allow transitions to terminal/semi-terminal statuses from any phase
+        const isMovingToTerminal = TERMINAL_STATUSES.includes(s);
+        const isCurrentlyTerminal = TERMINAL_STATUSES.includes(String(existing.status));
+
+        // Handle resuming from ON_HOLD - can only resume to the phase that was active before hold
+        // The statusBeforeHold field should be set when transitioning to ON_HOLD
+        if (isCurrentlyTerminal && !isMovingToTerminal) {
+          // Resuming from a terminal/semi-terminal status
+          if (String(existing.status) === "ON_HOLD") {
+            // ON_HOLD can resume - clear the statusBeforeHold and statusReason fields
+            data.statusBeforeHold = null;
+            data.statusReason = null;
+            // Status validation is handled by the normal flow below
+          } else {
+            // CANCELED and UNSUCCESSFUL are truly terminal - cannot resume
+            return reply.code(400).send({
+              error: "cannot_resume_terminal_status",
+              detail: `Cannot change status from ${existing.status} to ${s}. ${existing.status} is a terminal status and cannot be resumed.`,
+            });
+          }
+        }
+
+        // Skip regression validation when moving to terminal statuses
+        // (they can be set from any phase)
+        if (isMovingToTerminal) {
+          // No date validation needed for terminal statuses
+          data.status = s as any;
+
+          // When moving to ON_HOLD, store the current status so we can resume
+          if (s === "ON_HOLD") {
+            data.statusBeforeHold = existing.status;
+          }
+
+          // Store status reason if provided
+          if (b.statusReason !== undefined) {
+            data.statusReason = b.statusReason || null;
+          }
+        } else if (currentStatusIndex > -1 && newStatusIndex > -1 && newStatusIndex < currentStatusIndex) {
           // Regression detected - validate data consistency
 
           // Cannot regress past BIRTHED if offspring exist
@@ -1370,6 +1746,23 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(status).send(payload);
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // IMMUTABILITY VALIDATION (Phase 1.4 of anchor mode spec)
+      // Validates that fields can be modified based on current status
+      // ═══════════════════════════════════════════════════════════════════════════
+      try {
+        validateImmutability(existing, b);
+      } catch (err) {
+        if (err instanceof ImmutabilityError) {
+          return reply.code(400).send({
+            error: "immutable_field",
+            field: err.field,
+            detail: err.message,
+          });
+        }
+        throw err;
+      }
+
       // Track dam/sire changes for status sync
       const damChanged = data.damId !== undefined;
       const sireChanged = data.sireId !== undefined;
@@ -1395,20 +1788,46 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Ensure offspring group exists when plan reaches COMMITTED status
-      // This handles cases where the plan was committed before offspring group auto-creation was added
-      const isCommitted = String(updated.status) === "COMMITTED";
-      if (isCommitted) {
+      // Ensure offspring group exists when plan reaches BRED status
+      // This is when breeding has actually occurred and offspring are expected
+      const isBredStatus = String(updated.status) === "BRED";
+      if (isBredStatus) {
         try {
           const ogSvc = __makeOffspringGroupsService({ prisma, authorizer: __og_authorizer });
-          await ogSvc.ensureGroupForCommittedPlan({
+          await ogSvc.ensureGroupForBredPlan({
             tenantId,
             planId: id,
             actorId: (req as any).user?.id ?? "system",
           });
         } catch (ogErr) {
           // Log but don't fail the update - offspring group creation is secondary
-          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for committed plan");
+          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for bred plan");
+        }
+      }
+
+      // Delete offspring group when plan status changes to terminal state or resets to CYCLE
+      // These actions indicate the breeding attempt is over and the offspring group is no longer relevant
+      const isTerminalOrReset = ["UNSUCCESSFUL", "CANCELED", "CYCLE"].includes(String(updated.status));
+      if (isTerminalOrReset && statusChanged) {
+        try {
+          const group = await prisma.offspringGroup.findFirst({
+            where: { tenantId, planId: id },
+            select: { id: true },
+          });
+          if (group) {
+            // Delete events first (foreign key constraint)
+            await prisma.offspringGroupEvent.deleteMany({
+              where: { tenantId, offspringGroupId: group.id },
+            });
+            // Delete the group
+            await prisma.offspringGroup.delete({
+              where: { id: group.id },
+            });
+            req.log?.info?.({ planId: id, groupId: group.id }, "Deleted offspring group due to plan status change");
+          }
+        } catch (ogErr) {
+          // Log but don't fail the update
+          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to delete offspring group on status change");
         }
       }
 
@@ -1436,6 +1855,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: true,
           damId: true,
           sireId: true,
+          // Anchor mode system fields
+          reproAnchorMode: true,
+          ovulationConfirmed: true,
+          cycleStartObserved: true,
+          dateConfidenceLevel: true,
+          // Legacy locked fields
           lockedCycleStart: true,
           lockedOvulationDate: true,
           lockedDueDate: true,
@@ -1447,7 +1872,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
       const terminal = new Set<string>([
-        "COMMITTED",
+        "CYCLE",       // New: renamed from COMMITTED
+        "COMMITTED",   // Deprecated: kept for backward compatibility
         "BRED",
         "PREGNANT",
         "BIRTHED",
@@ -1455,6 +1881,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "PLACEMENT",
         "COMPLETE",
         "CANCELED",
+        "UNSUCCESSFUL",
+        "ON_HOLD",
       ]);
       if (terminal.has(String(plan.status))) {
         return reply.code(409).send({ error: "already_in_terminal_state" });
@@ -1464,6 +1892,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "dam_sire_required" });
       }
 
+      // Validate locked dates - anchor mode system populates all of these via /lock endpoint
       const missingLock: string[] = [];
       if (!plan.lockedCycleStart) missingLock.push("lockedCycleStart");
       if (!plan.lockedOvulationDate) missingLock.push("lockedOvulationDate");
@@ -1472,7 +1901,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (missingLock.length) {
         return reply.code(400).send({
           error: "full_lock_required",
-          detail: `Commit requires a locked cycle with all fields present. Missing: ${missingLock.join(", ")}`,
+          detail: `Commit requires a locked cycle with all fields present. Use POST /breeding/plans/:id/lock to lock the plan first. Missing: ${missingLock.join(", ")}`,
         });
       }
 
@@ -1489,7 +1918,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: plan.id },
           data: {
             code,
-            status: BreedingPlanStatus.COMMITTED,
+            status: BreedingPlanStatus.CYCLE,
             expectedBirthDate,
             expectedPlacementStart,
             committedAt: new Date(),
@@ -1501,12 +1930,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: {
             tenantId: plan.tenantId,
             planId: plan.id,
-            type: "PLAN_COMMITTED",
+            type: "PLAN_CYCLE_STARTED",
             occurredAt: new Date(),
-            label: "Plan committed",
+            label: "Plan cycle started",
             data: {
               code,
               fromStatus: String(plan.status),
+              // Anchor mode system data
+              anchorMode: plan.reproAnchorMode ?? "CYCLE_START",
+              confidenceLevel: plan.dateConfidenceLevel ?? "MEDIUM",
+              ovulationConfirmed: plan.ovulationConfirmed,
+              cycleStartObserved: plan.cycleStartObserved,
+              // Legacy locked dates
               lockedCycleStart: plan.lockedCycleStart,
               lockedOvulationDate: plan.lockedOvulationDate,
               lockedDueDate: plan.lockedDueDate,
@@ -1518,27 +1953,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // If actorId is provided, also ensure an offspring group and return that payload
-        if (b.actorId) {
-          const ogSvc = __makeOffspringGroupsService({ prisma: tx as any, authorizer: __og_authorizer });
-          const group = await ogSvc.ensureGroupForCommittedPlan({
-            tenantId,
-            planId: plan.id,
-            actorId: b.actorId,
-          });
-          return { mode: "ensure", payload: { planId: plan.id, group } };
-        }
+        // NOTE: Offspring group creation has been moved to BRED phase (when breedDateActual is set)
+        // This commit endpoint only locks the cycle timeline; offspring groups are created when breeding occurs
 
         // Sync animal breeding statuses for dam and sire
         if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId, tx);
         if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId, tx);
 
-        // Legacy response, return the updated plan
-        return { mode: "legacy", payload: saved };
+        return saved;
       });
 
-      if (result.mode === "ensure") return reply.send(result.payload);
-      return reply.send(result.payload);
+      return reply.send(result);
     } catch (err) {
       req.log.error({ err }, "commit failed");
       const { status, payload } = errorReply(err);
@@ -1567,11 +1992,12 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      // Only allow uncommit if status is COMMITTED
-      if (String(plan.status) !== "COMMITTED") {
+      // Only allow uncommit if status is CYCLE (or deprecated COMMITTED)
+      const planStatus = String(plan.status);
+      if (planStatus !== "CYCLE" && planStatus !== "COMMITTED") {
         return reply.code(409).send({
-          error: "not_committed",
-          detail: `Plan must be in COMMITTED status to uncommit. Current status: ${plan.status}`
+          error: "not_in_cycle",
+          detail: `Plan must be in CYCLE status to uncommit. Current status: ${plan.status}`
         });
       }
 
@@ -1677,6 +2103,1030 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       reply.send({ ok: true });
     } catch (err) {
       req.log.error({ err }, "uncommit failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────────────────── Phase Rewind Endpoint ───────────────────────── */
+
+  /**
+   * POST /breeding/plans/:id/rewind
+   *
+   * Rewinds a breeding plan back one phase by clearing the date(s) that
+   * advanced it to the current phase. Includes validation to prevent
+   * data integrity issues (e.g., can't rewind past birth if offspring exist).
+   *
+   * Body:
+   * - actorId?: string (for audit trail)
+   *
+   * Returns:
+   * - { ok: true, fromPhase, toPhase } on success
+   * - 400 with error code if validation fails
+   * - 409 with blockers if blocked by downstream data
+   */
+  app.post("/breeding/plans/:id/rewind", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as Partial<{ actorId: string }>;
+      const userId = (req as any).user?.id ?? null;
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          // Lock fields (CYCLE phase)
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+          lockedDueDate: true,
+          lockedPlacementStartDate: true,
+          committedAt: true,
+          committedByUserId: true,
+          ovulationConfirmed: true,
+          ovulationConfirmedMethod: true,
+          // Actual dates
+          cycleStartDateActual: true,
+          hormoneTestingStartDateActual: true,
+          breedDateActual: true,
+          birthDateActual: true,
+          weanedDateActual: true,
+          placementStartDateActual: true,
+          placementCompletedDateActual: true,
+          completedDateActual: true,
+          // Unknown flags
+          cycleStartDateUnknown: true,
+          ovulationDateUnknown: true,
+          breedDateUnknown: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Determine current phase based on dates (working backward from most advanced)
+      // Phase order: PLANNING -> CYCLE -> BRED -> BIRTHED -> WEANED -> PLACEMENT_STARTED -> PLACEMENT_COMPLETED -> COMPLETE
+      //
+      // The phase represents where the plan currently IS (what milestone has been reached):
+      // - PLANNING: Basic info only, not yet committed
+      // - CYCLE: Plan is committed (locked dates), waiting for cycle start actual
+      // - BRED: Cycle start actual entered, waiting for breed date actual
+      // - BIRTHED: Breed date actual entered, waiting for birth date actual
+      // - WEANED: Birth date actual entered, waiting for weaned date actual
+      // - PLACEMENT_STARTED: Weaned date entered, waiting for placement start date
+      // - PLACEMENT_COMPLETED: Placement start date entered, waiting for placement completed
+      // - COMPLETE: All dates recorded, plan is complete
+      //
+      // Note: Unknown flags (cycleStartDateUnknown, breedDateUnknown) act as placeholders
+      // that allow advancing without the actual date (for surprise pregnancies)
+      type Phase = "PLANNING" | "CYCLE" | "BRED" | "BIRTHED" | "WEANED" | "PLACEMENT_STARTED" | "PLACEMENT_COMPLETED" | "COMPLETE";
+      const PHASE_ORDER: Phase[] = ["PLANNING", "CYCLE", "BRED", "BIRTHED", "WEANED", "PLACEMENT_STARTED", "PLACEMENT_COMPLETED", "COMPLETE"];
+
+      const derivePhaseFromDates = (): Phase => {
+        // Work backward from most advanced phase
+        // Each check asks: "Has this milestone been completed?" If yes, we're in the NEXT phase
+        // Phase names represent what task you're working on, not what you've completed
+        if (plan.completedDateActual && plan.placementCompletedDateActual) return "COMPLETE";
+        if (plan.placementCompletedDateActual) return "COMPLETE"; // Has placement completed, working on plan completion
+        if (plan.placementStartDateActual) return "PLACEMENT_COMPLETED"; // Has placement start, working on placement completed
+        if (plan.weanedDateActual) return "PLACEMENT_STARTED"; // Has weaned, working on placement start
+        if (plan.birthDateActual) return "WEANED"; // Has birth, working on weaned date
+        // Has breed date (or unknown), working on birth date → BIRTHED phase
+        if (plan.breedDateActual || plan.breedDateUnknown) return "BIRTHED";
+        // Has cycle start (or unknown), working on breed date → BRED phase
+        // For ovulation-anchored plans: status=BRED means we advanced via ovulation (cycle start may be null)
+        if (plan.cycleStartDateActual || plan.cycleStartDateUnknown) return "BRED";
+        // Check if plan was advanced to BRED via ovulation confirmation (ovulation-anchored workflow)
+        // In this case, cycleStartDateActual may be null but status is BRED
+        if (String(plan.status) === "BRED" && plan.ovulationConfirmed) return "BRED";
+        // Plan is committed/locked (via cycle start lock OR ovulation confirmation), working on cycle start actual → CYCLE phase
+        if (plan.lockedCycleStart || plan.lockedOvulationDate || plan.ovulationConfirmed) return "CYCLE";
+        return "PLANNING";
+      };
+
+      const derivedPhase = derivePhaseFromDates();
+      let storedStatus = String(plan.status) as Phase;
+
+      // Map database PLACEMENT status to frontend PLACEMENT_STARTED or PLACEMENT_COMPLETED
+      // The database uses a single PLACEMENT status, but we differentiate by dates
+      if (storedStatus === ("PLACEMENT" as Phase)) {
+        // If placementStartDateActual exists, we're in PLACEMENT_COMPLETED (working on completed date)
+        // Otherwise, we're in PLACEMENT_STARTED (working on start date)
+        storedStatus = plan.placementStartDateActual ? "PLACEMENT_COMPLETED" : "PLACEMENT_STARTED";
+      }
+
+      // Use the stored status as the authoritative phase for rewind purposes.
+      // The derived phase tells us what dates have been entered, but the user may not have
+      // explicitly advanced yet (e.g., entered breed date but still in BRED status).
+      // Rewind should respect where the user actually IS (stored status), not where they
+      // COULD be based on entered data.
+      // However, if derived phase is LESS than stored status, use derived (data was cleared somehow).
+      const storedIdx = PHASE_ORDER.indexOf(storedStatus);
+      const derivedIdx = PHASE_ORDER.indexOf(derivedPhase);
+      const currentPhase = storedIdx >= 0 && storedIdx <= derivedIdx ? storedStatus : derivedPhase;
+
+      // Cannot rewind from PLANNING - nothing to rewind
+      if (currentPhase === "PLANNING") {
+        return reply.code(400).send({
+          error: "cannot_rewind_planning",
+          detail: "Plan is already in PLANNING phase. Nothing to rewind.",
+        });
+      }
+
+      // Define what each rewind operation clears and its target phase
+      const rewindConfig: Record<Phase, {
+        targetPhase: Phase;
+        clearFields: Record<string, null | false>;
+        validation?: () => Promise<{ blocked: boolean; error?: string; detail?: string; blockers?: any }>;
+      } | null> = {
+        PLANNING: null, // Can't rewind from PLANNING
+
+        CYCLE: {
+          // Rewind CYCLE -> PLANNING: Clear lock fields, reset anchor mode, delete offspring group if exists
+          targetPhase: "PLANNING",
+          clearFields: {
+            lockedCycleStart: null,
+            lockedOvulationDate: null,
+            lockedDueDate: null,
+            lockedPlacementStartDate: null,
+            committedAt: null,
+            committedByUserId: null,
+            ovulationConfirmed: null,
+            ovulationConfirmedMethod: null,
+            // Reset anchor mode back to default - breeder must re-enable ovulation anchors if desired
+            reproAnchorMode: "CYCLE_START",
+            primaryAnchor: "CYCLE_START",
+            dateConfidenceLevel: null,
+            dateSourceNotes: null,
+            // Clear all downstream actual dates in case they were entered ahead of status
+            cycleStartDateActual: null,
+            cycleStartDateUnknown: false,
+            hormoneTestingStartDateActual: null,
+            ovulationDateUnknown: false,
+            breedDateActual: null,
+            breedDateUnknown: false,
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.PLANNING,
+          },
+          validation: async () => {
+            // Check for offspring group blockers (same as uncommit)
+            const group = await prisma.offspringGroup.findFirst({
+              where: { tenantId, planId: plan.id },
+              select: { id: true },
+            });
+            if (group) {
+              const blockers: any = {};
+              const offspringCount = await prisma.animal.count({
+                where: { tenantId, offspringGroupId: group.id },
+              });
+              if (offspringCount > 0) blockers.hasOffspring = true;
+
+              try {
+                const buyersCount = await prisma.waitlistEntry.count({
+                  where: {
+                    tenantId,
+                    OR: [{ offspringGroupId: group.id }, { planId: plan.id }],
+                  },
+                });
+                if (buyersCount > 0) blockers.hasBuyers = true;
+              } catch (e) {
+                // Table may not exist
+              }
+
+              if (Object.keys(blockers).length > 0) {
+                return { blocked: true, blockers };
+              }
+            }
+            return { blocked: false };
+          },
+        },
+
+        BRED: {
+          // Rewind BRED -> CYCLE: Clear cycle start date and/or ovulation data that advanced us to BRED
+          // BRED phase = has cycle start OR ovulation confirmed, working on breed date
+          // Also clear any breed date that may have been entered but not yet advanced
+          // NOTE: Offspring group is NOT deleted here - only when rewinding all the way to PLANNING
+          // This allows user to continue with the plan and use the existing offspring group
+          targetPhase: "CYCLE",
+          clearFields: {
+            cycleStartDateActual: null,
+            hormoneTestingStartDateActual: null,
+            cycleStartDateUnknown: false,
+            ovulationDateUnknown: false,
+            breedDateActual: null, // Clear any entered breed date
+            breedDateUnknown: false,
+            // Clear ovulation anchor data (plan may have been advanced via ovulation confirmation)
+            ovulationConfirmed: null,
+            ovulationConfirmedMethod: null,
+            ovulationConfidence: null,
+            ovulationTestResultId: null,
+            // Reset anchor mode back to CYCLE_START - breeder must re-enable ovulation anchors if desired
+            reproAnchorMode: "CYCLE_START",
+            primaryAnchor: "CYCLE_START",
+            dateConfidenceLevel: null,
+            dateSourceNotes: null,
+            // Clear downstream dates in case they were entered ahead of status
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.CYCLE,
+          },
+        },
+
+        BIRTHED: {
+          // Rewind BIRTHED -> BRED: Clear breed date that advanced us to BIRTHED
+          // BIRTHED phase = has breed date, working on birth date
+          // Also clear any downstream dates that may have been entered but not yet advanced
+          targetPhase: "BRED",
+          clearFields: {
+            breedDateActual: null,
+            breedDateUnknown: false,
+            // Clear downstream dates in case they were entered ahead of status
+            birthDateActual: null,
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.BRED,
+          },
+        },
+
+        WEANED: {
+          // Rewind WEANED -> BIRTHED: Clear birth date that advanced us to WEANED
+          // WEANED phase = has birth date, working on weaned date
+          // Also clear any downstream dates that may have been entered but not yet advanced
+          targetPhase: "BIRTHED",
+          clearFields: {
+            birthDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            weanedDateActual: null,
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.BIRTHED,
+          },
+          validation: async () => {
+            // Cannot rewind if offspring exist in linked group
+            const linkedGroup = await prisma.offspringGroup.findFirst({
+              where: { planId: id, tenantId },
+              select: { id: true },
+            });
+            if (linkedGroup) {
+              const animalCount = await prisma.animal.count({
+                where: { tenantId, offspringGroupId: linkedGroup.id },
+              });
+              const offspringCount = await prisma.offspring.count({
+                where: { tenantId, groupId: linkedGroup.id },
+              });
+              if (animalCount > 0 || offspringCount > 0) {
+                return {
+                  blocked: true,
+                  error: "offspring_exist",
+                  detail: "Cannot rewind because offspring have been recorded in the linked offspring group. Remove all offspring first.",
+                  blockers: { hasOffspring: true },
+                };
+              }
+            }
+            return { blocked: false };
+          },
+        },
+
+        PLACEMENT_STARTED: {
+          // Rewind PLACEMENT_STARTED -> WEANED: Clear weaned date that advanced us to PLACEMENT_STARTED
+          // PLACEMENT_STARTED phase = has weaned date, working on placement start date
+          // Also clear any downstream dates that may have been entered but not yet advanced
+          targetPhase: "WEANED",
+          clearFields: {
+            weanedDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            placementStartDateActual: null,
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.WEANED,
+          },
+        },
+
+        PLACEMENT_COMPLETED: {
+          // Rewind PLACEMENT_COMPLETED -> PLACEMENT_STARTED: Clear placement start date that advanced us
+          // PLACEMENT_COMPLETED phase = has placement start date, working on placement completed date
+          // Also clear any downstream dates that may have been entered but not yet advanced
+          targetPhase: "PLACEMENT_STARTED",
+          clearFields: {
+            placementStartDateActual: null,
+            // Clear downstream dates in case they were entered ahead of status
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.PLACEMENT,
+          },
+        },
+
+        COMPLETE: {
+          // Rewind COMPLETE -> PLACEMENT_COMPLETED: Clear placement completed date that advanced us
+          // COMPLETE phase = has placement completed date, plan is done
+          targetPhase: "PLACEMENT_COMPLETED",
+          clearFields: {
+            placementCompletedDateActual: null,
+            completedDateActual: null,
+            status: BreedingPlanStatus.PLACEMENT,
+          },
+        },
+      };
+
+      const config = rewindConfig[currentPhase];
+      if (!config) {
+        return reply.code(400).send({
+          error: "cannot_rewind",
+          detail: `Cannot rewind from phase: ${currentPhase}`,
+        });
+      }
+
+      // Run validation if defined
+      if (config.validation) {
+        const validationResult = await config.validation();
+        if (validationResult.blocked) {
+          if (validationResult.blockers) {
+            return reply.code(409).send({ blockers: validationResult.blockers });
+          }
+          return reply.code(400).send({
+            error: validationResult.error || "validation_failed",
+            detail: validationResult.detail,
+          });
+        }
+      }
+
+      // Execute the rewind in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        // Special handling: Only delete offspring group when rewinding all the way to PLANNING
+        // For other rewinds, keep the group - user will likely continue with the plan
+        if (currentPhase === "CYCLE") {
+          const group = await tx.offspringGroup.findFirst({
+            where: { tenantId, planId: plan.id },
+            select: { id: true },
+          });
+          if (group) {
+            try {
+              await tx.offspringGroupEvent.deleteMany({
+                where: { tenantId, offspringGroupId: group.id },
+              });
+            } catch (e) {
+              // Events may not exist
+            }
+            await tx.offspringGroup.delete({
+              where: { id: group.id },
+            });
+          }
+        }
+
+        // Update plan with cleared fields
+        const updated = await tx.breedingPlan.update({
+          where: { id: plan.id },
+          data: config.clearFields as any,
+        });
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId: plan.tenantId,
+            planId: plan.id,
+            type: "PLAN_PHASE_REWOUND",
+            occurredAt: new Date(),
+            label: `Phase rewound from ${currentPhase} to ${config.targetPhase}`,
+            data: {
+              fromPhase: currentPhase,
+              toPhase: config.targetPhase,
+              clearedFields: Object.keys(config.clearFields),
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return { plan: updated, targetPhase: config.targetPhase };
+      });
+
+      // Sync animal breeding statuses after rewind
+      if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
+      if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
+
+      reply.send({
+        ok: true,
+        fromPhase: currentPhase,
+        toPhase: result.targetPhase,
+      });
+    } catch (err) {
+      req.log.error({ err }, "rewind failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────────────────── Anchor Mode System Endpoints ───────────────────────── */
+
+  /**
+   * POST /breeding/plans/:id/lock
+   *
+   * Unified lock endpoint for the anchor mode system.
+   * Locks a plan using the specified anchor mode and date.
+   * Replaces separate cycle/ovulation lock methods.
+   *
+   * Body:
+   * - anchorMode: "CYCLE_START" | "OVULATION" | "BREEDING_DATE"
+   * - anchorDate: ISO date string (YYYY-MM-DD)
+   * - confirmationMethod?: OvulationMethod (required for OVULATION mode)
+   * - testResultId?: number (optional link to TestResult for ovulation)
+   * - notes?: string
+   */
+  app.post("/breeding/plans/:id/lock", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as {
+        anchorMode: string;
+        anchorDate: string;
+        confirmationMethod?: string;
+        testResultId?: number;
+        notes?: string;
+      };
+
+      // Validate required fields
+      if (!b.anchorMode) {
+        return reply.code(400).send({ error: "anchor_mode_required", detail: "anchorMode is required" });
+      }
+      if (!b.anchorDate) {
+        return reply.code(400).send({ error: "anchor_date_required", detail: "anchorDate is required" });
+      }
+
+      // Validate anchor mode
+      const anchorMode = String(b.anchorMode).toUpperCase() as ReproAnchorMode;
+      if (!VALID_ANCHOR_MODES.has(anchorMode)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_mode",
+          detail: `anchorMode must be one of: ${Array.from(VALID_ANCHOR_MODES).join(", ")}`
+        });
+      }
+
+      // Parse anchor date
+      const anchorDate = toDateOrNull(b.anchorDate);
+      if (!anchorDate) {
+        return reply.code(400).send({
+          error: "invalid_anchor_date",
+          detail: "anchorDate must be a valid date in YYYY-MM-DD format"
+        });
+      }
+
+      // Get existing plan
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          species: true,
+          status: true,
+          damId: true,
+          sireId: true,
+          reproAnchorMode: true,
+          lockedCycleStart: true,
+          lockedOvulationDate: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Validate: Plan must be in PLANNING status to lock (use upgrade endpoint for COMMITTED plans)
+      if (String(plan.status) !== "PLANNING") {
+        return reply.code(400).send({
+          error: "plan_already_locked",
+          detail: `Plan is in ${plan.status} status. Use /upgrade-to-ovulation to upgrade an already-locked plan.`
+        });
+      }
+
+      // Validate: Dam and Sire required for locking
+      if (!plan.damId || !plan.sireId) {
+        return reply.code(400).send({
+          error: "dam_sire_required",
+          detail: "Both dam and sire must be set before locking a plan"
+        });
+      }
+
+      const species = String(plan.species);
+
+      // Species-specific anchor mode validation
+      if (anchorMode === "BREEDING_DATE" && !isInducedOvulator(species)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_for_species",
+          detail: `BREEDING_DATE anchor mode is only valid for induced ovulators (CAT, RABBIT). ${species} should use CYCLE_START or OVULATION.`
+        });
+      }
+
+      if (anchorMode === "OVULATION" && isInducedOvulator(species)) {
+        return reply.code(400).send({
+          error: "invalid_anchor_for_species",
+          detail: `OVULATION anchor mode is not valid for induced ovulators. ${species} uses BREEDING_DATE (breeding triggers ovulation).`
+        });
+      }
+
+      // GOAT and SHEEP don't support ovulation testing
+      if (anchorMode === "OVULATION" && !supportsOvulationTesting(species)) {
+        return reply.code(400).send({
+          error: "ovulation_not_supported",
+          detail: `OVULATION anchor mode is not available for ${species}. Commercial ovulation testing is not available for this species. Use CYCLE_START instead.`
+        });
+      }
+
+      // Validate confirmation method for OVULATION mode
+      let confirmationMethod: OvulationMethod | null = null;
+      if (anchorMode === "OVULATION") {
+        if (!b.confirmationMethod) {
+          return reply.code(400).send({
+            error: "confirmation_method_required",
+            detail: "confirmationMethod is required when anchorMode is OVULATION"
+          });
+        }
+        confirmationMethod = String(b.confirmationMethod).toUpperCase() as OvulationMethod;
+        if (!VALID_OVULATION_METHODS.has(confirmationMethod)) {
+          return reply.code(400).send({
+            error: "invalid_confirmation_method",
+            detail: `confirmationMethod must be one of: ${Array.from(VALID_OVULATION_METHODS).join(", ")}`
+          });
+        }
+      }
+
+      // Validate test result if provided
+      if (b.testResultId) {
+        const testResult = await prisma.testResult.findFirst({
+          where: { id: Number(b.testResultId), tenantId },
+          select: { id: true },
+        });
+        if (!testResult) {
+          return reply.code(400).send({
+            error: "test_result_not_found",
+            detail: "Specified testResultId not found or does not belong to this tenant"
+          });
+        }
+      }
+
+      // Calculate all expected dates from the anchor
+      const calculated = calculateExpectedDatesFromAnchor(anchorMode, anchorDate, species);
+
+      // Determine confidence level based on anchor mode
+      const confidence: ConfidenceLevel = anchorMode === "OVULATION" ? "HIGH" : "MEDIUM";
+
+      const userId = (req as any).user?.id ?? null;
+
+      // Build update payload
+      const updateData: any = {
+        // Lock the plan (change status to CYCLE)
+        status: BreedingPlanStatus.CYCLE,
+        committedAt: new Date(),
+        committedByUserId: userId,
+
+        // Anchor mode system fields
+        reproAnchorMode: anchorMode,
+        primaryAnchor: anchorMode,
+        dateConfidenceLevel: confidence,
+        dateSourceNotes: b.notes ?? null,
+
+        // Set anchor-specific observed/confirmed dates
+        ...(anchorMode === "CYCLE_START" && {
+          cycleStartObserved: anchorDate,
+          cycleStartSource: "OBSERVED",
+          cycleStartConfidence: confidence,
+          ovulationConfirmedMethod: "CALCULATED",
+        }),
+
+        ...(anchorMode === "OVULATION" && {
+          ovulationConfirmed: anchorDate,
+          ovulationConfirmedMethod: confirmationMethod,
+          ovulationConfidence: "HIGH",
+          ovulationTestResultId: b.testResultId ?? null,
+          // Derive cycle start from ovulation (estimated)
+          cycleStartObserved: calculated.cycleStart,
+          cycleStartSource: "DERIVED",
+          cycleStartConfidence: "MEDIUM",
+        }),
+
+        ...(anchorMode === "BREEDING_DATE" && {
+          // For induced ovulators, breeding date = ovulation date
+          breedDateActual: anchorDate,
+          ovulationConfirmed: anchorDate,
+          ovulationConfirmedMethod: "BREEDING_INDUCED",
+          ovulationConfidence: "MEDIUM",
+        }),
+
+        // Locked dates (backward compatibility with existing system)
+        lockedCycleStart: calculated.cycleStart,
+        lockedOvulationDate: calculated.ovulation,
+        lockedDueDate: calculated.dueDate,
+        lockedPlacementStartDate: calculated.placementStart,
+
+        // Expected dates
+        expectedCycleStart: calculated.cycleStart,
+        expectedBreedDate: calculated.ovulation,
+        expectedBirthDate: calculated.dueDate,
+        expectedWeaned: calculated.weanedDate,
+        expectedPlacementStart: calculated.placementStart,
+        expectedPlacementCompleted: calculated.placementCompleted,
+      };
+
+      // Perform update within transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.breedingPlan.update({
+          where: { id },
+          data: updateData,
+        });
+
+        // Create audit event for anchor lock
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: `${anchorMode}_LOCKED`,
+            occurredAt: new Date(),
+            label: `Plan locked with ${anchorMode.toLowerCase().replace("_", " ")} anchor`,
+            data: {
+              anchorMode,
+              anchorDate: anchorDate.toISOString().slice(0, 10),
+              confirmationMethod,
+              testResultId: b.testResultId ?? null,
+              confidence,
+              calculatedDates: {
+                cycleStart: calculated.cycleStart.toISOString().slice(0, 10),
+                ovulation: calculated.ovulation.toISOString().slice(0, 10),
+                dueDate: calculated.dueDate.toISOString().slice(0, 10),
+                weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+                placementStart: calculated.placementStart.toISOString().slice(0, 10),
+                placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+              },
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        // Create audit event for plan cycle start (status change to CYCLE)
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "PLAN_CYCLE_STARTED",
+            occurredAt: new Date(),
+            label: "Plan cycle started",
+            data: {
+              previousStatus: "PLANNING",
+              newStatus: "CYCLE",
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return updated;
+      });
+
+      reply.send({
+        success: true,
+        plan: result,
+        anchorMode,
+        anchorDate: anchorDate.toISOString().slice(0, 10),
+        confidence,
+        calculatedDates: {
+          cycleStart: calculated.cycleStart.toISOString().slice(0, 10),
+          ovulation: calculated.ovulation.toISOString().slice(0, 10),
+          dueDate: calculated.dueDate.toISOString().slice(0, 10),
+          weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+          placementStart: calculated.placementStart.toISOString().slice(0, 10),
+          placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+        },
+      });
+    } catch (err) {
+      req.log.error({ err }, "lock failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * POST /breeding/plans/:id/upgrade-to-ovulation
+   *
+   * Progressive enhancement: upgrade from CYCLE_START to OVULATION anchor.
+   * Used when breeder obtains hormone test results after initially locking with cycle start.
+   *
+   * Body:
+   * - ovulationDate: ISO date string (YYYY-MM-DD)
+   * - confirmationMethod: OvulationMethod (required)
+   * - testResultId?: number (optional link to TestResult)
+   * - notes?: string
+   */
+  app.post("/breeding/plans/:id/upgrade-to-ovulation", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as {
+        ovulationDate: string;
+        confirmationMethod: string;
+        testResultId?: number;
+        notes?: string;
+      };
+
+      // Validate required fields
+      if (!b.ovulationDate) {
+        return reply.code(400).send({ error: "ovulation_date_required", detail: "ovulationDate is required" });
+      }
+
+      // Parse ovulation date
+      const ovulationDate = toDateOrNull(b.ovulationDate);
+      if (!ovulationDate) {
+        return reply.code(400).send({
+          error: "invalid_ovulation_date",
+          detail: "ovulationDate must be a valid date in YYYY-MM-DD format"
+        });
+      }
+
+      // Validate confirmation method (required)
+      if (!b.confirmationMethod) {
+        return reply.code(400).send({
+          error: "confirmation_method_required",
+          detail: "confirmationMethod is required for ovulation confirmation"
+        });
+      }
+      const confirmationMethod = String(b.confirmationMethod).toUpperCase() as OvulationMethod;
+      if (!VALID_OVULATION_METHODS.has(confirmationMethod)) {
+        return reply.code(400).send({
+          error: "invalid_confirmation_method",
+          detail: `confirmationMethod must be one of: ${Array.from(VALID_OVULATION_METHODS).join(", ")}`
+        });
+      }
+
+      // Get existing plan with all needed fields
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          species: true,
+          status: true,
+          reproAnchorMode: true,
+          cycleStartObserved: true,
+          lockedCycleStart: true,
+          ovulationConfirmed: true,
+          expectedPlacementStart: true,
+        },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      const species = String(plan.species);
+
+      // Validate: Can only upgrade from CYCLE_START mode
+      if (plan.reproAnchorMode !== "CYCLE_START") {
+        return reply.code(400).send({
+          error: "cannot_upgrade",
+          detail: `Plan is using ${plan.reproAnchorMode} anchor mode. Only CYCLE_START plans can be upgraded to OVULATION.`
+        });
+      }
+
+      // Validate: Species must support ovulation upgrade
+      if (!supportsOvulationUpgrade(species)) {
+        return reply.code(400).send({
+          error: "species_not_supported",
+          detail: `${species} does not support ovulation upgrade. Only DOG and HORSE support this feature.`
+        });
+      }
+
+      // Validate: Plan must be CYCLE or later (not PLANNING)
+      if (String(plan.status) === "PLANNING") {
+        return reply.code(400).send({
+          error: "plan_not_locked",
+          detail: "Plan must be locked (CYCLE or later) before upgrading to ovulation anchor. Use /lock endpoint first."
+        });
+      }
+
+      // Validate: Cannot upgrade plans that have progressed past BRED
+      const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+      if (postBreedStatuses.includes(String(plan.status))) {
+        return reply.code(400).send({
+          error: "plan_too_advanced",
+          detail: `Plan is in ${plan.status} status. Cannot upgrade to ovulation anchor after breeding outcome is recorded.`
+        });
+      }
+
+      // Validate: Ovulation date must be after cycle start
+      const cycleStart = plan.cycleStartObserved || plan.lockedCycleStart;
+      if (cycleStart) {
+        const cycleDate = new Date(cycleStart);
+        if (ovulationDate <= cycleDate) {
+          return reply.code(400).send({
+            error: "invalid_ovulation_date",
+            detail: "Ovulation date must be after cycle start date"
+          });
+        }
+      }
+
+      // Validate test result if provided
+      if (b.testResultId) {
+        const testResult = await prisma.testResult.findFirst({
+          where: { id: Number(b.testResultId), tenantId },
+          select: { id: true },
+        });
+        if (!testResult) {
+          return reply.code(400).send({
+            error: "test_result_not_found",
+            detail: "Specified testResultId not found or does not belong to this tenant"
+          });
+        }
+      }
+
+      // Calculate new expected dates from ovulation
+      const calculated = calculateExpectedDatesFromAnchor("OVULATION", ovulationDate, species);
+
+      // Calculate variance from expected (for ML tracking)
+      let actualOffset: number | null = null;
+      let expectedOffset: number | null = null;
+      let variance: number | null = null;
+
+      if (cycleStart) {
+        const cycleDate = new Date(cycleStart);
+        actualOffset = Math.floor((ovulationDate.getTime() - cycleDate.getTime()) / (1000 * 60 * 60 * 24));
+        expectedOffset = getSpeciesDefaults(species).ovulationOffsetDays;
+        variance = actualOffset - expectedOffset;
+      }
+
+      // Calculate placement window shift
+      let placementShift = 0;
+      if (plan.expectedPlacementStart) {
+        const oldPlacement = new Date(plan.expectedPlacementStart);
+        placementShift = Math.abs(Math.floor((calculated.placementStart.getTime() - oldPlacement.getTime()) / (1000 * 60 * 60 * 24)));
+      }
+
+      const userId = (req as any).user?.id ?? null;
+
+      // Build update payload
+      const updateData: any = {
+        // Upgrade anchor mode
+        reproAnchorMode: "OVULATION",
+        primaryAnchor: "OVULATION",
+        dateConfidenceLevel: "HIGH",
+        dateSourceNotes: b.notes ?? null,
+
+        // Ovulation confirmed data
+        ovulationConfirmed: ovulationDate,
+        ovulationConfirmedMethod: confirmationMethod,
+        ovulationConfidence: "HIGH",
+        ovulationTestResultId: b.testResultId ?? null,
+
+        // Variance tracking (for ML)
+        actualOvulationOffset: actualOffset,
+        expectedOvulationOffset: expectedOffset,
+        varianceFromExpected: variance,
+
+        // Update locked dates
+        lockedOvulationDate: ovulationDate,
+        lockedDueDate: calculated.dueDate,
+        lockedPlacementStartDate: calculated.placementStart,
+
+        // Update expected dates
+        expectedBreedDate: ovulationDate,
+        expectedBirthDate: calculated.dueDate,
+        expectedWeaned: calculated.weanedDate,
+        expectedPlacementStart: calculated.placementStart,
+        expectedPlacementCompleted: calculated.placementCompleted,
+      };
+
+      // Perform update within transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.breedingPlan.update({
+          where: { id },
+          data: updateData,
+        });
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "ANCHOR_UPGRADED",
+            occurredAt: new Date(),
+            label: "Upgraded to ovulation anchor",
+            data: {
+              from: "CYCLE_START",
+              to: "OVULATION",
+              ovulationDate: ovulationDate.toISOString().slice(0, 10),
+              confirmationMethod,
+              testResultId: b.testResultId ?? null,
+              cycleStartDate: cycleStart ? new Date(cycleStart).toISOString().slice(0, 10) : null,
+              actualOffset,
+              expectedOffset,
+              variance,
+              placementShift,
+              calculatedDates: {
+                dueDate: calculated.dueDate.toISOString().slice(0, 10),
+                weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+                placementStart: calculated.placementStart.toISOString().slice(0, 10),
+                placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+              },
+            },
+            recordedByUserId: userId,
+          },
+        });
+
+        return updated;
+      });
+
+      reply.send({
+        success: true,
+        plan: result,
+        upgrade: {
+          from: "CYCLE_START",
+          to: "OVULATION",
+        },
+        ovulationDate: ovulationDate.toISOString().slice(0, 10),
+        confirmationMethod,
+        confidence: "HIGH",
+        variance: variance !== null ? {
+          actualOffset,
+          expectedOffset,
+          variance,
+          analysis: variance === 0 ? "on-time" : variance > 0 ? "late" : "early",
+        } : null,
+        placementShift,
+        calculatedDates: {
+          dueDate: calculated.dueDate.toISOString().slice(0, 10),
+          weanedDate: calculated.weanedDate.toISOString().slice(0, 10),
+          placementStart: calculated.placementStart.toISOString().slice(0, 10),
+          placementCompleted: calculated.placementCompleted.toISOString().slice(0, 10),
+        },
+      });
+    } catch (err) {
+      req.log.error({ err }, "upgrade-to-ovulation failed");
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * POST /breeding/plans/:id/clear-ovulation
+   *
+   * Clears ovulation confirmation and reverts plan back to CYCLE_START anchor mode.
+   * Used when breeder entered an incorrect ovulation date by mistake.
+   *
+   * Only allowed when:
+   * - Plan is in CYCLE status (hasn't advanced to BRED yet)
+   * - Plan currently has OVULATION anchor mode
+   */
+  app.post("/breeding/plans/:id/clear-ovulation", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Only allow clearing ovulation in CYCLE phase
+      if (String(plan.status) !== "CYCLE") {
+        return reply.code(400).send({
+          error: "invalid_status",
+          detail: `Can only clear ovulation in CYCLE phase. Current status: ${plan.status}`,
+        });
+      }
+
+      // Must currently be in OVULATION anchor mode
+      if (plan.reproAnchorMode !== "OVULATION") {
+        return reply.code(400).send({
+          error: "not_ovulation_mode",
+          detail: "Plan is not using ovulation anchors. Nothing to clear.",
+        });
+      }
+
+      // Clear ovulation fields and revert to CYCLE_START
+      const updated = await prisma.breedingPlan.update({
+        where: { id },
+        data: {
+          ovulationConfirmed: null,
+          ovulationConfirmedMethod: null,
+          reproAnchorMode: "CYCLE_START",
+          // Note: We keep lockedOvulationDate as it was calculated from cycle start
+          // and can still be useful as an estimate
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        plan: updated,
+      });
+    } catch (err) {
+      req.log.error({ err }, "clear-ovulation failed");
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
@@ -2681,6 +4131,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/foaling-analytics - Get aggregate foaling analytics
+  app.get("/breeding/foaling-analytics", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      const { year } = req.query as { year?: string };
+
+      const analytics = await getFoalingAnalytics(tenantId, {
+        year: year ? parseInt(year, 10) : undefined,
+      });
+      reply.send(analytics);
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

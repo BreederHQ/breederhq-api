@@ -115,6 +115,27 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
     }
 
+    // Auto-fill SELLER party email from current user if not provided
+    const userId = (req as any).userId as string;
+    if (userId) {
+      const currentUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+      if (currentUser) {
+        for (const party of body.parties) {
+          if (party.role === "SELLER" && !party.email) {
+            party.email = currentUser.email;
+            if (!party.name || party.name === "Breeder") {
+              party.name = [currentUser.firstName, currentUser.lastName]
+                .filter(Boolean)
+                .join(" ") || "Breeder";
+            }
+          }
+        }
+      }
+    }
+
     // Ensure all signing parties have email
     for (const party of body.parties) {
       if (party.signer && !party.email) {

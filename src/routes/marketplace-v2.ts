@@ -718,12 +718,12 @@ export default async function marketplaceV2Routes(
     try {
       // Delete participants first (cascade)
       await prisma.animalProgramParticipant.deleteMany({
-        where: { animalProgramId: id },
+        where: { programId: id },
       });
 
       // Delete media
       await prisma.animalProgramMedia.deleteMany({
-        where: { animalProgramId: id },
+        where: { programId: id },
       });
 
       // Delete program
@@ -782,7 +782,7 @@ export default async function marketplaceV2Routes(
       // Add participants
       await prisma.animalProgramParticipant.createMany({
         data: animalIds.map((animalId) => ({
-          animalProgramId: programId,
+          programId: programId,
           animalId,
           status: "ACTIVE",
         })),
@@ -827,7 +827,7 @@ export default async function marketplaceV2Routes(
       await prisma.animalProgramParticipant.deleteMany({
         where: {
           id: participantId,
-          animalProgramId: programId,
+          programId: programId,
         },
       });
 
@@ -935,7 +935,7 @@ export default async function marketplaceV2Routes(
           // Privacy settings
           privacySettings: true,
           // Registry identifiers
-          registryIdentifiers: {
+          registryIds: {
             select: {
               id: true,
               identifier: true,
@@ -943,20 +943,36 @@ export default async function marketplaceV2Routes(
                 select: {
                   id: true,
                   name: true,
-                  abbreviation: true,
+                  code: true,
                 },
               },
             },
           },
-          // Health traits (filtered by marketplaceVisible on client)
+          // Health traits (filtered by networkVisible on client)
+          // Include all health-related categories as defined in trait definitions
           AnimalTraitValue: {
             where: {
               traitDefinition: {
-                category: { in: ["health", "health_testing"] },
+                category: {
+                  in: [
+                    "Orthopedic",
+                    "Eyes",
+                    "Cardiac",
+                    "Genetic",
+                    "Infectious",
+                    "Preventative",
+                    "Reproductive",
+                    "General",
+                    // Legacy category names (if any)
+                    "health",
+                    "health_testing",
+                  ],
+                },
               },
             },
             select: {
               id: true,
+              traitDefinitionId: true,
               valueBoolean: true,
               valueNumber: true,
               valueText: true,
@@ -966,12 +982,15 @@ export default async function marketplaceV2Routes(
               performedAt: true,
               verified: true,
               marketplaceVisible: true,
+              networkVisible: true,
               traitDefinition: {
                 select: {
+                  id: true,
                   key: true,
                   displayName: true,
                   category: true,
                   valueType: true,
+                  supportsHistory: true,
                 },
               },
             },
@@ -1001,7 +1020,7 @@ export default async function marketplaceV2Routes(
               id: true,
               titleDefinition: {
                 select: {
-                  name: true,
+                  fullName: true,
                   abbreviation: true,
                   organization: true,
                 },
@@ -1035,7 +1054,7 @@ export default async function marketplaceV2Routes(
             take: 50, // Limit to recent competitions
           },
           // Attachments/Media
-          attachments: {
+          Attachment: {
             where: {
               kind: { in: ["photo", "video", "image"] },
             },
@@ -1043,21 +1062,20 @@ export default async function marketplaceV2Routes(
               id: true,
               kind: true,
               filename: true,
-              caption: true,
               storageKey: true,
             },
             orderBy: { createdAt: "desc" },
             take: 50,
           },
           // Documents
-          documents: {
+          Document: {
             where: {
-              status: "ACTIVE",
+              status: "READY",
             },
             select: {
               id: true,
               kind: true,
-              filename: true,
+              title: true,
               visibility: true,
             },
             orderBy: { createdAt: "desc" },
@@ -1135,27 +1153,75 @@ export default async function marketplaceV2Routes(
 
       const privacy = animal.privacySettings || defaultPrivacy;
 
-      // Filter health traits to only marketplaceVisible ones
-      const healthTraits = animal.AnimalTraitValue
-        .filter((t) => t.marketplaceVisible === true)
-        .map((t) => ({
-          id: t.id,
-          key: t.traitDefinition.key,
-          displayName: t.traitDefinition.displayName,
-          category: t.traitDefinition.category,
-          valueType: t.traitDefinition.valueType,
-          value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
-          status: t.status,
-          performedAt: t.performedAt,
-          verified: t.verified,
-        }));
+      // Get trait definition IDs that support history and are networkVisible
+      const historyTraitDefinitionIds = animal.AnimalTraitValue
+        .filter((t) => t.networkVisible === true && t.traitDefinition.supportsHistory)
+        .map((t) => t.traitDefinitionId);
 
-      // All health traits (for reference, to show what's not marketplace visible)
+      // Fetch history entries for traits that support it
+      const historyEntries = historyTraitDefinitionIds.length > 0
+        ? await prisma.animalTraitEntry.findMany({
+            where: {
+              tenantId,
+              animalId: animal.id,
+              traitDefinitionId: { in: historyTraitDefinitionIds },
+            },
+            orderBy: { recordedAt: "desc" },
+            select: {
+              id: true,
+              traitDefinitionId: true,
+              recordedAt: true,
+              data: true,
+              performedBy: true,
+              location: true,
+              notes: true,
+            },
+          })
+        : [];
+
+      // Group history entries by trait definition ID
+      const historyByTraitDefId = new Map<number, typeof historyEntries>();
+      for (const entry of historyEntries) {
+        const existing = historyByTraitDefId.get(entry.traitDefinitionId) || [];
+        existing.push(entry);
+        historyByTraitDefId.set(entry.traitDefinitionId, existing);
+      }
+
+      // Filter health traits to ones marked as public (networkVisible)
+      // The Health tab "Public" toggle controls networkVisible, not marketplaceVisible
+      const healthTraits = animal.AnimalTraitValue
+        .filter((t) => t.networkVisible === true)
+        .map((t) => {
+          const traitHistory = historyByTraitDefId.get(t.traitDefinitionId) || [];
+          return {
+            id: t.id,
+            key: t.traitDefinition.key,
+            displayName: t.traitDefinition.displayName,
+            category: t.traitDefinition.category,
+            valueType: t.traitDefinition.valueType,
+            value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
+            status: t.status,
+            performedAt: t.performedAt,
+            verified: t.verified,
+            supportsHistory: t.traitDefinition.supportsHistory,
+            history: t.traitDefinition.supportsHistory ? traitHistory.map((h) => ({
+              id: h.id,
+              recordedAt: h.recordedAt,
+              data: h.data,
+              performedBy: h.performedBy,
+              location: h.location,
+              notes: h.notes,
+            })) : undefined,
+            historyCount: t.traitDefinition.supportsHistory ? traitHistory.length : undefined,
+          };
+        });
+
+      // All health traits (for reference, to show what's not public)
       const allHealthTraits = animal.AnimalTraitValue.map((t) => ({
         id: t.id,
         key: t.traitDefinition.key,
         displayName: t.traitDefinition.displayName,
-        marketplaceVisible: t.marketplaceVisible,
+        marketplaceVisible: t.networkVisible, // Using networkVisible since that's what the "Public" toggle controls
       }));
 
       // Filter titles based on isPublic
@@ -1163,7 +1229,7 @@ export default async function marketplaceV2Routes(
         .filter((t) => t.isPublic === true)
         .map((t) => ({
           id: t.id,
-          name: t.titleDefinition.name,
+          name: t.titleDefinition.fullName,
           abbreviation: t.titleDefinition.abbreviation,
           organization: t.titleDefinition.organization,
           dateEarned: t.dateEarned,
@@ -1217,11 +1283,11 @@ export default async function marketplaceV2Routes(
         },
         privacySettings: privacy,
         // Registrations
-        registrations: animal.registryIdentifiers.map((r) => ({
+        registrations: animal.registryIds.map((r) => ({
           id: r.id,
           registryId: r.registry?.id,
           registryName: r.registry?.name,
-          registryAbbr: r.registry?.abbreviation,
+          registryCode: r.registry?.code,
           identifier: r.identifier,
         })),
         // Health - only marketplace visible traits available
@@ -1266,22 +1332,21 @@ export default async function marketplaceV2Routes(
         // Media
         media: {
           enabled: privacy.enableMediaSharing,
-          items: animal.attachments.map((a) => ({
+          items: animal.Attachment.map((a) => ({
             id: a.id,
             kind: a.kind,
             filename: a.filename,
-            caption: a.caption,
           })),
         },
         // Documents
         documents: {
           enabled: privacy.enableDocumentSharing,
-          items: animal.documents
+          items: animal.Document
             .filter((d) => d.visibility !== "PRIVATE")
             .map((d) => ({
               id: d.id,
               kind: d.kind,
-              filename: d.filename,
+              title: d.title,
             })),
         },
         // Lineage
@@ -2033,6 +2098,168 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
 // ============================================================================
 
   /**
+   * GET /api/v2/marketplace/listings - PUBLIC browse endpoint for direct animal listings
+   *
+   * Returns paginated list of ACTIVE, listed DirectAnimalListing records.
+   * Used by the public marketplace to browse individual animal listings.
+   */
+  app.get<{
+    Querystring: {
+      search?: string;
+      species?: string;
+      breed?: string;
+      templateType?: string;
+      location?: string;
+      priceMin?: string;
+      priceMax?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/listings", async (req, reply) => {
+    const { search, species, breed, templateType, location, priceMin, priceMax } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    // Build where clause - only ACTIVE status listings that are listed publicly
+    const where: any = {
+      status: "ACTIVE",
+      listed: true,
+    };
+
+    if (templateType) {
+      where.templateType = templateType.toUpperCase();
+    }
+
+    if (species) {
+      where.animal = { ...where.animal, species: species.toUpperCase() };
+    }
+
+    if (breed && breed.trim()) {
+      where.animal = { ...where.animal, breed: { contains: breed.trim(), mode: "insensitive" } };
+    }
+
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { headline: { contains: searchTerm, mode: "insensitive" } },
+        { title: { contains: searchTerm, mode: "insensitive" } },
+        { summary: { contains: searchTerm, mode: "insensitive" } },
+        { animal: { name: { contains: searchTerm, mode: "insensitive" } } },
+        { animal: { breed: { contains: searchTerm, mode: "insensitive" } } },
+      ];
+    }
+
+    if (location && location.trim()) {
+      const locationTerm = location.trim();
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { locationCity: { contains: locationTerm, mode: "insensitive" } },
+            { locationRegion: { contains: locationTerm, mode: "insensitive" } },
+            { locationCountry: { contains: locationTerm, mode: "insensitive" } },
+            { tenant: { organizations: { some: { city: { contains: locationTerm, mode: "insensitive" } } } } },
+            { tenant: { organizations: { some: { state: { contains: locationTerm, mode: "insensitive" } } } } },
+          ],
+        },
+      ];
+    }
+
+    if (priceMin || priceMax) {
+      const minCents = priceMin ? Math.round(Number(priceMin) * 100) : undefined;
+      const maxCents = priceMax ? Math.round(Number(priceMax) * 100) : undefined;
+      const priceConditions: any[] = [];
+      if (minCents) {
+        priceConditions.push({ OR: [{ priceCents: { gte: minCents } }, { priceMinCents: { gte: minCents } }] });
+      }
+      if (maxCents) {
+        priceConditions.push({ OR: [{ priceCents: { lte: maxCents } }, { priceMaxCents: { lte: maxCents } }, { priceModel: "inquire" }] });
+      }
+      if (priceConditions.length > 0) {
+        where.AND = [...(where.AND || []), ...priceConditions];
+      }
+    }
+
+    try {
+      const [listings, total] = await Promise.all([
+        prisma.directAnimalListing.findMany({
+          where,
+          orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+          skip: offset,
+          take: limit,
+          include: {
+            animal: {
+              select: {
+                id: true,
+                name: true,
+                photoUrl: true,
+                birthDate: true,
+                species: true,
+                breed: true,
+                sex: true,
+              },
+            },
+            tenant: {
+              select: {
+                id: true,
+                slug: true,
+                name: true,
+                organizations: {
+                  where: { isPublicProgram: true },
+                  take: 1,
+                  select: {
+                    city: true,
+                    state: true,
+                    programSlug: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        prisma.directAnimalListing.count({ where }),
+      ]);
+
+      const items = listings.map((listing) => {
+        const org = listing.tenant?.organizations?.[0];
+        return {
+          id: listing.id,
+          slug: listing.slug,
+          templateType: listing.templateType,
+          headline: listing.headline,
+          title: listing.title || listing.animal?.name,
+          summary: listing.summary,
+          priceModel: listing.priceModel,
+          priceCents: listing.priceCents,
+          priceMinCents: listing.priceMinCents,
+          priceMaxCents: listing.priceMaxCents,
+          locationCity: listing.locationCity || org?.city,
+          locationRegion: listing.locationRegion || org?.state,
+          publishedAt: listing.publishedAt?.toISOString() || null,
+          animalId: listing.animal?.id,
+          animalName: listing.animal?.name,
+          animalPhotoUrl: listing.animal?.photoUrl,
+          animalSpecies: listing.animal?.species || null,
+          animalBreed: listing.animal?.breed || null,
+          animalSex: listing.animal?.sex || null,
+          animalBirthDate: listing.animal?.birthDate?.toISOString() || null,
+          breeder: {
+            id: listing.tenant?.id,
+            slug: listing.tenant?.slug || org?.programSlug,
+            name: listing.tenant?.name,
+            location: [org?.city, org?.state].filter(Boolean).join(", ") || null,
+          },
+        };
+      });
+
+      reply.send({ items, total, limit, offset });
+    } catch (err: any) {
+      req.log.error({ err, where }, "Failed to fetch public direct listings");
+      reply.code(500).send({ error: "server_error", message: "Failed to fetch listings" });
+    }
+  });
+
+  /**
    * GET /api/v2/marketplace/listings/:slug
    * Public endpoint to view a direct animal listing with data drawer filtering
    */
@@ -2058,9 +2285,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             },
             animal: {
               include: {
-                species: true,
-                breed: true,
-                sex: true,
+                canonicalBreed: true,
                 privacySettings: true,
                 AnimalTraitValue: {
                   where: {
@@ -2081,21 +2306,17 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
                     },
                   },
                 },
-                AnimalTitle: {
+                titles: {
                   include: {
-                    title: true,
+                    titleDefinition: true,
                   },
                 },
-                AnimalCompetitionResult: {
-                  include: {
-                    competition: true,
-                  },
+                competitionEntries: true,
+                Attachment: {
+                  orderBy: { createdAt: "asc" },
                 },
-                AnimalMedia: {
-                  orderBy: { displayOrder: "asc" },
-                },
-                AnimalDocument: true,
-                AnimalRegistration: {
+                Document: true,
+                registryIds: {
                   include: {
                     registry: true,
                   },
@@ -2172,24 +2393,23 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           },
           animal: {
             id: animal.id,
-            name: config.identity?.showName ? animal.name : null,
-            species: animal.species?.name,
-            breed: animal.breed?.name,
-            sex: animal.sex?.displayName,
-            birthDate: config.identity?.showDob ? animal.birthDate : null,
-            photoUrl: config.identity?.showPhoto ? animal.photoUrl : null,
+            // Identity is always included based on animal-level privacy settings
+            name: privacy?.showName ? animal.name : null,
+            species: animal.species,
+            breed: animal.canonicalBreed?.name || animal.breed,
+            sex: animal.sex,
+            birthDate: privacy?.showFullDob ? animal.birthDate : null,
+            photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
           },
           data: {} as any,
         };
 
-        // IDENTITY - already handled above in animal object
-
         // REGISTRY
         if (isSectionEnabled(privacy?.showRegistryFull, config.registry)) {
           const selectedIds = config.registry.registryIds || [];
-          response.data.registrations = animal.AnimalRegistration
-            .filter((r) => selectedIds.length === 0 || selectedIds.includes(r.id))
-            .map((r) => ({
+          response.data.registrations = animal.registryIds
+            .filter((r: { id: number }) => selectedIds.length === 0 || selectedIds.includes(r.id))
+            .map((r: { id: number; registry: { name: string }; identifier: string }) => ({
               id: r.id,
               registryName: r.registry.name,
               identifier: r.identifier,
@@ -2209,7 +2429,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               id: t.id,
               key: t.traitDefinition.key,
               displayName: t.traitDefinition.displayName,
-              value: t.value,
+              value: t.valueText || t.valueNumber?.toString() || (t.valueBoolean !== null ? String(t.valueBoolean) : null),
             }));
         }
 
@@ -2225,36 +2445,36 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               id: t.id,
               key: t.traitDefinition.key,
               displayName: t.traitDefinition.displayName,
-              value: t.value,
+              value: t.valueText || t.valueNumber?.toString() || (t.valueBoolean !== null ? String(t.valueBoolean) : null),
             }));
         }
 
         // ACHIEVEMENTS (TITLES)
         if (isSectionEnabled(privacy?.showTitles, config.achievements)) {
           const selectedTitleIds = config.achievements.titleIds || [];
-          response.data.titles = animal.AnimalTitle
+          response.data.titles = animal.titles
             .filter((at) =>
               at.isPublic === true &&
               (selectedTitleIds.length === 0 || selectedTitleIds.includes(at.id))
             )
             .map((at) => ({
               id: at.id,
-              name: at.title.name,
-              abbreviation: at.title.abbreviation,
+              name: at.titleDefinition.fullName,
+              abbreviation: at.titleDefinition.abbreviation,
               dateEarned: at.dateEarned,
             }));
 
           // ACHIEVEMENTS (COMPETITIONS)
           const selectedCompIds = config.achievements.competitionIds || [];
-          response.data.competitions = animal.AnimalCompetitionResult
+          response.data.competitions = animal.competitionEntries
             .filter((ac) =>
               ac.isPublic === true &&
               (selectedCompIds.length === 0 || selectedCompIds.includes(ac.id))
             )
             .map((ac) => ({
               id: ac.id,
-              eventName: ac.competition?.name || "Competition",
-              placement: ac.placement,
+              eventName: ac.eventName,
+              placement: ac.placement?.toString() || ac.placementLabel || null,
               date: ac.eventDate,
             }));
         }
@@ -2262,25 +2482,25 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
         // MEDIA
         if (isSectionEnabled(privacy?.enableMediaSharing, config.media)) {
           const selectedIds = config.media.mediaIds || [];
-          response.data.media = animal.AnimalMedia
+          response.data.media = animal.Attachment
             .filter((m) => selectedIds.length === 0 || selectedIds.includes(m.id))
             .map((m) => ({
               id: m.id,
-              type: m.mediaType,
-              url: m.url,
-              caption: m.caption,
+              type: m.kind,
+              filename: m.filename,
+              mime: m.mime,
             }));
         }
 
         // DOCUMENTS
         if (isSectionEnabled(privacy?.enableDocumentSharing, config.documents)) {
           const selectedIds = config.documents.documentIds || [];
-          response.data.documents = animal.AnimalDocument
+          response.data.documents = animal.Document
             .filter((d) => selectedIds.length === 0 || selectedIds.includes(d.id))
             .map((d) => ({
               id: d.id,
               kind: d.kind,
-              filename: d.filename,
+              title: d.title,
               url: d.url,
             }));
         }

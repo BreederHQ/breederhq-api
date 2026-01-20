@@ -322,11 +322,11 @@ export async function processExpiredContracts(
           contractId: fullContract.id,
           contractTitle: fullContract.title,
           breederName: fullContract.tenant.name,
-          recipientName: party.name,
-          recipientEmail: party.email,
+          recipientName: party.name || "Recipient",
+          recipientEmail: party.email || "",
         });
       } catch (err) {
-        console.error(`[contract-scanner] Failed to send expired email to ${party.email}:`, err);
+        console.error(`[contract-scanner] Failed to send expired email to ${party.email || "unknown"}:`, err);
       }
     }
 

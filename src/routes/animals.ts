@@ -10,6 +10,7 @@ import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
 import type { IdentifierType } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
+import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 
 const AVATAR_SIZE = 256;
 
@@ -46,6 +47,72 @@ function normalizeIsoDateOnly(v: unknown): string | null {
   if (Number.isNaN(+d)) return null;
   // truncate to YYYY-MM-DD
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Checks for potential duplicate animals within a tenant.
+ * Returns matching animals if duplicates are found.
+ */
+async function findPotentialDuplicates(
+  tenantId: number,
+  name: string,
+  species: Species,
+  sex: Sex,
+  birthDate?: Date | null,
+  microchip?: string | null,
+  excludeId?: number | null
+): Promise<Array<{ id: number; name: string; species: string; sex: string; birthDate: Date | null; microchip: string | null }>> {
+  const normalizedName = name.trim().toLowerCase();
+
+  // Build query conditions
+  const conditions: any[] = [
+    { tenantId },
+    { archived: false },
+    { species },
+    { sex },
+  ];
+
+  // Exclude specific animal (for updates)
+  if (excludeId) {
+    conditions.push({ id: { not: excludeId } });
+  }
+
+  // Find animals with same name (case-insensitive)
+  const candidates = await prisma.animal.findMany({
+    where: {
+      AND: conditions,
+    },
+    select: {
+      id: true,
+      name: true,
+      species: true,
+      sex: true,
+      birthDate: true,
+      microchip: true,
+    },
+  });
+
+  // Filter to those with matching names (case-insensitive)
+  const matches = candidates.filter((a) => {
+    const candidateName = a.name.trim().toLowerCase();
+
+    // Exact name match
+    if (candidateName === normalizedName) {
+      return true;
+    }
+
+    // Also check for very similar names (one contains the other, for kennel name variations)
+    // e.g., "Padfoot's Pride" vs "Padfoots Pride" (apostrophe difference)
+    const normalizedCandidate = candidateName.replace(/[''`]/g, "").replace(/\s+/g, " ");
+    const normalizedInput = normalizedName.replace(/[''`]/g, "").replace(/\s+/g, " ");
+    if (normalizedCandidate === normalizedInput) {
+      return true;
+    }
+
+    return false;
+  });
+
+  return matches;
 }
 
 type ReproEventKind = "heat_start" | "ovulation" | "insemination" | "birth";
@@ -273,7 +340,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where.archived = false;
     }
     if (species) {
-      if (!["DOG", "CAT", "HORSE"].includes(species)) return reply.code(400).send({ error: "species_invalid" });
+      if (!["DOG", "CAT", "HORSE", "GOAT", "RABBIT", "SHEEP"].includes(species)) return reply.code(400).send({ error: "species_invalid" });
       where.species = species;
     }
     if (sex) {
@@ -427,6 +494,28 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ...rec, cycleStartDates });
   });
 
+  // GET /animals/:id/cycle-analysis
+  // Returns ovulation pattern analysis and cycle history for a female
+  app.get("/animals/:id/cycle-analysis", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    try {
+      const analysis = await calculateCycleAnalysis(id, tenantId);
+      reply.send(analysis);
+    } catch (err: any) {
+      if (err.message === "Animal not found") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      throw err;
+    }
+  });
+
 
   // GET /animals/:id
   app.get("/animals/:id", async (req, reply) => {
@@ -529,6 +618,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Lineage fields
       damId: number | null;
       sireId: number | null;
+      // Duplicate check bypass
+      skipDuplicateCheck: boolean;
     }>;
 
 
@@ -539,6 +630,34 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if (!b.sex || !["FEMALE", "MALE"].includes(b.sex)) {
       return reply.code(400).send({ error: "sex_required" });
+    }
+
+    // Check for potential duplicates unless explicitly bypassed
+    if (!b.skipDuplicateCheck) {
+      const parsedBirthDate = b.birthDate ? new Date(b.birthDate) : null;
+      const duplicates = await findPotentialDuplicates(
+        tenantId,
+        name,
+        b.species,
+        b.sex,
+        parsedBirthDate,
+        b.microchip?.trim() || null
+      );
+
+      if (duplicates.length > 0) {
+        return reply.code(409).send({
+          error: "potential_duplicate",
+          message: "An animal with the same name, species, and sex already exists",
+          duplicates: duplicates.map((d) => ({
+            id: d.id,
+            name: d.name,
+            species: d.species,
+            sex: d.sex,
+            birthDate: d.birthDate,
+            microchip: d.microchip,
+          })),
+        });
+      }
     }
 
     const data: any = {
