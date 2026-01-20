@@ -435,10 +435,10 @@ enum DocStatus {
 
 enum BreedingPlanStatus {
   PLANNING
-  CYCLE              // New: renamed from COMMITTED - tracking the dam's heat cycle
-  COMMITTED          // Deprecated: use CYCLE instead (kept for migration compatibility)
-  CYCLE_EXPECTED     // Sub-status: waiting for cycle to start
-  HORMONE_TESTING    // Sub-status: progesterone testing in progress
+  CYCLE // New: renamed from COMMITTED - tracking the dam's heat cycle
+  COMMITTED // Deprecated: use CYCLE instead (kept for migration compatibility)
+  CYCLE_EXPECTED // Sub-status: waiting for cycle to start
+  HORMONE_TESTING // Sub-status: progesterone testing in progress
   BRED
   PREGNANT
   BIRTHED
@@ -446,8 +446,8 @@ enum BreedingPlanStatus {
   PLACEMENT
   COMPLETE
   CANCELED
-  UNSUCCESSFUL       // Terminal: breeding was attempted but failed (distinct from CANCELED)
-  ON_HOLD            // Semi-terminal: plan is paused but can be resumed
+  UNSUCCESSFUL // Terminal: breeding was attempted but failed (distinct from CANCELED)
+  ON_HOLD // Semi-terminal: plan is paused but can be resumed
 
   @@schema("public")
 }
@@ -458,8 +458,8 @@ enum BreedingPlanStatus {
 
 /// User-selected primary anchor mode for a breeding plan
 enum ReproAnchorMode {
-  CYCLE_START   // Traditional: heat/cycle observation only
-  OVULATION     // Professional: hormone-tested ovulation
+  CYCLE_START // Traditional: heat/cycle observation only
+  OVULATION // Professional: hormone-tested ovulation
   BREEDING_DATE // For induced ovulators (cats/rabbits)
 
   @@schema("public")
@@ -467,43 +467,43 @@ enum ReproAnchorMode {
 
 /// Anchor type used for timeline calculations
 enum AnchorType {
-  CYCLE_START   // Primary calculation from cycle start
-  OVULATION     // Primary calculation from ovulation
+  CYCLE_START // Primary calculation from cycle start
+  OVULATION // Primary calculation from ovulation
   BREEDING_DATE // For induced ovulators (cats/rabbits)
-  BIRTH         // Post-birth timeline
-  LOCKED_CYCLE  // Legacy fallback
+  BIRTH // Post-birth timeline
+  LOCKED_CYCLE // Legacy fallback
 
   @@schema("public")
 }
 
 /// How the ovulation date was determined
 enum OvulationMethod {
-  CALCULATED        // Derived from cycle start + species offset
+  CALCULATED // Derived from cycle start + species offset
   PROGESTERONE_TEST // Blood progesterone testing (day 5-14 of cycle)
-  LH_TEST           // Luteinizing hormone test
-  ULTRASOUND        // Veterinary ultrasound (common for horses)
-  VAGINAL_CYTOLOGY  // Microscopic cell analysis
-  PALPATION         // Physical exam for horses
-  AT_HOME_TEST      // Consumer ovulation test kit
-  VETERINARY_EXAM   // Physical examination by vet
-  BREEDING_INDUCED  // For cats/rabbits
+  LH_TEST // Luteinizing hormone test
+  ULTRASOUND // Veterinary ultrasound (common for horses)
+  VAGINAL_CYTOLOGY // Microscopic cell analysis
+  PALPATION // Physical exam for horses
+  AT_HOME_TEST // Consumer ovulation test kit
+  VETERINARY_EXAM // Physical examination by vet
+  BREEDING_INDUCED // For cats/rabbits
 
   @@schema("public")
 }
 
 /// Confidence level for date accuracy
 enum ConfidenceLevel {
-  HIGH   // Hormone-tested ovulation (±1-2 days)
+  HIGH // Hormone-tested ovulation (±1-2 days)
   MEDIUM // Observed cycle start (±2-5 days)
-  LOW    // Estimated/guessed dates (±5+ days)
+  LOW // Estimated/guessed dates (±5+ days)
 
   @@schema("public")
 }
 
 /// How a date was determined (observed vs calculated)
 enum DataSource {
-  OBSERVED  // Breeder directly observed (cycle start, breeding date)
-  DERIVED   // Calculated from another date (cycle start derived from ovulation)
+  OBSERVED // Breeder directly observed (cycle start, breeding date)
+  DERIVED // Calculated from another date (cycle start derived from ovulation)
   ESTIMATED // User's best guess (low confidence)
 
   @@schema("public")
@@ -538,6 +538,15 @@ enum WaitlistStatus {
   COMPLETED
   CANCELED
   REJECTED
+
+  @@schema("public")
+}
+
+enum BreedingPlanBuyerStage {
+  POSSIBLE_MATCH
+  INQUIRY
+  ASSIGNED
+  MATCHED_TO_OFFSPRING
 
   @@schema("public")
 }
@@ -1084,6 +1093,7 @@ model Tenant {
   OffspringGroupEvent    OffspringGroupEvent[]
   OffspringEvent         OffspringEvent[]
   OffspringGroupBuyer    OffspringGroupBuyer[]
+  BreedingPlanBuyer      BreedingPlanBuyer[]
   Invoice                Invoice[]
   InvoiceLineItem        InvoiceLineItem[]
   Payment                Payment[]
@@ -1905,6 +1915,7 @@ model Party {
   planParties          PlanParty[]                @relation("PlanPartyRole")
   waitlistEntries      WaitlistEntry[]            @relation("WaitlistParty")
   offspringGroupBuyers OffspringGroupBuyer[]      @relation("OffspringGroupBuyerParty")
+  breedingPlanBuyers   BreedingPlanBuyer[]        @relation("BreedingPlanBuyerParty")
   offspringBuyers      Offspring[]                @relation("OffspringBuyerParty")
   invoiceParties       Invoice[]                  @relation("InvoiceParty")
   contractParties      ContractParty[]            @relation("ContractPartyRole")
@@ -2780,7 +2791,7 @@ model AnimalProgramMedia {
  */
 
 model TraitDefinition {
-  id                        Int                 @id @default(autoincrement())
+  id                        Int                @id @default(autoincrement())
   tenantId                  Int?
   species                   Species
   key                       String
@@ -2788,12 +2799,12 @@ model TraitDefinition {
   category                  String
   valueType                 TraitValueType
   enumValues                Json?
-  requiresDocument          Boolean             @default(false)
-  marketplaceVisibleDefault Boolean             @default(false)
-  supportsHistory           Boolean             @default(false) // If true, trait supports multiple historical entries
+  requiresDocument          Boolean            @default(false)
+  marketplaceVisibleDefault Boolean            @default(false)
+  supportsHistory           Boolean            @default(false) // If true, trait supports multiple historical entries
   sortOrder                 Int?
-  createdAt                 DateTime            @default(now())
-  updatedAt                 DateTime            @updatedAt
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
   animalTraitValues         AnimalTraitValue[]
   animalTraitEntries        AnimalTraitEntry[]
 
@@ -2863,23 +2874,23 @@ model AnimalTraitEntry {
   traitDefinition   TraitDefinition @relation(fields: [traitDefinitionId], references: [id])
 
   // The recorded date/time of this entry (when the measurement/exam occurred)
-  recordedAt        DateTime
+  recordedAt DateTime
 
   // Flexible JSON storage for entry data (structure depends on trait type)
   // e.g., { lbs: 45, oz: 8 } for weight, { outcome: "Normal", notes: "..." } for wellness exam
-  data              Json
+  data Json
 
   // Optional metadata
-  performedBy       String?         @db.VarChar(255) // Who performed (vet name, clinic, etc.)
-  location          String?         @db.VarChar(255) // Where it was performed
-  notes             String?         @db.Text
+  performedBy String? @db.VarChar(255) // Who performed (vet name, clinic, etc.)
+  location    String? @db.VarChar(255) // Where it was performed
+  notes       String? @db.Text
 
   // Optional document attachment
-  documentId        Int?
-  document          Document?       @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  documentId Int?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
 
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, animalId])
   @@index([tenantId, animalId, traitDefinitionId])
@@ -3156,9 +3167,10 @@ model BreedingProgram {
   publishedAt DateTime?
 
   // Relations
-  breedingPlans BreedingPlan[]
-  media         BreedingProgramMedia[]
-  inquiries     BreedingProgramInquiry[]
+  breedingPlans   BreedingPlan[]
+  media           BreedingProgramMedia[]
+  inquiries       BreedingProgramInquiry[]
+  waitlistEntries WaitlistEntry[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -3290,15 +3302,15 @@ model BreedingPlan {
   reproAnchorMode ReproAnchorMode @default(CYCLE_START)
 
   /// Cycle start tracking (observed or derived from ovulation)
-  cycleStartObserved   DateTime?       // When breeder observed heat signs
-  cycleStartSource     DataSource?     // How cycle start was determined
+  cycleStartObserved   DateTime? // When breeder observed heat signs
+  cycleStartSource     DataSource? // How cycle start was determined
   cycleStartConfidence ConfidenceLevel?
 
   /// Ovulation tracking (confirmed via hormone test or calculated)
-  ovulationConfirmed       DateTime?       // When ovulation was hormone-confirmed
+  ovulationConfirmed       DateTime? // When ovulation was hormone-confirmed
   ovulationConfirmedMethod OvulationMethod?
   ovulationTestResultId    Int?
-  ovulationTestResult      TestResult?     @relation("OvulationAnchor", fields: [ovulationTestResultId], references: [id], onDelete: SetNull)
+  ovulationTestResult      TestResult?      @relation("OvulationAnchor", fields: [ovulationTestResultId], references: [id], onDelete: SetNull)
   ovulationConfidence      ConfidenceLevel?
 
   /// System-determined primary anchor based on data quality
@@ -3357,10 +3369,18 @@ model BreedingPlan {
   depositsPaidCents      Int?
   depositRiskScore       Int?
 
+  // Buyer capacity tracking
+  expectedLitterSize Int?
+
+  // Deposit overrides (null = inherit from program)
+  depositOverrideRequired    Boolean?
+  depositOverrideAmountCents Int?
+
   Litter             Litter?
   offspringGroup     OffspringGroup?
   Events             BreedingPlanEvent[]
   Waitlist           WaitlistEntry[]
+  buyers             BreedingPlanBuyer[]
   Shares             BreedingPlanShare[]
   TestResults        TestResult[]
   BreedingAttempts   BreedingAttempt[]
@@ -3403,6 +3423,54 @@ model BreedingPlan {
   @@index([cycleStartObserved])
   @@index([primaryAnchor])
   @@index([ovulationTestResultId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Breeding Plan Buyers - Manage buyer assignments at plan level
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model BreedingPlanBuyer {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  planId Int
+  plan   BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // Buyer Reference (one of these should be set)
+  waitlistEntryId Int?
+  waitlistEntry   WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: SetNull)
+  partyId         Int?
+  party           Party?         @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id], onDelete: SetNull)
+
+  // Stage
+  stage BreedingPlanBuyerStage @default(POSSIBLE_MATCH)
+
+  // Match Metadata
+  matchScore   Int?
+  matchReasons Json?
+
+  // Assignment Metadata
+  assignedAt        DateTime?
+  assignedByPartyId Int?
+  priority          Int?
+
+  // Offspring Connection
+  offspringGroupBuyerId Int?
+  offspringId           Int?
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([planId])
+  @@index([planId, stage])
+  @@index([waitlistEntryId])
+  @@index([partyId])
   @@schema("public")
 }
 
@@ -3510,8 +3578,8 @@ model TestResult {
   data        Json?
 
   // Anchor Mode System: track which plans use this test for ovulation anchor
-  anchoredPlans        BreedingPlan[]   @relation("OvulationAnchor")
-  indicatesOvulationDate DateTime?      // When test indicates ovulation occurred
+  anchoredPlans          BreedingPlan[] @relation("OvulationAnchor")
+  indicatesOvulationDate DateTime? // When test indicates ovulation occurred
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4068,6 +4136,10 @@ model WaitlistEntry {
   offspringGroupId Int?
   offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: SetNull)
 
+  // Direct program link (for matching buyers to breeding plans)
+  programId Int?
+  program   BreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+
   // Step 6E: Party-only storage for client identity
   clientPartyId Int?
   clientParty   Party? @relation("WaitlistParty", fields: [clientPartyId], references: [id], onDelete: SetNull)
@@ -4098,6 +4170,7 @@ model WaitlistEntry {
   offspring   Offspring? @relation("WaitlistAllocationOffspring", fields: [offspringId], references: [id], onDelete: SetNull)
 
   groupBuyerLinks OffspringGroupBuyer[] @relation("GroupBuyerWaitlistEntry")
+  planBuyerLinks  BreedingPlanBuyer[]
 
   // Contracts tied to this waitlist entry (e.g., deposit agreements)
   contracts Contract[]
@@ -4130,6 +4203,7 @@ model WaitlistEntry {
   @@index([litterId])
   @@index([offspringGroupId])
   @@index([offspringId])
+  @@index([programId])
   @@index([clientPartyId])
   @@index([tenantId, clientPartyId])
   @@index([tenantId, speciesPref])
@@ -7417,8 +7491,8 @@ model MarketplaceServiceListing {
   pausedAt    DateTime? @map("paused_at")
 
   // Moderation
-  flagged     Boolean   @default(false)
-  flaggedAt   DateTime? @map("flagged_at")
+  flagged   Boolean   @default(false)
+  flaggedAt DateTime? @map("flagged_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -7443,8 +7517,8 @@ model MarketplaceServiceListing {
 }
 
 model MarketplaceAbuseReport {
-  id        Int      @id @default(autoincrement())
-  listingId Int      @map("listing_id")
+  id        Int                       @id @default(autoincrement())
+  listingId Int                       @map("listing_id")
   listing   MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   reason        String
@@ -7720,11 +7794,11 @@ model MarketplaceSavedListing {
 model MarketplaceServiceTag {
   id Int @id @default(autoincrement())
 
-  name         String  @db.VarChar(100)
-  slug         String  @unique @db.VarChar(100)
-  usageCount   Int     @default(0) @map("usage_count")
-  suggested    Boolean @default(false)
-  createdAt    DateTime @default(now()) @map("created_at")
+  name       String   @db.VarChar(100)
+  slug       String   @unique @db.VarChar(100)
+  usageCount Int      @default(0) @map("usage_count")
+  suggested  Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
   assignments MarketplaceServiceTagAssignment[]
@@ -7750,20 +7824,20 @@ model MarketplaceServiceTagAssignment {
 }
 
 model MarketplaceListingReport {
-  id        Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  listingId        Int       @map("listing_id")
-  reporterUserId   Int?      @map("reporter_user_id")
-  reason           String    @db.VarChar(50)
-  description      String    @db.Text
-  status           String    @default("PENDING") @db.VarChar(50) // PENDING, REVIEWED, ACTIONED, DISMISSED
+  listingId      Int    @map("listing_id")
+  reporterUserId Int?   @map("reporter_user_id")
+  reason         String @db.VarChar(50)
+  description    String @db.Text
+  status         String @default("PENDING") @db.VarChar(50) // PENDING, REVIEWED, ACTIONED, DISMISSED
 
   // Review tracking
-  reviewedBy       Int?      @map("reviewed_by")
-  reviewedAt       DateTime? @map("reviewed_at")
-  reviewNotes      String?   @map("review_notes") @db.Text
+  reviewedBy  Int?      @map("reviewed_by")
+  reviewedAt  DateTime? @map("reviewed_at")
+  reviewNotes String?   @map("review_notes") @db.Text
 
-  createdAt        DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([listingId])
   @@index([reporterUserId])
@@ -7774,16 +7848,16 @@ model MarketplaceListingReport {
 }
 
 model StripeIdentitySession {
-  id               Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  userId           Int       @map("user_id")
-  stripeSessionId  String    @unique @map("stripe_session_id") @db.VarChar(255)
-  clientSecret     String    @map("client_secret") @db.Text
-  status           String    @default("pending") @db.VarChar(50) // pending, verified, requires_input, canceled, failed
+  userId          Int    @map("user_id")
+  stripeSessionId String @unique @map("stripe_session_id") @db.VarChar(255)
+  clientSecret    String @map("client_secret") @db.Text
+  status          String @default("pending") @db.VarChar(50) // pending, verified, requires_input, canceled, failed
 
-  verifiedAt       DateTime? @map("verified_at")
-  stripeResponse   Json?     @map("stripe_response")
-  createdAt        DateTime  @default(now()) @map("created_at")
+  verifiedAt     DateTime? @map("verified_at")
+  stripeResponse Json?     @map("stripe_response")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([status])
@@ -7793,14 +7867,14 @@ model StripeIdentitySession {
 }
 
 model AdminActionLog {
-  id           Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  adminUserId  Int?     @map("admin_user_id")
-  action       String   @db.VarChar(100)
-  entityType   String?  @map("entity_type") @db.VarChar(50)
-  entityId     Int?     @map("entity_id")
-  details      Json?
-  createdAt    DateTime @default(now()) @map("created_at")
+  adminUserId Int?     @map("admin_user_id")
+  action      String   @db.VarChar(100)
+  entityType  String?  @map("entity_type") @db.VarChar(50)
+  entityId    Int?     @map("entity_id")
+  details     Json?
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@index([adminUserId])
   @@index([action])

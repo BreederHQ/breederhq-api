@@ -100,6 +100,38 @@ export function __makeOffspringGroupsService({
       },
     });
 
+    // Auto-populate offspring group buyers from assigned plan buyers
+    const planBuyers = await db.breedingPlanBuyer.findMany({
+      where: { planId, tenantId, stage: "ASSIGNED" },
+      orderBy: { priority: "asc" },
+    });
+
+    for (const buyer of planBuyers) {
+      try {
+        const groupBuyer = await db.offspringGroupBuyer.create({
+          data: {
+            tenantId,
+            groupId: created.id,
+            buyerPartyId: buyer.partyId,
+            waitlistEntryId: buyer.waitlistEntryId,
+            placementRank: buyer.priority,
+          },
+        });
+
+        // Update plan buyer with the link
+        await db.breedingPlanBuyer.update({
+          where: { id: buyer.id },
+          data: {
+            offspringGroupBuyerId: groupBuyer.id,
+            stage: "MATCHED_TO_OFFSPRING",
+          },
+        });
+      } catch (err) {
+        // Skip if buyer already exists in group (unique constraint)
+        console.warn(`[ensureGroupForBredPlan] Could not copy buyer ${buyer.id} to group: ${err}`);
+      }
+    }
+
     return created;
   }
 
