@@ -915,8 +915,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             sex: animal.sex,
             birthDate: privacy?.showFullDob ? animal.birthDate?.toISOString() : null,
             photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
-            sire: privacy?.showPedigree && animal.sire ? { id: animal.sire.id, name: animal.sire.name, photoUrl: animal.sire.photoUrl } : null,
-            dam: privacy?.showPedigree && animal.dam ? { id: animal.dam.id, name: animal.dam.name, photoUrl: animal.dam.photoUrl } : null,
+            sire: animal.sire ? { id: animal.sire.id, name: animal.sire.name, photoUrl: animal.sire.photoUrl } : null,
+            dam: animal.dam ? { id: animal.dam.id, name: animal.dam.name, photoUrl: animal.dam.photoUrl } : null,
           },
           data: {} as any,
         };
@@ -943,25 +943,25 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         }
 
         // Health testing
-        if (isSectionEnabled(privacy?.showHealthTesting, config?.healthTesting)) {
+        if (isSectionEnabled(privacy?.enableHealthSharing, config?.healthTesting)) {
           const healthTraits = animal.AnimalTraitValue.filter(
             (tv: { traitDefinition: { category: string } }) => tv.traitDefinition.category === "health_testing"
           );
-          response.data.healthTesting = healthTraits.map((tv: { id: number; traitDefinition: { key: string; displayName: string }; value: string }) => ({
+          response.data.healthTesting = healthTraits.map((tv: { id: number; traitDefinition: { key: string; displayName: string }; valueText: string | null }) => ({
             key: tv.traitDefinition.key,
             name: tv.traitDefinition.displayName,
-            value: tv.value,
+            value: tv.valueText || "",
           }));
         }
 
         // Photos/gallery
         if (privacy?.showPhoto && config?.gallery?.enabled) {
           response.data.gallery = animal.Attachment
-            .filter((a: { type: string }) => a.type === "PHOTO")
-            .map((a: { id: number; url: string; caption: string | null }) => ({
+            .filter((a: { kind: string; mime: string }) => a.kind === "photo" || a.mime.startsWith("image/"))
+            .map((a: { id: number; storageKey: string }) => ({
               id: a.id,
-              url: a.url,
-              caption: a.caption,
+              url: `https://${process.env.CDN_DOMAIN || "cdn.breederhq.com"}/${a.storageKey}`,
+              caption: null,
             }));
         }
 
