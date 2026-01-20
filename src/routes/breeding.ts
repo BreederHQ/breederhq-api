@@ -2240,7 +2240,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Define what each rewind operation clears and its target phase
       const rewindConfig: Record<Phase, {
         targetPhase: Phase;
-        clearFields: Record<string, null | false>;
+        clearFields: Record<string, null | false | string | BreedingPlanStatus>;
         validation?: () => Promise<{ blocked: boolean; error?: string; detail?: string; blockers?: any }>;
       } | null> = {
         PLANNING: null, // Can't rewind from PLANNING
