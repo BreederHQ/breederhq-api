@@ -693,10 +693,20 @@ enum AnimalListingIntent {
   @@schema("public")
 }
 
+// DEPRECATED: Use MarketplaceListingStatus instead
 enum AnimalListingStatus {
   DRAFT
   LIVE
   PAUSED
+
+  @@schema("public")
+}
+
+// Unified status enum for all marketplace listings
+enum MarketplaceListingStatus {
+  DRAFT  // Not yet published
+  LIVE   // Published and visible to public
+  PAUSED // Temporarily hidden
 
   @@schema("public")
 }
@@ -2563,9 +2573,9 @@ model AnimalPublicListing {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Core listing fields
-  urlSlug String?              @unique
+  urlSlug String?                     @unique
   intent  AnimalListingIntent?
-  status  AnimalListingStatus  @default(DRAFT)
+  status  MarketplaceListingStatus  @default(DRAFT)
 
   // Display fields
   headline    String? @db.VarChar(120)
@@ -2664,7 +2674,7 @@ model DirectAnimalListing {
   @@index([tenantId, status])
   @@index([tenantId, templateType])
   @@index([animalId])
-  @@index([status, listed])
+  @@index([status])
   @@index([slug])
   @@schema("public")
 }
@@ -2698,7 +2708,7 @@ model AnimalProgram {
   defaultPriceMaxCents Int?
 
   // Publishing
-  published   Boolean   @default(false)
+  status      MarketplaceListingStatus  @default(DRAFT)
   listed      Boolean   @default(true) // true = public, false = unlisted
   publishedAt DateTime?
 
@@ -2718,7 +2728,7 @@ model AnimalProgram {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([tenantId, published])
+  @@index([tenantId, status])
   @@index([tenantId, templateType])
   @@index([slug])
   @@schema("public")
@@ -3148,7 +3158,7 @@ model BreedingProgram {
   showCoverImage Boolean @default(true) // Visibility toggle for cover image
 
   // Marketplace Settings
-  listed             Boolean @default(false)
+  status             MarketplaceListingStatus @default(DRAFT)
   acceptInquiries    Boolean @default(true)
   openWaitlist       Boolean @default(false)
   acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
@@ -3174,7 +3184,7 @@ model BreedingProgram {
 
   @@unique([tenantId, slug])
   @@index([tenantId])
-  @@index([listed])
+  @@index([status])
   @@index([species])
   @@schema("public")
 }
@@ -3855,7 +3865,7 @@ model OffspringGroup {
   placementStartAt     DateTime?
   placementCompletedAt DateTime?
 
-  published     Boolean @default(false)
+  status        MarketplaceListingStatus @default(DRAFT)
   coverImageUrl String?
   themeName     String?
 
@@ -3904,7 +3914,7 @@ model OffspringGroup {
   @@index([linkState])
   @@index([placementStartAt])
   @@index([placementCompletedAt])
-  @@index([published])
+  @@index([status])
   @@index([deletedAt])
   @@schema("public")
 }
@@ -4109,7 +4119,7 @@ model Litter {
   statusOverride       String?
   statusOverrideReason String?
 
-  published     Boolean @default(false)
+  marketplaceStatus     MarketplaceListingStatus @default(DRAFT)
   coverImageUrl String?
   themeName     String?
 
@@ -7495,7 +7505,7 @@ model MarketplaceServiceListing {
   bookingCount Int @default(0) @map("booking_count")
 
   // Status
-  status      String    @default("draft")
+  status      MarketplaceListingStatus @default(DRAFT)
   publishedAt DateTime? @map("published_at")
   pausedAt    DateTime? @map("paused_at")
 

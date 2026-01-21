@@ -552,7 +552,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
           participants: {
-            where: { listed: true, status: "ACTIVE" },
+            where: { listed: true, status: "LIVE" },
             select: {
               id: true,
               animal: {
@@ -636,9 +636,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only ACTIVE status listings that are listed publicly
+    // Build where clause - only LIVE status listings that are listed publicly
     const where: any = {
-      status: "ACTIVE",
+      status: "LIVE",
       listed: true,
     };
 
@@ -793,7 +793,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         const listing = await prisma.directAnimalListing.findFirst({
           where: {
             slug,
-            status: "ACTIVE",
+            status: "LIVE",
             listed: true,
           },
           select: {
@@ -1038,7 +1038,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
           participants: {
-            where: { listed: true, status: "ACTIVE" },
+            where: { listed: true, status: "LIVE" },
             orderBy: { sortOrder: "asc" },
             select: {
               id: true,
@@ -1951,9 +1951,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       "OTHER_SERVICE",
     ];
 
-    // Build where clause - only ACTIVE service listings
+    // Build where clause - only LIVE service listings
     const where: any = {
-      status: "ACTIVE",
+      status: "LIVE",
       listingType: { in: serviceTypes },
     };
 

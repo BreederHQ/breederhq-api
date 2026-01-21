@@ -361,7 +361,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     const listing = await prisma.marketplaceListing.update({
       where: { id },
       data: {
-        status: "ACTIVE",
+        status: "LIVE",
         publishedAt: new Date(),
       },
     });
