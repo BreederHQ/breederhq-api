@@ -453,6 +453,7 @@ async function requireTenantMembership(
 import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
+import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
 import animalTraitsRoutes from "./routes/animal-traits.js";
 import animalDocumentsRoutes from "./routes/animal-documents.js";
 import authRoutes from "./routes/auth.js";
@@ -927,6 +928,7 @@ app.register(
     api.register(contractTemplatesRoutes); // /api/v1/contract-templates/* Contract template management
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
+    api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)

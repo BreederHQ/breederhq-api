@@ -100,6 +100,38 @@ export function __makeOffspringGroupsService({
       },
     });
 
+    // Auto-populate offspring group buyers from assigned plan buyers
+    const planBuyers = await db.breedingPlanBuyer.findMany({
+      where: { planId, tenantId, stage: "ASSIGNED" },
+      orderBy: { priority: "asc" },
+    });
+
+    for (const buyer of planBuyers) {
+      try {
+        const groupBuyer = await db.offspringGroupBuyer.create({
+          data: {
+            tenantId,
+            groupId: created.id,
+            buyerPartyId: buyer.partyId,
+            waitlistEntryId: buyer.waitlistEntryId,
+            placementRank: buyer.priority,
+          },
+        });
+
+        // Update plan buyer with the link
+        await db.breedingPlanBuyer.update({
+          where: { id: buyer.id },
+          data: {
+            offspringGroupBuyerId: groupBuyer.id,
+            stage: "MATCHED_TO_OFFSPRING",
+          },
+        });
+      } catch (err) {
+        // Skip if buyer already exists in group (unique constraint)
+        console.warn(`[ensureGroupForBredPlan] Could not copy buyer ${buyer.id} to group: ${err}`);
+      }
+    }
+
     return created;
   }
 
@@ -642,9 +674,10 @@ function getSpeciesDefaults(species: string) {
 }
 
 // Check if species is an induced ovulator (breeding triggers ovulation)
+// These species skip the CYCLE phase - ovulation is triggered by breeding itself
 function isInducedOvulator(species: string): boolean {
   const s = String(species).toUpperCase();
-  return s === "CAT" || s === "RABBIT";
+  return s === "CAT" || s === "RABBIT" || s === "ALPACA" || s === "LLAMA";
 }
 
 // Check if species supports ovulation upgrade (cycle start -> ovulation)
@@ -1288,6 +1321,19 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.breedText !== undefined) data.breedText = b.breedText ?? null;
       if (b.notes !== undefined) data.notes = b.notes ?? null;
 
+      // Expected litter/offspring size for capacity tracking
+      if (b.expectedLitterSize !== undefined) {
+        if (b.expectedLitterSize === null) {
+          data.expectedLitterSize = null;
+        } else {
+          const size = Number(b.expectedLitterSize);
+          if (!Number.isInteger(size) || size < 0) {
+            return reply.code(400).send({ error: "invalid_expected_litter_size" });
+          }
+          data.expectedLitterSize = size;
+        }
+      }
+
       // Committed intent flag - breeder has mentally committed to this plan (PLANNING phase feature)
       if (b.isCommittedIntent !== undefined) data.isCommittedIntent = Boolean(b.isCommittedIntent);
 
@@ -1551,8 +1597,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // Validate required dates for each status
         // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
+        // Induced ovulators (CAT, RABBIT, ALPACA, LLAMA) skip CYCLE phase and don't require cycle data for BRED
         const hasRequiredCycleData = finalCycleStart || (isOvulationAnchor && finalOvulationConfirmed);
-        if (s === "BRED" && !hasRequiredCycleData) {
+        const speciesIsInducedOvulator = isInducedOvulator(existing.species ?? "");
+        if (s === "BRED" && !speciesIsInducedOvulator && !hasRequiredCycleData) {
           return reply.code(400).send({
             error: "date_required_for_status",
             detail: isOvulationAnchor
