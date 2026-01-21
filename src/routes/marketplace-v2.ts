@@ -326,7 +326,7 @@ export default async function marketplaceV2Routes(
     }
 
     const { status } = req.body;
-    if (!status || !["DRAFT", "ACTIVE", "PAUSED"].includes(status)) {
+    if (!status || !["DRAFT", "LIVE", "PAUSED"].includes(status)) {
       return reply.code(400).send({ error: "validation_error", message: "Invalid status" });
     }
 
@@ -627,7 +627,7 @@ export default async function marketplaceV2Routes(
               data: selectedAnimalIds.map((animalId) => ({
                 programId: newProgram.id,
                 animalId,
-                status: "ACTIVE",
+                status: "LIVE",
               })),
             });
 
@@ -2120,9 +2120,9 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only ACTIVE status listings that are listed publicly
+    // Build where clause - only LIVE status listings that are listed publicly
     const where: any = {
-      status: "ACTIVE",
+      status: "LIVE",
       listed: true,
     };
 
@@ -2346,8 +2346,8 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           return reply.code(404).send({ error: "not_found", message: "Listing not found" });
         }
 
-        // Check if listing is published and active
-        if (listing.status !== "ACTIVE" || !listing.listed) {
+        // Check if listing is published and live
+        if (listing.status !== "LIVE" || !listing.listed) {
           return reply.code(404).send({ error: "not_found", message: "Listing not found" });
         }
 
