@@ -289,6 +289,7 @@ import {
   recalculateMareHistory,
   getFoalingAnalytics,
 } from "../services/mare-reproductive-history-service.js";
+import { checkArchiveReadiness } from "../services/archive-validation-service.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -3215,14 +3216,61 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      // Get plan with dam/sire and status before restoring
+      const userId = (req as any).user?.id ?? null;
+
+      // Get plan with dam/sire, status, and offspring group before restoring
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
-        select: { id: true, damId: true, sireId: true, status: true },
+        select: {
+          id: true,
+          damId: true,
+          sireId: true,
+          status: true,
+          offspringGroup: { select: { id: true } },
+        },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      await prisma.breedingPlan.update({ where: { id }, data: { archived: false } });
+      const now = new Date();
+
+      // Restore both plan and offspring group in a transaction
+      await prisma.$transaction(async (tx) => {
+        // Restore the plan - always revert status to PLACEMENT_COMPLETED
+        await tx.breedingPlan.update({
+          where: { id },
+          data: {
+            archived: false,
+            archiveReason: null,
+            status: "PLACEMENT_COMPLETED",
+          },
+        });
+
+        // Restore the offspring group if it exists
+        if (plan.offspringGroup?.id) {
+          await tx.offspringGroup.update({
+            where: { id: plan.offspringGroup.id },
+            data: { archivedAt: null },
+          });
+        }
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "UNARCHIVED",
+            occurredAt: now,
+            label: "Plan Restored",
+            notes: "Plan and offspring group restored from archive",
+            data: {
+              groupId: plan.offspringGroup?.id ?? null,
+              previousStatus: plan.status,
+              restoredToStatus: "PLACEMENT_COMPLETED",
+            },
+            recordedByUserId: userId,
+          },
+        });
+      });
 
       // Sync animal breeding statuses (they may need to be set to BREEDING if plan is active)
       if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
@@ -3231,8 +3279,161 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update usage snapshot after restoring (increases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
 
-      reply.send({ ok: true });
+      reply.send({
+        ok: true,
+        groupRestored: !!plan.offspringGroup?.id,
+      });
     } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────── Archive Readiness Check ───────────── */
+
+  /**
+   * GET /breeding/plans/:id/archive-readiness
+   *
+   * Checks if a plan is ready for archival by running validation checks.
+   * Returns blockers (must fix) and warnings (advisory).
+   */
+  app.get("/breeding/plans/:id/archive-readiness", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const result = await checkArchiveReadiness(prisma, tenantId, id);
+      return reply.send(result);
+    } catch (err: any) {
+      req.log.error({ err }, "archive-readiness check failed");
+      if (err.message === "Plan not found") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────── Complete Archive Workflow ───────────── */
+
+  /**
+   * POST /breeding/plans/:id/complete-archive
+   *
+   * Validates and archives a breeding plan along with its linked offspring group.
+   * This is the "complete" archival workflow that:
+   * 1. Runs validation checks
+   * 2. Blocks if there are blockers (unless force=true)
+   * 3. Archives both plan and offspring group together
+   * 4. Creates audit trail via BreedingPlanEvent
+   */
+  app.post("/breeding/plans/:id/complete-archive", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as {
+        reason?: string;
+        force?: boolean;
+        acknowledgeWarnings?: boolean;
+      };
+      const userId = (req as any).user?.id ?? null;
+
+      // Run validation
+      const validation = await checkArchiveReadiness(prisma, tenantId, id);
+
+      // Block if there are blockers (unless force is true)
+      if (!body.force && !validation.canArchive) {
+        return reply.code(409).send({
+          error: "archive_blocked",
+          detail: "Plan cannot be archived due to unresolved blockers",
+          blockers: validation.checks.filter((c) => !c.passed && c.severity === "blocker"),
+          warnings: validation.checks.filter((c) => !c.passed && c.severity === "warning"),
+        });
+      }
+
+      // Get plan with offspring group
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          damId: true,
+          sireId: true,
+          status: true,
+          offspringGroup: { select: { id: true } },
+        },
+      });
+
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      const now = new Date();
+      const archiveReason = body.reason || null;
+
+      // Archive both plan and offspring group in a transaction
+      await prisma.$transaction(async (tx) => {
+        // Archive the plan and set status to COMPLETE
+        await tx.breedingPlan.update({
+          where: { id },
+          data: {
+            archived: true,
+            archiveReason,
+            status: "COMPLETE",
+            completedDateActual: now,
+          },
+        });
+
+        // Archive the offspring group if it exists
+        if (plan.offspringGroup?.id) {
+          await tx.offspringGroup.update({
+            where: { id: plan.offspringGroup.id },
+            data: { archivedAt: now },
+          });
+        }
+
+        // Create audit event
+        await tx.breedingPlanEvent.create({
+          data: {
+            tenantId,
+            planId: id,
+            type: "ARCHIVED",
+            occurredAt: now,
+            label: "Plan Completed and Archived",
+            notes: archiveReason
+              ? `Plan and offspring group archived. Reason: ${archiveReason}`
+              : "Plan and offspring group archived",
+            data: {
+              archiveReason,
+              groupId: plan.offspringGroup?.id ?? null,
+              previousStatus: plan.status,
+              blockerCount: validation.summary.blockers,
+              warningCount: validation.summary.warnings,
+              forced: body.force ?? false,
+              acknowledgedWarnings: body.acknowledgeWarnings ?? false,
+            },
+            recordedByUserId: userId,
+          },
+        });
+      });
+
+      // Sync animal breeding statuses
+      if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
+      if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
+
+      // Update usage snapshot
+      await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
+      return reply.send({
+        ok: true,
+        archived: true,
+        groupArchived: !!plan.offspringGroup?.id,
+        validation,
+      });
+    } catch (err: any) {
+      req.log.error({ err }, "complete-archive failed");
+      if (err.message === "Plan not found") {
+        return reply.code(404).send({ error: "not_found" });
+      }
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
@@ -3263,77 +3464,174 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.send({ ok: true });
       }
 
-      // BUSINESS RULE: Cannot delete plan after breed actual date is entered
-      // This protects breeding data integrity - once breeding has occurred,
-      // the plan becomes part of the breeding record and cannot be deleted
-      if (plan.breedDateActual) {
-        return reply.code(400).send({
-          error: "cannot_delete_bred_plan",
-          detail: "Plans cannot be deleted after the Breed Date (Actual) has been entered. This is a permanent business rule to protect breeding data integrity.",
-        });
-      }
+      // UPDATED BUSINESS RULE: Allow deletion even after breed date IF no real dependencies exist
+      // Old rule blocked deletion after breedDateActual - now we check for actual data usage
+      // This allows breeders to delete plans they were just testing/experimenting with
 
-      // Check for blockers (same logic as uncommit)
       const blockers: any = {};
+      const blockerDetails: string[] = [];
 
-      // Check for linked offspring group and its blockers
+      // Check for linked offspring group and its dependencies
       const group = await prisma.offspringGroup.findFirst({
         where: { tenantId, planId: plan.id, deletedAt: null },
-        select: { id: true },
+        select: { id: true, actualBirthOn: true },
       });
 
       if (group) {
-        // Check for offspring animals linked to the group
+        // 1. Check for offspring records (modern Offspring table)
         try {
-          const offspringCount = await prisma.animal.count({
-            where: { tenantId, offspringGroupId: group.id },
+          const offspringCount = await prisma.offspring.count({
+            where: { tenantId, groupId: group.id },
           });
-          if (offspringCount > 0) blockers.hasOffspring = true;
+          if (offspringCount > 0) {
+            blockers.hasOffspring = true;
+            blockerDetails.push(`${offspringCount} offspring record(s) exist in the linked offspring group`);
+          }
         } catch (e) {
-          // Field may not exist, skip this check
+          // Table may not exist in older schemas
         }
 
-        // Check for buyers (via waitlist/reservations)
+        // 2. Check for legacy Animal offspring linked to the group
         try {
-          const buyersCount = await prisma.waitlistEntry.count({
+          const legacyOffspringCount = await prisma.animal.count({
+            where: { tenantId, offspringGroupId: group.id },
+          });
+          if (legacyOffspringCount > 0) {
+            blockers.hasLegacyOffspring = true;
+            blockerDetails.push(`${legacyOffspringCount} legacy animal offspring record(s) exist`);
+          }
+        } catch (e) {
+          // Field may not exist in schema
+        }
+
+        // 3. Check for offspring group buyers (NOT plan buyers - those are different)
+        try {
+          const groupBuyersCount = await prisma.offspringGroupBuyer.count({
+            where: { tenantId, groupId: group.id },
+          });
+          if (groupBuyersCount > 0) {
+            blockers.hasOffspringGroupBuyers = true;
+            blockerDetails.push(`${groupBuyersCount} buyer(s) assigned to the offspring group`);
+          }
+        } catch (e) {
+          // Table may not exist
+        }
+
+        // 4. Check for waitlist entries linked to offspring group
+        try {
+          const waitlistCount = await prisma.waitlistEntry.count({
+            where: { tenantId, offspringGroupId: group.id },
+          });
+          if (waitlistCount > 0) {
+            blockers.hasWaitlistEntries = true;
+            blockerDetails.push(`${waitlistCount} waitlist entry/entries linked to offspring group`);
+          }
+        } catch (e) {
+          // Field may not exist
+        }
+
+        // 5. Check for invoices linked to offspring group or offspring
+        try {
+          const invoiceCount = await prisma.invoice.count({
             where: {
               tenantId,
               OR: [
                 { offspringGroupId: group.id },
-                { planId: plan.id },
+                {
+                  offspringInvoiceLinks: {
+                    some: {
+                      offspring: { groupId: group.id }
+                    }
+                  }
+                }
               ]
             },
           });
-          if (buyersCount > 0) blockers.hasBuyers = true;
+          if (invoiceCount > 0) {
+            blockers.hasInvoices = true;
+            blockerDetails.push(`${invoiceCount} invoice(s) linked to offspring or group`);
+          }
         } catch (e) {
-          // Table or field may not exist, skip this check
+          // Fields may not exist
         }
-      }
 
-      // Also check for waitlist entries directly linked to the plan (without offspring group)
-      if (!blockers.hasBuyers) {
+        // 6. Check for contracts/documents
         try {
-          const planBuyersCount = await prisma.waitlistEntry.count({
-            where: { tenantId, planId: plan.id },
+          const contractCount = await prisma.offspringContract.count({
+            where: {
+              tenantId,
+              offspring: { groupId: group.id }
+            },
           });
-          if (planBuyersCount > 0) blockers.hasBuyers = true;
+          if (contractCount > 0) {
+            blockers.hasContracts = true;
+            blockerDetails.push(`${contractCount} contract(s) exist for offspring`);
+          }
         } catch (e) {
-          // Skip if field doesn't exist
+          // Table may not exist
+        }
+
+        try {
+          const documentCount = await prisma.offspringDocument.count({
+            where: {
+              tenantId,
+              offspring: { groupId: group.id }
+            },
+          });
+          if (documentCount > 0) {
+            blockers.hasDocuments = true;
+            blockerDetails.push(`${documentCount} document(s) exist for offspring`);
+          }
+        } catch (e) {
+          // Table may not exist
+        }
+
+        // 7. Check for actual birth date recorded (permanent milestone)
+        if (group.actualBirthOn) {
+          blockers.hasBirthDate = true;
+          blockerDetails.push('Actual birth date has been recorded');
         }
       }
 
-      // If any blockers exist, return 409
+      // 8. Check for breeding plan buyers (BreedingPlanBuyer table)
+      try {
+        const planBuyersCount = await prisma.breedingPlanBuyer.count({
+          where: { tenantId, planId: plan.id },
+        });
+        if (planBuyersCount > 0) {
+          blockers.hasPlanBuyers = true;
+          blockerDetails.push(`${planBuyersCount} buyer(s) linked to breeding plan`);
+        }
+      } catch (e) {
+        // Table may not exist
+      }
+
+      // 9. Check for waitlist entries directly linked to plan (older pattern)
+      try {
+        const planWaitlistCount = await prisma.waitlistEntry.count({
+          where: { tenantId, planId: plan.id },
+        });
+        if (planWaitlistCount > 0) {
+          blockers.hasPlanWaitlist = true;
+          blockerDetails.push(`${planWaitlistCount} waitlist entry/entries linked directly to plan`);
+        }
+      } catch (e) {
+        // Field may not exist
+      }
+
+      // If any blockers exist, return detailed error
       if (Object.keys(blockers).length > 0) {
         return reply.code(409).send({
           error: "delete_blocked",
           blockers,
-          detail: "Plan cannot be deleted due to linked data.",
+          detail: "Plan cannot be deleted because linked data exists that would be orphaned or lost.",
+          reasons: blockerDetails,
         });
       }
 
       const now = new Date();
 
-      // Use transaction to soft delete plan and cascade to offspring groups
+      // Safe to delete - no dependencies exist
       await prisma.$transaction(async (tx) => {
         // Soft delete the plan
         await tx.breedingPlan.update({
@@ -3341,7 +3639,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: { deletedAt: now, archived: true },
         });
 
-        // Cascade soft delete to linked offspring groups
+        // Cascade soft delete to linked offspring groups (should be empty/unused)
         await tx.offspringGroup.updateMany({
           where: { planId: id, tenantId, deletedAt: null },
           data: { deletedAt: now },

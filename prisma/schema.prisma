@@ -3393,8 +3393,9 @@ model BreedingPlan {
   foalingOutcome     FoalingOutcome?
   breedingMilestones BreedingMilestone[]
 
-  archived  Boolean   @default(false)
-  deletedAt DateTime?
+  archived      Boolean   @default(false)
+  archiveReason String?   /// Optional reason/note provided when archiving the plan
+  deletedAt     DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -3783,6 +3784,14 @@ enum MilestoneType {
   DAILY_CHECKS_330D
   DUE_DATE_340D
   OVERDUE_VET_CALL_350D
+
+  // Pre-foaling physical signs (user-recorded, not date-triggered)
+  UDDER_DEVELOPMENT
+  UDDER_FULL
+  WAX_APPEARANCE
+  VULVAR_RELAXATION
+  TAILHEAD_RELAXATION
+  MILK_CALCIUM_TEST
 
   @@schema("public")
 }
