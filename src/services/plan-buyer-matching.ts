@@ -1,5 +1,5 @@
 import { PrismaClient, WaitlistEntry, BreedingPlan, BreedingProgram, WaitlistStatus } from "@prisma/client";
-import type { MatchReason, BreedingPlanBuyerDTO } from "../types/breeding-plan-buyer";
+import type { MatchReason, BreedingPlanBuyerDTO } from "../types/breeding-plan-buyer.js";
 
 export interface MatchResult {
   waitlistEntryId: number;
@@ -168,7 +168,7 @@ export async function refreshPlanMatches(
     where: { planId, stage: "POSSIBLE_MATCH" },
   });
   const existingMap = new Map(
-    existing.map((e) => [e.waitlistEntryId, e])
+    existing.filter((e) => e.waitlistEntryId !== null).map((e) => [e.waitlistEntryId as number, e])
   );
 
   // Calculate new matches
