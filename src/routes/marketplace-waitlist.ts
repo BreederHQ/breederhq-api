@@ -154,6 +154,26 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return reply.code(401).send({ error: "unauthorized" });
     }
 
+    // 1b) Verify email is verified before allowing waitlist signup
+    const user = await prisma.user.findUnique({
+      where: { id: sess.userId },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "User not found.",
+      });
+    }
+
+    if (!user.emailVerifiedAt) {
+      return reply.code(403).send({
+        error: "email_verification_required",
+        message: "Please verify your email address before joining waitlists.",
+      });
+    }
+
     // 2) Validate required fields
     if (!body.programName || typeof body.programName !== "string") {
       return reply.code(400).send({ error: "programName_required" });

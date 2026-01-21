@@ -297,6 +297,55 @@ export default async function marketplaceAuthRoutes(
     );
   });
 
+  /* ───────────────────────── Resend Verification Email ───────────────────────── */
+
+  app.post("/resend-verification", {
+    config: { rateLimit: { max: 3, timeWindow: "10 minutes" } },
+  }, async (req, reply) => {
+    const { email = "" } = (req.body || {}) as { email?: string };
+    const e = String(email).trim().toLowerCase();
+
+    if (!e) {
+      return reply.code(400).send({ error: "email_required" });
+    }
+
+    // Find user by email
+    const user = await findMarketplaceUserByEmail(e);
+
+    // Always return success (don't reveal if email exists)
+    if (!user) {
+      return reply.send({
+        ok: true,
+        message: "If an account exists with that email, you'll receive a verification link."
+      });
+    }
+
+    // Check if already verified
+    if (user.emailVerifiedAt) {
+      return reply.code(400).send({
+        error: "already_verified",
+        message: "This email address is already verified."
+      });
+    }
+
+    // Create new verification token
+    const { raw } = await createEmailVerificationToken(user.id, user.email);
+
+    // Send welcome email with verification link (fire and forget)
+    sendMarketplaceWelcomeEmail({
+      email: user.email,
+      firstName: user.firstName || "there",
+      verificationToken: raw,
+    }).catch((err) => {
+      req.log?.error?.({ err, email: user.email }, "Failed to resend verification email");
+    });
+
+    return reply.send({
+      ok: true,
+      message: "Verification email sent. Please check your inbox."
+    });
+  });
+
   /* ───────────────────────── Forgot Password ───────────────────────── */
 
   app.post("/forgot-password", {
@@ -416,6 +465,7 @@ export default async function marketplaceAuthRoutes(
       phone: user.phone,
       userType: user.userType,
       emailVerified: user.emailVerified,
+      emailVerifiedAt: user.emailVerifiedAt,
       status: user.status,
       suspendedAt: user.suspendedAt,
       suspendedReason: user.suspendedReason,
@@ -428,5 +478,104 @@ export default async function marketplaceAuthRoutes(
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });
+  });
+
+  // PATCH /me - Update user profile
+  app.patch("/me", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { firstName, lastName, phone } = (req.body || {}) as {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+    };
+
+    // Validate inputs
+    if (firstName !== undefined && firstName.trim().length === 0) {
+      return reply.code(400).send({ error: "first_name_required" });
+    }
+    if (lastName !== undefined && lastName.trim().length === 0) {
+      return reply.code(400).send({ error: "last_name_required" });
+    }
+    if (phone !== undefined && phone.trim().length < 10) {
+      return reply.code(400).send({ error: "invalid_phone", message: "Phone number must be at least 10 characters" });
+    }
+
+    try {
+      // Update user profile
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(firstName !== undefined && { firstName: firstName.trim() }),
+          ...(lastName !== undefined && { lastName: lastName.trim() }),
+          ...(phone !== undefined && { phone: phone.trim() }),
+        },
+      });
+
+      return reply.send({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        phone: updatedUser.phone,
+        userType: updatedUser.userType,
+        emailVerified: updatedUser.emailVerified,
+        emailVerifiedAt: updatedUser.emailVerifiedAt,
+        status: updatedUser.status,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt,
+      });
+    } catch (err) {
+      req.log?.error?.({ err, userId }, "Failed to update user profile");
+      return reply.code(500).send({ error: "update_failed", message: "Unable to update profile" });
+    }
+  });
+
+  /* ───────────────────────── Change Password ───────────────────────── */
+
+  app.post("/change-password", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { currentPassword, newPassword } = (req.body || {}) as {
+      currentPassword?: string;
+      newPassword?: string;
+    };
+
+    if (!currentPassword || !newPassword) {
+      return reply.code(400).send({ error: "current_and_new_password_required" });
+    }
+
+    if (newPassword.length < 8) {
+      return reply.code(400).send({ error: "password_too_short", message: "Password must be at least 8 characters" });
+    }
+
+    try {
+      // Verify current password
+      const user = await findMarketplaceUserById(userId);
+      if (!user) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+
+      const validPassword = await verifyPassword(currentPassword, user.hashedPassword);
+      if (!validPassword) {
+        return reply.code(401).send({ error: "invalid_current_password", message: "Current password is incorrect" });
+      }
+
+      // Hash and update new password
+      const hashedPassword = await hashPassword(newPassword);
+      await prisma.user.update({
+        where: { id: userId },
+        data: { hashedPassword },
+      });
+
+      return reply.send({ ok: true, message: "Password changed successfully" });
+    } catch (err) {
+      req.log?.error?.({ err, userId }, "Failed to change password");
+      return reply.code(500).send({ error: "change_failed", message: "Unable to change password" });
+    }
   });
 }
