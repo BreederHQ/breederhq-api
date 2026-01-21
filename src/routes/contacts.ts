@@ -1287,6 +1287,97 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /**
+   * GET /contacts/templates/csv
+   * Download CSV import template for contacts
+   * Query params:
+   *   - withExamples: boolean (default: true) - include example rows
+   */
+  app.get("/contacts/templates/csv", async (req, reply) => {
+    try {
+      const q = (req.query as any) ?? {};
+      const withExamples = String(q.withExamples ?? "true").toLowerCase() !== "false";
+
+      const csvRows: string[][] = [];
+
+      // Header row
+      csvRows.push([
+        "First Name",
+        "Last Name",
+        "Nickname",
+        "Email",
+        "Phone",
+        "WhatsApp",
+        "Organization",
+        "Street",
+        "Street 2",
+        "City",
+        "State",
+        "Zip",
+        "Country",
+      ]);
+
+      // Example rows
+      if (withExamples) {
+        csvRows.push([
+          "John",
+          "Smith",
+          "Johnny",
+          "john.smith@example.com",
+          "+1-555-123-4567",
+          "+1-555-123-4567",
+          "Smith Family Farm",
+          "123 Main Street",
+          "Suite 100",
+          "Springfield",
+          "IL",
+          "62701",
+          "US",
+        ]);
+
+        csvRows.push([
+          "Sarah",
+          "Johnson",
+          "",
+          "sarah.j@example.com",
+          "+1-555-987-6543",
+          "",
+          "",
+          "456 Oak Avenue",
+          "",
+          "Portland",
+          "OR",
+          "97201",
+          "US",
+        ]);
+      }
+
+      // Escape CSV fields
+      const escapeCsvField = (value: string): string => {
+        if (!value) return "";
+        if (value.includes(",") || value.includes("\n") || value.includes('"')) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      };
+
+      const csv = csvRows.map((row) => row.map(escapeCsvField).join(",")).join("\n");
+
+      const filename = "contacts-import-template.csv";
+
+      reply
+        .header("Content-Type", "text/csv")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(csv);
+    } catch (error) {
+      console.error("Contacts CSV template error:", error);
+      return reply.code(500).send({
+        error: "template_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
+  /**
    * GET /contacts/export/csv
    * Export contacts to CSV
    * Query params:

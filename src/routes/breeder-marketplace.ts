@@ -777,4 +777,72 @@ export default async function breederMarketplaceRoutes(
       });
     }
   });
+
+  /* ─────────────────────── Dashboard Stats ─────────────────────── */
+
+  /**
+   * GET /dashboard/stats - Get aggregate marketplace stats for breeder dashboard
+   *
+   * Returns counts of:
+   *   - Animal Listings (direct listings)
+   *   - Animal Programs (offspring groups)
+   *   - Service Listings
+   *   - Pending Inquiries
+   */
+  app.get("/dashboard/stats", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    try {
+      // Get counts in parallel
+      const [animalListings, animalPrograms, breedingPrograms, serviceListings] = await Promise.all([
+        // Count animal listings (direct individual animal listings)
+        prisma.animalPublicListing.count({
+          where: {
+            tenantId,
+            status: "LIVE",
+          },
+        }),
+
+        // Count animal programs (offspring groups - published)
+        prisma.offspringGroup.count({
+          where: {
+            tenantId,
+            published: true,
+          },
+        }),
+
+        // Count breeding programs (listed breeding programs)
+        prisma.breedingProgram.count({
+          where: {
+            tenantId,
+            listed: true,
+          },
+        }),
+
+        // Count service listings (marketplace service listings for this provider)
+        prisma.marketplaceServiceListing.count({
+          where: {
+            provider: {
+              tenantId,
+            },
+            status: "ACTIVE",
+          },
+        }),
+      ]);
+
+      return reply.send({
+        animalListings,
+        offspringListings: animalPrograms,
+        pendingInquiries: breedingPrograms, // Breeding programs count (frontend uses this key)
+        serviceListings,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, tenantId }, "Failed to fetch dashboard stats");
+      return reply.code(500).send({
+        error: "fetch_failed",
+        message: "Failed to fetch dashboard stats. Please try again.",
+      });
+    }
+  });
 }
