@@ -3226,6 +3226,192 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     reply.send({ pedigree });
   });
+
+  /**
+   * POST /animals/:id/test-results
+   * Create a test result (e.g., follicle exam) for an animal
+   * If indicatesOvulationDate is set and planId is provided, automatically updates the breeding plan's ovulation date
+   */
+  app.post("/animals/:id/test-results", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    // Verify animal exists and belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: activeOnly({ id: animalId, tenantId }),
+      select: { id: true, sex: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    const b = (req.body || {}) as {
+      planId?: number;
+      kind: string;
+      method?: string;
+      labName?: string;
+      valueNumber?: number;
+      valueText?: string;
+      units?: string;
+      referenceRange?: string;
+      collectedAt: string;
+      resultAt?: string;
+      notes?: string;
+      data?: any;
+      indicatesOvulationDate?: string;
+    };
+
+    // Validate required fields
+    if (!b.kind) return reply.code(400).send({ error: "kind_required" });
+    if (!b.collectedAt) return reply.code(400).send({ error: "collectedAt_required" });
+
+    const collectedAt = parseDateIso(b.collectedAt);
+    if (!collectedAt) return reply.code(400).send({ error: "collectedAt_invalid" });
+
+    const resultAt = b.resultAt ? parseDateIso(b.resultAt) : null;
+    if (b.resultAt && !resultAt) return reply.code(400).send({ error: "resultAt_invalid" });
+
+    const indicatesOvulationDate = b.indicatesOvulationDate ? parseDateIso(b.indicatesOvulationDate) : null;
+    if (b.indicatesOvulationDate && !indicatesOvulationDate) {
+      return reply.code(400).send({ error: "indicatesOvulationDate_invalid" });
+    }
+
+    // If planId provided, verify it exists and belongs to tenant
+    if (b.planId) {
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: b.planId, tenantId },
+        select: { id: true, damId: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "breeding_plan_not_found" });
+
+      // Verify the animal is the dam on this breeding plan
+      if (plan.damId !== animalId) {
+        return reply.code(400).send({ error: "animal_not_dam_on_plan" });
+      }
+    }
+
+    try {
+      // Create the test result
+      const created = await prisma.testResult.create({
+        data: {
+          tenantId,
+          animalId,
+          planId: b.planId ?? null,
+          kind: b.kind,
+          method: b.method ?? null,
+          labName: b.labName ?? null,
+          valueNumber: b.valueNumber ?? null,
+          valueText: b.valueText ?? null,
+          units: b.units ?? null,
+          referenceRange: b.referenceRange ?? null,
+          collectedAt,
+          resultAt,
+          notes: b.notes ?? null,
+          data: b.data ?? null,
+          indicatesOvulationDate,
+        },
+      });
+
+      // If this test indicates ovulation and is linked to a breeding plan, update the plan
+      if (indicatesOvulationDate && b.planId) {
+        await prisma.breedingPlan.update({
+          where: { id: b.planId },
+          data: {
+            ovulationConfirmed: indicatesOvulationDate,
+            ovulationConfirmedMethod: "ULTRASOUND",
+            ovulationTestResultId: created.id,
+            ovulationConfidence: "HIGH",
+          },
+        });
+      }
+
+      return reply.code(201).send(created);
+    } catch (err: any) {
+      if (err?.code === "P2003") {
+        return reply.code(400).send({ error: "foreign_key_constraint_failed" });
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * GET /animals/:id/test-results
+   * Get test results for an animal, optionally filtered by kind and/or planId
+   */
+  app.get("/animals/:id/test-results", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    // Verify animal exists and belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: activeOnly({ id: animalId, tenantId }),
+      select: { id: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    const query = (req.query || {}) as {
+      kind?: string;
+      planId?: string;
+      limit?: string;
+      offset?: string;
+    };
+
+    // Build where clause
+    const where: any = {
+      animalId,
+      tenantId,
+    };
+
+    if (query.kind) {
+      where.kind = query.kind;
+    }
+
+    if (query.planId) {
+      const planId = parseIntStrict(query.planId);
+      if (planId) {
+        where.planId = planId;
+      }
+    }
+
+    const limit = query.limit ? Math.min(100, Math.max(1, parseInt(query.limit))) : 50;
+    const offset = query.offset ? Math.max(0, parseInt(query.offset)) : 0;
+
+    try {
+      const results = await prisma.testResult.findMany({
+        where,
+        orderBy: { collectedAt: "desc" },
+        take: limit,
+        skip: offset,
+        include: {
+          plan: {
+            select: {
+              id: true,
+              dam: { select: { id: true, name: true } },
+              sire: { select: { id: true, name: true } },
+            },
+          },
+        },
+      });
+
+      const total = await prisma.testResult.count({ where });
+
+      return reply.send({
+        results,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
+      });
+    } catch (err) {
+      throw err;
+    }
+  });
 };
 
 /**
