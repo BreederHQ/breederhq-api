@@ -674,9 +674,10 @@ function getSpeciesDefaults(species: string) {
 }
 
 // Check if species is an induced ovulator (breeding triggers ovulation)
+// These species skip the CYCLE phase - ovulation is triggered by breeding itself
 function isInducedOvulator(species: string): boolean {
   const s = String(species).toUpperCase();
-  return s === "CAT" || s === "RABBIT";
+  return s === "CAT" || s === "RABBIT" || s === "ALPACA" || s === "LLAMA";
 }
 
 // Check if species supports ovulation upgrade (cycle start -> ovulation)
@@ -1596,8 +1597,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // Validate required dates for each status
         // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
+        // Induced ovulators (CAT, RABBIT, ALPACA, LLAMA) skip CYCLE phase and don't require cycle data for BRED
         const hasRequiredCycleData = finalCycleStart || (isOvulationAnchor && finalOvulationConfirmed);
-        if (s === "BRED" && !hasRequiredCycleData) {
+        const speciesIsInducedOvulator = isInducedOvulator(existing.species ?? "");
+        if (s === "BRED" && !speciesIsInducedOvulator && !hasRequiredCycleData) {
           return reply.code(400).send({
             error: "date_required_for_status",
             detail: isOvulationAnchor
