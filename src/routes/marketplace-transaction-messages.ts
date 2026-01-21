@@ -14,7 +14,7 @@
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
-import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
+import { requireMarketplaceAuth, requireEmailVerified } from "../middleware/marketplace-auth.js";
 import { broadcastTransactionMessage, broadcastUnreadCount } from "../services/marketplace-websocket-service.js";
 import { sendNewMessageNotificationEmail } from "../services/marketplace-email-service.js";
 
@@ -267,7 +267,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post(
     "/transactions/:id/messages",
     {
-      preHandler: requireMarketplaceAuth,
+      preHandler: [requireMarketplaceAuth, requireEmailVerified],
       config: {
         rateLimit: { max: 20, timeWindow: "1 hour" },
       },

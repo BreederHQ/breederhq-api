@@ -1,0 +1,3 @@
+Name,Species,Sex,Birth Date,Microchip,Breed,Dam Name,Sire Name,Registry Name,Registry Number,Status,Notes
+,DOG,FEMALE,2023-01-15,,,,,,,ACTIVE,"Missing name"
+ValidDog,DOGGO,MALE,Jan 15 2023,,,,,,,INVALID,"Invalid species and date"

@@ -1,0 +1,3 @@
+Name,Species,Sex,Birth Date,Microchip,Breed,Dam Name,Sire Name,Registry Name,Registry Number,Status,Notes
+TestDog1,DOG,FEMALE,2023-01-15,982000111111111,Golden Retriever,,,AKC,TEST001,ACTIVE,"E2E test animal 1"
+TestDog2,DOG,MALE,2023-06-20,982000222222222,Labrador Retriever,,,AKC,TEST002,BREEDING,"E2E test animal 2"

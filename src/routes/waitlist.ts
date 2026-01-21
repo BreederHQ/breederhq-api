@@ -634,17 +634,28 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
    * Returns count of INQUIRY status entries for notification badge
    */
   app.get("/waitlist/pending-count", async (req, reply) => {
-    const tenantId = (req as any).tenantId as number;
+    try {
+      const tenantId = (req as any).tenantId as number;
 
-    const count = await prisma.waitlistEntry.count({
-      where: {
-        tenantId,
-        status: "INQUIRY",
-        litterId: null, // parking lot only
-      },
-    });
+      if (!tenantId) {
+        console.error("[waitlist/pending-count] Missing tenantId");
+        return reply.code(400).send({ error: "missing_tenant_id", count: 0 });
+      }
 
-    reply.send({ count });
+      const count = await prisma.waitlistEntry.count({
+        where: {
+          tenantId,
+          status: "INQUIRY",
+          litterId: null, // parking lot only
+        },
+      });
+
+      reply.send({ count });
+    } catch (error) {
+      console.error("[waitlist/pending-count] Error:", error);
+      // Return 0 count instead of 500 to prevent UI errors
+      reply.send({ count: 0 });
+    }
   });
 
   /**

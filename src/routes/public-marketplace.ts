@@ -1632,6 +1632,31 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // SECURITY: Require entitlement before creating any inquiry
     if (!(await requireMarketplaceEntitlement(req, reply))) return;
 
+    // SECURITY: Require verified email before allowing inquiries
+    const userId = (req as any).userId;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerifiedAt: true, partyId: true },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "User not found.",
+      });
+    }
+
+    if (!user.emailVerifiedAt) {
+      return reply.code(403).send({
+        error: "email_verification_required",
+        message: "Please verify your email address before submitting inquiries.",
+      });
+    }
+
+    if (!user.partyId) {
+      return reply.code(400).send({ error: "user_has_no_party" });
+    }
+
     const { programSlug, listingSlug, listingType, message, offspringId, origin } = req.body;
 
     // Validate required fields
@@ -1650,19 +1675,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const resolved = await resolveTenantFromProgramSlug(prisma, programSlug);
     if (!resolved) {
       return reply.code(404).send({ error: "program_not_found" });
-    }
-
-    // userId is guaranteed to exist after requireMarketplaceEntitlement() check
-    const userId = (req as any).userId;
-
-    // Get sender's party
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.code(400).send({ error: "user_has_no_party" });
     }
 
     // Validate listing if provided and get listing details for subject

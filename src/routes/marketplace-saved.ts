@@ -44,6 +44,45 @@ async function requireBhqAuth(req: FastifyRequest, reply: FastifyReply): Promise
 }
 
 /**
+ * Middleware to require verified email address.
+ * Must be used after requireBhqAuth (requires bhqUserId on request).
+ */
+async function requireEmailVerified(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const bhqUserId = (req as any).bhqUserId;
+
+  if (!bhqUserId) {
+    reply.code(401).send({
+      error: "unauthorized",
+      message: "Authentication required.",
+    });
+    return;
+  }
+
+  // Fetch user to check email verification status
+  const user = await prisma.user.findUnique({
+    where: { id: bhqUserId },
+    select: { emailVerifiedAt: true },
+  });
+
+  if (!user) {
+    reply.code(401).send({
+      error: "unauthorized",
+      message: "User not found.",
+    });
+    return;
+  }
+
+  // Check if email is verified
+  if (!user.emailVerifiedAt) {
+    reply.code(403).send({
+      error: "email_verification_required",
+      message: "Please verify your email address to use this feature.",
+    });
+    return;
+  }
+}
+
+/**
  * Parse pagination parameters
  */
 function parsePaging(q: any) {
@@ -193,7 +232,7 @@ export default async function marketplaceSavedRoutes(
    * Returns the created saved listing entry.
    */
   app.post("/saved", {
-    preHandler: requireBhqAuth,
+    preHandler: [requireBhqAuth, requireEmailVerified],
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const bhqUserId = (req as any).bhqUserId;

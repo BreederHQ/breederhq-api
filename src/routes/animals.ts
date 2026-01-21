@@ -2460,6 +2460,310 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // CSV Import/Export endpoints
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /animals/templates/csv
+   * Download CSV template for animal imports
+   */
+  app.get("/animals/templates/csv", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const { generateAnimalCsvTemplate } = await import("../lib/csv-import/template.js");
+    const csv = generateAnimalCsvTemplate(true); // Include examples
+
+    reply
+      .header("Content-Type", "text/csv")
+      .header("Content-Disposition", 'attachment; filename="animals-import-template.csv"')
+      .send(csv);
+  });
+
+  /**
+   * POST /animals/import/preview
+   * Preview/validate an animal CSV import without saving
+   * Body: { fileContent: string (base64 encoded CSV) }
+   */
+  app.post("/animals/import/preview", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const body = req.body as { fileContent?: string };
+    if (!body?.fileContent) {
+      return reply.code(400).send({ error: "file_content_required" });
+    }
+
+    try {
+      // Decode base64 CSV content
+      const csvContent = Buffer.from(body.fileContent, "base64").toString("utf-8");
+
+      // Parse and validate CSV
+      const { parseAnimalCSV } = await import("../lib/csv-import/parser.js");
+      const parsedRows = parseAnimalCSV(csvContent);
+
+      // Enhance with database checks (duplicates, parent matching)
+      const { enhanceWithDatabaseChecks, generatePreviewResponse } = await import(
+        "../services/animal-import-service.js"
+      );
+      const enhancedRows = await enhanceWithDatabaseChecks(tenantId, parsedRows);
+      const previewResponse = generatePreviewResponse(enhancedRows);
+
+      reply.send(previewResponse);
+    } catch (error) {
+      console.error("CSV import preview error:", error);
+      return reply.code(400).send({
+        error: "parse_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
+  /**
+   * POST /animals/import
+   * Execute animal CSV import with user resolutions
+   * Body: { fileContent: string, resolutions: RowResolution[] }
+   */
+  app.post("/animals/import", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const body = req.body as {
+      fileContent?: string;
+      resolutions?: any[];
+    };
+
+    if (!body?.fileContent) {
+      return reply.code(400).send({ error: "file_content_required" });
+    }
+
+    try {
+      // Decode base64 CSV content
+      const csvContent = Buffer.from(body.fileContent, "base64").toString("utf-8");
+
+      // Parse and validate CSV
+      const { parseAnimalCSV } = await import("../lib/csv-import/parser.js");
+      const parsedRows = parseAnimalCSV(csvContent);
+
+      // Get organization ID for this tenant
+      const org = await prisma.organization.findFirst({
+        where: { tenantId },
+        select: { id: true },
+      });
+
+      // Execute import with resolutions
+      const { executeImport } = await import("../services/animal-import-service.js");
+      const result = await executeImport(
+        tenantId,
+        org?.id ?? null,
+        parsedRows,
+        body.resolutions || []
+      );
+
+      // Update usage snapshot after import
+      await updateUsageSnapshot(tenantId);
+
+      reply.send(result);
+    } catch (error) {
+      console.error("CSV import execution error:", error);
+      return reply.code(400).send({
+        error: "import_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
+  /**
+   * GET /animals/export/csv
+   * Export animals to CSV
+   * Query params:
+   *   - includeExtended: boolean (include genetics, documents, etc.)
+   *   - species: filter by species
+   *   - status: filter by status
+   */
+  app.get("/animals/export/csv", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const q = req.query as {
+      includeExtended?: string;
+      species?: string;
+      status?: string;
+    };
+
+    try {
+      // Build filters
+      const filters: any = {
+        tenantId,
+        archived: false,
+      };
+
+      if (q.species) {
+        filters.species = q.species.toUpperCase();
+      }
+
+      if (q.status) {
+        filters.status = q.status.toUpperCase();
+      }
+
+      const includeExtended = q.includeExtended === "true";
+
+      // Fetch animals with relationships
+      const animals = await prisma.animal.findMany({
+        where: filters,
+        include: {
+          dam: { select: { name: true } },
+          sire: { select: { name: true } },
+          registryIdentifiers: {
+            select: {
+              identifier: true,
+              registry: {
+                select: { name: true },
+              },
+            },
+          },
+          owners: {
+            include: {
+              party: {
+                select: { name: true },
+              },
+            },
+          },
+          genetics: includeExtended
+            ? {
+                select: {
+                  testProvider: true,
+                },
+              }
+            : undefined,
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      // Build CSV rows
+      const csvRows: string[][] = [];
+
+      // Header row
+      const headers = [
+        "ID",
+        "Name",
+        "Species",
+        "Sex",
+        "Birth Date",
+        "Age",
+        "Microchip",
+        "Breed",
+        "Dam Name",
+        "Sire Name",
+        "Status",
+        "Registry Numbers",
+        "Owner(s)",
+        "COI %",
+        "Last Updated",
+        "Notes",
+      ];
+
+      if (includeExtended) {
+        headers.push("Genetics Provider");
+      }
+
+      csvRows.push(headers);
+
+      // Data rows
+      for (const animal of animals) {
+        // Calculate age
+        let age = "";
+        if (animal.birthDate) {
+          const now = new Date();
+          const birth = new Date(animal.birthDate);
+          const years = now.getFullYear() - birth.getFullYear();
+          const months = now.getMonth() - birth.getMonth();
+          const totalMonths = years * 12 + months;
+          const displayYears = Math.floor(totalMonths / 12);
+          const displayMonths = totalMonths % 12;
+
+          if (displayYears > 0) {
+            age = `${displayYears} year${displayYears > 1 ? "s" : ""}`;
+            if (displayMonths > 0) {
+              age += ` ${displayMonths} month${displayMonths > 1 ? "s" : ""}`;
+            }
+          } else {
+            age = `${displayMonths} month${displayMonths > 1 ? "s" : ""}`;
+          }
+        }
+
+        // Format breeds
+        const breeds = animal.breed || "";
+
+        // Format registry numbers
+        const registries = animal.registryIdentifiers
+          .map((r) => `${r.registry.name}: ${r.identifier}`)
+          .join(", ");
+
+        // Format owners
+        const owners = animal.owners.map((o) => o.party.name).join(", ");
+
+        // Format dates
+        const birthDate = animal.birthDate
+          ? new Date(animal.birthDate).toISOString().split("T")[0]
+          : "";
+        const updatedAt = new Date(animal.updatedAt).toISOString().split("T")[0];
+
+        const row = [
+          String(animal.id),
+          animal.name,
+          animal.species,
+          animal.sex,
+          birthDate,
+          age,
+          animal.microchip || "",
+          breeds,
+          animal.dam?.name || "",
+          animal.sire?.name || "",
+          animal.status,
+          registries,
+          owners,
+          animal.coiPercent ? String(animal.coiPercent) : "",
+          updatedAt,
+          animal.notes || "",
+        ];
+
+        if (includeExtended && animal.genetics) {
+          row.push(animal.genetics.testProvider || "");
+        }
+
+        csvRows.push(row);
+      }
+
+      // Generate CSV content
+      const escapeCsvField = (value: string): string => {
+        if (!value) return "";
+        if (value.includes(",") || value.includes("\n") || value.includes('"')) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      };
+
+      const csv = csvRows.map((row) => row.map(escapeCsvField).join(",")).join("\n");
+
+      // Generate filename with date
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `animals-export-${today}.csv`;
+
+      reply
+        .header("Content-Type", "text/csv")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(csv);
+    } catch (error) {
+      console.error("CSV export error:", error);
+      return reply.code(500).send({
+        error: "export_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Lineage / Pedigree endpoints
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -3394,6 +3698,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sire: { select: { id: true, name: true } },
             },
           },
+          anchoredPlans: {
+            select: { id: true },
+          },
         },
       });
 
@@ -3408,6 +3715,208 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           hasMore: offset + limit < total,
         },
       });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  /**
+   * PUT /animals/:id/test-results/:testResultId
+   * Update a test result (e.g., follicle exam) for an animal
+   * If indicatesOvulationDate is changed and planId is provided, automatically updates the breeding plan's ovulation date
+   */
+  app.put("/animals/:id/test-results/:testResultId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const testResultId = parseIntStrict((req.params as { testResultId: string }).testResultId);
+
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+    if (!testResultId) return reply.code(400).send({ error: "test_result_id_invalid" });
+
+    // Verify animal exists and belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: activeOnly({ id: animalId, tenantId }),
+      select: { id: true, sex: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    // Verify test result exists and belongs to this animal and tenant
+    const existingTestResult = await prisma.testResult.findFirst({
+      where: {
+        id: testResultId,
+        animalId,
+        tenantId,
+      },
+      select: {
+        id: true,
+        planId: true,
+        indicatesOvulationDate: true,
+        anchoredPlans: { select: { id: true } },
+      },
+    });
+
+    if (!existingTestResult) {
+      return reply.code(404).send({ error: "test_result_not_found" });
+    }
+
+    const b = (req.body || {}) as {
+      planId?: number;
+      kind: string;
+      method?: string;
+      labName?: string;
+      valueNumber?: number;
+      valueText?: string;
+      units?: string;
+      referenceRange?: string;
+      collectedAt: string;
+      resultAt?: string;
+      notes?: string;
+      data?: any;
+      indicatesOvulationDate?: string;
+    };
+
+    // Validate required fields
+    if (!b.kind) return reply.code(400).send({ error: "kind_required" });
+    if (!b.collectedAt) return reply.code(400).send({ error: "collectedAt_required" });
+
+    const collectedAt = parseDateIso(b.collectedAt);
+    if (!collectedAt) return reply.code(400).send({ error: "collectedAt_invalid" });
+
+    const resultAt = b.resultAt ? parseDateIso(b.resultAt) : null;
+    if (b.resultAt && !resultAt) return reply.code(400).send({ error: "resultAt_invalid" });
+
+    const indicatesOvulationDate = b.indicatesOvulationDate ? parseDateIso(b.indicatesOvulationDate) : null;
+    if (b.indicatesOvulationDate && !indicatesOvulationDate) {
+      return reply.code(400).send({ error: "indicatesOvulationDate_invalid" });
+    }
+
+    // If planId provided, verify it exists and belongs to tenant
+    if (b.planId) {
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: b.planId, tenantId },
+        select: { id: true, damId: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "breeding_plan_not_found" });
+
+      // Verify the animal is the dam on this breeding plan
+      if (plan.damId !== animalId) {
+        return reply.code(400).send({ error: "animal_not_dam_on_plan" });
+      }
+    }
+
+    try {
+      // Update the test result
+      const updated = await prisma.testResult.update({
+        where: { id: testResultId },
+        data: {
+          planId: b.planId ?? null,
+          kind: b.kind,
+          method: b.method ?? null,
+          labName: b.labName ?? null,
+          valueNumber: b.valueNumber ?? null,
+          valueText: b.valueText ?? null,
+          units: b.units ?? null,
+          referenceRange: b.referenceRange ?? null,
+          collectedAt,
+          resultAt,
+          notes: b.notes ?? null,
+          data: b.data ?? null,
+          indicatesOvulationDate,
+        },
+      });
+
+      // Handle ovulation date changes for anchored plans
+      if (existingTestResult.anchoredPlans && existingTestResult.anchoredPlans.length > 0) {
+        // Update all anchored breeding plans with the new ovulation date
+        for (const anchoredPlan of existingTestResult.anchoredPlans) {
+          await prisma.breedingPlan.update({
+            where: { id: anchoredPlan.id },
+            data: {
+              ovulationConfirmed: indicatesOvulationDate,
+              ovulationConfirmedMethod: indicatesOvulationDate ? "ULTRASOUND" : null,
+              ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
+              ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
+            },
+          });
+        }
+      } else if (indicatesOvulationDate && b.planId) {
+        // If this test now indicates ovulation and is linked to a breeding plan, update the plan
+        await prisma.breedingPlan.update({
+          where: { id: b.planId },
+          data: {
+            ovulationConfirmed: indicatesOvulationDate,
+            ovulationConfirmedMethod: "ULTRASOUND",
+            ovulationTestResultId: testResultId,
+            ovulationConfidence: "HIGH",
+          },
+        });
+      }
+
+      return reply.code(200).send(updated);
+    } catch (err: any) {
+      if (err?.code === "P2003") {
+        return reply.code(400).send({ error: "foreign_key_constraint_failed" });
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * DELETE /animals/:id/test-results/:testResultId
+   * Delete a test result for an animal
+   */
+  app.delete("/animals/:id/test-results/:testResultId", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    const testResultId = parseIntStrict((req.params as { testResultId: string }).testResultId);
+
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+    if (!testResultId) return reply.code(400).send({ error: "test_result_id_invalid" });
+
+    // Verify animal exists and belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: activeOnly({ id: animalId, tenantId }),
+      select: { id: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    // Verify test result exists, belongs to this animal, and tenant owns it
+    const testResult = await prisma.testResult.findFirst({
+      where: {
+        id: testResultId,
+        animalId,
+        tenantId,
+      },
+      select: {
+        id: true,
+        indicatesOvulationDate: true,
+        anchoredPlans: { select: { id: true } },
+      },
+    });
+
+    if (!testResult) {
+      return reply.code(404).send({ error: "test_result_not_found" });
+    }
+
+    // Check if this test result is being used as an ovulation anchor
+    if (testResult.anchoredPlans && testResult.anchoredPlans.length > 0) {
+      return reply.code(409).send({
+        error: "test_result_in_use",
+        detail: "Cannot delete test result that is currently anchoring breeding plans",
+        anchoredPlanIds: testResult.anchoredPlans.map((p) => p.id),
+      });
+    }
+
+    try {
+      await prisma.testResult.delete({
+        where: { id: testResultId },
+      });
+
+      return reply.code(204).send();
     } catch (err) {
       throw err;
     }
