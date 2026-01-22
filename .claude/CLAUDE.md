@@ -14,7 +14,8 @@
 > - ALL protected routes MUST use requireAuth middleware
 > - ALL input MUST be validated with Zod schemas
 > - ALL list endpoints MUST be paginated
-> - No N+1 queries, no unbounded results"
+> - No N+1 queries, no unbounded results
+> - TypeScript: Zero errors policy - I will run tsc and fix all errors before finishing"
 
 This confirms the instructions are active and that Claude has read the imported documentation.
 
@@ -42,6 +43,51 @@ This confirms the instructions are active and that Claude has read the imported 
 - Skip authentication checks (security issue)
 - Trust user input directly (injection risk)
 - Query in loops (N+1 performance issue)
+
+---
+
+## TypeScript Discipline (ENFORCED)
+
+**Zero TypeScript errors policy. No exceptions.**
+
+### After Every Code Change
+
+After modifying or creating TypeScript files, **ALWAYS** verify compilation before considering the task complete:
+
+```bash
+npx tsc --noEmit
+```
+
+### Rules
+
+1. **Fix errors immediately** - Do not defer, do not ask permission, just fix them
+2. **Re-run until clean** - Keep fixing and re-checking until zero errors
+3. **No implicit any** - All parameters and variables must be typed
+4. **No @ts-ignore** - Find the real fix instead of suppressing errors
+5. **No @ts-expect-error** - Unless absolutely necessary with a comment explaining why
+6. **Handle nullability** - Use optional chaining (`?.`) and nullish coalescing (`??`)
+7. **Type Prisma results** - Use generated Prisma types, don't cast to `any`
+
+### Common Mistakes to Avoid
+
+- Forgetting to import a type after using it
+- Mismatched function signatures
+- Missing properties on object literals
+- Incorrect generic type parameters
+- Using `any` instead of proper types
+- Not handling `null | undefined` return types from Prisma
+- Incorrect Express request/response typing
+
+### Self-Review Before Finishing
+
+Before marking any task complete, mentally verify:
+- [ ] Did I run `tsc --noEmit`?
+- [ ] Are there zero type errors?
+- [ ] Did I import all necessary types?
+- [ ] Are all function parameters typed?
+- [ ] Did I handle null/undefined cases?
+
+**Type errors are bugs, not warnings. A task is not complete until TypeScript compiles cleanly.**
 
 ---
 
@@ -160,3 +206,4 @@ Before submitting PR:
 ---
 
 **Auto-loaded by Claude Code at session start**
+**Last Updated**: 2026-01-22 (Added TypeScript zero-errors policy)
