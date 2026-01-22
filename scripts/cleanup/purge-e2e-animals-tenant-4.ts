@@ -181,7 +181,7 @@ async function purgeE2EAnimals() {
     // Cross-tenant animal links
     const deletedAnimalLinks = await prisma.crossTenantAnimalLink.deleteMany({
       where: {
-        OR: [{ sourceAnimalId: { in: animalIds } }, { targetAnimalId: { in: animalIds } }],
+        OR: [{ childAnimalId: { in: animalIds } }, { parentAnimalId: { in: animalIds } }],
       },
     });
     console.log(`   - Cross-tenant links: ${deletedAnimalLinks.count}`);
