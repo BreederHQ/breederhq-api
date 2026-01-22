@@ -1132,7 +1132,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Validate programId if provided (links plan to a BreedingProgram for marketplace)
       if (b.programId) {
-        const program = await prisma.breedingProgram.findFirst({
+        const program = await prisma.mktListingBreedingProgram.findFirst({
           where: { id: Number(b.programId), tenantId },
           select: { id: true },
         });
@@ -1756,7 +1756,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data.programId = null;
         } else {
           // Validate program exists and belongs to tenant
-          const program = await prisma.breedingProgram.findFirst({
+          const program = await prisma.mktListingBreedingProgram.findFirst({
             where: { id: Number(b.programId), tenantId },
             select: { id: true },
           });
@@ -4030,7 +4030,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           placementCompletedAt: b.placementCompletedAt ? new Date(b.placementCompletedAt) : null,
           statusOverride: b.statusOverride ?? null,
           statusOverrideReason: b.statusOverrideReason ?? null,
-          published: b.published ?? false,
+          marketplaceStatus: (b.published ?? false) ? "LIVE" : "DRAFT",
           coverImageUrl: b.coverImageUrl ?? null,
           themeName: b.themeName ?? null,
           notes: b.notes ?? null,

@@ -35,7 +35,7 @@ async function generateUniqueSlug(tenantId: number, baseName: string): Promise<s
   let counter = 1;
 
   while (true) {
-    const existing = await prisma.breedingProgram.findFirst({
+    const existing = await prisma.mktListingBreedingProgram.findFirst({
       where: { tenantId, slug },
       select: { id: true },
     });
@@ -127,9 +127,10 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         where.species = String(q.species).toUpperCase();
       }
 
-      // Filter by listed status
-      if (q.listed === "true") where.listed = true;
-      if (q.listed === "false") where.listed = false;
+      // Filter by status (DRAFT, LIVE, PAUSED)
+      if (q.listed === "true") where.status = 'LIVE';
+      if (q.listed === "false") where.status = { not: 'LIVE' };
+      if (q.status) where.status = String(q.status).toUpperCase();
 
       // Search
       const search = String(q.q || "").trim();
@@ -142,7 +143,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       const [programs, total] = await prisma.$transaction([
-        prisma.breedingProgram.findMany({
+        prisma.mktListingBreedingProgram.findMany({
           where,
           orderBy: { createdAt: "desc" },
           skip,
@@ -163,7 +164,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
                     countBorn: true,
                     countLive: true,
                     countPlaced: true,
-                    published: true,
+                    status: true,
                     _count: {
                       select: { Offspring: true },
                     },
@@ -176,7 +177,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
             },
           },
         }),
-        prisma.breedingProgram.count({ where }),
+        prisma.mktListingBreedingProgram.count({ where }),
       ]);
 
       // Compute summary stats for each program
@@ -247,7 +248,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const id = parseIntStrict((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: { id, tenantId },
         include: {
           media: {
@@ -300,7 +301,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       // Check for soft duplicate (same breed) and warn
       const breedText = String(b.breedText || "").trim() || null;
       if (breedText) {
-        const existingWithBreed = await prisma.breedingProgram.findFirst({
+        const existingWithBreed = await prisma.mktListingBreedingProgram.findFirst({
           where: {
             tenantId,
             breedText: { equals: breedText, mode: "insensitive" },
@@ -310,7 +311,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         // We don't block, but could return a warning in response
       }
 
-      const program = await prisma.breedingProgram.create({
+      const program = await prisma.mktListingBreedingProgram.create({
         data: {
           tenantId,
           slug,
@@ -322,7 +323,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           breedId: b.breedId ?? null,
           coverImageUrl: b.coverImageUrl ?? null,
           showCoverImage: b.showCoverImage ?? true,
-          listed: b.listed ?? false,
+          status: b.listed ? "LIVE" : "DRAFT",
           acceptInquiries: b.acceptInquiries ?? true,
           openWaitlist: b.openWaitlist ?? false,
           acceptReservations: b.acceptReservations ?? false,
@@ -349,7 +350,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const id = parseIntStrict((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const existing = await prisma.breedingProgram.findFirst({
+      const existing = await prisma.mktListingBreedingProgram.findFirst({
         where: { id, tenantId },
         select: { id: true, slug: true, name: true },
       });
@@ -375,10 +376,10 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (b.coverImageUrl !== undefined) data.coverImageUrl = b.coverImageUrl;
       if (b.showCoverImage !== undefined) data.showCoverImage = Boolean(b.showCoverImage);
       if (b.listed !== undefined) {
-        data.listed = Boolean(b.listed);
+        data.status = Boolean(b.listed) ? "LIVE" : "DRAFT";
         // Set publishedAt when first published
         if (b.listed && !data.publishedAt) {
-          const current = await prisma.breedingProgram.findFirst({
+          const current = await prisma.mktListingBreedingProgram.findFirst({
             where: { id, tenantId },
             select: { publishedAt: true },
           });
@@ -397,7 +398,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (b.typicalWaitTime !== undefined) data.typicalWaitTime = b.typicalWaitTime;
       if (b.showWaitTime !== undefined) data.showWaitTime = Boolean(b.showWaitTime);
 
-      const updated = await prisma.breedingProgram.update({
+      const updated = await prisma.mktListingBreedingProgram.update({
         where: { id },
         data,
       });
@@ -416,7 +417,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const id = parseIntStrict((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const existing = await prisma.breedingProgram.findFirst({
+      const existing = await prisma.mktListingBreedingProgram.findFirst({
         where: { id, tenantId },
         select: { id: true },
       });
@@ -434,7 +435,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         });
       }
 
-      await prisma.breedingProgram.delete({ where: { id } });
+      await prisma.mktListingBreedingProgram.delete({ where: { id } });
 
       reply.code(204).send();
     } catch (err) {
@@ -453,7 +454,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (!programId) return reply.code(400).send({ error: "bad_id" });
 
       // Verify program belongs to tenant
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: { id: programId, tenantId },
         select: { id: true },
       });
@@ -479,7 +480,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (!programId) return reply.code(400).send({ error: "bad_id" });
 
       // Verify program belongs to tenant
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: { id: programId, tenantId },
         select: { id: true },
       });
@@ -577,7 +578,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const programId = parseIntStrict((req.params as any).id);
       if (!programId) return reply.code(400).send({ error: "bad_id" });
 
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: { id: programId, tenantId },
         select: { id: true },
       });

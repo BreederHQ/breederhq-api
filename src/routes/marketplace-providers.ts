@@ -563,7 +563,7 @@ export default async function marketplaceProvidersRoutes(
           },
           listings: {
             where: {
-              status: "published",
+              status: "LIVE",
               deletedAt: null,
             },
             orderBy: { createdAt: "desc" },

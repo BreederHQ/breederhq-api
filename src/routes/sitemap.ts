@@ -68,12 +68,11 @@ const sitemapRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       }),
 
-      // 2. Published and listed animal programs
+      // 2. Published animal programs
       // URL pattern: /animal-programs/:slug
-      prisma.animalProgram.findMany({
+      prisma.mktListingAnimalProgram.findMany({
         where: {
-          published: true,
-          listed: true,
+          status: "LIVE",
           slug: { not: { equals: undefined } },
         },
         select: {
@@ -84,9 +83,9 @@ const sitemapRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // 3. Listed breeding programs
       // URL pattern: /breeding-programs/:slug
-      prisma.breedingProgram.findMany({
+      prisma.mktListingBreedingProgram.findMany({
         where: {
-          listed: true,
+          status: "LIVE",
           slug: { not: { equals: undefined } },
         },
         select: {

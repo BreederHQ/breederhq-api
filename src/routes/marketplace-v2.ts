@@ -393,7 +393,7 @@ export default async function marketplaceV2Routes(
     const where: any = { tenantId };
 
     if (published !== undefined) {
-      where.published = published === "true";
+      where.status = published === "true" ? "LIVE" : { not: "LIVE" };
     }
 
     if (templateType) {
@@ -402,7 +402,7 @@ export default async function marketplaceV2Routes(
 
     try {
       const [programs, total] = await Promise.all([
-        prisma.animalProgram.findMany({
+        prisma.mktListingAnimalProgram.findMany({
           where,
           skip,
           take: limit,
@@ -426,7 +426,7 @@ export default async function marketplaceV2Routes(
             },
           },
         }),
-        prisma.animalProgram.count({ where }),
+        prisma.mktListingAnimalProgram.count({ where }),
       ]);
 
       reply.send({
@@ -456,7 +456,7 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      const program = await prisma.animalProgram.findFirst({
+      const program = await prisma.mktListingAnimalProgram.findFirst({
         where: { id, tenantId },
         include: {
           participants: {
@@ -548,7 +548,7 @@ export default async function marketplaceV2Routes(
     }
 
     // Check slug uniqueness for new programs or if slug changed
-    const existingWithSlug = await prisma.animalProgram.findFirst({
+    const existingWithSlug = await prisma.mktListingAnimalProgram.findFirst({
       where: {
         tenantId,
         slug: rest.slug,
@@ -573,7 +573,7 @@ export default async function marketplaceV2Routes(
       let program;
       if (id) {
         // Update existing
-        program = await prisma.animalProgram.update({
+        program = await prisma.mktListingAnimalProgram.update({
           where: { id },
           data,
           include: {
@@ -599,7 +599,7 @@ export default async function marketplaceV2Routes(
         // Create new program with participants in a transaction
         program = await prisma.$transaction(async (tx) => {
           // Create the program
-          const newProgram = await tx.animalProgram.create({
+          const newProgram = await tx.mktListingAnimalProgram.create({
             data,
             include: {
               participants: {
@@ -632,7 +632,7 @@ export default async function marketplaceV2Routes(
             });
 
             // Refetch with participants to get the complete data
-            const programWithParticipants = await tx.animalProgram.findUnique({
+            const programWithParticipants = await tx.mktListingAnimalProgram.findUnique({
               where: { id: newProgram.id },
               include: {
                 participants: {
@@ -689,9 +689,9 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      await prisma.animalProgram.updateMany({
+      await prisma.mktListingAnimalProgram.updateMany({
         where: { id, tenantId },
-        data: { published },
+        data: { status: published ? "LIVE" : "DRAFT" },
       });
 
       reply.send({ success: true });
@@ -727,7 +727,7 @@ export default async function marketplaceV2Routes(
       });
 
       // Delete program
-      await prisma.animalProgram.deleteMany({
+      await prisma.mktListingAnimalProgram.deleteMany({
         where: { id, tenantId },
       });
 
@@ -760,7 +760,7 @@ export default async function marketplaceV2Routes(
 
     try {
       // Verify program belongs to tenant
-      const program = await prisma.animalProgram.findFirst({
+      const program = await prisma.mktListingAnimalProgram.findFirst({
         where: { id: programId, tenantId },
         select: { id: true },
       });
@@ -814,7 +814,7 @@ export default async function marketplaceV2Routes(
 
     try {
       // Verify program belongs to tenant
-      const program = await prisma.animalProgram.findFirst({
+      const program = await prisma.mktListingAnimalProgram.findFirst({
         where: { id: programId, tenantId },
         select: { id: true },
       });
@@ -1421,13 +1421,13 @@ export default async function marketplaceV2Routes(
       fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
 
       // Get all published programs with their stats
-      const programs = await prisma.animalProgram.findMany({
+      const programs = await prisma.mktListingAnimalProgram.findMany({
         where: { tenantId },
         select: {
           id: true,
           name: true,
           templateType: true,
-          published: true,
+          status: true,
           viewCount: true,
           inquiryCount: true,
           lastViewedAt: true,
@@ -1854,7 +1854,7 @@ export default async function marketplaceV2Routes(
       startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
 
       // Get all service listings for this tenant
-      const services = await prisma.marketplaceListing.findMany({
+      const services = await prisma.mktListingBreederService.findMany({
         where: {
           tenantId,
           listingType: { in: SERVICE_LISTING_TYPES as any[] },
@@ -2120,10 +2120,9 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only LIVE status listings that are listed publicly
+    // Build where clause - only LIVE status listings
     const where: any = {
       status: "LIVE",
-      listed: true,
     };
 
     if (templateType) {
@@ -2346,8 +2345,8 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           return reply.code(404).send({ error: "not_found", message: "Listing not found" });
         }
 
-        // Check if listing is published and live
-        if (listing.status !== "LIVE" || !listing.listed) {
+        // Check if listing is live
+        if (listing.status !== "LIVE") {
           return reply.code(404).send({ error: "not_found", message: "Listing not found" });
         }
 

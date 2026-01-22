@@ -1255,7 +1255,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Check for public listing
-      const publicListingCount = await prisma.animalPublicListing.count({
+      const publicListingCount = await prisma.mktListingIndividualAnimal.count({
         where: { animalId: id },
       });
       if (publicListingCount > 0) {
@@ -1911,7 +1911,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(animalId, tenantId);
 
-    const listing = await prisma.animalPublicListing.findUnique({
+    const listing = await prisma.mktListingIndividualAnimal.findUnique({
       where: { animalId },
       select: {
         id: true,
@@ -2005,7 +2005,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       detailsJson: body.detailsJson ?? undefined,
     };
 
-    const listing = await prisma.animalPublicListing.upsert({
+    const listing = await prisma.mktListingIndividualAnimal.upsert({
       where: { animalId },
       create: {
         animalId,
@@ -2060,7 +2060,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: "invalid_status", validStatuses });
     }
 
-    const existing = await prisma.animalPublicListing.findUnique({
+    const existing = await prisma.mktListingIndividualAnimal.findUnique({
       where: { animalId },
       select: { id: true, status: true, intent: true, urlSlug: true },
     });
@@ -2092,7 +2092,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       updateData.pausedAt = null;
     }
 
-    const listing = await prisma.animalPublicListing.update({
+    const listing = await prisma.mktListingIndividualAnimal.update({
       where: { animalId },
       data: updateData,
       select: {
@@ -2119,7 +2119,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(animalId, tenantId);
 
-    const existing = await prisma.animalPublicListing.findUnique({
+    const existing = await prisma.mktListingIndividualAnimal.findUnique({
       where: { animalId },
       select: { id: true },
     });
@@ -2128,7 +2128,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "no_listing" });
     }
 
-    await prisma.animalPublicListing.delete({ where: { animalId } });
+    await prisma.mktListingIndividualAnimal.delete({ where: { animalId } });
     reply.send({ ok: true });
   });
 

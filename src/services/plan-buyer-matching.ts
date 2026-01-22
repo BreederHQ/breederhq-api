@@ -1,4 +1,4 @@
-import { PrismaClient, WaitlistEntry, BreedingPlan, BreedingProgram, WaitlistStatus } from "@prisma/client";
+import { PrismaClient, WaitlistEntry, BreedingPlan, MktListingBreedingProgram, WaitlistStatus } from "@prisma/client";
 import type { MatchReason, BreedingPlanBuyerDTO } from "../types/breeding-plan-buyer.js";
 
 export interface MatchResult {
@@ -8,7 +8,7 @@ export interface MatchResult {
 }
 
 type PlanWithProgram = BreedingPlan & {
-  program: BreedingProgram | null;
+  program: MktListingBreedingProgram | null;
 };
 
 type WaitlistEntryWithPrefs = WaitlistEntry & {

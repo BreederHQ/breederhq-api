@@ -1829,7 +1829,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.schedulingEventTemplate.deleteMany({ where: { tenantId } });
 
         // Marketplace
-        await tx.marketplaceListing.deleteMany({ where: { tenantId } });
+        await tx.mktListingBreederService.deleteMany({ where: { tenantId } });
 
         // Settings (keep some, clear others as needed)
         // We preserve tenant settings like theme but clear operational settings
@@ -2010,7 +2010,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.schedulingEventTemplate.deleteMany({ where: { tenantId } });
 
         // Marketplace
-        await tx.marketplaceListing.deleteMany({ where: { tenantId } });
+        await tx.mktListingBreederService.deleteMany({ where: { tenantId } });
 
         // Sequences and idempotency keys
         await tx.sequence.deleteMany({ where: { tenantId } });

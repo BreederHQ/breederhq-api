@@ -1058,9 +1058,9 @@ model Tenant {
   billing        BillingAccount?
   sharesSent     AnimalShare[]         @relation("ShareFromTenant")
   sharesReceived AnimalShare[]         @relation("ShareToTenant")
-  publicListings AnimalPublicListing[]
+  publicListings MktListingIndividualAnimal[]
   directListings DirectAnimalListing[] @relation("TenantDirectListings")
-  animalPrograms AnimalProgram[]       @relation("TenantAnimalPrograms")
+  animalPrograms MktListingAnimalProgram[]       @relation("TenantAnimalPrograms")
   User           User[]
   tags           Tag[]
   CustomBreed    CustomBreed[]
@@ -1092,7 +1092,7 @@ model Tenant {
   programBreeds TenantProgramBreed[]
 
   // Breeding Programs (marketplace)
-  breedingPrograms         BreedingProgram[]
+  breedingPrograms         MktListingBreedingProgram[]
   breedingProgramMedia     BreedingProgramMedia[]
   breedingProgramInquiries BreedingProgramInquiry[]
   breedingProgramRules     BreedingProgramRule[]
@@ -1171,7 +1171,7 @@ model Tenant {
   referralCodesOwned  ReferralCode[]       @relation("ReferralCodeOwner")
   referralsMade       Referral[]           @relation("ReferralsMade")
   referralsReceived   Referral[]           @relation("ReferralsReceived")
-  marketplaceListings MarketplaceListing[]
+  marketplaceListings MktListingBreederService[]
   featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
@@ -1718,7 +1718,7 @@ model Referral {
   @@schema("public")
 }
 
-model MarketplaceListing {
+model MktListingBreederService {
   id Int @id @default(autoincrement())
 
   // Owner
@@ -1758,7 +1758,7 @@ model MarketplaceListing {
   commissionRate  Float?
 
   // Status
-  status      ListingStatus @default(DRAFT)
+  status      MarketplaceListingStatus @default(DRAFT)
   publishedAt DateTime?
   expiresAt   DateTime?
 
@@ -1780,6 +1780,7 @@ model MarketplaceListing {
   @@index([status, publishedAt])
   @@index([listingType, category])
   @@index([tier])
+  @@map("mkt_listing_breeder_service")
   @@schema("public")
 }
 
@@ -1808,7 +1809,7 @@ model ServiceProviderProfile {
   stripeSubscriptionId String? @unique
 
   // Relations
-  listings MarketplaceListing[]
+  listings MktListingBreederService[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2401,7 +2402,7 @@ model Animal {
   owners              AnimalOwner[]
   registryIds         AnimalRegistryIdentifier[]
   shares              AnimalShare[]              @relation("ShareAnimal")
-  publicListing       AnimalPublicListing?
+  publicListing       MktListingIndividualAnimal?
   directListings      DirectAnimalListing[]      @relation("AnimalDirectListings")
   programParticipants AnimalProgramParticipant[] @relation("AnimalProgramParticipants")
   createdAt           DateTime                   @default(now())
@@ -2565,7 +2566,7 @@ model AnimalShare {
   @@schema("public")
 }
 
-model AnimalPublicListing {
+model MktListingIndividualAnimal {
   id       Int    @id @default(autoincrement())
   animalId Int    @unique
   animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
@@ -2573,19 +2574,15 @@ model AnimalPublicListing {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Core listing fields
-  urlSlug String?                     @unique
+  urlSlug String?                    @unique
   intent  AnimalListingIntent?
-  status  MarketplaceListingStatus  @default(DRAFT)
+  status  MarketplaceListingStatus   @default(DRAFT)
 
   // Display fields
   headline    String? @db.VarChar(120)
   title       String?
   summary     String? @db.Text
   description String? @db.Text
-
-  // Legacy visibility control (retained for compatibility)
-  isListed   Boolean @default(false)
-  visibility String?
 
   // Publishing timestamps
   publishedAt DateTime?
@@ -2613,6 +2610,7 @@ model AnimalPublicListing {
   @@index([tenantId, status])
   @@index([tenantId, intent])
   @@index([status, intent])
+  @@map("mkt_listing_individual_animal")
   @@schema("public")
 }
 
@@ -2679,7 +2677,7 @@ model DirectAnimalListing {
   @@schema("public")
 }
 
-model AnimalProgram {
+model MktListingAnimalProgram {
   id       Int    @id @default(autoincrement())
   tenantId Int
   tenant   Tenant @relation("TenantAnimalPrograms", fields: [tenantId], references: [id], onDelete: Cascade)
@@ -2731,15 +2729,16 @@ model AnimalProgram {
   @@index([tenantId, status])
   @@index([tenantId, templateType])
   @@index([slug])
+  @@map("mkt_listing_animal_program")
   @@schema("public")
 }
 
 model AnimalProgramParticipant {
-  id        Int           @id @default(autoincrement())
+  id        Int                      @id @default(autoincrement())
   programId Int
-  program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingAnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
   animalId  Int
-  animal    Animal        @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
+  animal    Animal                   @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
 
   // Per-participant visibility settings
   status   String  @default("ACTIVE") // ACTIVE, PAUSED
@@ -2777,9 +2776,9 @@ model AnimalProgramParticipant {
 }
 
 model AnimalProgramMedia {
-  id        Int           @id @default(autoincrement())
+  id        Int                      @id @default(autoincrement())
   programId Int
-  program   AnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingAnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
 
   type      String  @db.VarChar(32) // "image" | "video"
   url       String  @db.VarChar(500)
@@ -3139,7 +3138,7 @@ model TenantProgramBreed {
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-model BreedingProgram {
+model MktListingBreedingProgram {
   id       Int    @id @default(autoincrement())
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -3186,13 +3185,14 @@ model BreedingProgram {
   @@index([tenantId])
   @@index([status])
   @@index([species])
+  @@map("mkt_listing_breeding_program")
   @@schema("public")
 }
 
 model BreedingProgramMedia {
   id        Int             @id @default(autoincrement())
   programId Int
-  program   BreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingBreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   tenantId  Int
   tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -3212,7 +3212,7 @@ model BreedingProgramMedia {
 model BreedingProgramInquiry {
   id        Int             @id @default(autoincrement())
   programId Int
-  program   BreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingBreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   tenantId  Int // Breeder's tenant
   tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -3284,7 +3284,7 @@ model BreedingPlan {
 
   // Breeding Program linkage (for marketplace)
   programId Int?
-  program   BreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  program   MktListingBreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
 
   code      String?
   name      String
@@ -4157,7 +4157,7 @@ model WaitlistEntry {
 
   // Direct program link (for matching buyers to breeding plans)
   programId Int?
-  program   BreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  program   MktListingBreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
 
   // Step 6E: Party-only storage for client identity
   clientPartyId Int?

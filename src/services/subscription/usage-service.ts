@@ -152,10 +152,10 @@ export async function calculateActualUsage(
       });
 
     case "MARKETPLACE_LISTING_COUNT":
-      return await prisma.marketplaceListing.count({
+      return await prisma.mktListingBreederService.count({
         where: {
           tenantId,
-          status: { in: ["DRAFT", "PENDING_REVIEW", "ACTIVE"] },
+          status: { in: ["DRAFT", "LIVE", "PAUSED"] },
         },
       });
 

@@ -206,7 +206,7 @@ async function searchBreedingPrograms(
   limit: number
 ): Promise<SearchResultItem[]> {
   // Note: species is an enum, not searchable with contains
-  const rows = await prisma.breedingProgram.findMany({
+  const rows = await prisma.mktListingBreedingProgram.findMany({
     where: {
       tenantId,
       OR: [

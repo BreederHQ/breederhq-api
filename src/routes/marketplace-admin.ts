@@ -107,7 +107,7 @@ export default async function marketplaceAdminRoutes(
         prisma.marketplaceProvider.count({ where: { status: "active" } }),
         prisma.marketplaceProvider.count({ where: { status: "suspended" } }),
         prisma.marketplaceServiceListing.count({ where: { deletedAt: null } }),
-        prisma.marketplaceServiceListing.count({ where: { status: "published", deletedAt: null } }),
+        prisma.marketplaceServiceListing.count({ where: { status: "LIVE", deletedAt: null } }),
         prisma.marketplaceTransaction.count(),
         prisma.marketplaceTransaction.count({ where: { status: "completed" } }),
         prisma.marketplaceReview.count(),
@@ -435,7 +435,7 @@ export default async function marketplaceAdminRoutes(
     if (isNaN(listingId)) return reply.code(400).send({ error: "invalid_listing_id" });
 
     try {
-      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "draft", publishedAt: null } });
+      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "DRAFT", publishedAt: null } });
       return reply.send({ ok: true, message: "Listing unpublished successfully." });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to unpublish listing");
@@ -448,7 +448,7 @@ export default async function marketplaceAdminRoutes(
     if (isNaN(listingId)) return reply.code(400).send({ error: "invalid_listing_id" });
 
     try {
-      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "draft", deletedAt: new Date() } });
+      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "DRAFT", deletedAt: new Date() } });
       return reply.send({ ok: true, message: "Listing removed successfully." });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to remove listing");

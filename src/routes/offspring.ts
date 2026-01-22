@@ -1456,7 +1456,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       species: resolvedSpecies,
       name: identifier ?? null,
       notes: notes ?? null,
-      published: Boolean(published ?? false),
+      status: (published ?? false) ? "LIVE" : "DRAFT",
       data: data ?? null,
     };
 
