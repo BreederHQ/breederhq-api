@@ -607,7 +607,7 @@ function validateAndNormalizeLockPayload(body: any) {
 async function getPlanInTenant(planId: number, tenantId: number) {
   const plan = await prisma.breedingPlan.findFirst({
     where: { id: planId, tenantId },
-    select: { id: true, species: true },
+    select: { id: true, species: true, damId: true, sireId: true },
   });
   if (!plan) {
     const exists = await prisma.breedingPlan.findUnique({ where: { id: planId } });
@@ -1378,6 +1378,44 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           if (String(sire.species) !== String(targetSpecies)) return reply.code(400).send({ error: "sire_species_mismatch" });
           if (String(sire.sex) !== "MALE") return reply.code(400).send({ error: "sire_sex_mismatch" });
           data.sireId = sireId;
+        }
+      }
+
+      // Prevent changing dam if there are existing breeding attempts or follicle exams for a different dam
+      if (data.damId !== undefined && existing.damId && data.damId !== existing.damId) {
+        // Check for breeding attempts linked to this plan with the old dam
+        const existingAttempts = await prisma.breedingAttempt.count({
+          where: { planId: id, damId: existing.damId },
+        });
+        if (existingAttempts > 0) {
+          return reply.code(409).send({
+            error: "dam_change_blocked_by_attempts",
+            message: `Cannot change dam: ${existingAttempts} breeding attempt(s) recorded for this plan. Delete the attempts first or create a new plan.`,
+          });
+        }
+
+        // Check for follicle exams linked to this plan for the old dam
+        const existingExams = await prisma.testResult.count({
+          where: { planId: id, animalId: existing.damId, kind: "FOLLICLE_EXAM" },
+        });
+        if (existingExams > 0) {
+          return reply.code(409).send({
+            error: "dam_change_blocked_by_exams",
+            message: `Cannot change dam: ${existingExams} follicle exam(s) recorded for this plan. Delete the exams first or create a new plan.`,
+          });
+        }
+      }
+
+      // Prevent changing sire if there are existing breeding attempts for a different sire
+      if (data.sireId !== undefined && existing.sireId && data.sireId !== existing.sireId) {
+        const existingAttempts = await prisma.breedingAttempt.count({
+          where: { planId: id, sireId: existing.sireId },
+        });
+        if (existingAttempts > 0) {
+          return reply.code(409).send({
+            error: "sire_change_blocked_by_attempts",
+            message: `Cannot change sire: ${existingAttempts} breeding attempt(s) recorded for this plan. Delete the attempts first or create a new plan.`,
+          });
         }
       }
 
@@ -3863,12 +3901,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const b = (req.body || {}) as any;
       if (!b.method) return reply.code(400).send({ error: "method_required" });
 
-      await getPlanInTenant(planId, tenantId);
+      // Get the plan to extract damId and sireId for historical persistence
+      const plan = await getPlanInTenant(planId, tenantId);
 
       const created = await prisma.breedingAttempt.create({
         data: {
           tenantId,
           planId,
+          // Store animal IDs for historical persistence (survives plan deletion)
+          damId: plan.damId ?? null,
+          sireId: plan.sireId ?? null,
           method: b.method,
           attemptAt: b.attemptAt ? new Date(b.attemptAt) : null,
           windowStart: b.windowStart ? new Date(b.windowStart) : null,
@@ -3880,7 +3922,146 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: b.data ?? null,
         },
       });
+
+      // Also update breedDateActual on the plan if attemptAt is provided
+      if (b.attemptAt) {
+        await prisma.breedingPlan.update({
+          where: { id: planId },
+          data: { breedDateActual: new Date(b.attemptAt) },
+        });
+      }
+
       reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // Get all breeding attempts for a plan
+  app.get("/breeding/plans/:id/attempts", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const attempts = await prisma.breedingAttempt.findMany({
+        where: { planId, tenantId },
+        orderBy: { attemptAt: "desc" },
+        include: {
+          dam: { select: { id: true, name: true } },
+          sire: { select: { id: true, name: true } },
+        },
+      });
+
+      reply.send(attempts);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // Delete the most recent breeding attempt for a plan (used to "undo" a recorded breeding)
+  app.delete("/breeding/plans/:id/attempts/latest", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      // Find the most recent attempt for this plan
+      const latestAttempt = await prisma.breedingAttempt.findFirst({
+        where: { planId, tenantId },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // Delete the attempt if one exists
+      if (latestAttempt) {
+        await prisma.breedingAttempt.delete({
+          where: { id: latestAttempt.id },
+        });
+      }
+
+      // Clear the breedDateActual on the plan since we're undoing the breeding record
+      // (do this even if no attempt existed - handles legacy data)
+      await prisma.breedingPlan.update({
+        where: { id: planId },
+        data: { breedDateActual: null },
+      });
+
+      reply.code(200).send({ success: true, deletedAttemptId: latestAttempt?.id ?? null });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * PATCH /breeding/attempts/:id
+   * Update a specific breeding attempt
+   */
+  app.patch("/breeding/attempts/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const attemptId = idNum((req.params as any).id);
+      if (!attemptId) return reply.code(400).send({ error: "bad_id" });
+
+      // Verify attempt belongs to tenant
+      const existing = await prisma.breedingAttempt.findFirst({
+        where: { id: attemptId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "attempt_not_found" });
+
+      const b = (req.body || {}) as any;
+      const data: any = {};
+
+      if (b.method !== undefined) data.method = b.method;
+      if (b.attemptAt !== undefined) data.attemptAt = b.attemptAt ? new Date(b.attemptAt) : null;
+      if (b.notes !== undefined) data.notes = b.notes || null;
+      if (b.data !== undefined) data.data = b.data || null;
+      if (b.success !== undefined) data.success = b.success;
+
+      const updated = await prisma.breedingAttempt.update({
+        where: { id: attemptId },
+        data,
+        include: {
+          dam: { select: { id: true, name: true } },
+          sire: { select: { id: true, name: true } },
+          plan: { select: { id: true, code: true, name: true, status: true } },
+        },
+      });
+
+      reply.send(updated);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * DELETE /breeding/attempts/:id
+   * Delete a specific breeding attempt
+   */
+  app.delete("/breeding/attempts/:id", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const attemptId = idNum((req.params as any).id);
+      if (!attemptId) return reply.code(400).send({ error: "bad_id" });
+
+      // Verify attempt belongs to tenant
+      const existing = await prisma.breedingAttempt.findFirst({
+        where: { id: attemptId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "attempt_not_found" });
+
+      await prisma.breedingAttempt.delete({
+        where: { id: attemptId },
+      });
+
+      reply.code(200).send({ success: true, deletedAttemptId: attemptId });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

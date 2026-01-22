@@ -3921,6 +3921,52 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       throw err;
     }
   });
+
+  /**
+   * GET /animals/:id/breeding-attempts
+   * Get breeding attempts for an animal (as dam or sire)
+   * Query params:
+   *   - role: "dam" | "sire" | "both" (default: "both")
+   *   - planId: optional filter by plan
+   */
+  app.get("/animals/:id/breeding-attempts", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    const q = (req.query || {}) as { role?: string; planId?: string };
+    const role = q.role || "both";
+    const planId = q.planId ? parseIntStrict(q.planId) : undefined;
+
+    // Build where clause based on role
+    let where: any = { tenantId };
+    if (role === "dam") {
+      where.damId = animalId;
+    } else if (role === "sire") {
+      where.sireId = animalId;
+    } else {
+      // both - dam OR sire
+      where.OR = [{ damId: animalId }, { sireId: animalId }];
+    }
+
+    if (planId) {
+      where.planId = planId;
+    }
+
+    const attempts = await prisma.breedingAttempt.findMany({
+      where,
+      orderBy: { attemptAt: "desc" },
+      include: {
+        dam: { select: { id: true, name: true } },
+        sire: { select: { id: true, name: true } },
+        plan: { select: { id: true, code: true, name: true, status: true } },
+      },
+    });
+
+    reply.send(attempts);
+  });
 };
 
 /**
