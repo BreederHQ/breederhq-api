@@ -2328,6 +2328,10 @@ model Animal {
   breedingPlansAsDam  BreedingPlan[]      @relation("PlanDam")
   breedingPlansAsSire BreedingPlan[]      @relation("PlanSire")
 
+  // Breeding attempts: stored with animal for historical persistence
+  breedingAttemptsAsDam  BreedingAttempt[] @relation("BreedingAttemptDam")
+  breedingAttemptsAsSire BreedingAttempt[] @relation("BreedingAttemptSire")
+
   // Cycle Length Override v1: Animal-level override for female cycle length calculation
   // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
   femaleCycleLenOverrideDays Int?
@@ -3607,8 +3611,15 @@ model BreedingAttempt {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  planId Int
-  plan   BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  // Plan link (optional - attempt survives plan deletion for historical records)
+  planId Int?
+  plan   BreedingPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  // Animal links (primary ownership - for historical persistence and animal-level queries)
+  damId Int?
+  dam   Animal? @relation("BreedingAttemptDam", fields: [damId], references: [id], onDelete: SetNull)
+  sireId Int?
+  sire   Animal? @relation("BreedingAttemptSire", fields: [sireId], references: [id], onDelete: SetNull)
 
   method      BreedingMethod
   attemptAt   DateTime?
@@ -3630,6 +3641,8 @@ model BreedingAttempt {
 
   @@index([tenantId])
   @@index([planId])
+  @@index([damId])
+  @@index([sireId])
   @@index([studOwnerPartyId])
   @@schema("public")
 }
