@@ -26,7 +26,7 @@ async function getServiceDetail(
 
     // Build where clause - search by ID or slug
     const where: any = {
-      status: "published",
+      status: "LIVE",
       deletedAt: null,
     };
 

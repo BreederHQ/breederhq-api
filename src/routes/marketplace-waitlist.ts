@@ -254,11 +254,11 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     }
 
     // 5b) Look up the actual BreedingProgram to get its ID for buyer matching
-    const breedingProgram = await prisma.breedingProgram.findFirst({
+    const breedingProgram = await prisma.mktListingBreedingProgram.findFirst({
       where: {
         tenantId: tenant.id,
         name: body.programName,
-        listed: true,
+        status: "LIVE",
         openWaitlist: true,
       },
       select: { id: true },

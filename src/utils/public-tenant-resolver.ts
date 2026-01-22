@@ -89,7 +89,7 @@ export async function resolveOffspringGroupListing(
     where: {
       tenantId,
       listingSlug: normalized,
-      published: true,
+      status: "LIVE",
     },
     select: {
       id: true,
@@ -118,11 +118,11 @@ export async function resolveAnimalListing(
 
   const normalized = normalizeSlug(urlSlug);
 
-  const listing = await prisma.animalPublicListing.findFirst({
+  const listing = await prisma.mktListingIndividualAnimal.findFirst({
     where: {
       tenantId,
       urlSlug: normalized,
-      isListed: true,
+      status: "LIVE",
     },
     select: {
       id: true,

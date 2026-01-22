@@ -98,7 +98,7 @@ export default async function breederMarketplaceRoutes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.animalPublicListing.findMany({
+        prisma.mktListingIndividualAnimal.findMany({
           where,
           orderBy: { createdAt: "desc" },
           skip,
@@ -107,7 +107,7 @@ export default async function breederMarketplaceRoutes(
             animal: true,
           },
         }),
-        prisma.animalPublicListing.count({ where }),
+        prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
       // Transform listings to response format
@@ -175,7 +175,7 @@ export default async function breederMarketplaceRoutes(
     }
 
     try {
-      const listing: any = await prisma.animalPublicListing.findFirst({
+      const listing: any = await prisma.mktListingIndividualAnimal.findFirst({
         where: {
           id,
           tenantId,
@@ -794,38 +794,36 @@ export default async function breederMarketplaceRoutes(
     if (!tenantId) return;
 
     try {
-      // Get counts in parallel - all using standardized MarketplaceListingStatus.LIVE
+      // Get counts in parallel for all 4 marketplace listing types
       const [animalListings, animalPrograms, breedingPrograms, serviceListings] = await Promise.all([
-        // Count animal listings (direct individual animal listings)
-        prisma.animalPublicListing.count({
+        // Count individual animal listings (AnimalPublicListing with LIVE status)
+        prisma.mktListingIndividualAnimal.count({
           where: {
             tenantId,
             status: "LIVE",
           },
         }),
 
-        // Count animal programs (offspring groups - LIVE status)
-        prisma.offspringGroup.count({
+        // Count animal programs (AnimalProgram - Stud Services, Guardian, etc. with LIVE status)
+        prisma.mktListingAnimalProgram.count({
           where: {
             tenantId,
             status: "LIVE",
           },
         }),
 
-        // Count breeding programs (LIVE breeding programs)
-        prisma.breedingProgram.count({
+        // Count breeding programs (BreedingProgram with LIVE status)
+        prisma.mktListingBreedingProgram.count({
           where: {
             tenantId,
             status: "LIVE",
           },
         }),
 
-        // Count service listings (LIVE marketplace service listings for this provider)
-        prisma.marketplaceServiceListing.count({
+        // Count service listings (MktListingBreederService with LIVE status)
+        prisma.mktListingBreederService.count({
           where: {
-            provider: {
-              tenantId,
-            },
+            tenantId,
             status: "LIVE",
           },
         }),
@@ -833,8 +831,8 @@ export default async function breederMarketplaceRoutes(
 
       return reply.send({
         animalListings,
-        offspringListings: animalPrograms,
-        pendingInquiries: breedingPrograms, // Breeding programs count (frontend uses this key)
+        animalPrograms,
+        breedingPrograms,
         serviceListings,
       });
     } catch (err: any) {

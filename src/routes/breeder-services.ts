@@ -132,7 +132,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       where.listingType = type.toUpperCase();
     }
 
-    const listings = await prisma.marketplaceListing.findMany({
+    const listings = await prisma.mktListingBreederService.findMany({
       where,
       orderBy: { createdAt: "desc" },
     });
@@ -159,7 +159,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const listing = await prisma.marketplaceListing.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: {
         id,
         tenantId,
@@ -217,7 +217,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     // Create the listing
-    const listing = await prisma.marketplaceListing.create({
+    const listing = await prisma.mktListingBreederService.create({
       data: {
         tenantId,
         listingType,
@@ -239,7 +239,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
 
     // Generate and set slug
     const slug = generateSlug(title, listing.id);
-    const updatedListing = await prisma.marketplaceListing.update({
+    const updatedListing = await prisma.mktListingBreederService.update({
       where: { id: listing.id },
       data: { slug },
     });
@@ -265,7 +265,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     // Verify ownership
-    const existing = await prisma.marketplaceListing.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: {
         id,
         tenantId,
@@ -302,7 +302,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     // Build update data
-    const updateData: Prisma.MarketplaceListingUpdateInput = {};
+    const updateData: Prisma.MktListingBreederServiceUpdateInput = {};
     if (listingType) updateData.listingType = listingType;
     if (title !== undefined) updateData.title = title.trim();
     if (description !== undefined) updateData.description = description?.trim() || null;
@@ -317,7 +317,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     if (videoUrl !== undefined) updateData.videoUrl = videoUrl?.trim() || null;
     if (metadata !== undefined) updateData.metadata = metadata ? (metadata as Prisma.InputJsonValue) : Prisma.JsonNull;
 
-    const listing = await prisma.marketplaceListing.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: updateData,
     });
@@ -341,7 +341,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.marketplaceListing.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: {
         id,
         tenantId,
@@ -358,7 +358,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "title_required_to_publish" });
     }
 
-    const listing = await prisma.marketplaceListing.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: {
         status: "LIVE",
@@ -385,7 +385,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.marketplaceListing.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: {
         id,
         tenantId,
@@ -397,7 +397,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "not_found" });
     }
 
-    const listing = await prisma.marketplaceListing.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: {
         status: "PAUSED",
@@ -423,7 +423,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.marketplaceListing.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: {
         id,
         tenantId,
@@ -435,7 +435,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "not_found" });
     }
 
-    await prisma.marketplaceListing.delete({
+    await prisma.mktListingBreederService.delete({
       where: { id },
     });
 

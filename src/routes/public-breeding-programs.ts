@@ -145,10 +145,10 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
     try {
       const { slug } = req.params as { slug: string };
 
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: {
           slug,
-          listed: true,
+          status: "LIVE",
         },
         include: {
           media: {
@@ -200,7 +200,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
       const q = (req.query || {}) as any;
       const { page, limit, skip } = parsePaging(q);
 
-      const where: any = { listed: true };
+      const where: any = { status: "LIVE" };
 
       // Filter by species
       if (q.species) {
@@ -240,7 +240,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
       }
 
       const [programs, total] = await prisma.$transaction([
-        prisma.breedingProgram.findMany({
+        prisma.mktListingBreedingProgram.findMany({
           where,
           orderBy,
           skip,
@@ -271,7 +271,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
             },
           },
         }),
-        prisma.breedingProgram.count({ where }),
+        prisma.mktListingBreedingProgram.count({ where }),
       ]);
 
       // Transform to summary DTOs with stats
@@ -329,10 +329,10 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
       const body = (req.body || {}) as any;
 
       // Find program
-      const program = await prisma.breedingProgram.findFirst({
+      const program = await prisma.mktListingBreedingProgram.findFirst({
         where: {
           slug,
-          listed: true,
+          status: "LIVE",
           acceptInquiries: true,
         },
         select: {

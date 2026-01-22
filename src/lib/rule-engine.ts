@@ -53,7 +53,7 @@ export async function buildInheritanceChain(
             const species = plan.sire?.species || plan.dam?.species;
             if (species) {
               // Find breeding program that matches species and optionally breed
-              const program = await prisma.breedingProgram.findFirst({
+              const program = await prisma.mktListingBreedingProgram.findFirst({
                 where: {
                   tenantId,
                   species,
@@ -93,7 +93,7 @@ export async function buildInheritanceChain(
 
           const species = plan.sire?.species || plan.dam?.species;
           if (species) {
-            const program = await prisma.breedingProgram.findFirst({
+            const program = await prisma.mktListingBreedingProgram.findFirst({
               where: { tenantId, species }
             });
 
@@ -120,7 +120,7 @@ export async function buildInheritanceChain(
 
         const species = plan.sire?.species || plan.dam?.species;
         if (species) {
-          const program = await prisma.breedingProgram.findFirst({
+          const program = await prisma.mktListingBreedingProgram.findFirst({
             where: { tenantId, species }
           });
 
@@ -133,7 +133,7 @@ export async function buildInheritanceChain(
     }
 
     case 'PROGRAM': {
-      const program = await prisma.breedingProgram.findUnique({
+      const program = await prisma.mktListingBreedingProgram.findUnique({
         where: {
           tenantId_slug: {
             tenantId,
