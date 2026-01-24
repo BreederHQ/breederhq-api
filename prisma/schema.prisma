@@ -2659,7 +2659,7 @@ model DirectAnimalListing {
   locationCountry String? @db.VarChar(2)
 
   // Publishing
-  status      String    @default("DRAFT") @db.VarChar(32) // DRAFT, ACTIVE, PAUSED
+  status      String    @default("DRAFT") @db.VarChar(32) // DRAFT, LIVE, PAUSED
   listed      Boolean   @default(true) // true = public listing, false = unlisted (direct link only)
   publishedAt DateTime?
   pausedAt    DateTime?
