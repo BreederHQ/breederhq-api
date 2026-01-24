@@ -470,9 +470,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only published and listed programs
+    // Build where clause - only LIVE and listed programs
     const where: any = {
-      published: true,
       status: "LIVE",
     };
 
@@ -1266,10 +1265,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       return reply.code(404).send({ error: "not_found" });
     }
 
-    // Build where clause
+    // Build where clause - only LIVE groups from this breeder
     const where: any = {
       tenantId: resolved.tenantId,
-      published: true,
+      status: "LIVE",
       listingSlug: { not: null },
     };
 
@@ -2070,9 +2069,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const { species, breed, search, location } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
 
-    // Build where clause - only published groups from published breeders
+    // Build where clause - only LIVE groups from published breeders
     const where: any = {
-      published: true,
+      status: "LIVE",
       listingSlug: { not: null },
       tenant: {
         organizations: {
