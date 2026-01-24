@@ -32,10 +32,59 @@ import {
   checkAndSetServiceProviderTier,
 } from "../services/marketplace-verification-service.js";
 import prisma from "../prisma.js";
+import bcrypt from "bcryptjs";
+import {
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse,
+} from "@simplewebauthn/server";
+import type {
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
+} from "@simplewebauthn/server";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
 const EXPOSE_DEV_TOKENS = !IS_PROD;
+
+// WebAuthn configuration
+const RP_ID = IS_PROD ? "breederhq.com" : "localhost";
+const RP_NAME = "BreederHQ";
+const EXPECTED_ORIGINS = IS_PROD
+  ? ["https://breederhq.com", "https://www.breederhq.com", "https://marketplace.breederhq.com"]
+  : ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"];
+
+/**
+ * B-02 FIX: Verify marketplace user password by userId
+ * Used for security-sensitive operations like disabling 2FA
+ */
+async function verifyPasswordByUserId(userId: number, password: string): Promise<boolean> {
+  const user = await prisma.marketplaceUser.findUnique({
+    where: { id: userId },
+    select: { passwordHash: true },
+  });
+
+  if (!user?.passwordHash) return false;
+
+  return bcrypt.compare(password, user.passwordHash).catch(() => false);
+}
+
+/**
+ * Log security event for audit trail
+ */
+async function logSecurityEvent(data: {
+  userId: number;
+  event: string;
+  ip?: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  // Log to console for now - in production, this should go to a dedicated security log table
+  console.info(`[SECURITY] ${data.event}`, {
+    userId: data.userId,
+    ip: data.ip,
+    timestamp: new Date().toISOString(),
+    ...data.details,
+  });
+}
 
 export default async function marketplace2faRoutes(
   app: FastifyInstance,
@@ -328,21 +377,14 @@ export default async function marketplace2faRoutes(
 
   /**
    * Complete passkey registration
+   * B-01 FIX: Implements full WebAuthn credential verification
    */
   app.post("/passkey/register/finish", {
     preHandler: requireMarketplaceAuth,
   }, async (req, reply) => {
     const userId = req.marketplaceUserId!;
     const { credential } = (req.body || {}) as {
-      credential?: {
-        id: string;
-        rawId: string;
-        response: {
-          clientDataJSON: string;
-          attestationObject: string;
-        };
-        type: string;
-      };
+      credential?: RegistrationResponseJSON;
     };
 
     if (!credential) {
@@ -359,20 +401,35 @@ export default async function marketplace2faRoutes(
       return reply.code(400).send({ error: "challenge_expired" });
     }
 
-    // TODO: Verify the credential properly using @simplewebauthn/server or similar
-    // For now, we'll store the credential ID and public key
-    // In production, you MUST verify:
-    // 1. clientDataJSON.challenge matches stored challenge
-    // 2. clientDataJSON.origin is valid
-    // 3. attestationObject is valid
-    // 4. Extract and store the public key
-
     try {
+      // B-01 FIX: Verify the registration response using @simplewebauthn/server
+      // This validates:
+      // 1. clientDataJSON.challenge matches stored challenge
+      // 2. clientDataJSON.origin is in expected origins
+      // 3. attestationObject is valid
+      // 4. Extracts and returns the public key
+      const verification = await verifyRegistrationResponse({
+        response: credential,
+        expectedChallenge: user.passkeyChallenge,
+        expectedOrigin: EXPECTED_ORIGINS,
+        expectedRPID: RP_ID,
+        requireUserVerification: false, // "preferred" in authenticatorSelection
+      });
+
+      if (!verification.verified || !verification.registrationInfo) {
+        req.log?.warn?.({ userId }, "Passkey registration verification failed");
+        return reply.code(400).send({ error: "verification_failed" });
+      }
+
+      const { credential: verifiedCred } = verification.registrationInfo;
+
+      // Store verified credential
       await prisma.marketplaceUser.update({
         where: { id: userId },
         data: {
-          passkeyCredentialId: credential.id,
-          passkeyPublicKey: Buffer.from(credential.response.attestationObject, "base64"), // Should be extracted public key
+          passkeyCredentialId: verifiedCred.id,
+          passkeyPublicKey: Buffer.from(verifiedCred.publicKey), // Verified public key
+          passkeyCounter: verifiedCred.counter,
           passkeyCreatedAt: new Date(),
           passkeyChallenge: null,
           passkeyChallengeExpires: null,
@@ -380,6 +437,13 @@ export default async function marketplace2faRoutes(
           twoFactorMethod: "PASSKEY",
           twoFactorEnabledAt: new Date(),
         },
+      });
+
+      // Log security event
+      await logSecurityEvent({
+        userId,
+        event: "PASSKEY_REGISTERED",
+        ip: req.ip,
       });
 
       // Check and set service provider tier if applicable
@@ -450,22 +514,14 @@ export default async function marketplace2faRoutes(
 
   /**
    * Complete passkey authentication
+   * B-01 FIX: Implements full WebAuthn assertion verification
    */
   app.post("/passkey/auth/finish", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const { userId, credential } = (req.body || {}) as {
       userId?: number;
-      credential?: {
-        id: string;
-        rawId: string;
-        response: {
-          clientDataJSON: string;
-          authenticatorData: string;
-          signature: string;
-        };
-        type: string;
-      };
+      credential?: AuthenticationResponseJSON;
     };
 
     if (!userId || !credential) {
@@ -480,6 +536,7 @@ export default async function marketplace2faRoutes(
         passkeyChallengeExpires: true,
         passkeyCredentialId: true,
         passkeyPublicKey: true,
+        passkeyCounter: true,
       },
     });
 
@@ -487,28 +544,83 @@ export default async function marketplace2faRoutes(
       return reply.code(400).send({ error: "challenge_expired" });
     }
 
+    if (!user.passkeyCredentialId || !user.passkeyPublicKey) {
+      return reply.code(400).send({ error: "passkey_not_registered" });
+    }
+
     if (credential.id !== user.passkeyCredentialId) {
       return reply.code(401).send({ error: "invalid_credential" });
     }
 
-    // TODO: Verify signature properly using @simplewebauthn/server or similar
-    // For now, we'll just check the credential ID matches
-    // In production, you MUST verify:
-    // 1. clientDataJSON.challenge matches stored challenge
-    // 2. clientDataJSON.origin is valid
-    // 3. authenticatorData flags
-    // 4. signature is valid against stored public key
+    try {
+      // B-01 FIX: Verify the authentication response using @simplewebauthn/server
+      // This validates:
+      // 1. clientDataJSON.challenge matches stored challenge
+      // 2. clientDataJSON.origin is in expected origins
+      // 3. authenticatorData flags (UP required)
+      // 4. signature is valid against stored public key
+      // 5. signCount to detect cloned authenticators
+      // Convert Buffer to Uint8Array for @simplewebauthn/server compatibility
+      const publicKeyArray = new Uint8Array(user.passkeyPublicKey);
 
-    // Clear challenge
-    await prisma.marketplaceUser.update({
-      where: { id: userId },
-      data: {
-        passkeyChallenge: null,
-        passkeyChallengeExpires: null,
-      },
-    });
+      const verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: user.passkeyChallenge,
+        expectedOrigin: EXPECTED_ORIGINS,
+        expectedRPID: RP_ID,
+        credential: {
+          id: user.passkeyCredentialId,
+          publicKey: publicKeyArray,
+          counter: user.passkeyCounter ?? 0,
+        },
+        requireUserVerification: false,
+      });
 
-    return reply.send({ ok: true });
+      if (!verification.verified) {
+        req.log?.warn?.({ userId }, "Passkey authentication verification failed");
+        await logSecurityEvent({
+          userId,
+          event: "PASSKEY_AUTH_FAILED",
+          ip: req.ip,
+          details: { reason: "verification_failed" },
+        });
+        return reply.code(401).send({ error: "verification_failed" });
+      }
+
+      // Check for potential authenticator cloning (signCount should always increase)
+      const newCounter = verification.authenticationInfo.newCounter;
+      if (user.passkeyCounter != null && newCounter <= user.passkeyCounter) {
+        req.log?.warn?.({ userId, oldCounter: user.passkeyCounter, newCounter }, "Possible authenticator clone detected");
+        await logSecurityEvent({
+          userId,
+          event: "PASSKEY_CLONE_DETECTED",
+          ip: req.ip,
+          details: { oldCounter: user.passkeyCounter, newCounter },
+        });
+        // Still allow auth but log the security concern
+      }
+
+      // Update counter and clear challenge
+      await prisma.marketplaceUser.update({
+        where: { id: userId },
+        data: {
+          passkeyChallenge: null,
+          passkeyChallengeExpires: null,
+          passkeyCounter: newCounter,
+        },
+      });
+
+      await logSecurityEvent({
+        userId,
+        event: "PASSKEY_AUTH_SUCCESS",
+        ip: req.ip,
+      });
+
+      return reply.send({ ok: true });
+    } catch (err: any) {
+      req.log?.error?.({ err, userId }, "Passkey authentication error");
+      return reply.code(401).send({ error: "authentication_failed" });
+    }
   });
 
   /* ───────────────────────────────────────────────────────────────────
@@ -517,16 +629,16 @@ export default async function marketplace2faRoutes(
 
   /**
    * Disable 2FA
-   * Note: In production, you should require re-authentication or recovery code
+   * B-02 FIX: Requires password verification before disabling
    */
   app.post("/disable", {
     preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const userId = req.marketplaceUserId!;
-
-    // In production, you'd want to verify the user's password or recovery code
     const { password } = (req.body || {}) as { password?: string };
 
+    // B-02 FIX: Require password to disable 2FA
     if (!password) {
       return reply.code(400).send({
         error: "password_required",
@@ -534,10 +646,30 @@ export default async function marketplace2faRoutes(
       });
     }
 
-    // TODO: Verify password before disabling
-    // const isValid = await verifyMarketplacePassword(user.email, password);
+    // B-02 FIX: Verify password before allowing 2FA disable
+    const passwordValid = await verifyPasswordByUserId(userId, password);
+    if (!passwordValid) {
+      await logSecurityEvent({
+        userId,
+        event: "2FA_DISABLE_FAILED",
+        ip: req.ip,
+        details: { reason: "invalid_password" },
+      });
+      return reply.code(401).send({
+        error: "invalid_password",
+        message: "Invalid password. Please try again.",
+      });
+    }
 
+    // Disable 2FA
     await disableUserTwoFactor(userId);
+
+    // Log security event
+    await logSecurityEvent({
+      userId,
+      event: "2FA_DISABLED",
+      ip: req.ip,
+    });
 
     return reply.send({ ok: true });
   });
