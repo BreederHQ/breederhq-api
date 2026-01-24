@@ -32,6 +32,7 @@ import {
   provideRequestedInfo,
 } from "../services/marketplace-verification-service.js";
 import prisma from "../prisma.js";
+import { stripe } from "../services/stripe-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -172,7 +173,8 @@ export default async function marketplaceVerificationRoutes(
   });
 
   /**
-   * Purchase verification package for provider (breeder)
+   * Start verification package purchase for provider (breeder)
+   * B-03 FIX: Creates Stripe PaymentIntent and returns client_secret
    * Requires: Provider authentication
    */
   app.post("/providers/package/purchase", {
@@ -188,13 +190,22 @@ export default async function marketplaceVerificationRoutes(
       return reply.code(400).send({ error: "invalid_package_type" });
     }
 
-    // Get provider for this user
+    // Get provider and user for this user
     const provider = await prisma.marketplaceProvider.findFirst({
       where: { userId },
     });
 
     if (!provider) {
       return reply.code(404).send({ error: "provider_not_found" });
+    }
+
+    const user = await prisma.marketplaceUser.findUnique({
+      where: { id: userId },
+      select: { email: true, stripeCustomerId: true },
+    });
+
+    if (!user) {
+      return reply.code(404).send({ error: "user_not_found" });
     }
 
     // Check prerequisites
@@ -216,17 +227,108 @@ export default async function marketplaceVerificationRoutes(
       }
     }
 
-    // TODO: Create Stripe payment intent and process payment
-    // For now, create the request with placeholder payment info
     const priceKey = packageType === "VERIFIED" ? "BREEDER_VERIFIED" : "BREEDER_ACCREDITED";
+    const amountCents = PACKAGE_PRICES[priceKey];
 
     try {
+      // B-03 FIX: Create Stripe PaymentIntent for verification fee
+      // Store packageType in metadata - submittedInfo will be passed in complete call
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amountCents,
+        currency: "usd",
+        metadata: {
+          type: "MARKETPLACE_VERIFICATION",
+          userType: "BREEDER",
+          providerId: String(provider.id),
+          userId: String(userId),
+          packageType,
+        },
+        ...(user.stripeCustomerId && { customer: user.stripeCustomerId }),
+        description: `BreederHQ ${packageType} Verification Package`,
+      });
+
+      return reply.send({
+        ok: true,
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        packageType,
+        amountCents,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Failed to create payment intent");
+      return reply.code(500).send({ error: "payment_setup_failed" });
+    }
+  });
+
+  /**
+   * Complete verification package purchase for provider (breeder)
+   * B-03 FIX: Verifies payment succeeded before creating verification request
+   * Requires: Provider authentication
+   */
+  app.post("/providers/package/complete", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { paymentIntentId, submittedInfo } = (req.body || {}) as {
+      paymentIntentId?: string;
+      submittedInfo?: Record<string, unknown>;
+    };
+
+    if (!paymentIntentId) {
+      return reply.code(400).send({ error: "payment_intent_id_required" });
+    }
+
+    // Get provider for this user
+    const provider = await prisma.marketplaceProvider.findFirst({
+      where: { userId },
+    });
+
+    if (!provider) {
+      return reply.code(404).send({ error: "provider_not_found" });
+    }
+
+    try {
+      // B-03 FIX: Verify payment actually succeeded
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      // Verify this payment is for this provider
+      if (paymentIntent.metadata.providerId !== String(provider.id)) {
+        return reply.code(400).send({ error: "invalid_payment_intent" });
+      }
+
+      if (paymentIntent.metadata.type !== "MARKETPLACE_VERIFICATION") {
+        return reply.code(400).send({ error: "invalid_payment_type" });
+      }
+
+      if (paymentIntent.status !== "succeeded") {
+        return reply.code(402).send({
+          error: "payment_required",
+          paymentStatus: paymentIntent.status,
+          message: "Payment must be completed before verification can proceed.",
+        });
+      }
+
+      // Check if this payment was already used
+      const existingRequest = await prisma.verificationRequest.findFirst({
+        where: { paymentIntentId },
+      });
+      if (existingRequest) {
+        return reply.code(409).send({
+          error: "already_processed",
+          requestId: existingRequest.id,
+        });
+      }
+
+      const packageType = paymentIntent.metadata.packageType as "VERIFIED" | "ACCREDITED";
+      const priceKey = packageType === "VERIFIED" ? "BREEDER_VERIFIED" : "BREEDER_ACCREDITED";
+
+      // Create the actual verification request now that payment is confirmed
       const request = await createVerificationRequest({
         userType: "BREEDER",
         providerId: provider.id,
         packageType,
         submittedInfo: submittedInfo || {},
-        // paymentIntentId: stripePaymentIntent.id,
+        paymentIntentId,
         amountPaidCents: PACKAGE_PRICES[priceKey],
       });
 
@@ -238,8 +340,8 @@ export default async function marketplaceVerificationRoutes(
         amountPaidCents: PACKAGE_PRICES[priceKey],
       });
     } catch (err: any) {
-      req.log?.error?.({ err, providerId: provider.id }, "Failed to create verification request");
-      return reply.code(500).send({ error: "request_creation_failed" });
+      req.log?.error?.({ err, providerId: provider.id }, "Failed to complete verification request");
+      return reply.code(500).send({ error: "completion_failed" });
     }
   });
 
@@ -343,7 +445,8 @@ export default async function marketplaceVerificationRoutes(
   });
 
   /**
-   * Purchase verification package for marketplace user (service provider)
+   * Start verification package purchase for marketplace user (service provider)
+   * B-03 FIX: Creates Stripe PaymentIntent and returns client_secret
    * Requires: Marketplace authentication
    */
   app.post("/users/package/purchase", {
@@ -393,16 +496,98 @@ export default async function marketplaceVerificationRoutes(
       }
     }
 
-    // TODO: Create Stripe payment intent and process payment
     const priceKey = packageType === "VERIFIED" ? "SERVICE_VERIFIED" : "SERVICE_ACCREDITED";
+    const amountCents = PACKAGE_PRICES[priceKey];
 
     try {
+      // B-03 FIX: Create Stripe PaymentIntent for verification fee
+      // Store packageType in metadata - submittedInfo will be passed in complete call
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amountCents,
+        currency: "usd",
+        metadata: {
+          type: "MARKETPLACE_VERIFICATION",
+          userType: "SERVICE_PROVIDER",
+          userId: String(userId),
+          packageType,
+        },
+        ...(user.stripeCustomerId && { customer: user.stripeCustomerId }),
+        description: `BreederHQ Service Provider ${packageType} Verification Package`,
+      });
+
+      return reply.send({
+        ok: true,
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        packageType,
+        amountCents,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, userId }, "Failed to create payment intent");
+      return reply.code(500).send({ error: "payment_setup_failed" });
+    }
+  });
+
+  /**
+   * Complete verification package purchase for marketplace user (service provider)
+   * B-03 FIX: Verifies payment succeeded before creating verification request
+   * Requires: Marketplace authentication
+   */
+  app.post("/users/package/complete", {
+    preHandler: requireMarketplaceAuth,
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { paymentIntentId, submittedInfo } = (req.body || {}) as {
+      paymentIntentId?: string;
+      submittedInfo?: Record<string, unknown>;
+    };
+
+    if (!paymentIntentId) {
+      return reply.code(400).send({ error: "payment_intent_id_required" });
+    }
+
+    try {
+      // B-03 FIX: Verify payment actually succeeded
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      // Verify this payment is for this user
+      if (paymentIntent.metadata.userId !== String(userId)) {
+        return reply.code(400).send({ error: "invalid_payment_intent" });
+      }
+
+      if (paymentIntent.metadata.type !== "MARKETPLACE_VERIFICATION") {
+        return reply.code(400).send({ error: "invalid_payment_type" });
+      }
+
+      if (paymentIntent.status !== "succeeded") {
+        return reply.code(402).send({
+          error: "payment_required",
+          paymentStatus: paymentIntent.status,
+          message: "Payment must be completed before verification can proceed.",
+        });
+      }
+
+      // Check if this payment was already used
+      const existingRequest = await prisma.verificationRequest.findFirst({
+        where: { paymentIntentId },
+      });
+      if (existingRequest) {
+        return reply.code(409).send({
+          error: "already_processed",
+          requestId: existingRequest.id,
+        });
+      }
+
+      const packageType = paymentIntent.metadata.packageType as "VERIFIED" | "ACCREDITED";
+      const priceKey = packageType === "VERIFIED" ? "SERVICE_VERIFIED" : "SERVICE_ACCREDITED";
+
+      // Create the actual verification request now that payment is confirmed
       const request = await createVerificationRequest({
         userType: "SERVICE_PROVIDER",
         marketplaceUserId: userId,
         packageType,
         submittedInfo: submittedInfo || {},
-        // paymentIntentId: stripePaymentIntent.id,
+        paymentIntentId,
         amountPaidCents: PACKAGE_PRICES[priceKey],
       });
 
@@ -414,8 +599,8 @@ export default async function marketplaceVerificationRoutes(
         amountPaidCents: PACKAGE_PRICES[priceKey],
       });
     } catch (err: any) {
-      req.log?.error?.({ err, userId }, "Failed to create verification request");
-      return reply.code(500).send({ error: "request_creation_failed" });
+      req.log?.error?.({ err, userId }, "Failed to complete verification request");
+      return reply.code(500).send({ error: "completion_failed" });
     }
   });
 
