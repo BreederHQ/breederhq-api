@@ -83,7 +83,7 @@ function validateListingAvailability(listing: MarketplaceServiceListing | null):
     throw new Error("listing_not_found");
   }
 
-  if (listing.status !== "published") {
+  if (listing.status !== "LIVE") {
     throw new Error("listing_not_published");
   }
 

@@ -107,14 +107,14 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
     const slug = generateSlug(program.name);
 
     // Check if record exists
-    const existing = await prisma.breedingProgram.findFirst({
+    const existing = await prisma.mktListingBreedingProgram.findFirst({
       where: { tenantId, slug },
       select: { id: true },
     });
 
     if (existing) {
       // Update existing
-      await prisma.breedingProgram.update({
+      await prisma.mktListingBreedingProgram.update({
         where: { id: existing.id },
         data: {
           name: program.name,
@@ -125,7 +125,7 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
           programStory: program.programStory || null,
           coverImageUrl: program.coverImageUrl || null,
           showCoverImage: program.showCoverImage !== false,
-          listed: true,
+          status: 'LIVE',
           acceptInquiries: program.acceptInquiries !== false,
           openWaitlist: program.openWaitlist === true,
           acceptReservations: program.acceptReservations === true,
@@ -134,7 +134,7 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
       });
     } else {
       // Create new
-      await prisma.breedingProgram.create({
+      await prisma.mktListingBreedingProgram.create({
         data: {
           tenantId,
           slug,
@@ -146,7 +146,7 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
           programStory: program.programStory || null,
           coverImageUrl: program.coverImageUrl || null,
           showCoverImage: program.showCoverImage !== false,
-          listed: true,
+          status: 'LIVE',
           acceptInquiries: program.acceptInquiries !== false,
           openWaitlist: program.openWaitlist === true,
           acceptReservations: program.acceptReservations === true,

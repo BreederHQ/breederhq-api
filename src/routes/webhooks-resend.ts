@@ -14,6 +14,7 @@ import {
 } from "../services/inbound-email-service.js";
 import { sendNewMessageNotification } from "../services/portal-provisioning-service.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
+import { sendInactiveAddressAutoReply } from "../services/marketplace-email-service.js";
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 
@@ -264,7 +265,14 @@ async function handleNewInboundThread(
 
     if (!tenant) {
       log.warn({ slug }, "No tenant found for inbound slug");
-      // TODO: Send auto-reply that address is not active
+      // P-02 FIX: Send auto-reply that address is not active
+      sendInactiveAddressAutoReply({
+        toEmail: fromEmail,
+        fromSlug: slug,
+        originalSubject: subject,
+      }).catch((err) => {
+        log.error({ err, slug, fromEmail }, "Failed to send inactive address auto-reply");
+      });
       return { error: "tenant_not_found" };
     }
 

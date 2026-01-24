@@ -118,3 +118,55 @@ export const requireBuyer = requireUserType("buyer");
  * Middleware to require admin account
  */
 export const requireAdmin = requireUserType("admin");
+
+/**
+ * Middleware to require email verification
+ *
+ * Enforces email verification for engagement actions like:
+ * - Submitting inquiries
+ * - Joining waitlists
+ * - Saving listings
+ * - Sending messages
+ *
+ * Usage:
+ * ```ts
+ * app.post("/inquiries", {
+ *   preHandler: [requireMarketplaceAuth, requireEmailVerified]
+ * }, async (req, reply) => {
+ *   // User is authenticated AND email verified
+ * });
+ * ```
+ */
+export async function requireEmailVerified(
+  req: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const userId = req.marketplaceUserId;
+
+  if (!userId) {
+    return reply.code(401).send({
+      error: "unauthorized",
+      message: "Authentication required.",
+    });
+  }
+
+  // Fetch user to check email verification status
+  const user = await findMarketplaceUserById(userId);
+
+  if (!user) {
+    return reply.code(401).send({
+      error: "unauthorized",
+      message: "User not found.",
+    });
+  }
+
+  // Check if email is verified
+  if (!user.emailVerifiedAt) {
+    return reply.code(403).send({
+      error: "email_verification_required",
+      message: "Please verify your email address to use this feature.",
+    });
+  }
+
+  // Email is verified - allow request to proceed
+}

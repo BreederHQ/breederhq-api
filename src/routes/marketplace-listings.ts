@@ -269,7 +269,7 @@ export default async function marketplaceListingsRoutes(
             availability,
             metaDescription,
             keywords,
-            status: "draft",
+            status: "DRAFT",
           },
         });
 
@@ -811,7 +811,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check if already published
-    if (listing.status === "published") {
+    if (listing.status === "LIVE") {
       return reply.code(409).send({
         error: "already_published",
         message: "Listing is already published.",
@@ -822,7 +822,7 @@ export default async function marketplaceListingsRoutes(
       const updated = await prisma.marketplaceServiceListing.update({
         where: { id: listingId },
         data: {
-          status: "published",
+          status: "LIVE",
           publishedAt: new Date(),
         },
       });
@@ -882,7 +882,7 @@ export default async function marketplaceListingsRoutes(
       const updated = await prisma.marketplaceServiceListing.update({
         where: { id: listingId },
         data: {
-          status: "draft",
+          status: "DRAFT",
         },
       });
 
@@ -1216,7 +1216,7 @@ export default async function marketplaceListingsRoutes(
       const listing = await prisma.marketplaceServiceListing.findFirst({
         where: {
           slug,
-          status: "published",
+          status: "LIVE",
           deletedAt: null,
         },
         include: {

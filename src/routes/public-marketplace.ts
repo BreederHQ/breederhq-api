@@ -470,10 +470,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only published and listed programs
+    // Build where clause - only LIVE and listed programs
     const where: any = {
-      published: true,
-      listed: true,
+      status: "LIVE",
     };
 
     // Filter by tenant/breeder if specified (for breeder storefront context)
@@ -517,7 +516,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // Accept params without error but ignore for now
 
     const [programs, total] = await Promise.all([
-      prisma.animalProgram.findMany({
+      prisma.mktListingAnimalProgram.findMany({
         where,
         skip: offset,
         take: limit,
@@ -552,7 +551,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
           participants: {
-            where: { listed: true, status: "ACTIVE" },
+            where: { status: "LIVE" },
             select: {
               id: true,
               animal: {
@@ -569,7 +568,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.animalProgram.count({ where }),
+      prisma.mktListingAnimalProgram.count({ where }),
     ]);
 
     // Transform to public DTOs
@@ -636,10 +635,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only ACTIVE status listings that are listed publicly
+    // Build where clause - only LIVE status listings
     const where: any = {
-      status: "ACTIVE",
-      listed: true,
+      status: "LIVE",
     };
 
     if (templateType) {
@@ -793,8 +791,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         const listing = await prisma.directAnimalListing.findFirst({
           where: {
             slug,
-            status: "ACTIVE",
-            listed: true,
+            status: "LIVE",
           },
           select: {
             id: true,
@@ -993,11 +990,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      const program = await prisma.animalProgram.findFirst({
+      const program = await prisma.mktListingAnimalProgram.findFirst({
         where: {
           slug,
-          published: true,
-          listed: true,
+          status: "LIVE",
         },
         select: {
           id: true,
@@ -1038,7 +1034,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
           participants: {
-            where: { listed: true, status: "ACTIVE" },
+            where: { status: "LIVE" },
             orderBy: { sortOrder: "asc" },
             select: {
               id: true,
@@ -1082,7 +1078,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       }
 
       // Increment view count asynchronously (don't await)
-      prisma.animalProgram
+      prisma.mktListingAnimalProgram
         .update({
           where: { id: program.id },
           data: {
@@ -1269,10 +1265,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       return reply.code(404).send({ error: "not_found" });
     }
 
-    // Build where clause
+    // Build where clause - only LIVE groups from this breeder
     const where: any = {
       tenantId: resolved.tenantId,
-      published: true,
+      status: "LIVE",
       listingSlug: { not: null },
     };
 
@@ -1464,7 +1460,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [listings, total] = await Promise.all([
-      prisma.animalPublicListing.findMany({
+      prisma.mktListingIndividualAnimal.findMany({
         where,
         skip,
         take: limit,
@@ -1489,7 +1485,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.animalPublicListing.count({ where }),
+      prisma.mktListingIndividualAnimal.count({ where }),
     ]);
 
     const items = listings.map(toAnimalListingSummaryDTO);
@@ -1536,7 +1532,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      const listing = await prisma.animalPublicListing.findUnique({
+      const listing = await prisma.mktListingIndividualAnimal.findUnique({
         where: {
           id: listingResolved.listingId,
           // FILTER: Only LIVE status listings are publicly visible
@@ -1632,6 +1628,31 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // SECURITY: Require entitlement before creating any inquiry
     if (!(await requireMarketplaceEntitlement(req, reply))) return;
 
+    // SECURITY: Require verified email before allowing inquiries
+    const userId = (req as any).userId;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerifiedAt: true, partyId: true },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "User not found.",
+      });
+    }
+
+    if (!user.emailVerifiedAt) {
+      return reply.code(403).send({
+        error: "email_verification_required",
+        message: "Please verify your email address before submitting inquiries.",
+      });
+    }
+
+    if (!user.partyId) {
+      return reply.code(400).send({ error: "user_has_no_party" });
+    }
+
     const { programSlug, listingSlug, listingType, message, offspringId, origin } = req.body;
 
     // Validate required fields
@@ -1650,19 +1671,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const resolved = await resolveTenantFromProgramSlug(prisma, programSlug);
     if (!resolved) {
       return reply.code(404).send({ error: "program_not_found" });
-    }
-
-    // userId is guaranteed to exist after requireMarketplaceEntitlement() check
-    const userId = (req as any).userId;
-
-    // Get sender's party
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partyId: true },
-    });
-
-    if (!user?.partyId) {
-      return reply.code(400).send({ error: "user_has_no_party" });
     }
 
     // Validate listing if provided and get listing details for subject
@@ -1699,7 +1707,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           return reply.code(404).send({ error: "listing_not_found" });
         }
         // Verify listing is LIVE and get details for subject
-        const animalListing = await prisma.animalPublicListing.findUnique({
+        const animalListing = await prisma.mktListingIndividualAnimal.findUnique({
           where: { id: listingResolved.listingId },
           select: { status: true, title: true, headline: true, intent: true },
         });
@@ -1844,7 +1852,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // Build where clause - only listed programs
     const where: any = {
       tenantId: resolved.tenantId,
-      listed: true,
+      status: "LIVE",
     };
 
     if (species) {
@@ -1852,7 +1860,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [items, total] = await prisma.$transaction([
-      prisma.breedingProgram.findMany({
+      prisma.mktListingBreedingProgram.findMany({
         where,
         orderBy: { createdAt: "desc" },
         skip,
@@ -1882,7 +1890,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.breedingProgram.count({ where }),
+      prisma.mktListingBreedingProgram.count({ where }),
     ]);
 
     return reply.send({
@@ -1939,9 +1947,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       "OTHER_SERVICE",
     ];
 
-    // Build where clause - only ACTIVE service listings
+    // Build where clause - only LIVE service listings
     const where: any = {
-      status: "ACTIVE",
+      status: "LIVE",
       listingType: { in: serviceTypes },
     };
 
@@ -1967,7 +1975,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [items, total] = await prisma.$transaction([
-      prisma.marketplaceListing.findMany({
+      prisma.mktListingBreederService.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip,
@@ -2007,7 +2015,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.marketplaceListing.count({ where }),
+      prisma.mktListingBreederService.count({ where }),
     ]);
 
     return reply.send({
@@ -2061,9 +2069,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const { species, breed, search, location } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
 
-    // Build where clause - only published groups from published breeders
+    // Build where clause - only LIVE groups from published breeders
     const where: any = {
-      published: true,
+      status: "LIVE",
       listingSlug: { not: null },
       tenant: {
         organizations: {
@@ -2305,7 +2313,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [listings, total] = await prisma.$transaction([
-      prisma.animalPublicListing.findMany({
+      prisma.mktListingIndividualAnimal.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip: offset,
@@ -2352,7 +2360,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.animalPublicListing.count({ where }),
+      prisma.mktListingIndividualAnimal.count({ where }),
     ]);
 
     // Transform to response format
@@ -2413,7 +2421,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     // Build where clause - only listed programs from published breeders
     const where: any = {
-      listed: true,
+      status: "LIVE",
       tenant: {
         organizations: {
           some: {
@@ -2440,7 +2448,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [items, total] = await prisma.$transaction([
-      prisma.breedingProgram.findMany({
+      prisma.mktListingBreedingProgram.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip,
@@ -2481,7 +2489,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.breedingProgram.count({ where }),
+      prisma.mktListingBreedingProgram.count({ where }),
     ]);
 
     return reply.send({

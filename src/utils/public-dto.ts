@@ -10,7 +10,7 @@ import type {
   OffspringGroup,
   Offspring,
   Animal,
-  AnimalPublicListing,
+  MktListingIndividualAnimal,
   Breed,
   AnimalRegistryIdentifier,
   Registry,
@@ -309,7 +309,7 @@ type AnimalWithRelations = Pick<
 };
 
 type ListingWithAnimal = Pick<
-  AnimalPublicListing,
+  MktListingIndividualAnimal,
   | "urlSlug"
   | "title"
   | "description"
@@ -333,7 +333,7 @@ type ListingWithAnimal = Pick<
  * Derive a display string for price based on priceModel and values
  */
 function derivePriceDisplay(listing: Pick<
-  AnimalPublicListing,
+  MktListingIndividualAnimal,
   "priceModel" | "priceCents" | "priceMinCents" | "priceMaxCents" | "priceText"
 > & { animal: Pick<Animal, "priceCents"> }): string | null {
   const model = listing.priceModel;
@@ -361,7 +361,7 @@ function derivePriceDisplay(listing: Pick<
  * Derive location string from listing fields
  */
 function deriveLocation(listing: Pick<
-  AnimalPublicListing,
+  MktListingIndividualAnimal,
   "locationCity" | "locationRegion" | "locationCountry"
 >): string | null {
   const parts: string[] = [];
@@ -491,7 +491,7 @@ export function toOffspringGroupSummaryDTO(
 
 export function toAnimalListingSummaryDTO(
   listing: Pick<
-    AnimalPublicListing,
+    MktListingIndividualAnimal,
     | "urlSlug"
     | "title"
     | "intent"

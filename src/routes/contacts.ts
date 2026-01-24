@@ -1285,6 +1285,273 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "internal_error", detail: err?.message });
     }
   });
+
+  /**
+   * GET /contacts/templates/csv
+   * Download CSV import template for contacts
+   * Query params:
+   *   - withExamples: boolean (default: true) - include example rows
+   */
+  app.get("/contacts/templates/csv", async (req, reply) => {
+    try {
+      const q = (req.query as any) ?? {};
+      const withExamples = String(q.withExamples ?? "true").toLowerCase() !== "false";
+
+      const csvRows: string[][] = [];
+
+      // Header row
+      csvRows.push([
+        "First Name",
+        "Last Name",
+        "Nickname",
+        "Email",
+        "Phone",
+        "WhatsApp",
+        "Organization",
+        "Street",
+        "Street 2",
+        "City",
+        "State",
+        "Zip",
+        "Country",
+      ]);
+
+      // Example rows
+      if (withExamples) {
+        csvRows.push([
+          "John",
+          "Smith",
+          "Johnny",
+          "john.smith@example.com",
+          "+1-555-123-4567",
+          "+1-555-123-4567",
+          "Smith Family Farm",
+          "123 Main Street",
+          "Suite 100",
+          "Springfield",
+          "IL",
+          "62701",
+          "US",
+        ]);
+
+        csvRows.push([
+          "Sarah",
+          "Johnson",
+          "",
+          "sarah.j@example.com",
+          "+1-555-987-6543",
+          "",
+          "",
+          "456 Oak Avenue",
+          "",
+          "Portland",
+          "OR",
+          "97201",
+          "US",
+        ]);
+      }
+
+      // Escape CSV fields
+      const escapeCsvField = (value: string): string => {
+        if (!value) return "";
+        if (value.includes(",") || value.includes("\n") || value.includes('"')) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      };
+
+      const csv = csvRows.map((row) => row.map(escapeCsvField).join(",")).join("\n");
+
+      const filename = "contacts-import-template.csv";
+
+      reply
+        .header("Content-Type", "text/csv")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(csv);
+    } catch (error) {
+      console.error("Contacts CSV template error:", error);
+      return reply.code(500).send({
+        error: "template_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
+  /**
+   * GET /contacts/export/csv
+   * Export contacts to CSV
+   * Query params:
+   *   - includeArchived: boolean (default: false)
+   *   - search: string (optional filter)
+   */
+  app.get("/contacts/export/csv", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const q = (req.query as any) ?? {};
+      const includeArchived = String(q.includeArchived ?? "false").toLowerCase() === "true";
+      const search = trimToNull(q.search);
+
+      // Build where clause
+      const where: any = { tenantId };
+      if (!includeArchived) where.archived = false;
+      if (search) {
+        const organizationNameMatch = includeArchived
+          ? { organization: { party: { name: { contains: search, mode: "insensitive" } } } }
+          : {
+              organization: {
+                is: {
+                  archived: false,
+                  party: {
+                    is: {
+                      archived: false,
+                      name: { contains: search, mode: "insensitive" },
+                    },
+                  },
+                },
+              },
+            };
+        where.OR = [
+          { party: { name: { contains: search, mode: "insensitive" } } },
+          organizationNameMatch,
+          { party: { email: { contains: search } } },
+          { party: { phoneE164: { contains: search } } },
+          { party: { whatsappE164: { contains: search } } },
+          { display_name: { contains: search, mode: "insensitive" } },
+          { first_name: { contains: search, mode: "insensitive" } },
+          { last_name: { contains: search, mode: "insensitive" } },
+          { nickname: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+          { phoneE164: { contains: search, mode: "insensitive" } },
+          { whatsappE164: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      // Fetch all contacts (no pagination for export)
+      const contacts = await prisma.contact.findMany({
+        where: activeOnly(where),
+        orderBy: { display_name: "asc" },
+        select: {
+          id: true,
+          display_name: true,
+          first_name: true,
+          last_name: true,
+          nickname: true,
+          email: true,
+          phoneE164: true,
+          whatsappE164: true,
+          street: true,
+          street2: true,
+          city: true,
+          state: true,
+          zip: true,
+          country: true,
+          archived: true,
+          createdAt: true,
+          updatedAt: true,
+          organization: {
+            select: {
+              party: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          party: {
+            select: {
+              name: true,
+              email: true,
+              phoneE164: true,
+            },
+          },
+        },
+      });
+
+      // Build CSV
+      const csvRows: string[][] = [];
+
+      // Header row
+      csvRows.push([
+        "ID",
+        "Display Name",
+        "First Name",
+        "Last Name",
+        "Nickname",
+        "Email",
+        "Phone",
+        "WhatsApp",
+        "Organization",
+        "Street",
+        "Street 2",
+        "City",
+        "State",
+        "Zip",
+        "Country",
+        "Party Name",
+        "Party Email",
+        "Party Phone",
+        "Archived",
+        "Created At",
+        "Updated At",
+      ]);
+
+      // Data rows
+      for (const contact of contacts) {
+        const row = [
+          String(contact.id),
+          contact.display_name || "",
+          contact.first_name || "",
+          contact.last_name || "",
+          contact.nickname || "",
+          contact.email || "",
+          contact.phoneE164 || "",
+          contact.whatsappE164 || "",
+          contact.organization?.party?.name || "",
+          contact.street || "",
+          contact.street2 || "",
+          contact.city || "",
+          contact.state || "",
+          contact.zip || "",
+          contact.country || "",
+          contact.party?.name || "",
+          contact.party?.email || "",
+          contact.party?.phoneE164 || "",
+          contact.archived ? "Yes" : "No",
+          new Date(contact.createdAt).toISOString().split("T")[0],
+          new Date(contact.updatedAt).toISOString().split("T")[0],
+        ];
+        csvRows.push(row);
+      }
+
+      // Escape CSV fields
+      const escapeCsvField = (value: string): string => {
+        if (!value) return "";
+        if (value.includes(",") || value.includes("\n") || value.includes('"')) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      };
+
+      const csv = csvRows.map((row) => row.map(escapeCsvField).join(",")).join("\n");
+
+      // Generate filename with date
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `contacts-export-${today}.csv`;
+
+      reply
+        .header("Content-Type", "text/csv")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(csv);
+    } catch (error) {
+      console.error("Contacts CSV export error:", error);
+      return reply.code(500).send({
+        error: "export_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
 };
 
 

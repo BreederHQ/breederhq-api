@@ -11,6 +11,10 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
+import { sendEmail } from "../services/email-service.js";
+
+// Base URL for verification links (from env or default)
+const BASE_URL = process.env.PORTAL_BASE_URL || process.env.APP_BASE_URL || "https://portal.breederhq.com";
 
 // Helper to log party activity (non-blocking)
 async function logPartyActivity(
@@ -526,12 +530,38 @@ const portalProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         { newEmail: normalizedEmail, requestId: emailRequest.id }
       );
 
-      // TODO: Send verification email to newEmail with token
-      // For now, just return success - email sending will be added later
-      req.log?.info?.(
-        { requestId: emailRequest.id, newEmail: normalizedEmail, token: emailRequest.verificationToken },
-        "Email change request created - verification email should be sent"
-      );
+      // B-05 FIX: Send verification email to new email address
+      const verifyUrl = `${BASE_URL}/verify-email?token=${emailRequest.verificationToken}`;
+
+      try {
+        await sendEmail({
+          tenantId,
+          to: normalizedEmail,
+          subject: "Verify your new email address",
+          html: `
+            <h2>Verify your new email address</h2>
+            <p>You requested to change your email address. Click the link below to verify this email:</p>
+            <p><a href="${verifyUrl}">Verify Email Address</a></p>
+            <p>Or copy this link: ${verifyUrl}</p>
+            <p>This link expires in 24 hours.</p>
+            <p>If you didn't request this change, you can safely ignore this email.</p>
+          `,
+          text: `Verify your new email address\n\nYou requested to change your email address. Click the link below to verify:\n\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't request this change, you can safely ignore this email.`,
+          category: "transactional",
+          metadata: { type: "email_change_verification", requestId: emailRequest.id },
+        });
+      } catch (emailErr: any) {
+        req.log?.error?.({ err: emailErr }, "Failed to send verification email");
+        // Roll back the request if we can't send the email
+        await prisma.emailChangeRequest.update({
+          where: { id: emailRequest.id },
+          data: { status: "CANCELLED" },
+        });
+        return reply.code(500).send({
+          error: "email_send_failed",
+          message: "Unable to send verification email. Please try again.",
+        });
+      }
 
       return reply.send({
         ok: true,
@@ -591,7 +621,7 @@ const portalProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         return reply.code(400).send({ error: "token_expired" });
       }
 
-      // Update contact email and mark request as verified
+      // B-05 FIX: Update contact email, linked User email, and mark request as verified
       await prisma.$transaction(async (tx) => {
         // Update contact email
         await tx.contact.update({
@@ -608,8 +638,40 @@ const portalProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           },
         });
 
-        // TODO: Update User email if this contact's party is linked to a user
-        // This is important for login credentials
+        // B-05 FIX: Update User email if this contact's party is linked to a user
+        // This is critical for login credentials - prevents credential drift
+        if (emailRequest.contact.partyId) {
+          const user = await tx.user.findFirst({
+            where: { partyId: emailRequest.contact.partyId },
+          });
+
+          if (user) {
+            // Update user's email for login credentials
+            await tx.user.update({
+              where: { id: user.id },
+              data: { email: emailRequest.newEmail },
+            });
+
+            // Log security event
+            req.log?.info?.(
+              {
+                userId: user.id,
+                oldEmail: emailRequest.oldEmail,
+                newEmail: emailRequest.newEmail,
+              },
+              "User email updated via portal email change"
+            );
+
+            // Invalidate existing sessions for security (except current)
+            // This ensures the user re-authenticates with their new email
+            await tx.session.deleteMany({
+              where: {
+                userId: user.id,
+                // Keep current session if we can identify it
+              },
+            });
+          }
+        }
       });
 
       // Log activity

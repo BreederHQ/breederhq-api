@@ -206,7 +206,7 @@ async function searchBreedingPrograms(
   limit: number
 ): Promise<SearchResultItem[]> {
   // Note: species is an enum, not searchable with contains
-  const rows = await prisma.breedingProgram.findMany({
+  const rows = await prisma.mktListingBreedingProgram.findMany({
     where: {
       tenantId,
       OR: [
@@ -531,6 +531,133 @@ async function searchCompetitions(
 /* ───────────────────────── Route ───────────────────────── */
 
 const searchRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  /**
+   * POST /search/directory
+   *
+   * Unified directory search for contacts, organizations, and animals.
+   * Used by offspring module for buyer selection and parent pickers.
+   *
+   * Body:
+   * - q: search query (required, min 2 characters)
+   * - types: array of types to search ["contact", "organization", "animal"] (optional, defaults to all)
+   * - limit: max results per type (optional, default 20, max 50)
+   *
+   * Returns:
+   * {
+   *   contacts: Contact[],
+   *   organizations: Organization[],
+   *   animals: Animal[]
+   * }
+   */
+  app.post("/search/directory", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const body = (req.body as any) ?? {};
+      const q = trimToNull(body.q);
+
+      if (!q || q.length < 2) {
+        return reply.code(400).send({
+          error: "query_too_short",
+          message: "Search query must be at least 2 characters",
+        });
+      }
+
+      const requestedTypes = body.types ?? ["contact", "organization", "animal"];
+      const limit = Math.min(50, Math.max(1, Number(body.limit ?? 20)));
+
+      const results: {
+        contacts?: any[];
+        organizations?: any[];
+        animals?: any[];
+      } = {};
+
+      // Search contacts
+      if (requestedTypes.includes("contact")) {
+        const contacts = await prisma.contact.findMany({
+          where: {
+            tenantId,
+            archived: false,
+            deletedAt: null,
+            OR: [
+              { display_name: { contains: q, mode: "insensitive" } },
+              { first_name: { contains: q, mode: "insensitive" } },
+              { last_name: { contains: q, mode: "insensitive" } },
+              { email: { contains: q, mode: "insensitive" } },
+            ],
+          },
+          take: limit,
+          orderBy: { display_name: "asc" },
+          select: {
+            id: true,
+            display_name: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phoneE164: true,
+          },
+        });
+        results.contacts = contacts;
+      }
+
+      // Search organizations
+      if (requestedTypes.includes("organization")) {
+        const organizations = await prisma.organization.findMany({
+          where: {
+            tenantId,
+            archived: false,
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { email: { contains: q, mode: "insensitive" } },
+            ],
+          },
+          take: limit,
+          orderBy: { name: "asc" },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        });
+        results.organizations = organizations;
+      }
+
+      // Search animals
+      if (requestedTypes.includes("animal")) {
+        const animals = await prisma.animal.findMany({
+          where: {
+            tenantId,
+            archived: false,
+            deletedAt: null,
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { breed: { contains: q, mode: "insensitive" } },
+              { microchip: { contains: q, mode: "insensitive" } },
+            ],
+          },
+          take: limit,
+          orderBy: { name: "asc" },
+          select: {
+            id: true,
+            name: true,
+            breed: true,
+            species: true,
+            sex: true,
+            photoUrl: true,
+          },
+        });
+        results.animals = animals;
+      }
+
+      return reply.send(results);
+    } catch (err) {
+      req.log?.error?.(err as any);
+      return reply.code(500).send({ error: "search_unavailable" });
+    }
+  });
+
   /**
    * GET /search
    *
