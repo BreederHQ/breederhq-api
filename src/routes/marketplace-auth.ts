@@ -17,6 +17,8 @@
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import bcrypt from "bcryptjs";
+import prisma from "../prisma.js";
 import {
   registerMarketplaceUser,
   verifyMarketplacePassword,
@@ -321,7 +323,7 @@ export default async function marketplaceAuthRoutes(
     }
 
     // Check if already verified
-    if (user.emailVerifiedAt) {
+    if (user.emailVerified) {
       return reply.code(400).send({
         error: "already_verified",
         message: "This email address is already verified."
@@ -465,7 +467,6 @@ export default async function marketplaceAuthRoutes(
       phone: user.phone,
       userType: user.userType,
       emailVerified: user.emailVerified,
-      emailVerifiedAt: user.emailVerifiedAt,
       status: user.status,
       suspendedAt: user.suspendedAt,
       suspendedReason: user.suspendedReason,
@@ -505,7 +506,7 @@ export default async function marketplaceAuthRoutes(
 
     try {
       // Update user profile
-      const updatedUser = await prisma.user.update({
+      const updatedUser = await prisma.marketplaceUser.update({
         where: { id: userId },
         data: {
           ...(firstName !== undefined && { firstName: firstName.trim() }),
@@ -522,7 +523,6 @@ export default async function marketplaceAuthRoutes(
         phone: updatedUser.phone,
         userType: updatedUser.userType,
         emailVerified: updatedUser.emailVerified,
-        emailVerifiedAt: updatedUser.emailVerifiedAt,
         status: updatedUser.status,
         createdAt: updatedUser.createdAt,
         updatedAt: updatedUser.updatedAt,
@@ -554,22 +554,29 @@ export default async function marketplaceAuthRoutes(
     }
 
     try {
-      // Verify current password
-      const user = await findMarketplaceUserById(userId);
-      if (!user) {
+      // Verify current password - need to fetch user with passwordHash
+      const user = await prisma.marketplaceUser.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          passwordHash: true,
+        },
+      });
+
+      if (!user || !user.passwordHash) {
         return reply.code(401).send({ error: "unauthorized" });
       }
 
-      const validPassword = await verifyPassword(currentPassword, user.hashedPassword);
+      const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
       if (!validPassword) {
         return reply.code(401).send({ error: "invalid_current_password", message: "Current password is incorrect" });
       }
 
       // Hash and update new password
-      const hashedPassword = await hashPassword(newPassword);
-      await prisma.user.update({
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await prisma.marketplaceUser.update({
         where: { id: userId },
-        data: { hashedPassword },
+        data: { passwordHash },
       });
 
       return reply.send({ ok: true, message: "Password changed successfully" });

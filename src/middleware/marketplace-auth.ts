@@ -161,7 +161,7 @@ export async function requireEmailVerified(
   }
 
   // Check if email is verified
-  if (!user.emailVerifiedAt) {
+  if (!user.emailVerified) {
     return reply.code(403).send({
       error: "email_verification_required",
       message: "Please verify your email address to use this feature.",

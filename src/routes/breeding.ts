@@ -3273,13 +3273,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Restore both plan and offspring group in a transaction
       await prisma.$transaction(async (tx) => {
-        // Restore the plan - always revert status to PLACEMENT_COMPLETED
+        // Restore the plan - always revert status to PLACEMENT
         await tx.breedingPlan.update({
           where: { id },
           data: {
             archived: false,
             archiveReason: null,
-            status: "PLACEMENT_COMPLETED",
+            status: "PLACEMENT",
           },
         });
 
@@ -3574,12 +3574,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             where: {
               tenantId,
               OR: [
-                { offspringGroupId: group.id },
+                { groupId: group.id },
                 {
-                  offspringInvoiceLinks: {
-                    some: {
-                      offspring: { groupId: group.id }
-                    }
+                  offspring: {
+                    groupId: group.id
                   }
                 }
               ]
