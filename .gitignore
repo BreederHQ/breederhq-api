@@ -37,10 +37,6 @@ nul
 
 # Other files
 *repo-structure*
-CLAUDE.md
-.claudeignore
-.claude/
-.eslintcache
 
 # route tests (excluded)
 src/routes/__tests__/
@@ -51,3 +47,39 @@ cookies.txt
 .env.proto
 *.cookies.txt
 *-cookies.txt
+
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Screenshots (Playwright, debug, etc)
+./screenshots
+screenshot*.png
+*.screenshot.png
+docs/marketplace/audit/screenshots/
+
+# Cookie files (sensitive session data)
+cookies.txt
+*.cookies.txt
+*-cookies.txt
+
+# Other files
+repo-structure-output.txt
+breederhq-repo-structure.txt
+.claudeignore
+.eslintcache
+*.nul
+/nul
+
+# Claude Code config - track CLAUDE.md but ignore local settings
+.claude/*
+!.claude/CLAUDE.md
+
+# Claude Code temporary files
+tmpclaude-*-cwd
+
+# Temporary folders
+.tmp/
+tmp/

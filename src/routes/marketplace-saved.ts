@@ -44,6 +44,45 @@ async function requireBhqAuth(req: FastifyRequest, reply: FastifyReply): Promise
 }
 
 /**
+ * Middleware to require verified email address.
+ * Must be used after requireBhqAuth (requires bhqUserId on request).
+ */
+async function requireEmailVerified(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const bhqUserId = (req as any).bhqUserId;
+
+  if (!bhqUserId) {
+    reply.code(401).send({
+      error: "unauthorized",
+      message: "Authentication required.",
+    });
+    return;
+  }
+
+  // Fetch user to check email verification status
+  const user = await prisma.user.findUnique({
+    where: { id: bhqUserId },
+    select: { emailVerifiedAt: true },
+  });
+
+  if (!user) {
+    reply.code(401).send({
+      error: "unauthorized",
+      message: "User not found.",
+    });
+    return;
+  }
+
+  // Check if email is verified
+  if (!user.emailVerifiedAt) {
+    reply.code(403).send({
+      error: "email_verification_required",
+      message: "Please verify your email address to use this feature.",
+    });
+    return;
+  }
+}
+
+/**
  * Parse pagination parameters
  */
 function parsePaging(q: any) {
@@ -109,7 +148,7 @@ export default async function marketplaceSavedRoutes(
                 slug: serviceListing.slug,
                 coverImageUrl: serviceListing.coverImageUrl,
                 status: serviceListing.status,
-                isAvailable: serviceListing.status === "published" && !serviceListing.deletedAt,
+                isAvailable: serviceListing.status === "LIVE" && !serviceListing.deletedAt,
                 priceCents: serviceListing.priceCents ? Number(serviceListing.priceCents) : null,
                 breederName: serviceListing.provider?.businessName,
               };
@@ -126,8 +165,8 @@ export default async function marketplaceSavedRoutes(
                 title: offspringGroup.listingTitle || offspringGroup.name || "Unnamed Litter",
                 slug: offspringGroup.listingSlug,
                 coverImageUrl: offspringGroup.coverImageUrl,
-                status: offspringGroup.published ? "live" : "draft",
-                isAvailable: offspringGroup.published,
+                status: offspringGroup.status === "LIVE" ? "live" : "draft",
+                isAvailable: offspringGroup.status === "LIVE",
                 priceCents: offspringGroup.marketplaceDefaultPriceCents ? Number(offspringGroup.marketplaceDefaultPriceCents) : null,
                 breederName: offspringGroup.tenant?.name,
                 breederSlug: offspringGroup.tenant?.slug,
@@ -193,7 +232,7 @@ export default async function marketplaceSavedRoutes(
    * Returns the created saved listing entry.
    */
   app.post("/saved", {
-    preHandler: requireBhqAuth,
+    preHandler: [requireBhqAuth, requireEmailVerified],
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const bhqUserId = (req as any).bhqUserId;

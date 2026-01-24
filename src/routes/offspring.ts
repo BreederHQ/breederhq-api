@@ -1024,9 +1024,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const actorContext = (req as any).actorContext;
     const tenantId = (req as any).tenantId as number;
     const q = String((req as any).query?.q ?? "").trim();
+
+    // Support both cursor-based (legacy) and page/limit pagination
+    const page = (req as any).query?.page ? Number((req as any).query.page) : undefined;
     const limit = Math.min(250, Math.max(1, Number((req as any).query?.limit ?? 25)));
     const cursorId = (req as any).query?.cursor ? Number((req as any).query.cursor) : undefined;
     const published = asBool((req as any).query?.published);
+
     const where: any = {
       tenantId,
       ...(q ? { name: { contains: q, mode: "insensitive" } } : null),
@@ -1042,71 +1046,156 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       };
     }
 
-    const groups = await prisma.offspringGroup.findMany({
-      where,
-      orderBy: { id: "desc" },
-      take: limit + 1,
-      include: {
-        plan: {
-          where: { deletedAt: null },
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            species: true,
-            breedText: true,
-            dam: { select: { id: true, name: true } },
-            sire: { select: { id: true, name: true } },
-            programId: true,
-            program: { select: { id: true, name: true } },
-            expectedPlacementStart: true,
-            expectedPlacementCompleted: true,
-            placementStartDateActual: true,
-            placementCompletedDateActual: true,
-            // Birth date fields for offspring group UI
-            status: true,
-            birthDateActual: true,
-            breedDateActual: true,
-            // Locked cycle date for computing expected dates
-            lockedCycleStart: true,
-            expectedBirthDate: true,
-            expectedWeaned: true,
-            // Foaling outcome for horses
-            foalingOutcome: true,
+    // If page is specified, use offset-based pagination and include total count
+    if (page !== undefined) {
+      const skip = (page - 1) * limit;
+
+      const [groups, total] = await Promise.all([
+        prisma.offspringGroup.findMany({
+          where,
+          orderBy: { id: "desc" },
+          skip,
+          take: limit,
+          include: {
+            plan: {
+              where: { deletedAt: null },
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                species: true,
+                breedText: true,
+                dam: { select: { id: true, name: true } },
+                sire: { select: { id: true, name: true } },
+                programId: true,
+                program: { select: { id: true, name: true } },
+                expectedPlacementStart: true,
+                expectedPlacementCompleted: true,
+                placementStartDateActual: true,
+                placementCompletedDateActual: true,
+                // Birth date fields for offspring group UI
+                status: true,
+                birthDateActual: true,
+                breedDateActual: true,
+                // Locked cycle date for computing expected dates
+                lockedCycleStart: true,
+                expectedBirthDate: true,
+                expectedWeaned: true,
+                // Foaling outcome for horses
+                foalingOutcome: true,
+              },
+            },
+          },
+        }),
+        prisma.offspringGroup.count({ where }),
+      ]);
+
+      const ids = groups.map((g) => g.id);
+      // batch counts to avoid _count key mismatches
+      const [animalCounts, waitlistCounts] = await Promise.all([
+        ids.length
+          ? prisma.animal.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+          : Promise.resolve([] as any[]),
+        ids.length
+          ? prisma.waitlistEntry.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+          : Promise.resolve([] as any[]),
+      ]);
+
+      const aMap = new Map<number, number>();
+      for (const r of animalCounts) aMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+      const wMap = new Map<number, number>();
+      for (const r of waitlistCounts) wMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+
+      const items = groups.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
+      const totalPages = Math.ceil(total / limit);
+
+      reply.send({
+        data: items,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrevious: page > 1,
+        },
+      });
+    } else {
+      // Legacy cursor-based pagination
+      const groups = await prisma.offspringGroup.findMany({
+        where,
+        orderBy: { id: "desc" },
+        take: limit + 1,
+        include: {
+          plan: {
+            where: { deletedAt: null },
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              species: true,
+              breedText: true,
+              dam: { select: { id: true, name: true } },
+              sire: { select: { id: true, name: true } },
+              programId: true,
+              program: { select: { id: true, name: true } },
+              expectedPlacementStart: true,
+              expectedPlacementCompleted: true,
+              placementStartDateActual: true,
+              placementCompletedDateActual: true,
+              // Birth date fields for offspring group UI
+              status: true,
+              birthDateActual: true,
+              breedDateActual: true,
+              // Locked cycle date for computing expected dates
+              lockedCycleStart: true,
+              expectedBirthDate: true,
+              expectedWeaned: true,
+              // Foaling outcome for horses
+              foalingOutcome: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    const ids = groups.map((g) => g.id);
-    // batch counts to avoid _count key mismatches
-    const [animalCounts, waitlistCounts] = await Promise.all([
-      ids.length
-        ? prisma.animal.groupBy({
-          by: ["offspringGroupId"],
-          where: { offspringGroupId: { in: ids } },
-          _count: { _all: true },
-        })
-        : Promise.resolve([] as any[]),
-      ids.length
-        ? prisma.waitlistEntry.groupBy({
-          by: ["offspringGroupId"],
-          where: { offspringGroupId: { in: ids } },
-          _count: { _all: true },
-        })
-        : Promise.resolve([] as any[]),
-    ]);
+      const ids = groups.map((g) => g.id);
+      // batch counts to avoid _count key mismatches
+      const [animalCounts, waitlistCounts] = await Promise.all([
+        ids.length
+          ? prisma.animal.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+          : Promise.resolve([] as any[]),
+        ids.length
+          ? prisma.waitlistEntry.groupBy({
+            by: ["offspringGroupId"],
+            where: { offspringGroupId: { in: ids } },
+            _count: { _all: true },
+          })
+          : Promise.resolve([] as any[]),
+      ]);
 
-    const aMap = new Map<number, number>();
-    for (const r of animalCounts) aMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
-    const wMap = new Map<number, number>();
-    for (const r of waitlistCounts) wMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+      const aMap = new Map<number, number>();
+      for (const r of animalCounts) aMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
+      const wMap = new Map<number, number>();
+      for (const r of waitlistCounts) wMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
 
-    const rows = groups.length > limit ? groups.slice(0, limit) : groups;
-    const items = rows.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
-    const nextCursor = groups.length > limit ? String(rows[rows.length - 1].id) : null;
+      const rows = groups.length > limit ? groups.slice(0, limit) : groups;
+      const items = rows.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
+      const nextCursor = groups.length > limit ? String(rows[rows.length - 1].id) : null;
 
-    reply.send({ items, nextCursor });
+      reply.send({ items, nextCursor });
+    }
   });
 
   /* ===== DETAIL: GET /api/v1/offspring/:id ===== */
@@ -1367,7 +1456,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       species: resolvedSpecies,
       name: identifier ?? null,
       notes: notes ?? null,
-      published: Boolean(published ?? false),
+      status: (published ?? false) ? "LIVE" : "DRAFT",
       data: data ?? null,
     };
 

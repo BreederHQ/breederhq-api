@@ -98,7 +98,7 @@ export default async function breederMarketplaceRoutes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.animalPublicListing.findMany({
+        prisma.mktListingIndividualAnimal.findMany({
           where,
           orderBy: { createdAt: "desc" },
           skip,
@@ -107,7 +107,7 @@ export default async function breederMarketplaceRoutes(
             animal: true,
           },
         }),
-        prisma.animalPublicListing.count({ where }),
+        prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
       // Transform listings to response format
@@ -175,7 +175,7 @@ export default async function breederMarketplaceRoutes(
     }
 
     try {
-      const listing: any = await prisma.animalPublicListing.findFirst({
+      const listing: any = await prisma.mktListingIndividualAnimal.findFirst({
         where: {
           id,
           tenantId,
@@ -774,6 +774,72 @@ export default async function breederMarketplaceRoutes(
       return reply.code(500).send({
         error: "list_failed",
         message: "Failed to list waitlist entries. Please try again.",
+      });
+    }
+  });
+
+  /* ─────────────────────── Dashboard Stats ─────────────────────── */
+
+  /**
+   * GET /dashboard/stats - Get aggregate marketplace stats for breeder dashboard
+   *
+   * Returns counts of:
+   *   - Animal Listings (direct listings)
+   *   - Animal Programs (offspring groups)
+   *   - Service Listings
+   *   - Pending Inquiries
+   */
+  app.get("/dashboard/stats", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    try {
+      // Get counts in parallel for all 4 marketplace listing types
+      const [animalListings, animalPrograms, breedingPrograms, serviceListings] = await Promise.all([
+        // Count individual animal listings (AnimalPublicListing with LIVE status)
+        prisma.mktListingIndividualAnimal.count({
+          where: {
+            tenantId,
+            status: "LIVE",
+          },
+        }),
+
+        // Count animal programs (AnimalProgram - Stud Services, Guardian, etc. with LIVE status)
+        prisma.mktListingAnimalProgram.count({
+          where: {
+            tenantId,
+            status: "LIVE",
+          },
+        }),
+
+        // Count breeding programs (BreedingProgram with LIVE status)
+        prisma.mktListingBreedingProgram.count({
+          where: {
+            tenantId,
+            status: "LIVE",
+          },
+        }),
+
+        // Count service listings (MktListingBreederService with LIVE status)
+        prisma.mktListingBreederService.count({
+          where: {
+            tenantId,
+            status: "LIVE",
+          },
+        }),
+      ]);
+
+      return reply.send({
+        animalListings,
+        animalPrograms,
+        breedingPrograms,
+        serviceListings,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, tenantId }, "Failed to fetch dashboard stats");
+      return reply.code(500).send({
+        error: "fetch_failed",
+        message: "Failed to fetch dashboard stats. Please try again.",
       });
     }
   });

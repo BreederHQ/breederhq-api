@@ -390,6 +390,26 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post("/threads", async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
 
+    // Check if email is verified before allowing messages
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "User not found.",
+      });
+    }
+
+    if (!user.emailVerifiedAt) {
+      return reply.code(403).send({
+        error: "email_verification_required",
+        message: "Please verify your email address before sending messages.",
+      });
+    }
+
     const { recipientPartyId, breederTenantId, subject, initialMessage, context } = req.body as any;
 
     if (!recipientPartyId || !initialMessage || !breederTenantId) {
@@ -540,6 +560,27 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
   app.post("/threads/:id/messages", async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
+
+    // Check if email is verified before allowing messages
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "User not found.",
+      });
+    }
+
+    if (!user.emailVerifiedAt) {
+      return reply.code(403).send({
+        error: "email_verification_required",
+        message: "Please verify your email address before sending messages.",
+      });
+    }
+
     const threadId = Number((req.params as any).id);
     const { body: messageBody } = req.body as any;
 

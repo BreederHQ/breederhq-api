@@ -61,12 +61,75 @@ function getActorInfo(request: FastifyRequest): {
   userId: string | null;
   tenantId: number | null;
   providerId: number | null;
+  marketplaceUserId: number | null;
 } {
   const userId = (request as any).userId || (request as any).marketplaceUserId || null;
   const tenantId = (request as any).tenantId || null;
   const providerId = (request as any).marketplaceProvider?.id || null;
+  // B-06: Track marketplace user ID separately for buyer access checks
+  const marketplaceUserId = (request as any).marketplaceUserId || null;
 
-  return { userId, tenantId, providerId };
+  return { userId, tenantId, providerId, marketplaceUserId };
+}
+
+/**
+ * B-06 FIX: Check if a marketplace user has a buyer relationship with a tenant.
+ *
+ * A buyer relationship exists if the user has:
+ * 1. An active message thread with any provider from this tenant
+ * 2. A transaction (completed or in progress) with this tenant
+ *
+ * This allows buyers to view documents marked as BUYERS visibility.
+ */
+async function hasBuyerRelationship(
+  marketplaceUserId: number,
+  documentTenantId: number
+): Promise<boolean> {
+  // Check 1: Active message thread with a provider from this tenant
+  const activeThread = await prisma.marketplaceMessageThread.findFirst({
+    where: {
+      clientId: marketplaceUserId,
+      status: "active",
+      provider: {
+        tenantId: documentTenantId,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (activeThread) {
+    return true;
+  }
+
+  // Check 2: Any transaction (active, completed, or pending) with this tenant
+  const transaction = await prisma.marketplaceTransaction.findFirst({
+    where: {
+      clientId: marketplaceUserId,
+      tenantId: documentTenantId,
+      status: {
+        in: ["PENDING", "PAYMENT_RECEIVED", "IN_PROGRESS", "COMPLETED", "CONFIRMED"],
+      },
+    },
+    select: { id: true },
+  });
+
+  if (transaction) {
+    return true;
+  }
+
+  // Check 3: Thread with a provider from this tenant (regardless of status)
+  // This catches buyers who had past conversations
+  const anyThread = await prisma.marketplaceMessageThread.findFirst({
+    where: {
+      clientId: marketplaceUserId,
+      provider: {
+        tenantId: documentTenantId,
+      },
+    },
+    select: { id: true },
+  });
+
+  return !!anyThread;
 }
 
 async function checkDocumentOwnership(
@@ -370,10 +433,9 @@ async function handleGetAccessUrl(
         hasAccess = true;
       }
       // BUYERS visibility - check buyer relationship
-      else if (visibility === "BUYERS" && actor.userId) {
-        // TODO: Implement buyer relationship check
-        // For now, deny access
-        hasAccess = false;
+      else if (visibility === "BUYERS" && actor.marketplaceUserId && document.tenantId) {
+        // B-06 FIX: Actually check buyer relationship instead of denying
+        hasAccess = await hasBuyerRelationship(actor.marketplaceUserId, document.tenantId);
       }
     } else {
       // No document record - check ownership from storage key

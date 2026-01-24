@@ -114,6 +114,9 @@ function extractUserAgent(req: FastifyRequest): string | null {
 /**
  * Records a ToS acceptance for a user.
  * Server stamps acceptedAt for audit integrity.
+ *
+ * B-08 FIX: This MUST succeed for compliance - if logging fails, the operation fails.
+ * ToS acceptance is a legal requirement and must be recorded before proceeding.
  */
 export async function writeTosAcceptance(
   userId: string,
@@ -123,22 +126,24 @@ export async function writeTosAcceptance(
   const ipAddress = extractIpAddress(req);
   const userAgent = extractUserAgent(req);
 
-  try {
-    await (prisma as any).tosAcceptance.create({
-      data: {
-        userId,
-        version: payload.version,
-        acceptedAt: new Date(), // Server-side timestamp
-        ipAddress,
-        userAgent,
-        surface: payload.surface,
-        flow: payload.flow,
-      },
-    });
-  } catch (err) {
-    // If TosAcceptance table doesn't exist yet (migration pending), log and continue
-    console.warn("[tos-service] Failed to record ToS acceptance (table may not exist):", err);
-    // Don't throw - we don't want to block registration if the table is missing
+  // B-08 FIX: ToS acceptance logging is MANDATORY for compliance
+  // If this fails, the entire operation must fail - we cannot allow users
+  // to proceed without a recorded acceptance
+  const record = await (prisma as any).tosAcceptance.create({
+    data: {
+      userId,
+      version: payload.version,
+      acceptedAt: new Date(), // Server-side timestamp
+      ipAddress,
+      userAgent,
+      surface: payload.surface,
+      flow: payload.flow,
+    },
+  });
+
+  if (!record) {
+    console.error("[tos-service] COMPLIANCE ERROR: Failed to record ToS acceptance for userId:", userId);
+    throw new Error("TOS_ACCEPTANCE_LOGGING_FAILED");
   }
 }
 
