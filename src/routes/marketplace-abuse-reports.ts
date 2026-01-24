@@ -4,6 +4,7 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
+import { sendAdminListingFlaggedNotification } from "../services/marketplace-email-service.js";
 
 // Valid abuse report reasons
 const VALID_REASONS = [
@@ -77,8 +78,15 @@ async function reportListing(
       },
       select: {
         id: true,
+        title: true,
         status: true,
         flaggedAt: true,
+        provider: {
+          select: {
+            id: true,
+            businessName: true,
+          },
+        },
       },
     });
 
@@ -130,9 +138,17 @@ async function reportListing(
         "Listing auto-flagged due to multiple abuse reports"
       );
 
-      // TODO: Send admin notification email
-      // This would integrate with your notification system
-      // Example: await sendAdminNotification('listing_flagged', { listingId, reportCount });
+      // P-02 FIX: Send admin notification email
+      sendAdminListingFlaggedNotification({
+        listingId,
+        listingTitle: listing.title,
+        providerId: listing.provider.id,
+        providerBusinessName: listing.provider.businessName,
+        reportCount: recentReportCount,
+        latestReportId: report.id,
+      }).catch((err) => {
+        request.log.error({ err, listingId }, "Failed to send admin listing flagged notification");
+      });
     }
 
     return reply.status(201).send({
