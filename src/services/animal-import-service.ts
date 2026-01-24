@@ -358,7 +358,7 @@ export async function executeImport(
               birthDate: data.birthDate,
               microchip: data.microchip,
               breed: data.breed,
-              status: data.status,
+              ...(data.status !== null && data.status !== undefined && { status: data.status }),
               notes: data.notes,
             },
           });
