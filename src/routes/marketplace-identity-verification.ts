@@ -5,6 +5,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
 import Stripe from "stripe";
+import { sendProviderVerificationFailedNotification } from "../services/marketplace-email-service.js";
 
 // Initialize Stripe (only if API key is configured)
 const stripeKey = process.env.STRIPE_SECRET_KEY;
@@ -289,8 +290,31 @@ async function handleStripeWebhook(
           "Provider identity verification failed or requires input"
         );
 
-        // TODO: Send notification to provider about verification failure
-        // Example: await sendProviderNotification(providerId, 'verification_failed', { reason: session.last_error });
+        // P-02 FIX: Send notification to provider about verification failure
+        const provider = await prisma.marketplaceProvider.findUnique({
+          where: { id: providerId },
+          select: {
+            businessName: true,
+            user: {
+              select: { email: true, firstName: true },
+            },
+          },
+        });
+
+        if (provider?.user?.email) {
+          const errorMessage = session.last_error?.reason
+            || session.last_error?.code
+            || "Verification could not be completed";
+
+          sendProviderVerificationFailedNotification({
+            email: provider.user.email,
+            firstName: provider.user.firstName,
+            businessName: provider.businessName,
+            failureReason: errorMessage,
+          }).catch((err) => {
+            request.log.error({ err, providerId }, "Failed to send verification failure notification");
+          });
+        }
       }
     }
 

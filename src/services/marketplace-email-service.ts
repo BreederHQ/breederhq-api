@@ -1437,3 +1437,232 @@ Browse other breeders at: ${MARKETPLACE_URL}/breeders
     category: "transactional",
   });
 }
+
+// ---------- Admin & Operational Notifications (P-02) ----------
+
+// Admin notification email (configurable)
+const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@breederhq.com";
+
+/**
+ * P-02: Send admin notification when a listing is auto-flagged due to abuse reports
+ */
+export async function sendAdminListingFlaggedNotification(data: {
+  listingId: number;
+  listingTitle: string;
+  providerId: number;
+  providerBusinessName: string;
+  reportCount: number;
+  latestReportId: number;
+}): Promise<void> {
+  const adminUrl = `${MARKETPLACE_URL}/admin/listings/${data.listingId}`;
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">⚠️ Listing Auto-Flagged</h2>
+      <p>A service listing has been automatically flagged due to multiple abuse reports.</p>
+
+      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
+        <p style="margin: 0; font-weight: 600;">Listing Details</p>
+        <p style="margin: 8px 0 0 0;"><strong>Title:</strong> ${data.listingTitle}</p>
+        <p style="margin: 4px 0 0 0;"><strong>Listing ID:</strong> ${data.listingId}</p>
+        <p style="margin: 4px 0 0 0;"><strong>Provider:</strong> ${data.providerBusinessName} (ID: ${data.providerId})</p>
+        <p style="margin: 4px 0 0 0;"><strong>Reports in 24h:</strong> ${data.reportCount}</p>
+      </div>
+
+      <p>Please review this listing and take appropriate action.</p>
+
+      <p style="margin: 24px 0;">
+        <a href="${adminUrl}" style="display: inline-block; padding: 12px 24px; background: #dc2626; color: #fff; text-decoration: none; border-radius: 6px;">
+          Review Listing
+        </a>
+      </p>
+
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        — ${FROM_NAME} Automated Notifications
+      </p>
+    </div>
+  `;
+
+  const text = `
+⚠️ Listing Auto-Flagged
+
+A service listing has been automatically flagged due to multiple abuse reports.
+
+Listing Details:
+- Title: ${data.listingTitle}
+- Listing ID: ${data.listingId}
+- Provider: ${data.providerBusinessName} (ID: ${data.providerId})
+- Reports in 24h: ${data.reportCount}
+
+Please review this listing and take appropriate action.
+
+Review at: ${adminUrl}
+
+— ${FROM_NAME} Automated Notifications
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: ADMIN_NOTIFICATION_EMAIL,
+    subject: `[Action Required] Listing Auto-Flagged: ${data.listingTitle}`,
+    html,
+    text,
+    templateKey: "admin_listing_flagged",
+    category: "transactional",
+  });
+}
+
+/**
+ * P-02: Send notification to provider when identity verification fails
+ */
+export async function sendProviderVerificationFailedNotification(data: {
+  email: string;
+  firstName: string | null;
+  businessName: string | null;
+  failureReason?: string | null;
+}): Promise<void> {
+  const userName = data.firstName || "there";
+  const verificationUrl = `${MARKETPLACE_URL}/provider/settings/verification`;
+
+  const reasonText = data.failureReason
+    ? `<p style="margin: 8px 0 0 0;"><strong>Details:</strong> ${data.failureReason}</p>`
+    : "";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1f2937;">Identity Verification Update</h2>
+      <p>Hi ${userName},</p>
+      <p>We were unable to complete your identity verification${data.businessName ? ` for <strong>${data.businessName}</strong>` : ""}.</p>
+
+      <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f59e0b;">
+        <p style="margin: 0; color: #92400e; font-weight: 600;">⚠️ Verification Incomplete</p>
+        ${reasonText}
+      </div>
+
+      <h3 style="color: #374151;">What To Do Next</h3>
+      <p>Please try the verification process again. Common issues include:</p>
+      <ul style="color: #6b7280;">
+        <li>Document was unclear or partially visible</li>
+        <li>Photo didn't match the document</li>
+        <li>Document type wasn't accepted</li>
+        <li>Session timed out</li>
+      </ul>
+
+      <p style="margin: 24px 0;">
+        <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
+          Try Again
+        </a>
+      </p>
+
+      <p style="color: #6b7280; font-size: 14px;">
+        If you continue to have issues, please contact our support team.
+      </p>
+
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        — The ${FROM_NAME} Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+Identity Verification Update
+
+Hi ${userName},
+
+We were unable to complete your identity verification${data.businessName ? ` for ${data.businessName}` : ""}.
+
+${data.failureReason ? `Details: ${data.failureReason}\n` : ""}
+What To Do Next:
+Please try the verification process again. Common issues include:
+• Document was unclear or partially visible
+• Photo didn't match the document
+• Document type wasn't accepted
+• Session timed out
+
+Try again at: ${verificationUrl}
+
+If you continue to have issues, please contact our support team.
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.email,
+    subject: `Identity Verification Update - ${FROM_NAME}`,
+    html,
+    text,
+    templateKey: "provider_verification_failed",
+    category: "transactional",
+  });
+}
+
+/**
+ * P-02: Send auto-reply when inbound email is received for an inactive/unknown address
+ */
+export async function sendInactiveAddressAutoReply(data: {
+  toEmail: string;
+  fromSlug: string;
+  originalSubject: string;
+}): Promise<void> {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1f2937;">Email Delivery Failed</h2>
+      <p>Your email to <strong>${data.fromSlug}@mail.breederhq.com</strong> could not be delivered.</p>
+
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
+        <p style="margin: 0;"><strong>Original Subject:</strong> ${data.originalSubject || "(no subject)"}</p>
+      </div>
+
+      <p>This email address is not currently active or does not exist. Possible reasons:</p>
+      <ul style="color: #6b7280;">
+        <li>The business may have changed their email address</li>
+        <li>The account may no longer be active on BreederHQ</li>
+        <li>There may be a typo in the address</li>
+      </ul>
+
+      <p>If you're trying to reach a breeder or service provider on BreederHQ, please visit our marketplace to find their current contact information.</p>
+
+      <p style="margin: 24px 0;">
+        <a href="${MARKETPLACE_URL}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
+          Visit BreederHQ Marketplace
+        </a>
+      </p>
+
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        This is an automated message. Please do not reply.
+        <br>— ${FROM_NAME}
+      </p>
+    </div>
+  `;
+
+  const text = `
+Email Delivery Failed
+
+Your email to ${data.fromSlug}@mail.breederhq.com could not be delivered.
+
+Original Subject: ${data.originalSubject || "(no subject)"}
+
+This email address is not currently active or does not exist. Possible reasons:
+• The business may have changed their email address
+• The account may no longer be active on BreederHQ
+• There may be a typo in the address
+
+If you're trying to reach a breeder or service provider on BreederHQ, please visit our marketplace to find their current contact information.
+
+Visit: ${MARKETPLACE_URL}
+
+This is an automated message. Please do not reply.
+— ${FROM_NAME}
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.toEmail,
+    subject: `Undeliverable: ${data.originalSubject || "(no subject)"}`,
+    html,
+    text,
+    templateKey: "inbound_inactive_address_reply",
+    category: "transactional",
+  });
+}
