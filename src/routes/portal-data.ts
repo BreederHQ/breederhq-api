@@ -231,17 +231,92 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // TODO: Implement document download endpoint when storage is configured
-  // Route: GET /api/v1/portal/documents/:id/download
-  // Implementation requirements:
-  // 1. Verify party access via Attachment -> OffspringDocument -> Offspring -> Group -> GroupBuyerLinks
-  // 2. Return 404 for out-of-scope access (party doesn't own document)
-  // 3. Determine storage backend from attachment.storageProvider (S3, local, etc.)
-  // 4. Fetch file using attachment.storageKey
-  // 5. Stream file with Content-Disposition: attachment; filename="<attachment.filename>"
-  // 6. Set Content-Type from attachment.mime
-  // 7. Log download for audit trail
-  // See RUNTIME_VERIFICATION.md for reference implementation
+  /**
+   * GET /api/v1/portal/documents/:id/download
+   * Returns a presigned URL for downloading a document
+   * Access: Party must be a buyer linked to the offspring group containing this document
+   * Note: :id is the Attachment ID (file.id) as returned by /portal/documents
+   */
+  app.get<{ Params: { id: string } }>("/portal/documents/:id/download", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const fileId = parseInt(req.params.id, 10);
+
+      if (isNaN(fileId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Find the document via the same access path used by /portal/documents list endpoint
+      // OffspringDocument -> Offspring -> Group -> GroupBuyerLinks -> buyerPartyId
+      const offspringDocument = await prisma.offspringDocument.findFirst({
+        where: {
+          tenantId,
+          fileId,
+          offspring: {
+            group: {
+              groupBuyerLinks: {
+                some: {
+                  buyerPartyId: partyId,
+                },
+              },
+            },
+          },
+        },
+        include: {
+          file: true,
+          offspring: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!offspringDocument) {
+        // Either document doesn't exist or party doesn't have access
+        req.log?.warn?.({ fileId, partyId }, "Document access denied or not found");
+        return reply.code(404).send({ error: "document_not_found" });
+      }
+
+      // Get the file attachment
+      const attachment = offspringDocument.file;
+      if (!attachment || !attachment.storageKey) {
+        req.log?.error?.({ fileId }, "Document has no associated storage key");
+        return reply.code(404).send({ error: "file_not_found" });
+      }
+
+      // Generate presigned download URL
+      const { generatePresignedDownloadUrl } = await import("../services/media-storage.js");
+      const { url, expiresIn } = await generatePresignedDownloadUrl(
+        attachment.storageKey,
+        3600 // 1 hour expiry
+      );
+
+      // Log the download for audit trail
+      req.log?.info?.({
+        action: "portal_document_download",
+        fileId,
+        offspringDocumentId: offspringDocument.id,
+        offspringId: offspringDocument.offspring.id,
+        partyId,
+        tenantId,
+        filename: attachment.filename,
+      }, "Portal document download");
+
+      // Return the download URL
+      return reply.send({
+        downloadUrl: url,
+        filename: attachment.filename || `document-${fileId}`,
+        mimeType: attachment.mime || "application/octet-stream",
+        expiresIn,
+      });
+
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to generate document download URL");
+      return reply.code(500).send({ error: "download_failed" });
+    }
+  });
 
   /**
    * GET /api/v1/portal/offspring
