@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import type { DraftChannel } from "@prisma/client";
+import { sendEmail, buildFromAddress, INBOUND_DOMAIN } from "../services/email-service.js";
 
 interface DraftResponse {
   id: number;
@@ -344,28 +345,60 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "org_email_not_configured" });
       }
 
-      // TODO: Integrate with email sending service
-      // For now, create EmailSendLog entry
+      // B-07 FIX: Actually send the email via email service
+      const fromAddress = buildFromAddress(
+        tenantOrg.party.name || "BreederHQ",
+        "messages"
+      );
+
+      const result = await sendEmail({
+        tenantId,
+        to: toAddress,
+        subject: draft.subject || "(No subject)",
+        html: draft.bodyHtml || `<p>${draft.bodyText.replace(/\n/g, "<br>")}</p>`,
+        text: draft.bodyText,
+        from: fromAddress,
+        replyTo: tenantOrg.party.email,
+        category: "transactional",
+        metadata: {
+          type: "draft_send",
+          draftId: draft.id,
+          partyId: draft.partyId,
+          ...(typeof draft.metadata === "object" && draft.metadata !== null ? draft.metadata : {}),
+        },
+      });
+
+      if (!result.ok) {
+        req.log?.error?.({ err: result.error, draftId: id }, "Failed to send draft email");
+        return reply.code(500).send({
+          error: "send_failed",
+          message: result.error || "Failed to send email",
+        });
+      }
+
+      // Create email log with sent status
       const emailLog = await prisma.emailSendLog.create({
         data: {
           tenantId,
           to: toAddress,
-          from: tenantOrg.party.email,
+          from: fromAddress,
           subject: draft.subject || "(No subject)",
           partyId: draft.partyId,
-          status: "queued",
+          status: "sent",
+          providerMessageId: result.providerMessageId,
           templateId: draft.templateId,
           metadata: draft.metadata ?? undefined,
         },
       });
 
-      // Delete the draft
+      // Delete the draft after successful send
       await prisma.draft.delete({ where: { id } });
 
       return reply.send({
         ok: true,
         channel: "email",
         emailLogId: emailLog.id,
+        messageId: result.providerMessageId,
       });
     }
 
