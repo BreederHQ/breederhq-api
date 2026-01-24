@@ -25,6 +25,7 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { sendEmail, buildFromAddress } from "../services/email-service.js";
 
 // ───────────────────────── Helpers ─────────────────────────
 
@@ -591,9 +592,58 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!emailBody) return reply.code(400).send({ error: "body_required" });
       if (!toEmail) return reply.code(400).send({ error: "to_email_required" });
 
-      // TODO: Actually send the email via email service
-      // For now, just record it
+      // B-07 FIX: Get tenant org for from address
+      const tenantOrg = await prisma.organization.findFirst({
+        where: { tenantId },
+        include: { party: { select: { email: true, name: true } } },
+      });
 
+      if (!tenantOrg?.party?.email) {
+        return reply.code(400).send({ error: "org_email_not_configured" });
+      }
+
+      const fromAddress = buildFromAddress(
+        tenantOrg.party.name || "BreederHQ",
+        "messages"
+      );
+
+      // B-07 FIX: Actually send the email via email service
+      const result = await sendEmail({
+        tenantId,
+        to: toEmail,
+        subject,
+        html: `<p>${emailBody.replace(/\n/g, "<br>")}</p>`,
+        text: emailBody,
+        from: fromAddress,
+        replyTo: tenantOrg.party.email,
+        category: "transactional",
+        metadata: {
+          type: "party_crm_email",
+          partyId,
+        },
+      });
+
+      if (!result.ok) {
+        req.log?.error?.({ err: result.error, partyId }, "Failed to send party email");
+        // Record failed email
+        await prisma.partyEmail.create({
+          data: {
+            tenantId,
+            partyId,
+            subject,
+            body: emailBody,
+            toEmail,
+            status: "failed",
+            createdBy: toNum(body.createdBy),
+          },
+        });
+        return reply.code(500).send({
+          error: "send_failed",
+          message: result.error || "Failed to send email",
+        });
+      }
+
+      // Record successful email
       const email = await prisma.partyEmail.create({
         data: {
           tenantId,
@@ -608,9 +658,14 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       await logActivity(tenantId, partyId, "EMAIL_SENT", `Email sent: ${subject}`, null, {
         emailId: email.id,
+        messageId: result.providerMessageId,
       });
 
-      return reply.code(201).send({ ok: true, email });
+      return reply.code(201).send({
+        ok: true,
+        email,
+        messageId: result.providerMessageId,
+      });
     } catch (err) {
       req.log?.error?.({ err }, "Failed to send party email");
       return reply.code(500).send({ error: "send_email_failed" });
