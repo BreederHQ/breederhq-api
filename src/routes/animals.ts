@@ -2561,7 +2561,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       );
 
       // Update usage snapshot after import
-      await updateUsageSnapshot(tenantId);
+      await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
 
       reply.send(result);
     } catch (error) {
@@ -2614,7 +2614,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         include: {
           dam: { select: { name: true } },
           sire: { select: { name: true } },
-          registryIdentifiers: {
+          registryIds: {
             select: {
               identifier: true,
               registry: {
@@ -2696,12 +2696,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const breeds = animal.breed || "";
 
         // Format registry numbers
-        const registries = animal.registryIdentifiers
-          .map((r) => `${r.registry.name}: ${r.identifier}`)
+        const registries = animal.registryIds
+          .map((r: any) => `${r.registry.name}: ${r.identifier}`)
           .join(", ");
 
         // Format owners
-        const owners = animal.owners.map((o) => o.party.name).join(", ");
+        const owners = animal.owners.map((o: any) => o.party.name).join(", ");
 
         // Format dates
         const birthDate = animal.birthDate
