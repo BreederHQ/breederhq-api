@@ -635,9 +635,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
-    // Build where clause - only LIVE status listings
+    // Build where clause - only ACTIVE status listings (DirectAnimalListing uses DRAFT/ACTIVE/PAUSED)
     const where: any = {
-      status: "LIVE",
+      status: "ACTIVE",
     };
 
     if (templateType) {
@@ -791,7 +791,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         const listing = await prisma.directAnimalListing.findFirst({
           where: {
             slug,
-            status: "LIVE",
+            status: "ACTIVE",
           },
           select: {
             id: true,
