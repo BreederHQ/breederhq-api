@@ -1,5 +1,5 @@
 // src/routes/marketplace-service-detail.ts
-// Service Detail API for Service Provider Portal
+// Service Detail API for Service Provider Portal AND Breeder Services
 // Public endpoint supporting both slug and ID routing
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
@@ -8,6 +8,7 @@ import prisma from "../prisma.js";
 /**
  * GET /api/v1/marketplace/services/:slugOrId
  * Get service listing by slug or ID with full provider details
+ * Searches both Service Provider listings AND Breeder Service listings
  */
 async function getServiceDetail(
   request: FastifyRequest<{
@@ -24,21 +25,109 @@ async function getServiceDetail(
     const numericId = parseInt(slugOrId, 10);
     const isNumeric = !isNaN(numericId);
 
-    // Build where clause - search by ID or slug
-    const where: any = {
+    // ==========================================================================
+    // 1. First, try to find in Breeder Services (mktListingBreederService)
+    // ==========================================================================
+    const breederWhere: any = {
+      status: "LIVE",
+    };
+
+    if (isNumeric) {
+      breederWhere.id = numericId;
+    } else {
+      breederWhere.slug = slugOrId;
+    }
+
+    const breederListing = await prisma.mktListingBreederService.findFirst({
+      where: breederWhere,
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            slug: true,
+            name: true,
+            organizations: {
+              where: { isPublicProgram: true },
+              take: 1,
+              select: {
+                programSlug: true,
+                name: true,
+                publicContactEmail: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (breederListing) {
+      // Increment view count asynchronously (fire-and-forget)
+      prisma.mktListingBreederService
+        .update({
+          where: { id: breederListing.id },
+          data: { viewCount: { increment: 1 } },
+        })
+        .catch((err) => {
+          request.log.error(
+            { err, listingId: breederListing.id },
+            "Failed to increment view count"
+          );
+        });
+
+      const org = breederListing.tenant?.organizations?.[0];
+
+      // Transform to public DTO (matching PublicServiceListing interface)
+      return reply.send({
+        id: breederListing.id,
+        slug: breederListing.slug,
+        listingType: breederListing.listingType,
+        title: breederListing.title,
+        summary: breederListing.description?.substring(0, 200) || null,
+        description: breederListing.description,
+        customServiceType: null,
+        tags: [],
+        city: breederListing.city,
+        state: breederListing.state,
+        country: breederListing.country,
+        priceCents: breederListing.priceCents,
+        priceType: breederListing.priceType,
+        priceDisplay: breederListing.priceCents
+          ? `$${(breederListing.priceCents / 100).toLocaleString()}`
+          : null,
+        coverImageUrl: Array.isArray(breederListing.images) && breederListing.images.length > 0
+          ? breederListing.images[0]
+          : null,
+        images: breederListing.images || [],
+        publishedAt: breederListing.publishedAt?.toISOString() || null,
+        provider: {
+          type: "breeder" as const,
+          id: breederListing.tenant?.id,
+          slug: breederListing.tenant?.slug || org?.programSlug || null,
+          name: org?.name || breederListing.tenant?.name || "Unknown Breeder",
+          email: breederListing.contactEmail || org?.publicContactEmail || null,
+          phone: breederListing.contactPhone || null,
+          website: null,
+        },
+      });
+    }
+
+    // ==========================================================================
+    // 2. If not found in Breeder Services, try Service Provider listings
+    // ==========================================================================
+    const providerWhere: any = {
       status: "LIVE",
       deletedAt: null,
     };
 
     if (isNumeric) {
-      where.id = numericId;
+      providerWhere.id = numericId;
     } else {
-      where.slug = slugOrId;
+      providerWhere.slug = slugOrId;
     }
 
     // Fetch listing with full provider details and tags
     const listing = await prisma.marketplaceServiceListing.findFirst({
-      where,
+      where: providerWhere,
       include: {
         provider: {
           select: {
