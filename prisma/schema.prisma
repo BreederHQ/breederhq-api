@@ -1058,8 +1058,7 @@ model Tenant {
   billing        BillingAccount?
   sharesSent     AnimalShare[]         @relation("ShareFromTenant")
   sharesReceived AnimalShare[]         @relation("ShareToTenant")
-  publicListings MktListingIndividualAnimal[]
-  directListings DirectAnimalListing[] @relation("TenantDirectListings")
+  individualAnimalListings MktListingIndividualAnimal[] @relation("TenantIndividualAnimalListings")
   animalPrograms MktListingAnimalProgram[]       @relation("TenantAnimalPrograms")
   User           User[]
   tags           Tag[]
@@ -2406,8 +2405,7 @@ model Animal {
   owners              AnimalOwner[]
   registryIds         AnimalRegistryIdentifier[]
   shares              AnimalShare[]              @relation("ShareAnimal")
-  publicListing       MktListingIndividualAnimal?
-  directListings      DirectAnimalListing[]      @relation("AnimalDirectListings")
+  individualAnimalListings MktListingIndividualAnimal[] @relation("AnimalIndividualAnimalListings")
   programParticipants AnimalProgramParticipant[] @relation("AnimalProgramParticipants")
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
@@ -2570,66 +2568,18 @@ model AnimalShare {
   @@schema("public")
 }
 
-model MktListingIndividualAnimal {
-  id       Int    @id @default(autoincrement())
-  animalId Int    @unique
-  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  // Core listing fields
-  urlSlug String?                    @unique
-  intent  AnimalListingIntent?
-  status  MarketplaceListingStatus   @default(DRAFT)
-
-  // Display fields
-  headline    String? @db.VarChar(120)
-  title       String?
-  summary     String? @db.Text
-  description String? @db.Text
-
-  // Publishing timestamps
-  publishedAt DateTime?
-  pausedAt    DateTime?
-
-  // Location override (optional, defaults to org location if null)
-  locationCity    String? @db.VarChar(100)
-  locationRegion  String? @db.VarChar(100)
-  locationCountry String? @db.VarChar(2)
-
-  // Pricing fields for marketplace cards
-  priceModel    String? @db.VarChar(32) // "fixed" | "range" | "negotiable" | "inquire"
-  priceCents    Int?
-  priceMinCents Int?
-  priceMaxCents Int?
-  priceText     String? @db.VarChar(100)
-
-  // Intent-specific details (JSON for flexibility)
-  detailsJson Json? @db.JsonB
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tenantId])
-  @@index([tenantId, status])
-  @@index([tenantId, intent])
-  @@index([status, intent])
-  @@map("mkt_listing_individual_animal")
-  @@schema("public")
-}
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
- * Animal Listings V2 - Direct Listings & Programs
+ * Individual Animal Listings
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-model DirectAnimalListing {
+model MktListingIndividualAnimal {
   id       Int    @id @default(autoincrement())
   tenantId Int
-  tenant   Tenant @relation("TenantDirectListings", fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant   Tenant @relation("TenantIndividualAnimalListings", fields: [tenantId], references: [id], onDelete: Cascade)
   animalId Int
-  animal   Animal @relation("AnimalDirectListings", fields: [animalId], references: [id], onDelete: Cascade)
+  animal   Animal @relation("AnimalIndividualAnimalListings", fields: [animalId], references: [id], onDelete: Cascade)
 
   // Template & Identity
   templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
@@ -2659,7 +2609,7 @@ model DirectAnimalListing {
   locationCountry String? @db.VarChar(2)
 
   // Publishing
-  status      String    @default("DRAFT") @db.VarChar(32) // DRAFT, LIVE, PAUSED
+  status      MarketplaceListingStatus @default(DRAFT)
   listed      Boolean   @default(true) // true = public listing, false = unlisted (direct link only)
   publishedAt DateTime?
   pausedAt    DateTime?
@@ -2678,6 +2628,7 @@ model DirectAnimalListing {
   @@index([animalId])
   @@index([status])
   @@index([slug])
+  @@map("direct_animal_listing")
   @@schema("public")
 }
 
