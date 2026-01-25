@@ -647,8 +647,26 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     // Filter by breeder tenant slug (for breeder storefront pages)
+    // Accepts either numeric ID or slug
     if (tenantSlug && tenantSlug.trim()) {
-      where.tenant = { ...where.tenant, marketplaceProfile: { slug: tenantSlug.trim() } };
+      const trimmedSlug = tenantSlug.trim();
+      const parsedId = parseInt(trimmedSlug, 10);
+      if (!isNaN(parsedId)) {
+        // Numeric ID
+        where.tenantId = parsedId;
+      } else {
+        // Slug - need to resolve to ID first
+        const tenant = await prisma.tenant.findUnique({
+          where: { slug: trimmedSlug.toLowerCase() },
+          select: { id: true },
+        });
+        if (tenant) {
+          where.tenantId = tenant.id;
+        } else {
+          // Invalid slug - return empty results
+          return reply.send({ items: [], total: 0, limit, offset });
+        }
+      }
     }
 
     if (species) {
