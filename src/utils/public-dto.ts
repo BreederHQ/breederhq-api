@@ -310,17 +310,16 @@ type AnimalWithRelations = Pick<
 
 type ListingWithAnimal = Pick<
   MktListingIndividualAnimal,
-  | "urlSlug"
+  | "slug"
   | "title"
   | "description"
-  | "intent"
+  | "templateType"
   | "status"
   | "headline"
   | "summary"
   | "priceCents"
   | "priceMinCents"
   | "priceMaxCents"
-  | "priceText"
   | "priceModel"
   | "locationCity"
   | "locationRegion"
@@ -334,12 +333,12 @@ type ListingWithAnimal = Pick<
  */
 function derivePriceDisplay(listing: Pick<
   MktListingIndividualAnimal,
-  "priceModel" | "priceCents" | "priceMinCents" | "priceMaxCents" | "priceText"
+  "priceModel" | "priceCents" | "priceMinCents" | "priceMaxCents"
 > & { animal: Pick<Animal, "priceCents"> }): string | null {
   const model = listing.priceModel;
 
   if (model === "inquire" || model === "negotiable") {
-    return listing.priceText || (model === "inquire" ? "Inquire" : "Negotiable");
+    return model === "inquire" ? "Inquire" : "Negotiable";
   }
 
   if (model === "range" && listing.priceMinCents != null && listing.priceMaxCents != null) {
@@ -354,7 +353,7 @@ function derivePriceDisplay(listing: Pick<
     return (price / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
   }
 
-  return listing.priceText || null;
+  return null;
 }
 
 /**
@@ -396,8 +395,8 @@ export function toPublicAnimalListingDTO(
   }));
 
   return {
-    slug: listing.urlSlug || "",
-    intent: listing.intent || null,
+    slug: listing.slug || "",
+    intent: listing.templateType || null,
     status: listing.status,
     headline: listing.headline || null,
     title: listing.title || null,
@@ -408,7 +407,7 @@ export function toPublicAnimalListingDTO(
     priceCents: listing.priceCents || null,
     priceMinCents: listing.priceMinCents || null,
     priceMaxCents: listing.priceMaxCents || null,
-    priceText: listing.priceText || null,
+    priceText: null, // No longer supported in new model
     // Location
     location: deriveLocation(listing),
     // Animal
@@ -492,14 +491,13 @@ export function toOffspringGroupSummaryDTO(
 export function toAnimalListingSummaryDTO(
   listing: Pick<
     MktListingIndividualAnimal,
-    | "urlSlug"
+    | "slug"
     | "title"
-    | "intent"
+    | "templateType"
     | "headline"
     | "priceCents"
     | "priceMinCents"
     | "priceMaxCents"
-    | "priceText"
     | "priceModel"
   > & {
     animal: Pick<Animal, "species" | "breed" | "photoUrl" | "priceCents">;
@@ -521,8 +519,8 @@ export function toAnimalListingSummaryDTO(
 
   return {
     type: "animal",
-    slug: listing.urlSlug || "",
-    intent: listing.intent || null,
+    slug: listing.slug || "",
+    intent: listing.templateType || null,
     headline: listing.headline || null,
     title: listing.title || null,
     species: listing.animal.species,

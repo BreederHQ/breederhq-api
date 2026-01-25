@@ -414,13 +414,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       where.name = { contains: search.trim(), mode: "insensitive" };
     }
 
-    // Location filter - match city, state, or country
+    // Location filter - match city, state, country, or zip code
     if (location && location.trim()) {
       const locationTerm = location.trim();
       where.OR = [
         { city: { contains: locationTerm, mode: "insensitive" } },
         { state: { contains: locationTerm, mode: "insensitive" } },
         { country: { contains: locationTerm, mode: "insensitive" } },
+        { zip: { contains: locationTerm, mode: "insensitive" } },
       ];
     }
 
@@ -625,13 +626,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       location?: string;
       priceMin?: string;
       priceMax?: string;
+      tenantSlug?: string;
       limit?: string;
       offset?: string;
     };
   }>("/direct-listings", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
-    const { search, species, breed, templateType, location, priceMin, priceMax } = req.query;
+    const { search, species, breed, templateType, location, priceMin, priceMax, tenantSlug } = req.query;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
@@ -642,6 +644,11 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     if (templateType) {
       where.templateType = templateType.toUpperCase();
+    }
+
+    // Filter by breeder tenant slug (for breeder storefront pages)
+    if (tenantSlug && tenantSlug.trim()) {
+      where.tenant = { ...where.tenant, marketplaceProfile: { slug: tenantSlug.trim() } };
     }
 
     if (species) {
@@ -674,6 +681,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             { locationCountry: { contains: locationTerm, mode: "insensitive" } },
             { tenant: { organizations: { some: { city: { contains: locationTerm, mode: "insensitive" } } } } },
             { tenant: { organizations: { some: { state: { contains: locationTerm, mode: "insensitive" } } } } },
+            { tenant: { organizations: { some: { zip: { contains: locationTerm, mode: "insensitive" } } } } },
           ],
         },
       ];
@@ -696,7 +704,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.directAnimalListing.findMany({
+        prisma.mktListingIndividualAnimal.findMany({
           where,
           orderBy: [{ createdAt: "desc" }],
           skip: offset,
@@ -731,7 +739,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
         }),
-        prisma.directAnimalListing.count({ where }),
+        prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
       const items = listings.map((listing) => {
@@ -788,7 +796,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       }
 
       try {
-        const listing = await prisma.directAnimalListing.findFirst({
+        const listing = await prisma.mktListingIndividualAnimal.findFirst({
           where: {
             slug,
             status: "LIVE",
@@ -963,7 +971,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         }
 
         // Increment view count asynchronously
-        prisma.directAnimalListing.update({
+        prisma.mktListingIndividualAnimal.update({
           where: { id: listing.id },
           data: { viewCount: { increment: 1 } },
         }).catch((err) => req.log.warn({ err }, "Failed to increment view count"));
@@ -1266,10 +1274,18 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     // Build where clause - only LIVE groups from this breeder
+    // IMPORTANT: Offspring groups must have a parent BreedingProgram with status=LIVE
+    // This enforces the hierarchy: BreedingProgram (LIVE) → BreedingPlan → OffspringGroup
     const where: any = {
       tenantId: resolved.tenantId,
       status: "LIVE",
       listingSlug: { not: null },
+      // Require the parent breeding program to be LIVE
+      plan: {
+        program: {
+          status: "LIVE",
+        },
+      },
     };
 
     if (species) {
@@ -1452,7 +1468,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const where: any = {
       tenantId: resolved.tenantId,
       status: "LIVE",
-      urlSlug: { not: null },
     };
 
     if (species) {
@@ -1466,14 +1481,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         take: limit,
         orderBy: { publishedAt: "desc" },
         select: {
-          urlSlug: true,
+          slug: true,
           title: true,
-          intent: true,
+          templateType: true,
           headline: true,
           priceCents: true,
           priceMinCents: true,
           priceMaxCents: true,
-          priceText: true,
           priceModel: true,
           animal: {
             select: {
@@ -1539,17 +1553,16 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           status: "LIVE",
         },
         select: {
-          urlSlug: true,
+          slug: true,
           title: true,
           description: true,
-          intent: true,
+          templateType: true,
           status: true,
           headline: true,
           summary: true,
           priceCents: true,
           priceMinCents: true,
           priceMaxCents: true,
-          priceText: true,
           priceModel: true,
           locationCity: true,
           locationRegion: true,
@@ -1709,13 +1722,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         // Verify listing is LIVE and get details for subject
         const animalListing = await prisma.mktListingIndividualAnimal.findUnique({
           where: { id: listingResolved.listingId },
-          select: { status: true, title: true, headline: true, intent: true },
+          select: { status: true, title: true, headline: true, templateType: true },
         });
         if (!animalListing || animalListing.status !== "LIVE") {
           return reply.code(404).send({ error: "listing_not_found" });
         }
         listingTitle = animalListing.headline || animalListing.title || null;
-        animalListingIntent = animalListing.intent;
+        animalListingIntent = animalListing.templateType;
       }
     }
 
@@ -1921,6 +1934,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   // --------------------------------------------------------------------------
   app.get<{
     Querystring: {
+      tenantId?: string;
       type?: string;
       search?: string;
       city?: string;
@@ -1931,7 +1945,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   }>("/services", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
-    const { type, search, city, state } = req.query;
+    const { tenantId, type, search, city, state } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
 
     // Service listing types
@@ -1952,6 +1966,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       status: "LIVE",
       listingType: { in: serviceTypes },
     };
+
+    // Filter by tenant/breeder if provided (tenantId param is the tenant slug)
+    if (tenantId && tenantId.trim()) {
+      const normalizedSlug = tenantId.trim().toLowerCase();
+      const tenant = await prisma.tenant.findUnique({
+        where: { slug: normalizedSlug },
+        select: { id: true },
+      });
+      if (tenant) {
+        where.tenantId = tenant.id;
+      } else {
+        // Tenant not found - return empty results
+        return reply.send({ items: [], total: 0, page, limit });
+      }
+    }
 
     // Filter by specific type if provided
     if (type && serviceTypes.includes(type.toUpperCase())) {
@@ -2070,9 +2099,17 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const { page, limit, skip } = parsePaging(req.query);
 
     // Build where clause - only LIVE groups from published breeders
+    // IMPORTANT: Offspring groups must have a parent BreedingProgram with status=LIVE
+    // This enforces the hierarchy: BreedingProgram (LIVE) → BreedingPlan → OffspringGroup
     const where: any = {
       status: "LIVE",
       listingSlug: { not: null },
+      // Require the parent breeding program to be LIVE
+      plan: {
+        program: {
+          status: "LIVE",
+        },
+      },
       tenant: {
         organizations: {
           some: {
@@ -2106,7 +2143,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       ];
     }
 
-    // Location filter - match breeder's city, state, or the location text
+    // Location filter - match breeder's city, state, country, or zip code
     if (location && location.trim()) {
       const locationTerm = location.trim();
       where.tenant = {
@@ -2118,6 +2155,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
               { city: { contains: locationTerm, mode: "insensitive" } },
               { state: { contains: locationTerm, mode: "insensitive" } },
               { country: { contains: locationTerm, mode: "insensitive" } },
+              { zip: { contains: locationTerm, mode: "insensitive" } },
             ],
           },
         },
@@ -2241,7 +2279,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // Build where clause - only LIVE status listings from public programs
     const where: any = {
       status: "LIVE",
-      urlSlug: { not: null },
       tenant: {
         organizations: {
           some: {
@@ -2284,7 +2321,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       };
     }
 
-    // Location filter - match listing's location or breeder's location
+    // Location filter - match listing's location or breeder's location (including zip code)
     if (location && location.trim()) {
       const locationTerm = location.trim();
       where.AND = [
@@ -2302,6 +2339,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
                     OR: [
                       { city: { contains: locationTerm, mode: "insensitive" } },
                       { state: { contains: locationTerm, mode: "insensitive" } },
+                      { zip: { contains: locationTerm, mode: "insensitive" } },
                     ],
                   },
                 },
@@ -2320,15 +2358,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         take: limit,
         select: {
           id: true,
-          urlSlug: true,
-          intent: true,
+          slug: true,
+          templateType: true,
           headline: true,
           title: true,
           summary: true,
           priceCents: true,
           priceMinCents: true,
           priceMaxCents: true,
-          priceText: true,
           priceModel: true,
           locationCity: true,
           locationRegion: true,
@@ -2368,15 +2405,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       const org = listing.tenant?.organizations?.[0] || null;
       return {
         id: listing.id,
-        urlSlug: listing.urlSlug,
-        intent: listing.intent,
+        slug: listing.slug,
+        templateType: listing.templateType,
         headline: listing.headline,
         title: listing.title,
         summary: listing.summary,
         priceCents: listing.priceCents,
         priceMinCents: listing.priceMinCents,
         priceMaxCents: listing.priceMaxCents,
-        priceText: listing.priceText,
         priceModel: listing.priceModel,
         locationCity: listing.locationCity,
         locationRegion: listing.locationRegion,

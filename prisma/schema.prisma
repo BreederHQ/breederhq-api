@@ -704,8 +704,8 @@ enum AnimalListingStatus {
 
 // Unified status enum for all marketplace listings
 enum MarketplaceListingStatus {
-  DRAFT  // Not yet published
-  LIVE   // Published and visible to public
+  DRAFT // Not yet published
+  LIVE // Published and visible to public
   PAUSED // Temporarily hidden
 
   @@schema("public")
@@ -1050,20 +1050,19 @@ model Tenant {
   stripeConnectOnboardingComplete Boolean @default(false)
   stripeConnectPayoutsEnabled     Boolean @default(false)
 
-  memberships    TenantMembership[]
-  organizations  Organization[]
-  contacts       Contact[]
-  parties        Party[]
-  animals        Animal[]
-  billing        BillingAccount?
-  sharesSent     AnimalShare[]         @relation("ShareFromTenant")
-  sharesReceived AnimalShare[]         @relation("ShareToTenant")
-  publicListings MktListingIndividualAnimal[]
-  directListings DirectAnimalListing[] @relation("TenantDirectListings")
-  animalPrograms MktListingAnimalProgram[]       @relation("TenantAnimalPrograms")
-  User           User[]
-  tags           Tag[]
-  CustomBreed    CustomBreed[]
+  memberships              TenantMembership[]
+  organizations            Organization[]
+  contacts                 Contact[]
+  parties                  Party[]
+  animals                  Animal[]
+  billing                  BillingAccount?
+  sharesSent               AnimalShare[]                @relation("ShareFromTenant")
+  sharesReceived           AnimalShare[]                @relation("ShareToTenant")
+  individualAnimalListings MktListingIndividualAnimal[] @relation("TenantIndividualAnimalListings")
+  animalPrograms           MktListingAnimalProgram[]    @relation("TenantAnimalPrograms")
+  User                     User[]
+  tags                     Tag[]
+  CustomBreed              CustomBreed[]
 
   // breeding additions
   breedingPlans             BreedingPlan[]
@@ -1168,9 +1167,9 @@ model Tenant {
   usageRecords        UsageRecord[]
   usageSnapshots      UsageSnapshot[]
   paymentMethods      PaymentMethod[]
-  referralCodesOwned  ReferralCode[]       @relation("ReferralCodeOwner")
-  referralsMade       Referral[]           @relation("ReferralsMade")
-  referralsReceived   Referral[]           @relation("ReferralsReceived")
+  referralCodesOwned  ReferralCode[]             @relation("ReferralCodeOwner")
+  referralsMade       Referral[]                 @relation("ReferralsMade")
+  referralsReceived   Referral[]                 @relation("ReferralsReceived")
   marketplaceListings MktListingBreederService[]
   featureChecks       FeatureCheck[]
 
@@ -1769,6 +1768,15 @@ model MktListingBreederService {
   viewCount    Int @default(0)
   inquiryCount Int @default(0)
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Stallion/Stud Service fields (for STUD_SERVICE listings)
+  // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
+  // ─────────────────────────────────────────────────────────────────────────────
+  stallionId       Int?
+  stallion         Animal? @relation("StallionStudListings", fields: [stallionId], references: [id], onDelete: SetNull)
+  maxBookings      Int? // Max breeding slots per season (null = unlimited)
+  bookingsReceived Int     @default(0) // Current booking count for the season
+
   // Metadata
   metadata Json?
 
@@ -1780,6 +1788,7 @@ model MktListingBreederService {
   @@index([status, publishedAt])
   @@index([listingType, category])
   @@index([tier])
+  @@index([stallionId])
   @@map("mkt_listing_breeder_service")
   @@schema("public")
 }
@@ -2402,16 +2411,15 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments      TagAssignment[]
-  owners              AnimalOwner[]
-  registryIds         AnimalRegistryIdentifier[]
-  shares              AnimalShare[]              @relation("ShareAnimal")
-  publicListing       MktListingIndividualAnimal?
-  directListings      DirectAnimalListing[]      @relation("AnimalDirectListings")
-  programParticipants AnimalProgramParticipant[] @relation("AnimalProgramParticipants")
-  createdAt           DateTime                   @default(now())
-  updatedAt           DateTime                   @updatedAt
-  archived            Boolean                    @default(false)
+  tagAssignments           TagAssignment[]
+  owners                   AnimalOwner[]
+  registryIds              AnimalRegistryIdentifier[]
+  shares                   AnimalShare[]                @relation("ShareAnimal")
+  individualAnimalListings MktListingIndividualAnimal[] @relation("AnimalIndividualAnimalListings")
+  programParticipants      AnimalProgramParticipant[]   @relation("AnimalProgramParticipants")
+  createdAt                DateTime                     @default(now())
+  updatedAt                DateTime                     @updatedAt
+  archived                 Boolean                      @default(false)
 
   // Soft delete
   deletedAt         DateTime?
@@ -2440,6 +2448,10 @@ model Animal {
 
   // Mare reproductive history (horses only)
   mareReproductiveHistory MareReproductiveHistory?
+
+  // Stallion stud service listings (horses only)
+  // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
+  studServiceListings MktListingBreederService[] @relation("StallionStudListings")
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
@@ -2570,66 +2582,18 @@ model AnimalShare {
   @@schema("public")
 }
 
-model MktListingIndividualAnimal {
-  id       Int    @id @default(autoincrement())
-  animalId Int    @unique
-  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  // Core listing fields
-  urlSlug String?                    @unique
-  intent  AnimalListingIntent?
-  status  MarketplaceListingStatus   @default(DRAFT)
-
-  // Display fields
-  headline    String? @db.VarChar(120)
-  title       String?
-  summary     String? @db.Text
-  description String? @db.Text
-
-  // Publishing timestamps
-  publishedAt DateTime?
-  pausedAt    DateTime?
-
-  // Location override (optional, defaults to org location if null)
-  locationCity    String? @db.VarChar(100)
-  locationRegion  String? @db.VarChar(100)
-  locationCountry String? @db.VarChar(2)
-
-  // Pricing fields for marketplace cards
-  priceModel    String? @db.VarChar(32) // "fixed" | "range" | "negotiable" | "inquire"
-  priceCents    Int?
-  priceMinCents Int?
-  priceMaxCents Int?
-  priceText     String? @db.VarChar(100)
-
-  // Intent-specific details (JSON for flexibility)
-  detailsJson Json? @db.JsonB
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tenantId])
-  @@index([tenantId, status])
-  @@index([tenantId, intent])
-  @@index([status, intent])
-  @@map("mkt_listing_individual_animal")
-  @@schema("public")
-}
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
- * Animal Listings V2 - Direct Listings & Programs
+ * Individual Animal Listings
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-model DirectAnimalListing {
+model MktListingIndividualAnimal {
   id       Int    @id @default(autoincrement())
   tenantId Int
-  tenant   Tenant @relation("TenantDirectListings", fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant   Tenant @relation("TenantIndividualAnimalListings", fields: [tenantId], references: [id], onDelete: Cascade)
   animalId Int
-  animal   Animal @relation("AnimalDirectListings", fields: [animalId], references: [id], onDelete: Cascade)
+  animal   Animal @relation("AnimalIndividualAnimalListings", fields: [animalId], references: [id], onDelete: Cascade)
 
   // Template & Identity
   templateType String  @db.VarChar(32) // STUD_SERVICES, GUARDIAN, TRAINED, REHOME, CO_OWNERSHIP, CUSTOM
@@ -2659,8 +2623,8 @@ model DirectAnimalListing {
   locationCountry String? @db.VarChar(2)
 
   // Publishing
-  status      String    @default("DRAFT") @db.VarChar(32) // DRAFT, LIVE, PAUSED
-  listed      Boolean   @default(true) // true = public listing, false = unlisted (direct link only)
+  status      MarketplaceListingStatus @default(DRAFT)
+  listed      Boolean                  @default(true) // true = public listing, false = unlisted (direct link only)
   publishedAt DateTime?
   pausedAt    DateTime?
 
@@ -2678,6 +2642,7 @@ model DirectAnimalListing {
   @@index([animalId])
   @@index([status])
   @@index([slug])
+  @@map("direct_animal_listing")
   @@schema("public")
 }
 
@@ -2710,8 +2675,8 @@ model MktListingAnimalProgram {
   defaultPriceMaxCents Int?
 
   // Publishing
-  status      MarketplaceListingStatus  @default(DRAFT)
-  listed      Boolean   @default(true) // true = public, false = unlisted
+  status      MarketplaceListingStatus @default(DRAFT)
+  listed      Boolean                  @default(true) // true = public, false = unlisted
   publishedAt DateTime?
 
   // Settings
@@ -2738,11 +2703,11 @@ model MktListingAnimalProgram {
 }
 
 model AnimalProgramParticipant {
-  id        Int                      @id @default(autoincrement())
+  id        Int                     @id @default(autoincrement())
   programId Int
-  program   MktListingAnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingAnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   animalId  Int
-  animal    Animal                   @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
+  animal    Animal                  @relation("AnimalProgramParticipants", fields: [animalId], references: [id], onDelete: Cascade)
 
   // Per-participant visibility settings
   status   String  @default("ACTIVE") // ACTIVE, PAUSED
@@ -2780,9 +2745,9 @@ model AnimalProgramParticipant {
 }
 
 model AnimalProgramMedia {
-  id        Int                      @id @default(autoincrement())
+  id        Int                     @id @default(autoincrement())
   programId Int
-  program   MktListingAnimalProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   MktListingAnimalProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
 
   type      String  @db.VarChar(32) // "image" | "video"
   url       String  @db.VarChar(500)
@@ -3162,10 +3127,10 @@ model MktListingBreedingProgram {
 
   // Marketplace Settings
   status             MarketplaceListingStatus @default(DRAFT)
-  acceptInquiries    Boolean @default(true)
-  openWaitlist       Boolean @default(false)
-  acceptReservations Boolean @default(false) // Auto-accept deposits vs manual waitlist
-  comingSoon         Boolean @default(false) // Coming Soon badge for programs in development
+  acceptInquiries    Boolean                  @default(true)
+  openWaitlist       Boolean                  @default(false)
+  acceptReservations Boolean                  @default(false) // Auto-accept deposits vs manual waitlist
+  comingSoon         Boolean                  @default(false) // Coming Soon badge for programs in development
 
   // Pricing & Details
   pricingTiers      Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
@@ -3194,11 +3159,11 @@ model MktListingBreedingProgram {
 }
 
 model BreedingProgramMedia {
-  id        Int             @id @default(autoincrement())
+  id        Int                       @id @default(autoincrement())
   programId Int
   program   MktListingBreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   tenantId  Int
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   assetUrl  String
   caption   String?
@@ -3214,11 +3179,11 @@ model BreedingProgramMedia {
 }
 
 model BreedingProgramInquiry {
-  id        Int             @id @default(autoincrement())
+  id        Int                       @id @default(autoincrement())
   programId Int
   program   MktListingBreedingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   tenantId  Int // Breeder's tenant
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Buyer information
   buyerName  String
@@ -3408,10 +3373,10 @@ model BreedingPlan {
   breedingMilestones BreedingMilestone[]
 
   archived      Boolean   @default(false)
-  archiveReason String?   /// Optional reason/note provided when archiving the plan
+  archiveReason String? /// Optional reason/note provided when archiving the plan
   deletedAt     DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -3616,8 +3581,8 @@ model BreedingAttempt {
   plan   BreedingPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
 
   // Animal links (primary ownership - for historical persistence and animal-level queries)
-  damId Int?
-  dam   Animal? @relation("BreedingAttemptDam", fields: [damId], references: [id], onDelete: SetNull)
+  damId  Int?
+  dam    Animal? @relation("BreedingAttemptDam", fields: [damId], references: [id], onDelete: SetNull)
   sireId Int?
   sire   Animal? @relation("BreedingAttemptSire", fields: [sireId], references: [id], onDelete: SetNull)
 
@@ -4132,9 +4097,9 @@ model Litter {
   statusOverride       String?
   statusOverrideReason String?
 
-  marketplaceStatus     MarketplaceListingStatus @default(DRAFT)
-  coverImageUrl String?
-  themeName     String?
+  marketplaceStatus MarketplaceListingStatus @default(DRAFT)
+  coverImageUrl     String?
+  themeName         String?
 
   notes String?
   data  Json?
@@ -7519,8 +7484,8 @@ model MarketplaceServiceListing {
 
   // Status
   status      MarketplaceListingStatus @default(DRAFT)
-  publishedAt DateTime? @map("published_at")
-  pausedAt    DateTime? @map("paused_at")
+  publishedAt DateTime?                @map("published_at")
+  pausedAt    DateTime?                @map("paused_at")
 
   // Moderation
   flagged   Boolean   @default(false)

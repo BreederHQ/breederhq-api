@@ -350,8 +350,8 @@ async function searchListings(
   query: string,
   limit: number
 ): Promise<SearchResultItem[]> {
-  // Search DirectAnimalListing (stud services, guardian, rehome, etc.)
-  const rows = await prisma.directAnimalListing.findMany({
+  // Search MktListingIndividualAnimal (stud services, guardian, rehome, etc.)
+  const rows = await prisma.mktListingIndividualAnimal.findMany({
     where: {
       tenantId,
       OR: [
