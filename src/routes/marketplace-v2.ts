@@ -216,6 +216,18 @@ export default async function marketplaceV2Routes(
       locationCity?: string;
       locationRegion?: string;
       locationCountry?: string;
+      // Stud Service fields (P1 Sprint)
+      seasonName?: string;
+      seasonStart?: string;
+      seasonEnd?: string;
+      breedingMethods?: string[];
+      defaultGuaranteeType?: string;
+      bookingFeeCents?: number;
+      maxBookings?: number;
+      bookingsReceived?: number;
+      bookingsClosed?: boolean;
+      healthCertRequired?: boolean;
+      requiredTests?: string[];
     };
   }>("/direct-listings", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
@@ -378,6 +390,130 @@ export default async function marketplaceV2Routes(
     }
   });
 
+  /**
+   * GET /direct-listings/:id/availability - Get stud service availability (P1 Sprint)
+   */
+  app.get<{
+    Params: { id: string };
+  }>("/direct-listings/:id/availability", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return reply.code(400).send({ error: "invalid_id", message: "Invalid listing ID" });
+    }
+
+    try {
+      const listing = await prisma.mktListingIndividualAnimal.findFirst({
+        where: { id, tenantId },
+        select: {
+          maxBookings: true,
+          bookingsReceived: true,
+          bookingsClosed: true,
+          seasonStart: true,
+          seasonEnd: true,
+        },
+      });
+
+      if (!listing) {
+        return reply.code(404).send({ error: "not_found", message: "Listing not found" });
+      }
+
+      const maxBookings = listing.maxBookings;
+      const currentBookings = listing.bookingsReceived || 0;
+      const availableSlots = maxBookings !== null ? maxBookings - currentBookings : null;
+
+      return reply.send({
+        maxBookings,
+        currentBookings,
+        availableSlots,
+        bookingsClosed: listing.bookingsClosed,
+        seasonStart: listing.seasonStart?.toISOString() || null,
+        seasonEnd: listing.seasonEnd?.toISOString() || null,
+      });
+    } catch (err: any) {
+      req.log.error({ err, tenantId, id }, "Failed to get listing availability");
+      return reply.code(500).send({ error: "server_error", message: "Failed to get availability" });
+    }
+  });
+
+  /**
+   * POST /direct-listings/:id/book - Book a stud service slot (P1 Sprint)
+   * Atomically increments bookingsReceived count
+   */
+  app.post<{
+    Params: { id: string };
+  }>("/direct-listings/:id/book", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return reply.code(400).send({ error: "invalid_id", message: "Invalid listing ID" });
+    }
+
+    try {
+      // First, check if bookings are closed or if max bookings reached
+      const listing = await prisma.mktListingIndividualAnimal.findFirst({
+        where: { id, tenantId },
+        select: {
+          maxBookings: true,
+          bookingsReceived: true,
+          bookingsClosed: true,
+        },
+      });
+
+      if (!listing) {
+        return reply.code(404).send({ error: "not_found", message: "Listing not found" });
+      }
+
+      if (listing.bookingsClosed) {
+        return reply.code(400).send({
+          error: "bookings_closed",
+          message: "This stud service is no longer accepting bookings",
+        });
+      }
+
+      if (listing.maxBookings !== null) {
+        const currentBookings = listing.bookingsReceived || 0;
+        if (currentBookings >= listing.maxBookings) {
+          return reply.code(400).send({
+            error: "no_availability",
+            message: "Maximum bookings reached for this season",
+          });
+        }
+      }
+
+      // Atomically increment bookingsReceived
+      const updated = await prisma.mktListingIndividualAnimal.update({
+        where: { id },
+        data: {
+          bookingsReceived: {
+            increment: 1,
+          },
+        },
+        select: {
+          bookingsReceived: true,
+          maxBookings: true,
+        },
+      });
+
+      const currentBookings = updated.bookingsReceived;
+      const availableSlots =
+        updated.maxBookings !== null ? updated.maxBookings - currentBookings : null;
+
+      return reply.send({
+        success: true,
+        currentBookings,
+        availableSlots,
+      });
+    } catch (err: any) {
+      req.log.error({ err, tenantId, id }, "Failed to book stud service");
+      return reply.code(500).send({ error: "server_error", message: "Failed to book stud service" });
+    }
+  });
+
   // ============================================================================
   // ANIMAL PROGRAMS
   // ============================================================================
@@ -520,6 +656,16 @@ export default async function marketplaceV2Routes(
       listed: boolean;
       acceptInquiries: boolean;
       waitlistOpen: boolean;
+      // Stud Service program defaults (P1 Sprint)
+      seasonName?: string;
+      seasonStart?: string;
+      seasonEnd?: string;
+      breedingMethods?: string[];
+      defaultGuaranteeType?: string;
+      defaultBookingFeeCents?: number;
+      defaultMaxBookingsPerAnimal?: number;
+      healthCertRequired?: boolean;
+      requiredTests?: string[];
     };
   }>("/animal-programs", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
@@ -844,6 +990,157 @@ export default async function marketplaceV2Routes(
     } catch (err: any) {
       req.log.error({ err, tenantId, programId, participantId }, "Failed to remove animal from program");
       reply.code(500).send({ error: "server_error", message: "Failed to remove animal from program" });
+    }
+  });
+
+  /**
+   * GET /animal-programs/participants/:participantId/availability - Get participant availability (P1 Sprint)
+   */
+  app.get<{
+    Params: { participantId: string };
+  }>("/animal-programs/participants/:participantId/availability", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const participantId = parseInt(req.params.participantId, 10);
+    if (isNaN(participantId)) {
+      return reply.code(400).send({ error: "invalid_id", message: "Invalid participant ID" });
+    }
+
+    try {
+      const participant = await prisma.animalProgramParticipant.findFirst({
+        where: {
+          id: participantId,
+          program: { tenantId },
+        },
+        select: {
+          maxBookingsOverride: true,
+          bookingsReceived: true,
+          bookingsClosed: true,
+          program: {
+            select: {
+              defaultMaxBookingsPerAnimal: true,
+              seasonStart: true,
+              seasonEnd: true,
+            },
+          },
+        },
+      });
+
+      if (!participant) {
+        return reply.code(404).send({ error: "not_found", message: "Participant not found" });
+      }
+
+      // Use override if set, otherwise fall back to program default
+      const maxBookings =
+        participant.maxBookingsOverride ?? participant.program.defaultMaxBookingsPerAnimal;
+      const currentBookings = participant.bookingsReceived || 0;
+      const availableSlots = maxBookings !== null ? maxBookings - currentBookings : null;
+
+      return reply.send({
+        maxBookings,
+        currentBookings,
+        availableSlots,
+        bookingsClosed: participant.bookingsClosed,
+        seasonStart: participant.program.seasonStart?.toISOString() || null,
+        seasonEnd: participant.program.seasonEnd?.toISOString() || null,
+      });
+    } catch (err: any) {
+      req.log.error({ err, tenantId, participantId }, "Failed to get participant availability");
+      return reply.code(500).send({ error: "server_error", message: "Failed to get availability" });
+    }
+  });
+
+  /**
+   * POST /animal-programs/participants/:participantId/book - Book a participant slot (P1 Sprint)
+   * Atomically increments bookingsReceived count for a specific animal in a program
+   */
+  app.post<{
+    Params: { participantId: string };
+  }>("/animal-programs/participants/:participantId/book", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const participantId = parseInt(req.params.participantId, 10);
+    if (isNaN(participantId)) {
+      return reply.code(400).send({ error: "invalid_id", message: "Invalid participant ID" });
+    }
+
+    try {
+      // First, check if bookings are closed or if max bookings reached
+      const participant = await prisma.animalProgramParticipant.findFirst({
+        where: {
+          id: participantId,
+          program: { tenantId },
+        },
+        select: {
+          maxBookingsOverride: true,
+          bookingsReceived: true,
+          bookingsClosed: true,
+          program: {
+            select: {
+              defaultMaxBookingsPerAnimal: true,
+            },
+          },
+        },
+      });
+
+      if (!participant) {
+        return reply.code(404).send({ error: "not_found", message: "Participant not found" });
+      }
+
+      if (participant.bookingsClosed) {
+        return reply.code(400).send({
+          error: "bookings_closed",
+          message: "This animal is no longer accepting bookings",
+        });
+      }
+
+      const maxBookings =
+        participant.maxBookingsOverride ?? participant.program.defaultMaxBookingsPerAnimal;
+
+      if (maxBookings !== null) {
+        const currentBookings = participant.bookingsReceived || 0;
+        if (currentBookings >= maxBookings) {
+          return reply.code(400).send({
+            error: "no_availability",
+            message: "Maximum bookings reached for this animal",
+          });
+        }
+      }
+
+      // Atomically increment bookingsReceived
+      const updated = await prisma.animalProgramParticipant.update({
+        where: { id: participantId },
+        data: {
+          bookingsReceived: {
+            increment: 1,
+          },
+        },
+        select: {
+          bookingsReceived: true,
+          maxBookingsOverride: true,
+          program: {
+            select: {
+              defaultMaxBookingsPerAnimal: true,
+            },
+          },
+        },
+      });
+
+      const currentBookings = updated.bookingsReceived;
+      const finalMaxBookings =
+        updated.maxBookingsOverride ?? updated.program.defaultMaxBookingsPerAnimal;
+      const availableSlots = finalMaxBookings !== null ? finalMaxBookings - currentBookings : null;
+
+      return reply.send({
+        success: true,
+        currentBookings,
+        availableSlots,
+      });
+    } catch (err: any) {
+      req.log.error({ err, tenantId, participantId }, "Failed to book participant slot");
+      return reply.code(500).send({ error: "server_error", message: "Failed to book slot" });
     }
   });
 

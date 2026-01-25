@@ -2,7 +2,7 @@
 // CRUD API endpoints for breeder service listings (training, stud services, etc.)
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import type { ListingType } from "@prisma/client";
+import type { ListingType, BreedingGuaranteeType } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
@@ -36,6 +36,17 @@ interface ServiceListingInput {
   images?: string[];
   videoUrl?: string;
   metadata?: Record<string, unknown>;
+
+  // Stud Service fields (P1 Sprint)
+  stallionId?: number;
+  seasonName?: string;
+  seasonStart?: string; // ISO date
+  seasonEnd?: string; // ISO date
+  maxBookings?: number;
+  bookingsClosed?: boolean;
+  breedingMethods?: string[];
+  defaultGuarantee?: string; // BreedingGuaranteeType
+  horseServiceData?: Record<string, unknown>;
 }
 
 interface ServiceListingResponse {
@@ -58,6 +69,18 @@ interface ServiceListingResponse {
   metadata: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
+
+  // Stud Service fields (P1 Sprint)
+  stallionId?: number | null;
+  seasonName?: string | null;
+  seasonStart?: string | null;
+  seasonEnd?: string | null;
+  maxBookings?: number | null;
+  bookingsReceived?: number;
+  bookingsClosed?: boolean;
+  breedingMethods?: string[];
+  defaultGuarantee?: string | null;
+  horseServiceData?: Record<string, unknown> | null;
 }
 
 // ============================================================================
@@ -98,6 +121,17 @@ function toServiceResponse(listing: any): ServiceListingResponse {
     metadata: listing.metadata as Record<string, unknown> | null,
     createdAt: listing.createdAt.toISOString(),
     updatedAt: listing.updatedAt.toISOString(),
+    // Stud Service fields
+    stallionId: listing.stallionId,
+    seasonName: listing.seasonName,
+    seasonStart: listing.seasonStart?.toISOString() || null,
+    seasonEnd: listing.seasonEnd?.toISOString() || null,
+    maxBookings: listing.maxBookings,
+    bookingsReceived: listing.bookingsReceived,
+    bookingsClosed: listing.bookingsClosed,
+    breedingMethods: listing.breedingMethods,
+    defaultGuarantee: listing.defaultGuarantee,
+    horseServiceData: listing.horseServiceData as Record<string, unknown> | null,
   };
 }
 
@@ -199,6 +233,16 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       images,
       videoUrl,
       metadata,
+      // Stud Service fields (P1 Sprint)
+      stallionId,
+      seasonName,
+      seasonStart,
+      seasonEnd,
+      maxBookings,
+      bookingsClosed,
+      breedingMethods,
+      defaultGuarantee,
+      horseServiceData,
     } = req.body;
 
     // Validate required fields
@@ -234,6 +278,16 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         videoUrl: videoUrl?.trim() || null,
         metadata: metadata ? (metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
         status: "DRAFT",
+        // Stud Service fields (P1 Sprint)
+        seasonName: seasonName?.trim() || null,
+        seasonStart: seasonStart ? new Date(seasonStart) : null,
+        seasonEnd: seasonEnd ? new Date(seasonEnd) : null,
+        maxBookings: maxBookings ?? null,
+        bookingsClosed: bookingsClosed ?? false,
+        breedingMethods: breedingMethods || [],
+        defaultGuarantee: (defaultGuarantee as BreedingGuaranteeType) || null,
+        horseServiceData: horseServiceData ? (horseServiceData as Prisma.InputJsonValue) : Prisma.JsonNull,
+        ...(stallionId !== undefined && { stallionId: stallionId ?? null }),
       },
     });
 
@@ -291,6 +345,16 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       images,
       videoUrl,
       metadata,
+      // Stud Service fields (P1 Sprint)
+      stallionId,
+      seasonName,
+      seasonStart,
+      seasonEnd,
+      maxBookings,
+      bookingsClosed,
+      breedingMethods,
+      defaultGuarantee,
+      horseServiceData,
     } = req.body;
 
     // Validate listing type if provided
@@ -316,6 +380,17 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     if (images !== undefined) updateData.images = images ? (images as Prisma.InputJsonValue) : Prisma.JsonNull;
     if (videoUrl !== undefined) updateData.videoUrl = videoUrl?.trim() || null;
     if (metadata !== undefined) updateData.metadata = metadata ? (metadata as Prisma.InputJsonValue) : Prisma.JsonNull;
+
+    // Stud Service fields (P1 Sprint)
+    if (seasonName !== undefined) updateData.seasonName = seasonName?.trim() || null;
+    if (seasonStart !== undefined) updateData.seasonStart = seasonStart ? new Date(seasonStart) : null;
+    if (seasonEnd !== undefined) updateData.seasonEnd = seasonEnd ? new Date(seasonEnd) : null;
+    if (maxBookings !== undefined) updateData.maxBookings = maxBookings ?? null;
+    if (bookingsClosed !== undefined) updateData.bookingsClosed = bookingsClosed;
+    if (breedingMethods !== undefined) updateData.breedingMethods = breedingMethods;
+    if (defaultGuarantee !== undefined) updateData.defaultGuarantee = (defaultGuarantee as BreedingGuaranteeType) || null;
+    if (horseServiceData !== undefined) updateData.horseServiceData = horseServiceData ? (horseServiceData as Prisma.InputJsonValue) : Prisma.JsonNull;
+    if (stallionId !== undefined) (updateData as any).stallionId = stallionId ?? null;
 
     const listing = await prisma.mktListingBreederService.update({
       where: { id },
@@ -440,5 +515,112 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     });
 
     return reply.code(204).send();
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /services/:id/availability - Get stud service availability (P1.8)
+  // --------------------------------------------------------------------------
+  app.get<{
+    Params: { id: string };
+  }>("/services/:id/availability", async (req, reply) => {
+    const tenantId = (req as any).tenantId;
+    if (!tenantId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    const listing = await prisma.mktListingBreederService.findFirst({
+      where: {
+        id,
+        tenantId,
+        listingType: { in: BREEDER_SERVICE_TYPES },
+      },
+    });
+
+    if (!listing) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const maxBookings = listing.maxBookings;
+    const currentBookings = listing.bookingsReceived || 0;
+    const availableSlots = maxBookings !== null ? maxBookings - currentBookings : null;
+
+    return reply.send({
+      maxBookings,
+      currentBookings,
+      availableSlots,
+      bookingsClosed: listing.bookingsClosed,
+      seasonStart: listing.seasonStart?.toISOString() || null,
+      seasonEnd: listing.seasonEnd?.toISOString() || null,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /services/:id/book - Increment booking count (P1.10)
+  // --------------------------------------------------------------------------
+  app.post<{
+    Params: { id: string };
+  }>("/services/:id/book", async (req, reply) => {
+    const tenantId = (req as any).tenantId;
+    if (!tenantId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    const listing = await prisma.mktListingBreederService.findFirst({
+      where: {
+        id,
+        tenantId,
+        listingType: { in: BREEDER_SERVICE_TYPES },
+      },
+    });
+
+    if (!listing) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Check if bookings are closed
+    if (listing.bookingsClosed) {
+      return reply.code(400).send({
+        success: false,
+        error: "Bookings closed",
+      });
+    }
+
+    // Check if slots are available
+    const currentBookings = listing.bookingsReceived || 0;
+    if (listing.maxBookings !== null && currentBookings >= listing.maxBookings) {
+      return reply.code(400).send({
+        success: false,
+        error: "No slots available",
+      });
+    }
+
+    // Increment bookings atomically
+    const updated = await prisma.mktListingBreederService.update({
+      where: { id },
+      data: {
+        bookingsReceived: {
+          increment: 1,
+        },
+      },
+    });
+
+    const newCurrentBookings = updated.bookingsReceived;
+    const availableSlots = updated.maxBookings !== null ? updated.maxBookings - newCurrentBookings : null;
+
+    return reply.send({
+      success: true,
+      currentBookings: newCurrentBookings,
+      availableSlots,
+    });
   });
 }
