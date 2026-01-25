@@ -528,6 +528,26 @@ enum PregnancyCheckMethod {
   @@schema("public")
 }
 
+enum BreedingGuaranteeType {
+  NO_GUARANTEE
+  LIVE_FOAL
+  STANDS_AND_NURSES
+  SIXTY_DAY_PREGNANCY
+  CERTIFIED_PREGNANT
+
+  @@schema("public")
+}
+
+enum GuaranteeResolution {
+  NOT_TRIGGERED
+  RETURN_BREEDING_GRANTED
+  PARTIAL_REFUND
+  FULL_REFUND
+  WAIVED
+
+  @@schema("public")
+}
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -1202,7 +1222,8 @@ model Tenant {
   emailChangeRequests   EmailChangeRequest[]
 
   // Communications Hub
-  drafts Draft[]
+  drafts          Draft[]
+  documentBundles DocumentBundle[]
 
   // Notifications
   notifications           Notification[]
@@ -1768,15 +1789,6 @@ model MktListingBreederService {
   viewCount    Int @default(0)
   inquiryCount Int @default(0)
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Stallion/Stud Service fields (for STUD_SERVICE listings)
-  // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
-  // ─────────────────────────────────────────────────────────────────────────────
-  stallionId       Int?
-  stallion         Animal? @relation("StallionStudListings", fields: [stallionId], references: [id], onDelete: SetNull)
-  maxBookings      Int? // Max breeding slots per season (null = unlimited)
-  bookingsReceived Int     @default(0) // Current booking count for the season
-
   // Metadata
   metadata Json?
 
@@ -1788,7 +1800,6 @@ model MktListingBreederService {
   @@index([status, publishedAt])
   @@index([listingType, category])
   @@index([tier])
-  @@index([stallionId])
   @@map("mkt_listing_breeder_service")
   @@schema("public")
 }
@@ -1949,6 +1960,7 @@ model Party {
   sentMessages         Message[]                  @relation("MessageSenderParty")
   createdTemplates     Template[]                 @relation("TemplateCreatedBy")
   autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
+  autoReplyRulesCreated AutoReplyRule[]           @relation("AutoReplyRuleCreatedBy")
   portalAccess         PortalAccess?              @relation("PortalAccessParty")
   portalInvites        PortalInvite[]             @relation("PortalInviteParty")
   schedulingBookings   SchedulingBooking[]        @relation("SchedulingBookingParty")
@@ -2449,10 +2461,6 @@ model Animal {
   // Mare reproductive history (horses only)
   mareReproductiveHistory MareReproductiveHistory?
 
-  // Stallion stud service listings (horses only)
-  // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
-  studServiceListings MktListingBreederService[] @relation("StallionStudListings")
-
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
   // ─────────────────────────────────────────────────────────────────────────────
@@ -2634,6 +2642,29 @@ model MktListingIndividualAnimal {
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
 
+  // ─── Stud Service Fields (P1 Sprint) ────────────────────────────────
+  // Applied when templateType = "STUD_SERVICES"
+  // For standalone individual animal stud service listings
+
+  // Season Management
+  seasonName  String?   @db.VarChar(100)
+  seasonStart DateTime?
+  seasonEnd   DateTime?
+
+  // Breeding Details
+  breedingMethods      String[]                  @default([])
+  defaultGuaranteeType BreedingGuaranteeType?
+
+  // Booking Management
+  bookingFeeCents  Int?
+  maxBookings      Int?
+  bookingsReceived Int     @default(0)
+  bookingsClosed   Boolean @default(false)
+
+  // Mare Requirements
+  healthCertRequired Boolean  @default(false)
+  requiredTests      String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2692,6 +2723,27 @@ model MktListingAnimalProgram {
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
 
+  // ─── Stud Service Program Defaults (P1 Sprint) ──────────────────────
+  // Applied when templateType = "STUD_SERVICES"
+  // These are program-level defaults that can be overridden per animal
+
+  // Season Management
+  seasonName  String?   @db.VarChar(100)
+  seasonStart DateTime?
+  seasonEnd   DateTime?
+
+  // Breeding Details
+  breedingMethods      String[]                  @default([])
+  defaultGuaranteeType BreedingGuaranteeType?
+
+  // Default Booking Settings (per animal)
+  defaultBookingFeeCents      Int?
+  defaultMaxBookingsPerAnimal Int?
+
+  // Mare Requirements
+  healthCertRequired Boolean  @default(false)
+  requiredTests      String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2734,6 +2786,17 @@ model AnimalProgramParticipant {
   inquiryCount  Int       @default(0)
   lastViewedAt  DateTime?
   lastInquiryAt DateTime?
+
+  // ─── Stud Service Per-Animal Tracking & Overrides (P1 Sprint) ───────
+  // Applied when program templateType = "STUD_SERVICES"
+
+  // Booking tracking (per animal in program)
+  bookingsReceived Int     @default(0)
+  bookingsClosed   Boolean @default(false)
+
+  // Optional overrides for program defaults
+  maxBookingsOverride Int?
+  bookingFeeOverride  Int? // In cents
 
   addedAt   DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3600,6 +3663,26 @@ model BreedingAttempt {
   success Boolean?
   notes   String?
   data    Json?
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Guarantee Tracking (P1 Sprint - P1.3)
+  // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md Section 3.2
+  // ─────────────────────────────────────────────────────────────────────────────
+  guaranteeType          BreedingGuaranteeType?
+  guaranteeExpiresAt     DateTime?
+  guaranteeTriggered     Boolean   @default(false)
+  guaranteeTriggeredAt   DateTime?
+  guaranteeReason        String?   // "Stillborn", "Failed to conceive"
+  guaranteeResolution    GuaranteeResolution?
+
+  // Return Breeding (if guarantee triggered)
+  returnBreedingGranted    Boolean   @default(false)
+  returnBreedingExpiresAt  DateTime?
+  returnBreedingUsedAt     DateTime?
+
+  // Fee snapshot at time of breeding
+  agreedFeeCents         Int?
+  feePaidCents           Int?      @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5022,13 +5105,28 @@ enum EmailSendCategory {
 }
 
 enum AutoReplyTriggerType {
+  // Legacy triggers
   dm_first_message_from_party
   dm_after_hours
+
+  // New comprehensive triggers
+  email_received       // Instant acknowledgment for emails
+  time_based          // Away messages with date range
+  keyword_match       // FAQ responses based on keywords
+  business_hours      // Out of office during non-business hours
 
   @@schema("public")
 }
 
-enum AutoReplyStatus {
+enum AutoReplyRuleStatus {
+  active
+  paused
+  archived
+
+  @@schema("public")
+}
+
+enum AutoReplyLogStatus {
   sent
   skipped
   failed
@@ -5088,22 +5186,40 @@ model AutoReplyRule {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channel TemplateChannel
-  enabled Boolean         @default(true)
+  name        String
+  description String?          @db.Text
+  channel     TemplateChannel
+  status      AutoReplyRuleStatus @default(active)
+
+  // Legacy field (kept for backwards compatibility)
+  enabled Boolean @default(true)
 
   templateId Int
   template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  triggerType       AutoReplyTriggerType
-  cooldownMinutes   Int                  @default(60)
-  businessHoursJson Json?
+  triggerType AutoReplyTriggerType
+
+  // Trigger configuration (stored as JSON)
+  keywordConfigJson   Json? // KeywordMatchConfig for keyword_match trigger
+  timeBasedConfigJson Json? // TimeBasedConfig for time_based trigger
+  businessHoursJson   Json? // BusinessHoursConfig for business_hours trigger
+  cooldownMinutes     Int   @default(60) // Legacy field
+
+  // Execution tracking
+  executionCount Int       @default(0)
+  lastExecutedAt DateTime?
+
+  // Audit fields
+  createdByPartyId Int?
+  createdByParty   Party? @relation("AutoReplyRuleCreatedBy", fields: [createdByPartyId], references: [id], onDelete: SetNull)
 
   logs AutoReplyLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([tenantId, channel, enabled])
+  @@index([tenantId, channel, status])
+  @@index([tenantId, triggerType])
   @@index([templateId])
   @@schema("public")
 }
@@ -5125,8 +5241,8 @@ model AutoReplyLog {
 
   templateId Int?
 
-  status AutoReplyStatus
-  reason String?         @db.Text
+  status AutoReplyLogStatus
+  reason String?            @db.Text
 
   createdAt DateTime @default(now())
 
@@ -5457,6 +5573,9 @@ model Document {
   // Trait history entry links
   traitEntries AnimalTraitEntry[]
 
+  // Document bundle links
+  bundleItems DocumentBundleItem[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -5466,6 +5585,53 @@ model Document {
   @@index([scope, invoiceId])
   @@index([scope, contractId])
   @@index([kind])
+  @@schema("public")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Document Bundles - Named collections of documents for email attachments
+// ────────────────────────────────────────────────────────────────────────────
+
+enum BundleStatus {
+  active
+  archived
+
+  @@schema("public")
+}
+
+model DocumentBundle {
+  id          Int          @id @default(autoincrement())
+  tenantId    Int
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String       // e.g., "Go Home Document Bundle"
+  description String?      @db.Text
+  status      BundleStatus @default(active)
+
+  // Relations
+  items DocumentBundleItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@schema("public")
+}
+
+model DocumentBundleItem {
+  id         Int      @id @default(autoincrement())
+  bundleId   Int
+  bundle     DocumentBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  documentId Int
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  sortOrder Int      @default(0)
+  addedAt   DateTime @default(now())
+
+  @@unique([bundleId, documentId]) // Prevent duplicate documents in same bundle
+  @@index([bundleId])
+  @@index([documentId])
   @@schema("public")
 }
 

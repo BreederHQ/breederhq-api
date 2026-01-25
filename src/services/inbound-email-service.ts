@@ -150,3 +150,44 @@ export function generateSlugFromName(name: string): string {
     .replace(/^-|-$/g, "")
     .substring(0, 30);
 }
+
+/**
+ * Reserved email slugs that cannot be used by tenants
+ */
+const RESERVED_SLUGS = [
+  "reply",
+  "noreply",
+  "notifications",
+  "admin",
+  "support",
+  "info",
+  "contact",
+  "help",
+  "abuse",
+  "postmaster",
+];
+
+/**
+ * Validate an inbound email slug for format and reserved words.
+ *
+ * @param slug - The slug to validate
+ * @returns Validation result with reason if invalid
+ */
+export function validateInboundSlug(slug: string): { valid: boolean; reason?: string } {
+  // Length check
+  if (slug.length < 3 || slug.length > 30) {
+    return { valid: false, reason: "Must be 3-30 characters" };
+  }
+
+  // Format check (alphanumeric and hyphens only, no leading/trailing hyphens)
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug)) {
+    return { valid: false, reason: "Only lowercase letters, numbers, and hyphens allowed" };
+  }
+
+  // Reserved words check
+  if (RESERVED_SLUGS.includes(slug.toLowerCase())) {
+    return { valid: false, reason: "This address is reserved" };
+  }
+
+  return { valid: true };
+}
