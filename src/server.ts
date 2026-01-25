@@ -514,6 +514,8 @@ import settingsRoutes from "./routes/settings.js"; // User settings (genetics di
 import titlesRoutes from "./routes/titles.js"; // Title definitions and animal titles
 import competitionsRoutes from "./routes/competitions.js"; // Competition entry tracking
 import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
+import dashboardConfigRoutes from "./routes/dashboard-config.js"; // Dashboard config & presets
+import horseDashboardRoutes from "./routes/horse-dashboard.js"; // Horse-specific dashboard widgets
 import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
 import templatesRoutes from "./routes/templates.js"; // Email/message templates
 import contractsRoutes from "./routes/contracts.js"; // Contract e-signatures (platform)
@@ -532,6 +534,7 @@ import serviceProviderRoutes from "./routes/service-provider.js"; // Service Pro
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
+import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
@@ -586,6 +589,7 @@ app.register(
     api.register(marketplaceAbuseReportsRoutes, { prefix: "/marketplace/listings" }); // /api/v1/marketplace/listings/report (Abuse reporting)
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
     api.register(marketplaceAdminModerationRoutes, { prefix: "/marketplace/admin" }); // /api/v1/marketplace/admin/* (Admin moderation queue)
+    api.register(marketplaceBreedsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeds/* (Public breeds search)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -914,7 +918,9 @@ app.register(
     });
 
     // Dashboard Mission Control
-    api.register(dashboardRoutes);     // /api/v1/dashboard/*
+    api.register(dashboardRoutes);       // /api/v1/dashboard/*
+    api.register(dashboardConfigRoutes); // /api/v1/dashboard/config, /api/v1/dashboard/presets/*
+    api.register(horseDashboardRoutes);  // /api/v1/dashboard/horse/* (horse-specific widgets)
 
     // Platform-wide search (Command Palette)
     api.register(searchRoutes);        // /api/v1/search

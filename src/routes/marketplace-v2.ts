@@ -26,6 +26,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import { MarketplaceListingStatus } from "@prisma/client";
 import prisma from "../prisma.js";
 
 // ============================================================================
@@ -114,7 +115,7 @@ export default async function marketplaceV2Routes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.directAnimalListing.findMany({
+        prisma.mktListingIndividualAnimal.findMany({
           where,
           skip,
           take: limit,
@@ -131,7 +132,7 @@ export default async function marketplaceV2Routes(
             },
           },
         }),
-        prisma.directAnimalListing.count({ where }),
+        prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
       reply.send({
@@ -161,7 +162,7 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      const listing = await prisma.directAnimalListing.findFirst({
+      const listing = await prisma.mktListingIndividualAnimal.findFirst({
         where: { id, tenantId },
         include: {
           animal: {
@@ -263,14 +264,14 @@ export default async function marketplaceV2Routes(
         animalId,
         slug,
         templateType,
-        status,
+        status: status as MarketplaceListingStatus,
         ...rest,
       };
 
       let listing;
       if (id) {
         // Update existing
-        listing = await prisma.directAnimalListing.update({
+        listing = await prisma.mktListingIndividualAnimal.update({
           where: { id },
           data,
           include: {
@@ -287,7 +288,7 @@ export default async function marketplaceV2Routes(
         });
       } else {
         // Create new
-        listing = await prisma.directAnimalListing.create({
+        listing = await prisma.mktListingIndividualAnimal.create({
           data,
           include: {
             animal: {
@@ -331,9 +332,9 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      await prisma.directAnimalListing.updateMany({
+      await prisma.mktListingIndividualAnimal.updateMany({
         where: { id, tenantId },
-        data: { status },
+        data: { status: status as MarketplaceListingStatus },
       });
 
       reply.send({ success: true });
@@ -358,7 +359,7 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      await prisma.directAnimalListing.deleteMany({
+      await prisma.mktListingIndividualAnimal.deleteMany({
         where: { id, tenantId },
       });
 
@@ -1654,7 +1655,7 @@ export default async function marketplaceV2Routes(
       const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
       // Get all listings with stats
-      const listings = await prisma.directAnimalListing.findMany({
+      const listings = await prisma.mktListingIndividualAnimal.findMany({
         where: { tenantId },
         select: {
           id: true,
@@ -2181,7 +2182,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.directAnimalListing.findMany({
+        prisma.mktListingIndividualAnimal.findMany({
           where,
           orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
           skip: offset,
@@ -2216,7 +2217,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             },
           },
         }),
-        prisma.directAnimalListing.count({ where }),
+        prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
       const items = listings.map((listing) => {
@@ -2269,7 +2270,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
         const { slug } = req.params;
 
         // Fetch the listing with animal and all related data
-        const listing = await prisma.directAnimalListing.findUnique({
+        const listing = await prisma.mktListingIndividualAnimal.findUnique({
           where: { slug },
           include: {
             tenant: {
@@ -2543,7 +2544,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
         }
 
         // Update view count (async, don't wait)
-        prisma.directAnimalListing.update({
+        prisma.mktListingIndividualAnimal.update({
           where: { id: listing.id },
           data: {
             viewCount: { increment: 1 },

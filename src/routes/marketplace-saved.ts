@@ -20,11 +20,20 @@ import { parseVerifiedSession } from "../utils/session.js";
 import prisma from "../prisma.js";
 
 // Valid listing types
-const VALID_LISTING_TYPES = ["offspring_group", "animal", "service"] as const;
+// - individual_animal: Individual animal listings (MktListingIndividualAnimal table)
+const VALID_LISTING_TYPES = ["offspring_group", "individual_animal", "service", "animal_program", "breeder_storefront"] as const;
 type ListingType = typeof VALID_LISTING_TYPES[number];
+
+// Types that use string identifiers (slugs) instead of numeric IDs
+const STRING_ID_LISTING_TYPES = ["breeder_storefront"] as const;
+type StringIdListingType = typeof STRING_ID_LISTING_TYPES[number];
 
 function isValidListingType(type: unknown): type is ListingType {
   return typeof type === "string" && VALID_LISTING_TYPES.includes(type as ListingType);
+}
+
+function usesStringId(type: ListingType): type is StringIdListingType {
+  return STRING_ID_LISTING_TYPES.includes(type as StringIdListingType);
 }
 
 /**
@@ -172,26 +181,80 @@ export default async function marketplaceSavedRoutes(
                 breederSlug: offspringGroup.tenant?.slug,
               };
             }
-          } else if (item.listingType === "animal" && item.listingId) {
-            const animal = await prisma.animal.findUnique({
+          } else if (item.listingType === "individual_animal" && item.listingId) {
+            // Individual animal listings - MktListingIndividualAnimal table
+            const individualListing = await prisma.mktListingIndividualAnimal.findUnique({
+              where: { id: item.listingId },
+              include: {
+                animal: true,
+                tenant: true,
+              },
+            });
+            if (individualListing) {
+              listing = {
+                title: individualListing.title || individualListing.animal?.name || "Animal Listing",
+                slug: individualListing.slug,
+                coverImageUrl: individualListing.animal?.photoUrl,
+                status: individualListing.status || "DRAFT",
+                isAvailable: individualListing.status === "LIVE",
+                priceCents: individualListing.priceCents ? Number(individualListing.priceCents) : null,
+                priceMinCents: individualListing.priceMinCents ? Number(individualListing.priceMinCents) : null,
+                priceMaxCents: individualListing.priceMaxCents ? Number(individualListing.priceMaxCents) : null,
+                priceModel: individualListing.priceModel,
+                species: individualListing.animal?.species,
+                breed: individualListing.animal?.breed,
+                breederName: individualListing.tenant?.name,
+                breederSlug: individualListing.tenant?.slug,
+                templateType: individualListing.templateType,
+              };
+            }
+          } else if (item.listingType === "animal_program" && item.listingId) {
+            const program = await prisma.mktListingAnimalProgram.findUnique({
               where: { id: item.listingId },
               include: {
                 tenant: true,
-                publicListing: true,
+                _count: { select: { participants: true } },
               },
             });
-            if (animal) {
+            if (program) {
               listing = {
-                title: animal.name,
-                slug: animal.publicListing?.urlSlug || null,
-                coverImageUrl: animal.photoUrl,
-                status: animal.publicListing?.status || "DRAFT",
-                isAvailable: animal.publicListing?.status === "LIVE",
-                priceCents: animal.publicListing?.priceCents ? Number(animal.publicListing.priceCents) : null,
-                species: animal.species,
-                breed: animal.breed,
-                breederName: animal.tenant?.name,
-                breederSlug: animal.tenant?.slug,
+                title: program.name,
+                slug: program.slug,
+                coverImageUrl: program.coverImageUrl,
+                status: program.status,
+                isAvailable: program.status === "LIVE",
+                templateType: program.templateType,
+                headline: program.headline,
+                priceCents: program.defaultPriceCents ? Number(program.defaultPriceCents) : null,
+                priceMinCents: program.defaultPriceMinCents ? Number(program.defaultPriceMinCents) : null,
+                priceMaxCents: program.defaultPriceMaxCents ? Number(program.defaultPriceMaxCents) : null,
+                participantCount: program._count.participants,
+                breederName: program.tenant?.name,
+                breederSlug: program.tenant?.slug,
+              };
+            }
+          } else if (item.listingType === "breeder_storefront" && item.listingId) {
+            const tenant = await prisma.tenant.findUnique({
+              where: { id: item.listingId },
+              include: {
+                _count: { select: { animals: true } },
+              },
+            });
+            if (tenant) {
+              // Build location string
+              const locationParts = [tenant.city, tenant.region].filter(Boolean);
+              const location = locationParts.length > 0 ? locationParts.join(", ") : null;
+
+              listing = {
+                title: tenant.name,
+                slug: tenant.slug,
+                coverImageUrl: null, // Tenant doesn't have a cover image in the schema
+                status: "active",
+                isAvailable: true,
+                location,
+                animalCount: tenant._count.animals,
+                breederName: tenant.name,
+                breederSlug: tenant.slug,
               };
             }
           }
@@ -236,7 +299,7 @@ export default async function marketplaceSavedRoutes(
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const bhqUserId = (req as any).bhqUserId;
-    const { listingType, listingId } = req.body as { listingType?: string; listingId?: number };
+    const { listingType, listingId: rawListingId } = req.body as { listingType?: string; listingId?: number | string };
 
     if (!isValidListingType(listingType)) {
       return reply.code(400).send({
@@ -245,11 +308,27 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
-    if (!listingId || typeof listingId !== "number") {
-      return reply.code(400).send({
-        error: "invalid_listing_id",
-        message: "listingId is required and must be a number.",
-      });
+    // Validate listingId based on type
+    // breeder_storefront accepts string slugs (resolved to tenant ID), others use numeric IDs
+    let listingId: number;
+    if (usesStringId(listingType)) {
+      // For breeder_storefront, accept slug and resolve to tenant ID
+      if (!rawListingId || (typeof rawListingId !== "string" && typeof rawListingId !== "number")) {
+        return reply.code(400).send({
+          error: "invalid_listing_id",
+          message: "listingId is required (slug or ID) for breeder_storefront.",
+        });
+      }
+      // Will be resolved to tenant ID below
+      listingId = 0; // Placeholder, will be set after lookup
+    } else {
+      if (!rawListingId || typeof rawListingId !== "number") {
+        return reply.code(400).send({
+          error: "invalid_listing_id",
+          message: "listingId is required and must be a number.",
+        });
+      }
+      listingId = rawListingId;
     }
 
     try {
@@ -268,12 +347,37 @@ export default async function marketplaceSavedRoutes(
           select: { id: true },
         });
         listingExists = !!listing;
-      } else if (listingType === "animal") {
-        const listing = await prisma.animal.findUnique({
+      } else if (listingType === "individual_animal") {
+        // Individual animal listings - lookup in MktListingIndividualAnimal table
+        const listing = await prisma.mktListingIndividualAnimal.findUnique({
           where: { id: listingId },
           select: { id: true },
         });
         listingExists = !!listing;
+      } else if (listingType === "animal_program") {
+        const listing = await prisma.mktListingAnimalProgram.findUnique({
+          where: { id: listingId },
+          select: { id: true },
+        });
+        listingExists = !!listing;
+      } else if (listingType === "breeder_storefront") {
+        // breeder_storefront: look up by slug or ID, store tenant ID
+        let tenant: { id: number } | null = null;
+        if (typeof rawListingId === "string") {
+          tenant = await prisma.tenant.findUnique({
+            where: { slug: rawListingId },
+            select: { id: true },
+          });
+        } else if (typeof rawListingId === "number") {
+          tenant = await prisma.tenant.findUnique({
+            where: { id: rawListingId },
+            select: { id: true },
+          });
+        }
+        if (tenant) {
+          listingId = tenant.id; // Store tenant ID
+          listingExists = true;
+        }
       }
 
       if (!listingExists) {
@@ -324,7 +428,7 @@ export default async function marketplaceSavedRoutes(
    *
    * Params:
    *   - listingType: string - Type of listing
-   *   - listingId: number - ID of listing to unsave
+   *   - listingId: number or string (slug for breeder_storefront)
    */
   app.delete("/saved/:listingType/:listingId", {
     preHandler: requireBhqAuth,
@@ -332,7 +436,7 @@ export default async function marketplaceSavedRoutes(
   }, async (req, reply) => {
     const bhqUserId = (req as any).bhqUserId;
     const listingType = (req.params as any).listingType;
-    const listingId = parseInt((req.params as any).listingId, 10);
+    const rawListingId = (req.params as any).listingId;
 
     if (!isValidListingType(listingType)) {
       return reply.code(400).send({
@@ -341,11 +445,35 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
-    if (isNaN(listingId)) {
-      return reply.code(400).send({
-        error: "invalid_listing_id",
-        message: "Invalid listing ID.",
-      });
+    // Resolve listingId - for breeder_storefront, accept slug and resolve to tenant ID
+    let listingId: number;
+    if (usesStringId(listingType)) {
+      // Try to parse as number first (in case they pass the ID directly)
+      const parsedId = parseInt(rawListingId, 10);
+      if (!isNaN(parsedId)) {
+        listingId = parsedId;
+      } else {
+        // It's a slug, look up the tenant ID
+        const tenant = await prisma.tenant.findUnique({
+          where: { slug: rawListingId },
+          select: { id: true },
+        });
+        if (!tenant) {
+          return reply.code(404).send({
+            error: "not_saved",
+            message: "Listing is not in your saved items.",
+          });
+        }
+        listingId = tenant.id;
+      }
+    } else {
+      listingId = parseInt(rawListingId, 10);
+      if (isNaN(listingId)) {
+        return reply.code(400).send({
+          error: "invalid_listing_id",
+          message: "Invalid listing ID.",
+        });
+      }
     }
 
     try {
@@ -382,7 +510,7 @@ export default async function marketplaceSavedRoutes(
    *
    * Params:
    *   - listingType: string - Type of listing
-   *   - listingId: number - ID of listing to check
+   *   - listingId: number or string (slug for breeder_storefront)
    *
    * Returns { saved: boolean }
    */
@@ -392,7 +520,7 @@ export default async function marketplaceSavedRoutes(
   }, async (req, reply) => {
     const bhqUserId = (req as any).bhqUserId;
     const listingType = (req.params as any).listingType;
-    const listingId = parseInt((req.params as any).listingId, 10);
+    const rawListingId = (req.params as any).listingId;
 
     if (!isValidListingType(listingType)) {
       return reply.code(400).send({
@@ -401,11 +529,32 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
-    if (isNaN(listingId)) {
-      return reply.code(400).send({
-        error: "invalid_listing_id",
-        message: "Invalid listing ID.",
-      });
+    // Resolve listingId - for breeder_storefront, accept slug and resolve to tenant ID
+    let listingId: number;
+    if (usesStringId(listingType)) {
+      const parsedId = parseInt(rawListingId, 10);
+      if (!isNaN(parsedId)) {
+        listingId = parsedId;
+      } else {
+        // It's a slug, look up the tenant ID
+        const tenant = await prisma.tenant.findUnique({
+          where: { slug: rawListingId },
+          select: { id: true },
+        });
+        if (!tenant) {
+          // Tenant not found, so it can't be saved
+          return reply.send({ ok: true, saved: false });
+        }
+        listingId = tenant.id;
+      }
+    } else {
+      listingId = parseInt(rawListingId, 10);
+      if (isNaN(listingId)) {
+        return reply.code(400).send({
+          error: "invalid_listing_id",
+          message: "Invalid listing ID.",
+        });
+      }
     }
 
     try {
