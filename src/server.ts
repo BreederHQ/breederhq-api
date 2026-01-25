@@ -518,11 +518,14 @@ import dashboardConfigRoutes from "./routes/dashboard-config.js"; // Dashboard c
 import horseDashboardRoutes from "./routes/horse-dashboard.js"; // Horse-specific dashboard widgets
 import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
 import templatesRoutes from "./routes/templates.js"; // Email/message templates
+import autoRepliesRoutes from "./routes/auto-replies.js"; // Auto-reply rules for email/DM
 import contractsRoutes from "./routes/contracts.js"; // Contract e-signatures (platform)
 import contractTemplatesRoutes from "./routes/contract-templates.js"; // Contract templates management
 import portalContractsRoutes from "./routes/portal-contracts.js"; // Contract signing (portal)
 import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
+import documentBundlesRoutes from "./routes/document-bundles.js"; // Document Bundles for email attachments
+import documentsRoutes from "./routes/documents.js"; // General documents listing
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
@@ -930,6 +933,7 @@ app.register(
     api.register(partiesRoutes);       // /api/v1/parties/*
     api.register(partyCrmRoutes);      // /api/v1/parties/:partyId/notes|events|milestones|emails|activity
     api.register(templatesRoutes);     // /api/v1/templates/* Email/message templates
+    api.register(autoRepliesRoutes);   // /api/v1/auto-replies/* Auto-reply rules
     api.register(contractsRoutes);     // /api/v1/contracts/* Contract e-signatures
     api.register(contractTemplatesRoutes); // /api/v1/contract-templates/* Contract template management
     api.register(organizationsRoutes); // /api/v1/organizations/*
@@ -959,6 +963,8 @@ app.register(
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(communicationsRoutes); // /api/v1/communications/* Communications Hub
     api.register(draftsRoutes);         // /api/v1/drafts/* Draft messages/emails
+    api.register(documentBundlesRoutes); // /api/v1/document-bundles/* Document bundles for email attachments
+    api.register(documentsRoutes);      // /api/v1/documents/* General documents listing
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management

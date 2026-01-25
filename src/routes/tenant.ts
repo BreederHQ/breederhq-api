@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { getActorId } from "../utils/session.js";
 import { sendTenantWelcomeEmail } from "../services/email-service.js";
+import { generateSlugFromName, validateInboundSlug } from "../services/inbound-email-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -578,6 +579,124 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
+  /** GET /tenants/:id/inbound-email - Get tenant's inbound email address */
+  fastify.get<{ Params: { id: string } }>("/tenants/:id/inbound-email", async (req, reply) => {
+    try {
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { inboundEmailSlug: true },
+      });
+
+      if (!tenant || !tenant.inboundEmailSlug) {
+        return reply.status(404).send({ error: "not_found" });
+      }
+
+      return reply.send({
+        slug: tenant.inboundEmailSlug,
+        email: `${tenant.inboundEmailSlug}@mail.breederhq.com`,
+        isCustomized: false, // Track this later if needed
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** PATCH /tenants/:id/inbound-email - Update tenant's inbound email slug */
+  fastify.patch<{
+    Params: { id: string };
+    Body: { slug: string };
+  }>("/tenants/:id/inbound-email", async (req, reply) => {
+    try {
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      const { slug } = req.body;
+      if (!slug || typeof slug !== "string") {
+        return reply.status(400).send({ error: "bad_request", detail: "Missing or invalid slug" });
+      }
+
+      // Validate format
+      const validation = validateInboundSlug(slug);
+      if (!validation.valid) {
+        return reply.status(400).send({ error: "invalid_format", reason: validation.reason });
+      }
+
+      // Check uniqueness
+      const existing = await prisma.tenant.findFirst({
+        where: { inboundEmailSlug: slug, NOT: { id: tenantId } },
+      });
+
+      if (existing) {
+        return reply.status(409).send({ error: "already_in_use" });
+      }
+
+      // Update
+      const updated = await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { inboundEmailSlug: slug },
+      });
+
+      return reply.send({
+        slug: updated.inboundEmailSlug,
+        email: `${updated.inboundEmailSlug}@mail.breederhq.com`,
+        isCustomized: true,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** GET /tenants/:id/inbound-email/check-availability - Check if slug is available */
+  fastify.get<{
+    Params: { id: string };
+    Querystring: { slug: string };
+  }>("/tenants/:id/inbound-email/check-availability", async (req, reply) => {
+    try {
+      const tenantId = Number(req.params.id);
+      if (!Number.isFinite(tenantId)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      const { slug } = req.query;
+      if (!slug || typeof slug !== "string") {
+        return reply.send({ available: false, reason: "Missing slug parameter" });
+      }
+
+      // Validate format
+      const validation = validateInboundSlug(slug);
+      if (!validation.valid) {
+        return reply.send({ available: false, reason: validation.reason });
+      }
+
+      // Check uniqueness
+      const existing = await prisma.tenant.findFirst({
+        where: { inboundEmailSlug: slug, NOT: { id: tenantId } },
+      });
+
+      if (existing) {
+        return reply.send({ available: false, reason: "already_in_use" });
+      }
+
+      return reply.send({
+        available: true,
+        slug,
+        email: `${slug}@mail.breederhq.com`,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
   /** PATCH /tenants/:id/billing */
   fastify.patch<{
     Params: { id: string };
@@ -1023,6 +1142,29 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
             primaryEmail: tenant.primaryEmail ?? null,
           },
           include: { billing: true },
+        });
+
+        // Generate unique inbound email slug for the new tenant
+        const baseSlug = generateSlugFromName(tenant.name);
+        let finalSlug = baseSlug;
+        let suffix = 2;
+
+        // Find unique slug by checking for conflicts
+        while (suffix < 100) {
+          const existing = await tx.tenant.findFirst({
+            where: { inboundEmailSlug: finalSlug },
+          });
+
+          if (!existing) break;
+
+          finalSlug = `${baseSlug}-${suffix}`;
+          suffix++;
+        }
+
+        // Update tenant with the unique slug
+        await tx.tenant.update({
+          where: { id: createdTenant.id },
+          data: { inboundEmailSlug: finalSlug },
         });
 
         // Prepare password hash if we have a temp password
