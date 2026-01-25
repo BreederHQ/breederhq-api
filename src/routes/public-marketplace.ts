@@ -626,13 +626,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       location?: string;
       priceMin?: string;
       priceMax?: string;
+      tenantSlug?: string;
       limit?: string;
       offset?: string;
     };
   }>("/direct-listings", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
-    const { search, species, breed, templateType, location, priceMin, priceMax } = req.query;
+    const { search, species, breed, templateType, location, priceMin, priceMax, tenantSlug } = req.query;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 24)));
     const offset = Math.max(0, Number(req.query.offset || 0));
 
@@ -643,6 +644,11 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     if (templateType) {
       where.templateType = templateType.toUpperCase();
+    }
+
+    // Filter by breeder tenant slug (for breeder storefront pages)
+    if (tenantSlug && tenantSlug.trim()) {
+      where.tenant = { ...where.tenant, marketplaceProfile: { slug: tenantSlug.trim() } };
     }
 
     if (species) {
@@ -1462,7 +1468,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const where: any = {
       tenantId: resolved.tenantId,
       status: "LIVE",
-      urlSlug: { not: null },
     };
 
     if (species) {
@@ -1929,6 +1934,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   // --------------------------------------------------------------------------
   app.get<{
     Querystring: {
+      tenantId?: string;
       type?: string;
       search?: string;
       city?: string;
@@ -1939,7 +1945,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   }>("/services", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
-    const { type, search, city, state } = req.query;
+    const { tenantId, type, search, city, state } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
 
     // Service listing types
@@ -1960,6 +1966,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       status: "LIVE",
       listingType: { in: serviceTypes },
     };
+
+    // Filter by tenant/breeder if provided (tenantId param is the tenant slug)
+    if (tenantId && tenantId.trim()) {
+      const normalizedSlug = tenantId.trim().toLowerCase();
+      const tenant = await prisma.tenant.findUnique({
+        where: { slug: normalizedSlug },
+        select: { id: true },
+      });
+      if (tenant) {
+        where.tenantId = tenant.id;
+      } else {
+        // Tenant not found - return empty results
+        return reply.send({ items: [], total: 0, page, limit });
+      }
+    }
 
     // Filter by specific type if provided
     if (type && serviceTypes.includes(type.toUpperCase())) {
@@ -2258,7 +2279,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // Build where clause - only LIVE status listings from public programs
     const where: any = {
       status: "LIVE",
-      urlSlug: { not: null },
       tenant: {
         organizations: {
           some: {

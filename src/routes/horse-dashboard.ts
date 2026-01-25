@@ -8,6 +8,9 @@
 // GET /api/v1/dashboard/horse/mare-performance   - Mare performance stats
 // GET /api/v1/dashboard/horse/stallion-calendar  - Stallion breeding calendar
 // GET /api/v1/dashboard/horse/genetic-overview   - Genetic intelligence data
+// GET /api/v1/dashboard/horse/stallion-revenue   - Stallion revenue tracking
+// GET /api/v1/dashboard/horse/foals-ytd         - Foals born year-to-date count
+// GET /api/v1/dashboard/horse/season-bookings   - Season stallion booking utilization
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
@@ -911,6 +914,235 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       });
     } catch (err) {
       console.error("Error fetching genetic overview:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * GET /api/v1/dashboard/horse/stallion-revenue
+   * Revenue tracking by stallion with booking status
+   * Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
+   */
+  app.get("/dashboard/horse/stallion-revenue", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const currentYear = new Date().getFullYear();
+      const yearStart = new Date(currentYear, 0, 1);
+
+      // Get stallions with breeding attempts, plans, and stud service listings
+      const stallions = await prisma.animal.findMany({
+        where: {
+          tenantId,
+          species: "HORSE",
+          sex: "MALE",
+          archived: false,
+          status: { in: ["ACTIVE", "BREEDING"] },
+        },
+        include: {
+          breedingAttemptsAsSire: {
+            where: {
+              attemptAt: { gte: yearStart },
+            },
+            orderBy: { attemptAt: "desc" },
+          },
+          breedingPlansAsSire: {
+            where: {
+              status: { notIn: ["CANCELED", "UNSUCCESSFUL"] },
+              createdAt: { gte: yearStart },
+            },
+          },
+          studServiceListings: {
+            where: {
+              status: "LIVE",
+            },
+            select: {
+              id: true,
+              priceCents: true,
+              maxBookings: true,
+              bookingsReceived: true,
+            },
+          },
+        },
+      });
+
+      // Type for stallion with included relations
+      type StallionWithRelations = (typeof stallions)[number];
+
+      // Calculate per-stallion stats
+      let totalRevenueCents = 0;
+      let totalBreedings = 0;
+      let completedBreedings = 0;
+
+      const byStallion = stallions.map((stallion: StallionWithRelations) => {
+        const attempts = stallion.breedingAttemptsAsSire;
+        const listing = stallion.studServiceListings?.[0]; // Primary active listing
+
+        // Count breedings
+        const breedingCount = attempts.length;
+        totalBreedings += breedingCount;
+
+        // Successful breedings (where outcome is positive)
+        const successfulBreedings = attempts.filter((a: { success: boolean | null }) => a.success === true).length;
+        completedBreedings += successfulBreedings;
+
+        // Success rate
+        const successRate =
+          breedingCount > 0 ? Math.round((successfulBreedings / breedingCount) * 100) : 0;
+
+        // Calculate revenue from completed breedings * stud fee
+        // This is an estimate; actual revenue tracking will come from transactions
+        const studFeeCents = listing?.priceCents || 0;
+        const revenueCents = successfulBreedings * studFeeCents;
+        totalRevenueCents += revenueCents;
+
+        // Available slots from listing
+        let availableSlots: number | undefined;
+        if (listing && listing.maxBookings !== null) {
+          availableSlots = Math.max(0, listing.maxBookings - (listing.bookingsReceived || 0));
+        }
+
+        return {
+          stallionId: stallion.id,
+          name: stallion.name,
+          photoUrl: stallion.photoUrl || undefined,
+          totalRevenueCents: revenueCents,
+          breedingCount,
+          successRate,
+          activeListingId: listing?.id,
+          availableSlots,
+        };
+      });
+
+      // Sort by revenue descending, then by breeding count
+      byStallion.sort((a, b) => {
+        if (b.totalRevenueCents !== a.totalRevenueCents) {
+          return b.totalRevenueCents - a.totalRevenueCents;
+        }
+        return b.breedingCount - a.breedingCount;
+      });
+
+      // Calculate average fee from stallions with active listings
+      const stallionsWithFees = stallions.filter(
+        (s: StallionWithRelations) => s.studServiceListings?.[0]?.priceCents
+      );
+      const avgFeeCents =
+        stallionsWithFees.length > 0
+          ? Math.round(
+              stallionsWithFees.reduce(
+                (sum: number, s: StallionWithRelations) => sum + (s.studServiceListings?.[0]?.priceCents || 0),
+                0
+              ) / stallionsWithFees.length
+            )
+          : 0;
+
+      return reply.send({
+        summary: {
+          totalRevenueCents,
+          totalBreedings,
+          completedBreedings,
+          avgFeeCents,
+        },
+        byStallion,
+        recentPayments: [], // TODO: Populate from future StallionBooking/Payment model
+      });
+    } catch (err) {
+      console.error("Error fetching stallion revenue:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * GET /api/v1/dashboard/horse/foals-ytd
+   * Returns count of foals born year-to-date for the horse breeder KPI tile
+   */
+  app.get("/dashboard/horse/foals-ytd", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const currentYear = new Date().getFullYear();
+      const yearStart = new Date(currentYear, 0, 1);
+
+      // Count foals (horses born this year) where either dam or sire belongs to tenant
+      const foalCount = await prisma.animal.count({
+        where: {
+          species: "HORSE",
+          birthDate: { gte: yearStart },
+          archived: false,
+          OR: [
+            { dam: { tenantId } },
+            { sire: { tenantId } },
+            { tenantId }, // Also include foals directly owned by tenant
+          ],
+        },
+      });
+
+      return reply.send({
+        foalCount,
+        year: currentYear,
+      });
+    } catch (err) {
+      console.error("Error fetching foals YTD:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * GET /api/v1/dashboard/horse/season-bookings
+   * Returns aggregated stallion breeding bookings for the season
+   */
+  app.get("/dashboard/horse/season-bookings", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      // Get all active stud service listings for this tenant's stallions
+      const studListings = await prisma.mktListingBreederService.findMany({
+        where: {
+          status: "LIVE",
+          listingType: "STUD_SERVICE",
+          stallion: {
+            tenantId,
+            species: "HORSE",
+            sex: "MALE",
+            archived: false,
+          },
+        },
+        select: {
+          maxBookings: true,
+          bookingsReceived: true,
+        },
+      });
+
+      // Aggregate across all stallions
+      let totalBookingsReceived = 0;
+      let totalMaxBookings: number | null = 0; // null means unlimited
+
+      for (const listing of studListings) {
+        totalBookingsReceived += listing.bookingsReceived || 0;
+
+        if (listing.maxBookings === null) {
+          // If any stallion has unlimited, the total is unlimited
+          totalMaxBookings = null;
+        } else if (totalMaxBookings !== null) {
+          totalMaxBookings += listing.maxBookings;
+        }
+      }
+
+      return reply.send({
+        bookingsReceived: totalBookingsReceived,
+        maxBookings: totalMaxBookings,
+      });
+    } catch (err) {
+      console.error("Error fetching season bookings:", err);
       return reply.code(500).send({ error: "internal_error" });
     }
   });

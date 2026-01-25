@@ -125,8 +125,10 @@ export default async function marketplaceV2Routes(
               select: {
                 id: true,
                 name: true,
+                species: true,
                 breed: true,
                 sex: true,
+                birthDate: true,
                 photoUrl: true,
               },
             },
@@ -169,8 +171,10 @@ export default async function marketplaceV2Routes(
             select: {
               id: true,
               name: true,
+              species: true,
               breed: true,
               sex: true,
+              birthDate: true,
               photoUrl: true,
             },
           },
@@ -279,8 +283,10 @@ export default async function marketplaceV2Routes(
               select: {
                 id: true,
                 name: true,
+                species: true,
                 breed: true,
                 sex: true,
+                birthDate: true,
                 photoUrl: true,
               },
             },
@@ -295,8 +301,10 @@ export default async function marketplaceV2Routes(
               select: {
                 id: true,
                 name: true,
+                species: true,
                 breed: true,
                 sex: true,
+                birthDate: true,
                 photoUrl: true,
               },
             },
