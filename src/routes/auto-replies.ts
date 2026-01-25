@@ -3,7 +3,7 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
-import { Prisma } from "@prisma/client";
+import { Prisma, TemplateChannel, AutoReplyTriggerType, AutoReplyRuleStatus } from "@prisma/client";
 import { validateTemplate } from "../services/template-renderer.js";
 
 /**
@@ -24,22 +24,22 @@ type FrontendStatus = "active" | "paused" | "archived";
 /**
  * Map frontend channel to backend TemplateChannel
  */
-function mapChannelToBackend(channel: FrontendChannel): string {
-  return channel; // Same values for now
+function mapChannelToBackend(channel: FrontendChannel): TemplateChannel {
+  return channel as TemplateChannel; // Same values for now
 }
 
 /**
  * Map frontend trigger to backend AutoReplyTriggerType
  */
-function mapTriggerToBackend(trigger: FrontendTrigger): string {
-  return trigger;
+function mapTriggerToBackend(trigger: FrontendTrigger): AutoReplyTriggerType {
+  return trigger as AutoReplyTriggerType;
 }
 
 /**
  * Map frontend status to backend AutoReplyRuleStatus
  */
-function mapStatusToBackend(status: FrontendStatus): string {
-  return status;
+function mapStatusToBackend(status: FrontendStatus): AutoReplyRuleStatus {
+  return status as AutoReplyRuleStatus;
 }
 
 /**

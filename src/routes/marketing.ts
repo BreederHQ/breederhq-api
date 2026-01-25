@@ -205,7 +205,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const tenantId = Number((req as any).tenantId);
     if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-    const { channel, templateId, triggerType, cooldownMinutes, businessHoursJson, enabled } =
+    const { channel, templateId, triggerType, cooldownMinutes, businessHoursJson, enabled, name } =
       req.body as any;
 
     if (!channel || !templateId || !triggerType) {
@@ -233,6 +233,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const rule = await prisma.autoReplyRule.create({
       data: {
         tenantId,
+        name: name || `Auto-reply for ${template.name}`,
         channel,
         templateId,
         triggerType,
