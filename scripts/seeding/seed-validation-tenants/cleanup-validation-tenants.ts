@@ -8,7 +8,7 @@
 //   # For PROD environment:
 //   npx dotenv -e .env.prod -- npx tsx scripts/seed-validation-tenants/cleanup-validation-tenants.ts
 
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();

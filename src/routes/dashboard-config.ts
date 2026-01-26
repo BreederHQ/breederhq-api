@@ -239,19 +239,9 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
       );
 
       // Determine which config to use
-      let config: DashboardLayoutConfig;
-      if (storedConfig) {
-        config = storedConfig;
-      } else {
-        // Check if tenant has horses to recommend horse preset
-        const hasHorses = await prisma.animal.findFirst({
-          where: { tenantId, species: "HORSE", archived: false },
-          select: { id: true },
-        });
-        config = hasHorses
-          ? HORSE_BREEDER_PRESET.config
-          : STANDARD_PRESET.config;
-      }
+      // Always default to standard preset - user can switch to horse-breeder
+      // via the gear menu, which will persist their preference
+      const config: DashboardLayoutConfig = storedConfig ?? STANDARD_PRESET.config;
 
       // Combine system presets with user's custom presets
       const allPresets: DashboardPreset[] = [...SYSTEM_PRESETS, ...customPresets];

@@ -270,18 +270,21 @@ export default async function marketplaceSavedRoutes(
       );
 
       return reply.send({
-        ok: true,
         items: expandedItems,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
+        total,
+        page,
+        limit,
       });
     } catch (err: any) {
-      req.log?.error?.({ err }, "Failed to fetch saved listings");
-      return reply.code(500).send({ error: "fetch_failed", message: "Failed to fetch saved listings." });
+      req.log?.error?.({ err, message: err?.message, stack: err?.stack }, "Failed to fetch saved listings");
+      // Return more detailed error info for debugging
+      const errorMessage = err?.message || "Unknown error";
+      const isPrismaError = err?.code?.startsWith?.("P");
+      return reply.code(500).send({
+        error: "fetch_failed",
+        message: "Failed to fetch saved listings.",
+        detail: isPrismaError ? `Database error: ${err.code}` : errorMessage,
+      });
     }
   });
 

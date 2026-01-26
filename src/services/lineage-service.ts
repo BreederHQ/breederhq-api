@@ -46,7 +46,7 @@ export interface COIResult {
 export interface DescendantNode {
   id: number;
   name: string;
-  sex: "FEMALE" | "MALE";
+  sex: "FEMALE" | "MALE" | "UNKNOWN";
   species: string;
   breed: string | null;
   photoUrl: string | null;
