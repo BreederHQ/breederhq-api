@@ -1792,6 +1792,28 @@ model MktListingBreederService {
   // Metadata
   metadata Json?
 
+  // ─── Stud Service Fields (P1 Sprint) ────────────────────────────────
+  // Applied when listingType = "STUD_SERVICE"
+
+  // Stallion relation (for stud service listings)
+  stallionId Int?
+  stallion   Animal? @relation("AnimalStudServiceListings", fields: [stallionId], references: [id], onDelete: SetNull)
+
+  // Season Management
+  seasonName  String?   @db.VarChar(100)
+  seasonStart DateTime?
+  seasonEnd   DateTime?
+
+  // Breeding Details
+  breedingMethods   String[]               @default([])
+  defaultGuarantee  BreedingGuaranteeType?
+  horseServiceData  Json?                  @db.JsonB
+
+  // Booking Management
+  maxBookings      Int?
+  bookingsReceived Int     @default(0)
+  bookingsClosed   Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1800,6 +1822,7 @@ model MktListingBreederService {
   @@index([status, publishedAt])
   @@index([listingType, category])
   @@index([tier])
+  @@index([stallionId])
   @@map("mkt_listing_breeder_service")
   @@schema("public")
 }
@@ -2352,6 +2375,9 @@ model Animal {
   // Breeding attempts: stored with animal for historical persistence
   breedingAttemptsAsDam  BreedingAttempt[] @relation("BreedingAttemptDam")
   breedingAttemptsAsSire BreedingAttempt[] @relation("BreedingAttemptSire")
+
+  // Stud service listings (for stallions)
+  studServiceListings MktListingBreederService[] @relation("AnimalStudServiceListings")
 
   // Cycle Length Override v1: Animal-level override for female cycle length calculation
   // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.

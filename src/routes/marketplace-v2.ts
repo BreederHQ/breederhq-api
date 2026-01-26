@@ -26,7 +26,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
-import { MarketplaceListingStatus } from "@prisma/client";
+import { MarketplaceListingStatus, BreedingGuaranteeType } from "@prisma/client";
 import prisma from "../prisma.js";
 
 // ============================================================================
@@ -275,13 +275,25 @@ export default async function marketplaceV2Routes(
     }
 
     try {
+      // Extract defaultGuaranteeType to cast it properly
+      const { defaultGuaranteeType, seasonStart, seasonEnd, ...restFields } = rest;
+
       const data = {
         tenantId,
         animalId,
         slug,
         templateType,
         status: status as MarketplaceListingStatus,
-        ...rest,
+        ...restFields,
+        // Cast date strings to Date objects
+        ...(seasonStart !== undefined && { seasonStart: seasonStart ? new Date(seasonStart) : null }),
+        ...(seasonEnd !== undefined && { seasonEnd: seasonEnd ? new Date(seasonEnd) : null }),
+        // Cast defaultGuaranteeType to enum
+        ...(defaultGuaranteeType !== undefined && {
+          defaultGuaranteeType: defaultGuaranteeType
+            ? (defaultGuaranteeType as BreedingGuaranteeType)
+            : null,
+        }),
       };
 
       let listing;
@@ -720,9 +732,21 @@ export default async function marketplaceV2Routes(
     }
 
     try {
+      // Extract fields that need type casting
+      const { defaultGuaranteeType, seasonStart, seasonEnd, ...restFields } = rest;
+
       const data = {
         tenantId,
-        ...rest,
+        ...restFields,
+        // Cast date strings to Date objects
+        ...(seasonStart !== undefined && { seasonStart: seasonStart ? new Date(seasonStart) : null }),
+        ...(seasonEnd !== undefined && { seasonEnd: seasonEnd ? new Date(seasonEnd) : null }),
+        // Cast defaultGuaranteeType to enum
+        ...(defaultGuaranteeType !== undefined && {
+          defaultGuaranteeType: defaultGuaranteeType
+            ? (defaultGuaranteeType as BreedingGuaranteeType)
+            : null,
+        }),
       };
 
       let program;
