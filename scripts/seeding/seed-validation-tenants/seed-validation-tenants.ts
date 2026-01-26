@@ -1713,12 +1713,25 @@ async function seedStorefronts(
         activeListings: 0,
         averageRating: 4.5,
         totalReviews: 0,
+
+        // IMPORTANT: Set status to active so storefront appears in marketplace
+        status: 'active',
+        activatedAt: new Date(),
       },
     });
     storefrontsCreated++;
     console.log(`  + Created storefront: ${storefrontDef.businessName}`);
   } else {
-    console.log(`  = Storefront exists: ${storefrontDef.businessName}`);
+    // Update existing storefront to be active if it's not
+    if (provider.status !== 'active') {
+      await prisma.marketplaceProvider.update({
+        where: { id: provider.id },
+        data: { status: 'active', activatedAt: new Date() },
+      });
+      console.log(`  * Activated storefront: ${storefrontDef.businessName}`);
+    } else {
+      console.log(`  = Storefront exists: ${storefrontDef.businessName}`);
+    }
   }
 
   // Seed TenantProgramBreed records (breeder's breeds)
@@ -1781,7 +1794,164 @@ async function seedStorefronts(
   console.log(`    + Saved Standards & Credentials settings`);
   console.log(`    + Saved Placement Policies settings`);
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // CREATE marketplace-profile TenantSetting (REQUIRED for /breeders listing!)
+  // The marketplace breeders endpoint queries TenantSetting(namespace='marketplace-profile')
+  // NOT MarketplaceProvider. This is the critical setting for breeder visibility.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Build the published profile data structure
+  const profileData = {
+    draft: buildMarketplaceProfile(storefrontDef),
+    published: buildMarketplaceProfile(storefrontDef),
+    publishedAt: new Date().toISOString(),
+    draftUpdatedAt: new Date().toISOString(),
+  };
+
+  await upsertTenantSetting(tenantId, 'marketplace-profile', profileData);
+  console.log(`    + Created marketplace-profile (enables /breeders listing)`);
+
   return { storefronts: storefrontsCreated, tenantProgramBreeds: tenantProgramBreedsCreated };
+}
+
+/**
+ * Build the marketplace profile data structure expected by the /breeders endpoint.
+ * This must match the format stored by the breeder's storefront editor.
+ */
+function buildMarketplaceProfile(storefront: StorefrontDefinition): Record<string, unknown> {
+  // Build breeds array with species
+  const breeds = storefront.breeds.map(b => ({
+    name: b.breedName,
+    species: b.species === 'DOG' ? 'Dog' : b.species === 'CAT' ? 'Cat' : b.species === 'HORSE' ? 'Horse' : b.species,
+    isPublic: true,
+  }));
+
+  // Build listedPrograms from the storefront definition
+  // These will be populated later when MktListingBreedingProgram records are created
+  // For now, use placeholder data from breeds
+  const listedPrograms = storefront.breeds.map(b => ({
+    name: `${b.breedName} Program`,
+    species: b.species,
+    breedText: b.breedName,
+    description: `Quality ${b.breedName.toLowerCase()} breeding program.`,
+    openWaitlist: true,
+    acceptInquiries: true,
+    comingSoon: false,
+    showWaitTime: true,
+    showWhatsIncluded: true,
+    showCoverImage: true,
+    acceptReservations: false,
+    pricingTiers: null,
+    programStory: null,
+    coverImageUrl: null,
+    mediaAssetIds: [],
+    whatsIncluded: null,
+    typicalWaitTime: '6-12 months',
+  }));
+
+  // Build standards and credentials
+  const standardsAndCredentials = {
+    registrations: storefront.registryMemberships || [],
+    healthPractices: Object.entries(storefront.healthPractices || {})
+      .filter(([key, value]) => value === true && key !== 'notes')
+      .map(([key]) => {
+        const labels: Record<string, string> = {
+          ofaHipElbow: 'OFA Hip/Elbow',
+          ofaCardiac: 'OFA Cardiac',
+          ofaEyes: 'OFA Eyes (CAER)',
+          pennHip: 'PennHIP',
+          geneticTesting: 'Genetic Testing',
+          embarkWisdomPanel: 'Embark/Wisdom Panel',
+        };
+        return labels[key] || key;
+      }),
+    breedingPractices: Object.entries(storefront.breedingPractices || {})
+      .filter(([key, value]) => value === true && key !== 'notes')
+      .map(([key]) => {
+        const labels: Record<string, string> = {
+          healthTestedParentsOnly: 'Health-tested parents only',
+          puppyCulture: 'Puppy Culture',
+          avidogProgram: 'Avidog Program',
+          breedingSoundnessExam: 'Breeding soundness exam',
+          limitedBreedingRights: 'Limited breeding rights',
+          coOwnershipAvailable: 'Co-ownership available',
+        };
+        return labels[key] || key;
+      }),
+    carePractices: Object.entries(storefront.careAndEarlyLife || {})
+      .filter(([key, value]) => value === true && key !== 'notes')
+      .map(([key]) => {
+        const labels: Record<string, string> = {
+          ensEsi: 'ENS/ESI',
+          vetChecked: 'Vet checked',
+          firstVaccinations: 'First vaccinations',
+          microchipped: 'Microchipped',
+          cratePottyTrainingStarted: 'Crate/potty training started',
+          socializationProtocol: 'Socialization protocol',
+        };
+        return labels[key] || key;
+      }),
+    registrationsNote: null,
+    healthNote: (storefront.healthPractices as any)?.notes || null,
+    breedingNote: (storefront.breedingPractices as any)?.notes || null,
+    careNote: (storefront.careAndEarlyLife as any)?.notes || null,
+    showRegistrations: true,
+    showHealthPractices: true,
+    showBreedingPractices: true,
+    showCarePractices: true,
+  };
+
+  // Build placement policies
+  const pp = storefront.placementPolicies || {} as any;
+  const placementPolicies = {
+    showPolicies: true,
+    requireApplication: pp.requireApplication || false,
+    requireInterview: pp.requireInterviewMeeting || false,
+    requireContract: pp.requireSignedContract || false,
+    requireDeposit: pp.requireDeposit || false,
+    depositRefundable: pp.depositRefundable || false,
+    requireReservationFee: pp.requireReservationFee || false,
+    requireHomeVisit: pp.requireHomeVisit || false,
+    requireVetReference: pp.requireVetReference || false,
+    requireSpayNeuter: pp.requireSpayNeuterForPets || false,
+    hasReturnPolicy: pp.acceptReturns || false,
+    lifetimeTakeBack: pp.lifetimeTakeBackGuarantee || false,
+    offersSupport: pp.ongoingBreederSupport || false,
+    note: pp.additionalNotes || null,
+  };
+
+  return {
+    businessName: storefront.businessName,
+    bio: storefront.businessDescription || '',
+    showBusinessIdentity: true,
+    address: {
+      city: storefront.city,
+      state: storefront.state,
+      country: storefront.country,
+      zip: '00000',
+    },
+    publicLocationMode: 'city_state',
+    breeds,
+    listedBreeds: breeds.map(b => b.name),
+    listedPrograms,
+    standardsAndCredentials,
+    placementPolicies,
+    showWebsite: !!storefront.website,
+    showFacebook: false,
+    showInstagram: false,
+    websiteUrl: storefront.website || null,
+    facebook: null,
+    instagram: null,
+    logoAssetId: null,
+    logoUrl: `https://placehold.co/400x400/005dc3/ffffff?text=${encodeURIComponent(storefront.logoPlaceholderText)}`,
+    bannerImageUrl: `https://placehold.co/1200x400/f27517/ffffff?text=${encodeURIComponent(storefront.bannerPlaceholderText)}`,
+    searchParticipation: {
+      zipRadius: false,
+      citySearch: true,
+      distanceSearch: false,
+    },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 async function upsertTenantSetting(tenantId: number, namespace: string, data: unknown): Promise<void> {
@@ -3653,6 +3823,58 @@ async function seedDrafts(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE PROVIDER STATS UPDATE
+// Updates activeListings/totalListings counts on providers after programs are seeded
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function updateMarketplaceProviderStats(): Promise<void> {
+  // Get all active providers with a tenantId
+  const providers = await prisma.marketplaceProvider.findMany({
+    where: {
+      status: 'active',
+      tenantId: { not: null }
+    }
+  });
+
+  let updatedCount = 0;
+  for (const provider of providers) {
+    if (!provider.tenantId) continue;
+
+    // Count LIVE programs for this tenant
+    const livePrograms = await prisma.mktListingBreedingProgram.count({
+      where: {
+        tenantId: provider.tenantId,
+        status: 'LIVE'
+      }
+    });
+
+    // Count all programs for this tenant
+    const totalPrograms = await prisma.mktListingBreedingProgram.count({
+      where: {
+        tenantId: provider.tenantId
+      }
+    });
+
+    // Only update if there's a difference
+    if (provider.activeListings !== livePrograms || provider.totalListings !== totalPrograms) {
+      await prisma.marketplaceProvider.update({
+        where: { id: provider.id },
+        data: {
+          activeListings: livePrograms,
+          totalListings: totalPrograms
+        }
+      });
+      console.log(`  + Updated ${provider.businessName}: activeListings=${livePrograms}, totalListings=${totalPrograms}`);
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount === 0) {
+    console.log('  = All provider stats already up to date');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -4107,6 +4329,11 @@ async function main() {
   const crossTenantLinkDefs = getCrossTenantLinks(env);
   const crossTenantLinksCreated = await seedCrossTenantLinks(env, crossTenantLinkDefs);
   stats.crossTenantLinks = crossTenantLinksCreated;
+
+  // Update marketplace provider stats (activeListings, totalListings)
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  [Updating Marketplace Provider Stats]');
+  await updateMarketplaceProviderStats();
 
   // Print summary
   console.log('═══════════════════════════════════════════════════════════════════════════════');

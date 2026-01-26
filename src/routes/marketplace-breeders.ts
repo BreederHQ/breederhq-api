@@ -270,9 +270,13 @@ function extractBreeds(published: Record<string, unknown>): Array<{ name: string
 
 /**
  * Extract listed programs from published data
+ * @param published The published profile data
+ * @param livePrograms Optional set of program names that are currently LIVE in the database
+ *                     If provided, only programs matching these names will be included
  */
 function extractPrograms(
-  published: Record<string, unknown>
+  published: Record<string, unknown>,
+  livePrograms?: Set<string>
 ): Array<{
   name: string;
   description: string | null;
@@ -289,6 +293,12 @@ function extractPrograms(
       const prog = p as Record<string, unknown>;
       const name = safeString(prog.name);
       if (!name) return null;
+
+      // If we have a set of live programs, filter out any not in the set
+      if (livePrograms && !livePrograms.has(name.toLowerCase())) {
+        return null;
+      }
+
       return {
         name,
         description: safeString(prog.description),
@@ -565,6 +575,28 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       upcomingLitters.map((l) => [l.tenantId, (l._count as { id: number }).id])
     );
 
+    // Batch fetch LIVE breeding programs to filter availability metrics
+    // Only programs with status=LIVE should count toward acceptingInquiries/waitlistOpen
+    const livePrograms = await prisma.mktListingBreedingProgram.findMany({
+      where: {
+        tenantId: { in: tenantIds },
+        status: "LIVE",
+      },
+      select: {
+        tenantId: true,
+        name: true,
+      },
+    });
+
+    // Build a map of tenantId -> Set of lowercase program names
+    const liveProgramsMap = new Map<number, Set<string>>();
+    for (const prog of livePrograms) {
+      if (!liveProgramsMap.has(prog.tenantId)) {
+        liveProgramsMap.set(prog.tenantId, new Set());
+      }
+      liveProgramsMap.get(prog.tenantId)!.add(prog.name.toLowerCase());
+    }
+
     // Filter to only published profiles with valid businessName
     // and transform to summary items
     const publishedBreeders: Array<{
@@ -621,11 +653,27 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const upcomingLittersCount = upcomingLittersMap.get(tenantId) ?? 0;
 
       // Extract availability settings from published programs
-      const programs = Array.isArray(published.listedPrograms) ? published.listedPrograms : [];
-      const acceptingInquiries = programs.some(
+      // Only count programs that are LIVE in the database
+      const allPrograms = Array.isArray(published.listedPrograms) ? published.listedPrograms : [];
+      const tenantLivePrograms = liveProgramsMap.get(tenantId);
+
+      // Filter to only LIVE programs
+      const liveFilteredPrograms = allPrograms.filter((p: any) => {
+        if (!p || typeof p !== "object") return false;
+        const name = safeString(p.name);
+        if (!name) return false;
+        // If we have live program data, only include if it's in the LIVE set
+        if (tenantLivePrograms) {
+          return tenantLivePrograms.has(name.toLowerCase());
+        }
+        // If no database programs exist yet, include all (backward compat)
+        return true;
+      });
+
+      const acceptingInquiries = liveFilteredPrograms.some(
         (p: any) => p && typeof p === "object" && safeBool(p.acceptInquiries)
       );
-      const waitlistOpen = programs.some(
+      const waitlistOpen = liveFilteredPrograms.some(
         (p: any) => p && typeof p === "object" && safeBool(p.openWaitlist)
       );
 
@@ -786,6 +834,21 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     // Check visibility toggles
     const showBusinessIdentity = safeBool(published.showBusinessIdentity);
 
+    // Fetch LIVE breeding programs from the database to filter the JSON list
+    // Programs in the JSON that don't have a corresponding LIVE database record should be hidden
+    const liveDbPrograms = await prisma.mktListingBreedingProgram.findMany({
+      where: {
+        tenantId: tenant.id,
+        status: "LIVE",
+      },
+      select: {
+        name: true,
+      },
+    });
+
+    // Create a set of lowercase names for case-insensitive matching
+    const liveProgramNames = new Set(liveDbPrograms.map((p) => p.name.toLowerCase()));
+
     // Build response with only public-safe fields
     const response: PublishedBreederResponse = {
       tenantSlug: tenant.slug,
@@ -802,7 +865,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         facebook: safeBool(published.showFacebook) ? safeString(published.facebook) : null,
       },
       breeds: extractBreeds(published),
-      programs: extractPrograms(published),
+      programs: extractPrograms(published, liveProgramNames),
       standardsAndCredentials: extractStandardsAndCredentials(published),
       placementPolicies: extractPlacementPolicies(published),
       publishedAt: profileData.publishedAt ?? null,

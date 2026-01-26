@@ -364,6 +364,10 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
     tenantId: G.tenantId,
     identifier: G.name ?? null,
 
+    // Foreign keys for linking - used by frontend to match groups to plans/programs
+    breedingPlanId: G.planId ?? G.plan?.id ?? null,
+    breedingProgramId: G.breedingProgramId ?? G.plan?.programId ?? null,
+
     // expose real group species, not only plan.species
     species: G.species ?? null,
 
@@ -431,6 +435,10 @@ function groupDetail(
     published: !!G.published,
     coverImageUrl: G.coverImageUrl ?? null,
     themeName: G.themeName ?? null,
+
+    // Foreign keys for linking - used by frontend to match groups to plans/programs
+    breedingPlanId: G.planId ?? G.plan?.id ?? null,
+    breedingProgramId: G.breedingProgramId ?? G.plan?.programId ?? null,
 
     counts: {
       born: G.countBorn ?? null,
