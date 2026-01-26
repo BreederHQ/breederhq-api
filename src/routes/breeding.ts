@@ -1589,24 +1589,25 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // VALIDATION: Ensure required dates are present when advancing to certain phases
         // Merge existing data with incoming data to check effective values
+        // Use undefined as fallback when date not in payload, so we fall back to existingPlan values
         const effectiveCycleStart = data.cycleStartDateActual !== undefined
           ? data.cycleStartDateActual
-          : (b.cycleStartDateActual !== undefined ? (b.cycleStartDateActual ? new Date(b.cycleStartDateActual) : null) : null);
+          : (b.cycleStartDateActual !== undefined ? (b.cycleStartDateActual ? new Date(b.cycleStartDateActual) : null) : undefined);
         const effectiveBreedDate = data.breedDateActual !== undefined
           ? data.breedDateActual
-          : (b.breedDateActual !== undefined ? (b.breedDateActual ? new Date(b.breedDateActual) : null) : null);
+          : (b.breedDateActual !== undefined ? (b.breedDateActual ? new Date(b.breedDateActual) : null) : undefined);
         const effectiveBirthDate = data.birthDateActual !== undefined
           ? data.birthDateActual
-          : (b.birthDateActual !== undefined ? (b.birthDateActual ? new Date(b.birthDateActual) : null) : null);
+          : (b.birthDateActual !== undefined ? (b.birthDateActual ? new Date(b.birthDateActual) : null) : undefined);
         const effectiveWeanedDate = data.weanedDateActual !== undefined
           ? data.weanedDateActual
-          : (b.weanedDateActual !== undefined ? (b.weanedDateActual ? new Date(b.weanedDateActual) : null) : null);
+          : (b.weanedDateActual !== undefined ? (b.weanedDateActual ? new Date(b.weanedDateActual) : null) : undefined);
         const effectivePlacementStart = data.placementStartDateActual !== undefined
           ? data.placementStartDateActual
-          : (b.placementStartDateActual !== undefined ? (b.placementStartDateActual ? new Date(b.placementStartDateActual) : null) : null);
+          : (b.placementStartDateActual !== undefined ? (b.placementStartDateActual ? new Date(b.placementStartDateActual) : null) : undefined);
         const effectivePlacementCompleted = data.placementCompletedDateActual !== undefined
           ? data.placementCompletedDateActual
-          : (b.placementCompletedDateActual !== undefined ? (b.placementCompletedDateActual ? new Date(b.placementCompletedDateActual) : null) : null);
+          : (b.placementCompletedDateActual !== undefined ? (b.placementCompletedDateActual ? new Date(b.placementCompletedDateActual) : null) : undefined);
 
         // For status transitions, we need to check existing DB values too
         const existingPlan = await prisma.breedingPlan.findFirst({
