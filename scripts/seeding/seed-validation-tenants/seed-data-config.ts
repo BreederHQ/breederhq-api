@@ -3585,6 +3585,35 @@ export function getTenantVaccinations(env: Environment): Record<string, AnimalVa
 // BREEDING PLAN DEFINITIONS (per tenant)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+export type BreedingPlanStatusDef =
+  | 'PLANNING'
+  | 'CYCLE'
+  | 'COMMITTED'  // Deprecated - use CYCLE
+  | 'CYCLE_EXPECTED'
+  | 'HORMONE_TESTING'
+  | 'BRED'
+  | 'PREGNANT'
+  | 'BIRTHED'
+  | 'WEANED'
+  | 'PLACEMENT'
+  | 'COMPLETE'
+  | 'CANCELED'
+  | 'UNSUCCESSFUL'
+  | 'ON_HOLD';
+
+export type ReproAnchorModeDef = 'CYCLE_START' | 'OVULATION' | 'BREEDING_DATE';
+export type ConfidenceLevelDef = 'HIGH' | 'MEDIUM' | 'LOW';
+export type OvulationMethodDef =
+  | 'CALCULATED'
+  | 'PROGESTERONE_TEST'
+  | 'LH_TEST'
+  | 'ULTRASOUND'
+  | 'VAGINAL_CYTOLOGY'
+  | 'PALPATION'
+  | 'AT_HOME_TEST'
+  | 'VETERINARY_EXAM'
+  | 'BREEDING_INDUCED';
+
 export interface BreedingPlanDefinition {
   name: string;
   nickname?: string;
@@ -3592,59 +3621,186 @@ export interface BreedingPlanDefinition {
   breedText?: string;
   damRef: string;  // Reference to dam by name
   sireRef: string; // Reference to sire by name
-  status: 'PLANNING' | 'COMMITTED';
+  status: BreedingPlanStatusDef;
   notes?: string;
+
+  // Anchor mode and cycle tracking
+  reproAnchorMode?: ReproAnchorModeDef;
+  cycleStartObserved?: Date;
+  cycleStartConfidence?: ConfidenceLevelDef;
+  ovulationConfirmed?: Date;
+  ovulationConfirmedMethod?: OvulationMethodDef;
+  ovulationConfidence?: ConfidenceLevelDef;
+
+  // Expected dates
   expectedCycleStart?: Date;
+  expectedHormoneTestingStart?: Date;
+  expectedBreedDate?: Date;
+  expectedBirthDate?: Date;
+  expectedWeaned?: Date;
+  expectedPlacementStart?: Date;
+  expectedPlacementCompleted?: Date;
+
+  // Actual dates (for plans in later stages)
+  cycleStartDateActual?: Date;
+  hormoneTestingStartDateActual?: Date;
+  breedDateActual?: Date;
+  birthDateActual?: Date;
+  weanedDateActual?: Date;
+  placementStartDateActual?: Date;
+  placementCompletedDateActual?: Date;
+  completedDateActual?: Date;
+
+  // Birth outcome data (for BIRTHED+ status)
+  countBorn?: number;
+  countAlive?: number;
+
+  // Committed intent
+  isCommittedIntent?: boolean;
+  committedAt?: Date;
 }
 
 export const DEV_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]> = {
   rivendell: [
+    // PLANNING - Just an idea
     { name: 'House of Huan 2026', nickname: 'Spring Litter', species: 'DOG', breedText: 'German Shepherd', damRef: 'Sköll', sireRef: 'Fenrir', status: 'PLANNING', notes: 'Planning spring 2026 litter from our top producing pair.', expectedCycleStart: new Date('2026-03-01') },
-    { name: 'Mearas Legacy', species: 'HORSE', breedText: 'Andalusian', damRef: 'Nahar', sireRef: 'Felaróf', status: 'COMMITTED', notes: 'Committed breeding to continue the Mearas bloodline.' },
-    { name: 'Elven Cat Program 2026', species: 'CAT', breedText: 'Maine Coon', damRef: 'Mirkwood Prowler', sireRef: 'Shadow Cat of Mordor', status: 'PLANNING', notes: 'Expanding our feline program.' },
-    { name: 'Silmaril Line', species: 'DOG', breedText: 'German Shepherd', damRef: 'Werewolf of Tol Sirion', sireRef: 'Garm', status: 'COMMITTED', notes: 'Preservation breeding for rare color genetics.' },
+    // CYCLE - In heat, monitoring
+    { name: 'Mearas Legacy', species: 'HORSE', breedText: 'Andalusian', damRef: 'Nahar', sireRef: 'Felaróf', status: 'CYCLE', notes: 'Mare is in heat, preparing for breeding.',
+      reproAnchorMode: 'CYCLE_START', cycleStartObserved: new Date('2026-01-15'), cycleStartConfidence: 'HIGH',
+      expectedBreedDate: new Date('2026-01-20'), expectedBirthDate: new Date('2026-12-10'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-10') },
+    // PREGNANT - Confirmed pregnancy
+    { name: 'Elven Cat Program 2026', species: 'CAT', breedText: 'Maine Coon', damRef: 'Mirkwood Prowler', sireRef: 'Shadow Cat of Mordor', status: 'PREGNANT', notes: 'Pregnancy confirmed via ultrasound.',
+      reproAnchorMode: 'OVULATION', cycleStartObserved: new Date('2025-12-01'), cycleStartConfidence: 'MEDIUM',
+      ovulationConfirmed: new Date('2025-12-05'), ovulationConfirmedMethod: 'VETERINARY_EXAM', ovulationConfidence: 'HIGH',
+      breedDateActual: new Date('2025-12-06'), expectedBirthDate: new Date('2026-02-05'),
+      isCommittedIntent: true, committedAt: new Date('2025-11-20') },
+    // COMPLETE - Finished breeding
+    { name: 'Silmaril Line', species: 'DOG', breedText: 'German Shepherd', damRef: 'Werewolf of Tol Sirion', sireRef: 'Garm', status: 'COMPLETE', notes: 'All puppies placed successfully.',
+      cycleStartObserved: new Date('2025-06-01'), breedDateActual: new Date('2025-06-12'),
+      birthDateActual: new Date('2025-08-15'), weanedDateActual: new Date('2025-10-10'),
+      placementCompletedDateActual: new Date('2025-11-01'), completedDateActual: new Date('2025-11-01'),
+      countBorn: 6, countAlive: 6 },
   ],
   hogwarts: [
+    // PLANNING
     { name: 'Magical Creatures 2026', species: 'CAT', breedText: 'British Shorthair', damRef: 'Millicent Bulstrode Cat', sireRef: 'Kneazle Descendant', status: 'PLANNING', notes: 'Care of Magical Creatures class project.' },
-    { name: 'Hagrid\'s Hounds Q2', species: 'DOG', breedText: 'Irish Wolfhound', damRef: 'Buckbeak Hound', sireRef: 'Norbert Hound', status: 'COMMITTED', notes: 'Continuing the Hogwarts groundskeeper tradition.' },
-    { name: 'Bunny Breeding 101', species: 'RABBIT', breedText: 'Holland Lop', damRef: 'Diagon Alley Bunny', sireRef: 'Magical Menagerie Lop', status: 'PLANNING', notes: 'Teaching breeding basics to students.' },
+    // BRED - Just bred, waiting to confirm pregnancy
+    { name: 'Hagrid\'s Hounds Q2', species: 'DOG', breedText: 'Irish Wolfhound', damRef: 'Buckbeak Hound', sireRef: 'Norbert Hound', status: 'BRED', notes: 'Breeding completed, awaiting pregnancy confirmation.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-20'),
+      expectedBirthDate: new Date('2026-03-25'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-01') },
+    // BIRTHED - Litter born, not yet weaned
+    { name: 'Bunny Breeding 101', species: 'RABBIT', breedText: 'Holland Lop', damRef: 'Diagon Alley Bunny', sireRef: 'Magical Menagerie Lop', status: 'BIRTHED', notes: 'Teaching breeding basics to students. Litter born!',
+      breedDateActual: new Date('2025-12-01'), birthDateActual: new Date('2026-01-01'),
+      expectedWeaned: new Date('2026-02-15'),
+      countBorn: 5, countAlive: 5 },
   ],
   winterfell: [
-    { name: 'Direwolf Pack 2026', nickname: 'Winter is Coming', species: 'DOG', breedText: 'Alaskan Malamute', damRef: 'Winter Pup Beta', sireRef: 'Winter Pup Alpha', status: 'COMMITTED', notes: 'Restoring the Stark direwolf pack.' },
-    { name: 'Northern Cavalry', species: 'HORSE', breedText: 'Friesian', damRef: 'Night Mare', sireRef: 'Ice Storm', status: 'PLANNING', notes: 'Breeding warhorses for the Night\'s Watch.' },
-    { name: 'Nymeria\'s Line', species: 'DOG', breedText: 'Alaskan Malamute', damRef: 'Nymeria', sireRef: 'Ghost', status: 'PLANNING', notes: 'Wild breeding program.' },
+    // WEANED - Puppies weaned, placement in progress
+    { name: 'Direwolf Pack 2026', nickname: 'Winter is Coming', species: 'DOG', breedText: 'Alaskan Malamute', damRef: 'Winter Pup Beta', sireRef: 'Winter Pup Alpha', status: 'WEANED', notes: 'Puppies weaned and ready for evaluation.',
+      breedDateActual: new Date('2025-08-01'), birthDateActual: new Date('2025-10-05'),
+      weanedDateActual: new Date('2025-12-10'),
+      expectedPlacementCompleted: new Date('2026-02-01'),
+      countBorn: 7, countAlive: 6 },
+    // HORMONE_TESTING - Testing progesterone
+    { name: 'Northern Cavalry', species: 'HORSE', breedText: 'Friesian', damRef: 'Night Mare', sireRef: 'Ice Storm', status: 'HORMONE_TESTING', notes: 'Running progesterone tests to confirm ovulation.',
+      reproAnchorMode: 'OVULATION', cycleStartObserved: new Date('2026-01-10'), cycleStartConfidence: 'HIGH',
+      expectedBreedDate: new Date('2026-01-25') },
+    // CANCELED
+    { name: 'Nymeria\'s Line', species: 'DOG', breedText: 'Alaskan Malamute', damRef: 'Nymeria', sireRef: 'Ghost', status: 'CANCELED', notes: 'Canceled - dam not suitable for breeding this season.' },
   ],
   'stark-tower': [
-    { name: 'Flerken Breeding Initiative', species: 'CAT', breedText: 'Ragdoll', damRef: 'Wakandan Temple Cat', sireRef: 'Goose the Flerken', status: 'COMMITTED', notes: 'SHIELD-monitored breeding program for Flerken descendants.' },
+    // PLACEMENT - Waiting for placements to complete
+    { name: 'Flerken Breeding Initiative', species: 'CAT', breedText: 'Ragdoll', damRef: 'Wakandan Temple Cat', sireRef: 'Goose the Flerken', status: 'PLACEMENT', notes: 'Kittens being evaluated for placement.',
+      breedDateActual: new Date('2025-09-01'), birthDateActual: new Date('2025-11-05'),
+      weanedDateActual: new Date('2026-01-10'), placementStartDateActual: new Date('2026-01-15'),
+      countBorn: 4, countAlive: 4 },
+    // PLANNING
     { name: 'Asgardian Steed Program', species: 'HORSE', breedText: 'Lipizzan', damRef: 'Valkyrie Mare', sireRef: 'Sleipnir', status: 'PLANNING', notes: 'Breeding horses worthy of Asgardian warriors.' },
-    { name: 'Infinity Farm Goats', species: 'GOAT', breedText: 'Nigerian Dwarf', damRef: 'Infinity Nanny', sireRef: 'Thanos Bane', status: 'COMMITTED', notes: 'Avengers compound sustainability program.' },
-    { name: 'Lucky\'s Legacy', species: 'DOG', breedText: 'Cavalier King Charles Spaniel', damRef: 'Cosmo Dame', sireRef: 'Lucky Pizza Dog', status: 'PLANNING', notes: 'Companion breeding for Avengers families.' },
+    // UNSUCCESSFUL - Breeding didn't take
+    { name: 'Infinity Farm Goats', species: 'GOAT', breedText: 'Nigerian Dwarf', damRef: 'Infinity Nanny', sireRef: 'Thanos Bane', status: 'UNSUCCESSFUL', notes: 'Breeding unsuccessful - doe did not conceive.',
+      breedDateActual: new Date('2025-11-01') },
+    // PREGNANT
+    { name: 'Lucky\'s Legacy', species: 'DOG', breedText: 'Cavalier King Charles Spaniel', damRef: 'Cosmo Dame', sireRef: 'Lucky Pizza Dog', status: 'PREGNANT', notes: 'Pregnancy confirmed! Due in March.',
+      reproAnchorMode: 'CYCLE_START', cycleStartObserved: new Date('2025-12-15'), cycleStartConfidence: 'HIGH',
+      breedDateActual: new Date('2025-12-27'), expectedBirthDate: new Date('2026-03-01'),
+      isCommittedIntent: true, committedAt: new Date('2025-12-01') },
   ],
 };
 
-// PROD Breeding Plans
+// PROD Breeding Plans - Full lifecycle stages
 export const PROD_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]> = {
   arrakis: [
+    // PLANNING - Just an idea
     { name: 'Atreides Hound Program 2026', nickname: 'Spice Dogs', species: 'DOG', breedText: 'Saluki', damRef: 'Shai-Hulud Dame (DM Carrier Founder Female)', sireRef: 'Muad\'Dib Hunter (DM Carrier Founder Male)', status: 'PLANNING', notes: 'Desert-adapted hunting dogs for House Atreides.', expectedCycleStart: new Date('2026-03-01') },
-    { name: 'Caladan Legacy', species: 'HORSE', breedText: 'Arabian', damRef: 'Caladan Jewel (SCID Carrier Founder Mare)', sireRef: 'Duke Leto (SCID Carrier Founder Stallion)', status: 'COMMITTED', notes: 'Preserving the Atreides equine bloodline.' },
-    { name: 'Bene Gesserit Companions', species: 'CAT', breedText: 'Abyssinian', damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', sireRef: 'Mentat (PKDef Carrier Type B Founder Male)', status: 'PLANNING', notes: 'Breeding perceptive feline companions.' },
-    { name: 'Fremen Pack', species: 'DOG', breedText: 'Saluki', damRef: 'Fremen Scout (DM Affected Female)', sireRef: 'Spice Runner (DM Carrier Gen1 Male)', status: 'COMMITTED', notes: 'Sietch guard dogs.' },
+    // PREGNANT - Horse with confirmed pregnancy
+    { name: 'Caladan Legacy', species: 'HORSE', breedText: 'Arabian', damRef: 'Caladan Jewel (SCID Carrier Founder Mare)', sireRef: 'Duke Leto (SCID Carrier Founder Stallion)', status: 'PREGNANT', notes: 'Pregnancy confirmed via ultrasound at 45 days.',
+      reproAnchorMode: 'OVULATION', cycleStartObserved: new Date('2025-04-01'), cycleStartConfidence: 'HIGH',
+      ovulationConfirmed: new Date('2025-04-18'), ovulationConfirmedMethod: 'ULTRASOUND', ovulationConfidence: 'HIGH',
+      breedDateActual: new Date('2025-04-19'), expectedBirthDate: new Date('2026-03-15'),
+      isCommittedIntent: true, committedAt: new Date('2025-03-15') },
+    // CYCLE - Cat in heat
+    { name: 'Bene Gesserit Companions', species: 'CAT', breedText: 'Abyssinian', damRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', sireRef: 'Mentat (PKDef Carrier Type B Founder Male)', status: 'CYCLE', notes: 'Queen is showing signs of estrus.',
+      reproAnchorMode: 'CYCLE_START', cycleStartObserved: new Date('2026-01-20'), cycleStartConfidence: 'HIGH',
+      expectedBreedDate: new Date('2026-01-24'), expectedBirthDate: new Date('2026-03-28'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-15') },
+    // COMPLETE - Finished breeding
+    { name: 'Fremen Pack', species: 'DOG', breedText: 'Saluki', damRef: 'Fremen Scout (DM Affected Female)', sireRef: 'Spice Runner (DM Carrier Gen1 Male)', status: 'COMPLETE', notes: 'All puppies placed with Fremen families.',
+      cycleStartObserved: new Date('2025-05-01'), breedDateActual: new Date('2025-05-12'),
+      birthDateActual: new Date('2025-07-15'), weanedDateActual: new Date('2025-09-10'),
+      placementCompletedDateActual: new Date('2025-10-15'), completedDateActual: new Date('2025-10-15'),
+      countBorn: 8, countAlive: 7 },
   ],
   starfleet: [
-    { name: 'Enterprise Cats 2026', species: 'CAT', breedText: 'Exotic Shorthair', damRef: 'Enterprise (PKD Carrier Founder Female)', sireRef: 'Spot (PKD Carrier Founder Male)', status: 'PLANNING', notes: 'Ship cat breeding program for starships.' },
-    { name: 'Academy Service Dogs', species: 'DOG', breedText: 'Border Collie', damRef: 'Ten Forward (CEA+TNS Carrier Founder Female)', sireRef: 'Number One (TNS Carrier Founder Male)', status: 'COMMITTED', notes: 'Service dogs for Starfleet Academy.' },
-    { name: 'Station Rabbits', species: 'RABBIT', breedText: 'Flemish Giant', damRef: 'T\'Pol (Founder Female)', sireRef: 'Tribble Alternative (Founder Male)', status: 'PLANNING', notes: 'Alternative to tribbles for station morale.' },
+    // BRED - Waiting for pregnancy confirmation
+    { name: 'Enterprise Cats 2026', species: 'CAT', breedText: 'Exotic Shorthair', damRef: 'Enterprise (PKD Carrier Founder Female)', sireRef: 'Spot (PKD Carrier Founder Male)', status: 'BRED', notes: 'Breeding completed, scheduled for pregnancy check.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-18'),
+      expectedBirthDate: new Date('2026-03-22'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-10') },
+    // WEANED - Puppies ready for placement
+    { name: 'Academy Service Dogs', species: 'DOG', breedText: 'Border Collie', damRef: 'Ten Forward (CEA+TNS Carrier Founder Female)', sireRef: 'Number One (TNS Carrier Founder Male)', status: 'WEANED', notes: 'Puppies weaned and undergoing aptitude testing.',
+      breedDateActual: new Date('2025-07-15'), birthDateActual: new Date('2025-09-18'),
+      weanedDateActual: new Date('2025-11-20'),
+      expectedPlacementCompleted: new Date('2026-02-01'),
+      countBorn: 6, countAlive: 6 },
+    // BIRTHED - New litter
+    { name: 'Station Rabbits', species: 'RABBIT', breedText: 'Flemish Giant', damRef: 'T\'Pol (Founder Female)', sireRef: 'Tribble Alternative (Founder Male)', status: 'BIRTHED', notes: 'Kits born and thriving.',
+      breedDateActual: new Date('2025-12-20'), birthDateActual: new Date('2026-01-20'),
+      expectedWeaned: new Date('2026-03-01'),
+      countBorn: 8, countAlive: 8 },
   ],
   richmond: [
-    { name: 'Diamond Dogs Breeding', nickname: 'Believe Litter', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Rebecca (PRA Carrier Founder Female)', sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)', status: 'COMMITTED', notes: 'Breeding the next generation of AFC Richmond mascots.' },
-    { name: 'Nelson Road Horses', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Nelson Road (GBED Carrier Founder Mare)', sireRef: 'Total Football (GBED Carrier Founder Stallion)', status: 'PLANNING', notes: 'Horses for club promotional events.' },
-    { name: 'Wonder Kids Program', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Biscuits (PRA Affected Gen1 Female)', sireRef: 'Believe (PRA+ICH Carrier Gen1 Male)', status: 'PLANNING', notes: 'Youth development breeding program.' },
+    // HORMONE_TESTING - Running progesterone tests
+    { name: 'Diamond Dogs Breeding', nickname: 'Believe Litter', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Rebecca (PRA Carrier Founder Female)', sireRef: 'Ted Lasso (PRA+ICH Carrier Founder Male)', status: 'HORMONE_TESTING', notes: 'Running progesterone tests - day 10 of cycle.',
+      reproAnchorMode: 'OVULATION', cycleStartObserved: new Date('2026-01-15'), cycleStartConfidence: 'HIGH',
+      expectedBreedDate: new Date('2026-01-27'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-01') },
+    // PLACEMENT - Foals being placed
+    { name: 'Nelson Road Horses', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Nelson Road (GBED Carrier Founder Mare)', sireRef: 'Total Football (GBED Carrier Founder Stallion)', status: 'PLACEMENT', notes: 'Foal weaned and being evaluated for racing potential.',
+      breedDateActual: new Date('2024-06-01'), birthDateActual: new Date('2025-05-10'),
+      weanedDateActual: new Date('2025-11-01'), placementStartDateActual: new Date('2025-12-01'),
+      countBorn: 1, countAlive: 1 },
+    // CANCELED
+    { name: 'Wonder Kids Program', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Biscuits (PRA Affected Gen1 Female)', sireRef: 'Believe (PRA+ICH Carrier Gen1 Male)', status: 'CANCELED', notes: 'Canceled - genetic risk assessment indicated high likelihood of affected offspring.' },
   ],
   zion: [
-    { name: 'Resistance Cat Program', species: 'CAT', breedText: 'Bombay', damRef: 'Trinity (HCM Carrier Founder Female)', sireRef: 'Neo (HCM Carrier Founder Male)', status: 'COMMITTED', notes: 'Black cats of Zion breeding program.' },
-    { name: 'Free Horse Initiative', species: 'HORSE', breedText: 'Mustang', damRef: 'Zion (HERDA Carrier Founder Mare)', sireRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', status: 'PLANNING', notes: 'Wild horse breeding for freedom.' },
-    { name: 'Zion Farm Goats', species: 'GOAT', breedText: 'La Mancha', damRef: 'The Oracle (G6S Carrier Founder Female)', sireRef: 'The Architect (G6S Carrier Founder Male)', status: 'COMMITTED', notes: 'Sustenance for Zion.' },
-    { name: 'Agent Tracker Dogs', species: 'DOG', breedText: 'Belgian Malinois', damRef: 'Tank (DM Carrier Founder Female)', sireRef: 'Agent Hunter (DM Carrier Founder Male)', status: 'PLANNING', notes: 'Training dogs to detect Agents.' },
+    // PREGNANT - Confirmed pregnancy
+    { name: 'Resistance Cat Program', species: 'CAT', breedText: 'Bombay', damRef: 'Trinity (HCM Carrier Founder Female)', sireRef: 'Neo (HCM Carrier Founder Male)', status: 'PREGNANT', notes: 'Pregnancy confirmed - expecting 4-6 kittens.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2025-12-28'),
+      expectedBirthDate: new Date('2026-03-01'),
+      isCommittedIntent: true, committedAt: new Date('2025-12-15') },
+    // PLANNING
+    { name: 'Free Horse Initiative', species: 'HORSE', breedText: 'Mustang', damRef: 'Zion (HERDA Carrier Founder Mare)', sireRef: 'Nebuchadnezzar (HERDA Carrier Founder Stallion)', status: 'PLANNING', notes: 'Wild horse breeding for freedom.', expectedCycleStart: new Date('2026-04-01') },
+    // UNSUCCESSFUL
+    { name: 'Zion Farm Goats', species: 'GOAT', breedText: 'La Mancha', damRef: 'The Oracle (G6S Carrier Founder Female)', sireRef: 'The Architect (G6S Carrier Founder Male)', status: 'UNSUCCESSFUL', notes: 'Doe did not conceive - will retry next cycle.',
+      breedDateActual: new Date('2025-10-15') },
+    // COMPLETE
+    { name: 'Agent Tracker Dogs', species: 'DOG', breedText: 'Belgian Malinois', damRef: 'Tank (DM Carrier Founder Female)', sireRef: 'Agent Hunter (DM Carrier Founder Male)', status: 'COMPLETE', notes: 'All puppies placed with resistance operators.',
+      cycleStartObserved: new Date('2025-03-01'), breedDateActual: new Date('2025-03-14'),
+      birthDateActual: new Date('2025-05-18'), weanedDateActual: new Date('2025-07-15'),
+      placementCompletedDateActual: new Date('2025-09-01'), completedDateActual: new Date('2025-09-01'),
+      countBorn: 9, countAlive: 8 },
   ],
 };
 
@@ -4333,6 +4489,1093 @@ export function getMarketplaceUsers(): MarketplaceUserDefinition[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE STOREFRONT DEFINITIONS (MarketplaceProvider, TenantProgramBreed, etc.)
+// These configure the breeder's public marketplace presence and storefront settings
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface StorefrontDefinition {
+  // Business Profile
+  businessName: string;
+  businessDescription: string;
+  logoPlaceholderText: string;
+  bannerPlaceholderText: string;
+  yearEstablished: number;
+  publicEmail: string;
+  publicPhone: string;
+  website: string;
+  city: string;
+  state: string;
+  country: string;
+  timezone: string;
+
+  // Business Hours
+  businessHours: {
+    monday: { open: string; close: string } | null;
+    tuesday: { open: string; close: string } | null;
+    wednesday: { open: string; close: string } | null;
+    thursday: { open: string; close: string } | null;
+    friday: { open: string; close: string } | null;
+    saturday: { open: string; close: string } | null;
+    sunday: { open: string; close: string } | null;
+  };
+
+  // Verification & Badges
+  verificationTier: 'SUBSCRIBER' | 'MARKETPLACE_ENABLED' | 'IDENTITY_VERIFIED' | 'VERIFIED';
+  quickResponder: boolean;
+  establishedBadge: boolean;
+
+  // Breeder's Breeds (for Your Breeds tab)
+  breeds: {
+    species: Species;
+    breedName: string;
+    isPrimary: boolean;
+  }[];
+
+  // Standards & Credentials
+  registryMemberships: string[];  // e.g., ['AKC', 'OFA', 'AQHA']
+  healthPractices: {
+    ofaHipElbow: boolean;
+    ofaCardiac: boolean;
+    ofaEyes: boolean;
+    pennHip: boolean;
+    geneticTesting: boolean;
+    embarkWisdomPanel: boolean;
+    notes?: string;
+  };
+  breedingPractices: {
+    healthTestedParentsOnly: boolean;
+    puppyCulture: boolean;
+    avidogProgram: boolean;
+    breedingSoundnessExam: boolean;
+    limitedBreedingRights: boolean;
+    coOwnershipAvailable: boolean;
+    notes?: string;
+  };
+  careAndEarlyLife: {
+    ensEsi: boolean;
+    vetChecked: boolean;
+    firstVaccinations: boolean;
+    microchipped: boolean;
+    cratePottyTrainingStarted: boolean;
+    socializationProtocol: boolean;
+    notes?: string;
+  };
+
+  // Placement Policies
+  placementPolicies: {
+    requireApplication: boolean;
+    requireSignedContract: boolean;
+    requireVetReference: boolean;
+    requireInterviewMeeting: boolean;
+    requireHomeVisit: boolean;
+    requireDeposit: boolean;
+    depositRefundable: boolean;
+    requireReservationFee: boolean;
+    requireSpayNeuterForPets: boolean;
+    acceptReturns: boolean;
+    lifetimeTakeBackGuarantee: boolean;
+    ongoingBreederSupport: boolean;
+    additionalNotes?: string;
+  };
+}
+
+// DEV Storefronts
+export const DEV_STOREFRONTS: Record<string, StorefrontDefinition> = {
+  rivendell: {
+    businessName: 'Rivendell Breeders',
+    businessDescription: 'Premium breeding of German Shepherds, Arabian Horses, and Maine Coons in the heart of Middle Earth. Our animals are raised with elven care and attention.',
+    logoPlaceholderText: 'Rivendell+Breeders',
+    bannerPlaceholderText: 'Elven+Breeding+Excellence',
+    yearEstablished: 2010,
+    publicEmail: 'info@rivendell.local',
+    publicPhone: '+1-555-0101',
+    website: 'https://rivendell-breeders.local',
+    city: 'Rivendell',
+    state: 'Middle Earth',
+    country: 'US',
+    timezone: 'America/New_York',
+    businessHours: {
+      monday: { open: '09:00', close: '17:00' },
+      tuesday: { open: '09:00', close: '17:00' },
+      wednesday: { open: '09:00', close: '17:00' },
+      thursday: { open: '09:00', close: '17:00' },
+      friday: { open: '09:00', close: '17:00' },
+      saturday: { open: '10:00', close: '14:00' },
+      sunday: null,
+    },
+    verificationTier: 'VERIFIED',
+    quickResponder: true,
+    establishedBadge: true,
+    breeds: [
+      { species: 'DOG', breedName: 'German Shepherd', isPrimary: true },
+      { species: 'HORSE', breedName: 'Arabian', isPrimary: true },
+      { species: 'CAT', breedName: 'Maine Coon', isPrimary: true },
+    ],
+    registryMemberships: ['AKC', 'OFA', 'AQHA', 'CFA'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: true,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'All breeding animals undergo comprehensive health screening',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: true,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: true,
+      notes: 'We follow ethical breeding guidelines',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Puppies/kittens/foals raised in home environment',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: true,
+      requireHomeVisit: false,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Contract required for all placements',
+    },
+  },
+  hogwarts: {
+    businessName: 'Magical Creatures Breeding',
+    businessDescription: 'Specializing in magical companions - cats, rabbits, and the finest hounds of the wizarding world.',
+    logoPlaceholderText: 'Magical+Creatures',
+    bannerPlaceholderText: 'Wizarding+World+Breeding',
+    yearEstablished: 2015,
+    publicEmail: 'creatures@hogwarts.local',
+    publicPhone: '+1-555-0102',
+    website: 'https://magical-creatures.local',
+    city: 'Hogsmeade',
+    state: 'Scotland',
+    country: 'GB',
+    timezone: 'Europe/London',
+    businessHours: {
+      monday: { open: '10:00', close: '18:00' },
+      tuesday: { open: '10:00', close: '18:00' },
+      wednesday: { open: '10:00', close: '18:00' },
+      thursday: { open: '10:00', close: '18:00' },
+      friday: { open: '10:00', close: '18:00' },
+      saturday: { open: '10:00', close: '16:00' },
+      sunday: null,
+    },
+    verificationTier: 'IDENTITY_VERIFIED',
+    quickResponder: true,
+    establishedBadge: false,
+    breeds: [
+      { species: 'CAT', breedName: 'British Shorthair', isPrimary: true },
+      { species: 'RABBIT', breedName: 'Holland Lop', isPrimary: true },
+      { species: 'DOG', breedName: 'Beagle', isPrimary: true },
+    ],
+    registryMemberships: ['CFA', 'ARBA', 'AKC'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: false,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'All animals screened for species-specific conditions',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: false,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: false,
+      notes: 'Magical lineage preservation program',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Early handling and socialization with magical exposure',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: false,
+      requireInterviewMeeting: true,
+      requireHomeVisit: false,
+      requireDeposit: true,
+      depositRefundable: false,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: false,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Ministry of Magic registration required',
+    },
+  },
+  winterfell: {
+    businessName: 'Seven Kingdoms Stables',
+    businessDescription: 'Northern-bred horses and direwolf-sized dogs for discerning nobility.',
+    logoPlaceholderText: 'Seven+Kingdoms',
+    bannerPlaceholderText: 'Winter+is+Coming',
+    yearEstablished: 2008,
+    publicEmail: 'stables@winterfell.local',
+    publicPhone: '+1-555-0103',
+    website: 'https://winterfell-stables.local',
+    city: 'Winterfell',
+    state: 'The North',
+    country: 'US',
+    timezone: 'America/Chicago',
+    businessHours: {
+      monday: { open: '08:00', close: '17:00' },
+      tuesday: { open: '08:00', close: '17:00' },
+      wednesday: { open: '08:00', close: '17:00' },
+      thursday: { open: '08:00', close: '17:00' },
+      friday: { open: '08:00', close: '17:00' },
+      saturday: null,
+      sunday: null,
+    },
+    verificationTier: 'SUBSCRIBER',
+    quickResponder: false,
+    establishedBadge: true,
+    breeds: [
+      { species: 'HORSE', breedName: 'Friesian', isPrimary: true },
+      { species: 'DOG', breedName: 'Alaskan Malamute', isPrimary: true },
+      { species: 'GOAT', breedName: 'Nigerian Dwarf', isPrimary: true },
+    ],
+    registryMemberships: ['AQHA', 'AKC'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: false,
+      ofaEyes: true,
+      pennHip: true,
+      geneticTesting: true,
+      embarkWisdomPanel: false,
+      notes: 'Cold-climate health testing protocols',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: false,
+      avidogProgram: false,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: false,
+      coOwnershipAvailable: true,
+      notes: 'Traditional northern breeding methods',
+    },
+    careAndEarlyLife: {
+      ensEsi: false,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: false,
+      socializationProtocol: true,
+      notes: 'Hardy animals raised for northern climates',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: false,
+      requireHomeVisit: true,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: true,
+      requireSpayNeuterForPets: false,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Noble bloodlines guaranteed',
+    },
+  },
+  avengers: {
+    businessName: 'Stark Industries Breeding',
+    businessDescription: 'State-of-the-art breeding program with advanced genetics and health monitoring technology.',
+    logoPlaceholderText: 'Stark+Industries',
+    bannerPlaceholderText: 'Next+Gen+Breeding',
+    yearEstablished: 2018,
+    publicEmail: 'breeding@stark.local',
+    publicPhone: '+1-555-0104',
+    website: 'https://stark-breeding.local',
+    city: 'New York',
+    state: 'NY',
+    country: 'US',
+    timezone: 'America/New_York',
+    businessHours: {
+      monday: { open: '09:00', close: '18:00' },
+      tuesday: { open: '09:00', close: '18:00' },
+      wednesday: { open: '09:00', close: '18:00' },
+      thursday: { open: '09:00', close: '18:00' },
+      friday: { open: '09:00', close: '18:00' },
+      saturday: { open: '10:00', close: '15:00' },
+      sunday: { open: '12:00', close: '16:00' },
+    },
+    verificationTier: 'VERIFIED',
+    quickResponder: true,
+    establishedBadge: false,
+    breeds: [
+      { species: 'DOG', breedName: 'Doberman Pinscher', isPrimary: true },
+      { species: 'CAT', breedName: 'Bengal', isPrimary: true },
+      { species: 'SHEEP', breedName: 'Suffolk', isPrimary: true },
+    ],
+    registryMemberships: ['AKC', 'OFA', 'TICA'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: true,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'Advanced AI-assisted health analysis',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: true,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: true,
+      notes: 'Technology-enhanced breeding protocols',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Smart monitoring from birth',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: true,
+      requireHomeVisit: true,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'J.A.R.V.I.S. support included',
+    },
+  },
+};
+
+// PROD Storefronts
+export const PROD_STOREFRONTS: Record<string, StorefrontDefinition> = {
+  arrakis: {
+    businessName: 'House Atreides Stables',
+    businessDescription: 'Premier breeding of desert-hardy animals and noble steeds on Arrakis.',
+    logoPlaceholderText: 'House+Atreides',
+    bannerPlaceholderText: 'Atreides+Breeding',
+    yearEstablished: 2012,
+    publicEmail: 'stables@atreides.local',
+    publicPhone: '+1-555-0201',
+    website: 'https://atreides-stables.local',
+    city: 'Arrakeen',
+    state: 'Arrakis',
+    country: 'US',
+    timezone: 'America/Los_Angeles',
+    businessHours: {
+      monday: { open: '06:00', close: '14:00' },
+      tuesday: { open: '06:00', close: '14:00' },
+      wednesday: { open: '06:00', close: '14:00' },
+      thursday: { open: '06:00', close: '14:00' },
+      friday: { open: '06:00', close: '14:00' },
+      saturday: { open: '08:00', close: '12:00' },
+      sunday: null,
+    },
+    verificationTier: 'VERIFIED',
+    quickResponder: true,
+    establishedBadge: true,
+    breeds: [
+      { species: 'DOG', breedName: 'Saluki', isPrimary: true },
+      { species: 'HORSE', breedName: 'Arabian', isPrimary: true },
+      { species: 'CAT', breedName: 'Abyssinian', isPrimary: true },
+    ],
+    registryMemberships: ['AKC', 'AQHA', 'CFA', 'OFA'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: true,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'Desert climate adaptation testing',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: true,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: true,
+      notes: 'Bene Gesserit approved breeding lines',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Fremen-trained for survival',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: true,
+      requireHomeVisit: true,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Spice-enhanced bloodlines',
+    },
+  },
+  starfleet: {
+    businessName: 'Starfleet Academy Kennels',
+    businessDescription: 'Federation-approved breeding program for companion animals across the galaxy.',
+    logoPlaceholderText: 'Starfleet+Academy',
+    bannerPlaceholderText: 'Final+Frontier+Pets',
+    yearEstablished: 2016,
+    publicEmail: 'kennels@starfleet.local',
+    publicPhone: '+1-555-0202',
+    website: 'https://starfleet-kennels.local',
+    city: 'San Francisco',
+    state: 'CA',
+    country: 'US',
+    timezone: 'America/Los_Angeles',
+    businessHours: {
+      monday: { open: '08:00', close: '17:00' },
+      tuesday: { open: '08:00', close: '17:00' },
+      wednesday: { open: '08:00', close: '17:00' },
+      thursday: { open: '08:00', close: '17:00' },
+      friday: { open: '08:00', close: '17:00' },
+      saturday: { open: '10:00', close: '14:00' },
+      sunday: null,
+    },
+    verificationTier: 'IDENTITY_VERIFIED',
+    quickResponder: true,
+    establishedBadge: false,
+    breeds: [
+      { species: 'CAT', breedName: 'Siamese', isPrimary: true },
+      { species: 'RABBIT', breedName: 'Flemish Giant', isPrimary: true },
+      { species: 'DOG', breedName: 'Border Collie', isPrimary: true },
+    ],
+    registryMemberships: ['CFA', 'ARBA', 'AKC'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: false,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'Tricorder-verified health screenings',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: false,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: false,
+      notes: 'Prime Directive compliant breeding',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Multi-species socialization protocol',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: true,
+      requireHomeVisit: false,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Starfleet wellness checks included',
+    },
+  },
+  richmond: {
+    businessName: 'AFC Richmond Kennels',
+    businessDescription: 'Believe! Premium dog breeding with a winning attitude and heart.',
+    logoPlaceholderText: 'AFC+Richmond',
+    bannerPlaceholderText: 'Believe+in+Breeding',
+    yearEstablished: 2019,
+    publicEmail: 'kennels@afcrichmond.local',
+    publicPhone: '+44-20-5555-0203',
+    website: 'https://richmond-kennels.local',
+    city: 'Richmond',
+    state: 'London',
+    country: 'GB',
+    timezone: 'Europe/London',
+    businessHours: {
+      monday: { open: '09:00', close: '17:00' },
+      tuesday: { open: '09:00', close: '17:00' },
+      wednesday: { open: '09:00', close: '17:00' },
+      thursday: { open: '09:00', close: '17:00' },
+      friday: { open: '09:00', close: '17:00' },
+      saturday: { open: '10:00', close: '14:00' },
+      sunday: null,
+    },
+    verificationTier: 'MARKETPLACE_ENABLED',
+    quickResponder: true,
+    establishedBadge: false,
+    breeds: [
+      { species: 'DOG', breedName: 'English Bulldog', isPrimary: true },
+      { species: 'DOG', breedName: 'Cavalier King Charles Spaniel', isPrimary: false },
+    ],
+    registryMemberships: ['KC', 'OFA'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: false,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'Football-loving, healthy pups',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: true,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: true,
+      notes: 'Be a goldfish - breeding philosophy',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Biscuits with the boss included',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: false,
+      requireInterviewMeeting: true,
+      requireHomeVisit: false,
+      requireDeposit: true,
+      depositRefundable: true,
+      requireReservationFee: false,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Roy Kent approved',
+    },
+  },
+  zion: {
+    businessName: 'Zion Breeding Collective',
+    businessDescription: 'Free your mind, free your animals. Breeding program for those who have awakened.',
+    logoPlaceholderText: 'Zion+Collective',
+    bannerPlaceholderText: 'Free+Your+Mind',
+    yearEstablished: 2014,
+    publicEmail: 'collective@zion.local',
+    publicPhone: '+1-555-0204',
+    website: 'https://zion-collective.local',
+    city: 'Zion',
+    state: 'Underground',
+    country: 'US',
+    timezone: 'America/New_York',
+    businessHours: {
+      monday: { open: '00:00', close: '23:59' },
+      tuesday: { open: '00:00', close: '23:59' },
+      wednesday: { open: '00:00', close: '23:59' },
+      thursday: { open: '00:00', close: '23:59' },
+      friday: { open: '00:00', close: '23:59' },
+      saturday: { open: '00:00', close: '23:59' },
+      sunday: { open: '00:00', close: '23:59' },
+    },
+    verificationTier: 'VERIFIED',
+    quickResponder: true,
+    establishedBadge: true,
+    breeds: [
+      { species: 'CAT', breedName: 'Black Cat (Domestic)', isPrimary: true },
+      { species: 'GOAT', breedName: 'La Mancha', isPrimary: true },
+      { species: 'HORSE', breedName: 'Thoroughbred', isPrimary: true },
+      { species: 'DOG', breedName: 'Black German Shepherd', isPrimary: false },
+    ],
+    registryMemberships: ['AKC', 'CFA', 'AQHA', 'ADGA'],
+    healthPractices: {
+      ofaHipElbow: true,
+      ofaCardiac: true,
+      ofaEyes: true,
+      pennHip: true,
+      geneticTesting: true,
+      embarkWisdomPanel: true,
+      notes: 'Red pill health testing protocols',
+    },
+    breedingPractices: {
+      healthTestedParentsOnly: true,
+      puppyCulture: true,
+      avidogProgram: true,
+      breedingSoundnessExam: true,
+      limitedBreedingRights: true,
+      coOwnershipAvailable: true,
+      notes: 'There is no spoon... but there are puppies',
+    },
+    careAndEarlyLife: {
+      ensEsi: true,
+      vetChecked: true,
+      firstVaccinations: true,
+      microchipped: true,
+      cratePottyTrainingStarted: true,
+      socializationProtocol: true,
+      notes: 'Matrix-resistant conditioning',
+    },
+    placementPolicies: {
+      requireApplication: true,
+      requireSignedContract: true,
+      requireVetReference: true,
+      requireInterviewMeeting: true,
+      requireHomeVisit: true,
+      requireDeposit: true,
+      depositRefundable: false,
+      requireReservationFee: true,
+      requireSpayNeuterForPets: true,
+      acceptReturns: true,
+      lifetimeTakeBackGuarantee: true,
+      ongoingBreederSupport: true,
+      additionalNotes: 'Follow the white rabbit',
+    },
+  },
+};
+
+// Helper to get storefronts for an environment
+export function getStorefronts(env: Environment): Record<string, StorefrontDefinition> {
+  return env === 'prod' ? PROD_STOREFRONTS : DEV_STOREFRONTS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREEDING ATTEMPTS, PREGNANCY CHECKS, AND TEST RESULTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type BreedingMethodDef = 'NATURAL' | 'AI_TCI' | 'AI_SI' | 'AI_FROZEN';
+export type BreedingGuaranteeTypeDef = 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT';
+export type PregnancyCheckMethodDef = 'PALPATION' | 'ULTRASOUND' | 'RELAXIN_TEST' | 'XRAY' | 'OTHER';
+
+export interface BreedingAttemptDefinition {
+  planRef: string;  // Reference to breeding plan by name
+  method: BreedingMethodDef;
+  attemptAt: Date;
+  success: boolean | null;
+  notes?: string;
+  guaranteeType?: BreedingGuaranteeTypeDef;
+  agreedFeeCents?: number;
+  feePaidCents?: number;
+}
+
+export interface PregnancyCheckDefinition {
+  planRef: string;  // Reference to breeding plan by name
+  method: PregnancyCheckMethodDef;
+  checkedAt: Date;
+  result: boolean;
+  notes?: string;
+}
+
+export interface TestResultDefinition {
+  planRef: string;  // Reference to breeding plan by name
+  animalRef: string;  // Reference to animal (dam) by name
+  kind: string;  // 'progesterone', 'LH_TEST', 'FOLLICLE_EXAM', etc.
+  method?: string;
+  collectedAt: Date;
+  valueNumber?: number;
+  valueText?: string;
+  units?: string;
+  indicatesOvulationDate?: Date;
+  notes?: string;
+  data?: Record<string, unknown>;
+}
+
+// DEV Breeding Attempts - linked to breeding plans
+export const DEV_BREEDING_ATTEMPTS: Record<string, BreedingAttemptDefinition[]> = {
+  rivendell: [
+    // For CYCLE plan - breeding attempt scheduled
+    { planRef: 'Mearas Legacy', method: 'NATURAL', attemptAt: new Date('2026-01-20'), success: null, notes: 'Natural cover scheduled' },
+    // For PREGNANT plan - successful breeding
+    { planRef: 'Elven Cat Program 2026', method: 'NATURAL', attemptAt: new Date('2025-12-06'), success: true, notes: 'Queen bred successfully' },
+    // For COMPLETE plan - successful breeding
+    { planRef: 'Silmaril Line', method: 'AI_TCI', attemptAt: new Date('2025-06-12'), success: true, notes: 'TCI insemination successful',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 150000, feePaidCents: 150000 },
+  ],
+  hogwarts: [
+    // For BRED plan
+    { planRef: 'Hagrid\'s Hounds Q2', method: 'NATURAL', attemptAt: new Date('2026-01-20'), success: null, notes: 'Tie confirmed' },
+    // For BIRTHED plan
+    { planRef: 'Bunny Breeding 101', method: 'NATURAL', attemptAt: new Date('2025-12-01'), success: true, notes: 'Induced ovulation breeding' },
+  ],
+  winterfell: [
+    // For WEANED plan - past successful breeding
+    { planRef: 'Direwolf Pack 2026', method: 'NATURAL', attemptAt: new Date('2025-08-01'), success: true, notes: 'Northern breeding protocol' },
+    // For HORMONE_TESTING plan - planning
+  ],
+  'stark-tower': [
+    // For PLACEMENT plan - past successful breeding
+    { planRef: 'Flerken Breeding Initiative', method: 'NATURAL', attemptAt: new Date('2025-09-01'), success: true, notes: 'SHIELD-monitored breeding' },
+    // For UNSUCCESSFUL plan - failed attempt
+    { planRef: 'Infinity Farm Goats', method: 'NATURAL', attemptAt: new Date('2025-11-01'), success: false, notes: 'Breeding unsuccessful - no conception' },
+    // For PREGNANT plan
+    { planRef: 'Lucky\'s Legacy', method: 'NATURAL', attemptAt: new Date('2025-12-27'), success: true, notes: 'Tie confirmed, 30 min' },
+  ],
+};
+
+// PROD Breeding Attempts
+export const PROD_BREEDING_ATTEMPTS: Record<string, BreedingAttemptDefinition[]> = {
+  arrakis: [
+    { planRef: 'Caladan Legacy', method: 'AI_FROZEN', attemptAt: new Date('2025-04-19'), success: true, notes: 'Frozen semen from Duke Leto',
+      guaranteeType: 'SIXTY_DAY_PREGNANCY', agreedFeeCents: 500000, feePaidCents: 500000 },
+    { planRef: 'Bene Gesserit Companions', method: 'NATURAL', attemptAt: new Date('2026-01-24'), success: null, notes: 'Breeding scheduled' },
+    { planRef: 'Fremen Pack', method: 'NATURAL', attemptAt: new Date('2025-05-12'), success: true, notes: 'Desert breeding successful' },
+  ],
+  starfleet: [
+    { planRef: 'Enterprise Cats 2026', method: 'NATURAL', attemptAt: new Date('2026-01-18'), success: null, notes: 'Queen in estrus, tom introduced' },
+    { planRef: 'Academy Service Dogs', method: 'AI_TCI', attemptAt: new Date('2025-07-15'), success: true, notes: 'TCI with fresh chilled semen' },
+    { planRef: 'Station Rabbits', method: 'NATURAL', attemptAt: new Date('2025-12-20'), success: true, notes: 'Induced ovulation breeding' },
+  ],
+  richmond: [
+    { planRef: 'Diamond Dogs Breeding', method: 'AI_TCI', attemptAt: new Date('2026-01-27'), success: null, notes: 'Progesterone optimal, breeding scheduled',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 250000, feePaidCents: 125000 },
+    { planRef: 'Nelson Road Horses', method: 'AI_FROZEN', attemptAt: new Date('2024-06-01'), success: true, notes: 'Frozen semen breeding',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 350000, feePaidCents: 350000 },
+  ],
+  zion: [
+    { planRef: 'Resistance Cat Program', method: 'NATURAL', attemptAt: new Date('2025-12-28'), success: true, notes: 'Matrix breeding protocol' },
+    { planRef: 'Zion Farm Goats', method: 'NATURAL', attemptAt: new Date('2025-10-15'), success: false, notes: 'No conception' },
+    { planRef: 'Agent Tracker Dogs', method: 'AI_TCI', attemptAt: new Date('2025-03-14'), success: true, notes: 'Resistance breeding program' },
+  ],
+};
+
+export function getBreedingAttempts(env: Environment): Record<string, BreedingAttemptDefinition[]> {
+  return env === 'prod' ? PROD_BREEDING_ATTEMPTS : DEV_BREEDING_ATTEMPTS;
+}
+
+// DEV Pregnancy Checks
+export const DEV_PREGNANCY_CHECKS: Record<string, PregnancyCheckDefinition[]> = {
+  rivendell: [
+    // For PREGNANT plan - confirmed pregnancy
+    { planRef: 'Elven Cat Program 2026', method: 'ULTRASOUND', checkedAt: new Date('2025-12-20'), result: true, notes: '4 kittens visible' },
+    // For COMPLETE plan - historical checks
+    { planRef: 'Silmaril Line', method: 'ULTRASOUND', checkedAt: new Date('2025-06-30'), result: true, notes: '6 puppies confirmed' },
+    { planRef: 'Silmaril Line', method: 'PALPATION', checkedAt: new Date('2025-07-15'), result: true, notes: 'Healthy pregnancy confirmed' },
+  ],
+  hogwarts: [
+    // For BIRTHED plan - historical check
+    { planRef: 'Bunny Breeding 101', method: 'PALPATION', checkedAt: new Date('2025-12-14'), result: true, notes: 'Multiple kits palpated' },
+  ],
+  winterfell: [
+    // For WEANED plan - historical checks
+    { planRef: 'Direwolf Pack 2026', method: 'ULTRASOUND', checkedAt: new Date('2025-08-25'), result: true, notes: '7 puppies confirmed' },
+    { planRef: 'Direwolf Pack 2026', method: 'XRAY', checkedAt: new Date('2025-09-15'), result: true, notes: 'X-ray confirmed 7 puppies' },
+  ],
+  'stark-tower': [
+    // For PLACEMENT plan - historical check
+    { planRef: 'Flerken Breeding Initiative', method: 'ULTRASOUND', checkedAt: new Date('2025-09-20'), result: true, notes: '4 kittens confirmed' },
+    // For PREGNANT plan - recent check
+    { planRef: 'Lucky\'s Legacy', method: 'ULTRASOUND', checkedAt: new Date('2026-01-20'), result: true, notes: 'Pregnancy confirmed, 5 puppies visible' },
+    // For UNSUCCESSFUL plan - negative check
+    { planRef: 'Infinity Farm Goats', method: 'ULTRASOUND', checkedAt: new Date('2025-11-20'), result: false, notes: 'No pregnancy detected' },
+  ],
+};
+
+// PROD Pregnancy Checks
+export const PROD_PREGNANCY_CHECKS: Record<string, PregnancyCheckDefinition[]> = {
+  arrakis: [
+    // For PREGNANT horse plan - multiple checks per equine protocol
+    { planRef: 'Caladan Legacy', method: 'ULTRASOUND', checkedAt: new Date('2025-05-04'), result: true, notes: '15-day check - vesicle visible' },
+    { planRef: 'Caladan Legacy', method: 'ULTRASOUND', checkedAt: new Date('2025-06-03'), result: true, notes: '45-day check - fetal heartbeat' },
+    { planRef: 'Caladan Legacy', method: 'ULTRASOUND', checkedAt: new Date('2025-07-18'), result: true, notes: '90-day check - healthy fetus' },
+    // For COMPLETE plan
+    { planRef: 'Fremen Pack', method: 'ULTRASOUND', checkedAt: new Date('2025-06-01'), result: true, notes: '8 puppies confirmed' },
+  ],
+  starfleet: [
+    // For WEANED plan
+    { planRef: 'Academy Service Dogs', method: 'ULTRASOUND', checkedAt: new Date('2025-08-05'), result: true, notes: '6 puppies confirmed' },
+    // For BIRTHED plan
+    { planRef: 'Station Rabbits', method: 'PALPATION', checkedAt: new Date('2026-01-05'), result: true, notes: 'Kits palpated' },
+  ],
+  richmond: [
+    // For PLACEMENT plan - historical horse checks
+    { planRef: 'Nelson Road Horses', method: 'ULTRASOUND', checkedAt: new Date('2024-06-16'), result: true, notes: '15-day check positive' },
+    { planRef: 'Nelson Road Horses', method: 'ULTRASOUND', checkedAt: new Date('2024-07-16'), result: true, notes: '45-day check - fetal heartbeat confirmed' },
+  ],
+  zion: [
+    // For PREGNANT cat plan
+    { planRef: 'Resistance Cat Program', method: 'ULTRASOUND', checkedAt: new Date('2026-01-15'), result: true, notes: '5 kittens visible' },
+    // For UNSUCCESSFUL plan - negative check
+    { planRef: 'Zion Farm Goats', method: 'ULTRASOUND', checkedAt: new Date('2025-11-05'), result: false, notes: 'No pregnancy' },
+    // For COMPLETE plan
+    { planRef: 'Agent Tracker Dogs', method: 'ULTRASOUND', checkedAt: new Date('2025-04-05'), result: true, notes: '9 puppies confirmed' },
+  ],
+};
+
+export function getPregnancyChecks(env: Environment): Record<string, PregnancyCheckDefinition[]> {
+  return env === 'prod' ? PROD_PREGNANCY_CHECKS : DEV_PREGNANCY_CHECKS;
+}
+
+// DEV Test Results (progesterone, LH, follicle exams)
+export const DEV_TEST_RESULTS: Record<string, TestResultDefinition[]> = {
+  rivendell: [
+    // For CYCLE horse plan - follicle exams
+    { planRef: 'Mearas Legacy', animalRef: 'Nahar', kind: 'FOLLICLE_EXAM', method: 'ULTRASOUND',
+      collectedAt: new Date('2026-01-16'), valueNumber: 32, units: 'mm',
+      notes: 'Left ovary: 32mm follicle', data: { leftOvary: { follicleSize: 32, texture: 'firm' }, rightOvary: { follicleSize: 18 }, uterineEdema: 2 } },
+    { planRef: 'Mearas Legacy', animalRef: 'Nahar', kind: 'FOLLICLE_EXAM', method: 'ULTRASOUND',
+      collectedAt: new Date('2026-01-18'), valueNumber: 38, units: 'mm',
+      notes: 'Left ovary: 38mm follicle, softening', data: { leftOvary: { follicleSize: 38, texture: 'soft' }, rightOvary: { follicleSize: 20 }, uterineEdema: 3 } },
+  ],
+  hogwarts: [],
+  winterfell: [
+    // For HORMONE_TESTING plan - progesterone tests
+    { planRef: 'Northern Cavalry', animalRef: 'Night Mare', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-12'), valueNumber: 1.2, units: 'ng/mL', notes: 'Day 2 - baseline' },
+    { planRef: 'Northern Cavalry', animalRef: 'Night Mare', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-15'), valueNumber: 2.8, units: 'ng/mL', notes: 'Day 5 - rising' },
+    { planRef: 'Northern Cavalry', animalRef: 'Night Mare', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-18'), valueNumber: 5.2, units: 'ng/mL', notes: 'Day 8 - approaching optimal' },
+  ],
+  'stark-tower': [],
+};
+
+// PROD Test Results
+export const PROD_TEST_RESULTS: Record<string, TestResultDefinition[]> = {
+  arrakis: [
+    // For PREGNANT horse - ovulation confirmation tests
+    { planRef: 'Caladan Legacy', animalRef: 'Caladan Jewel (SCID Carrier Founder Mare)', kind: 'FOLLICLE_EXAM', method: 'ULTRASOUND',
+      collectedAt: new Date('2025-04-15'), valueNumber: 35, units: 'mm',
+      notes: 'Right ovary: 35mm follicle', data: { rightOvary: { follicleSize: 35, texture: 'soft' }, uterineEdema: 3 } },
+    { planRef: 'Caladan Legacy', animalRef: 'Caladan Jewel (SCID Carrier Founder Mare)', kind: 'FOLLICLE_EXAM', method: 'ULTRASOUND',
+      collectedAt: new Date('2025-04-18'), valueNumber: 42, units: 'mm', indicatesOvulationDate: new Date('2025-04-18'),
+      notes: 'Ovulation imminent', data: { rightOvary: { follicleSize: 42, texture: 'very soft' }, uterineEdema: 4 } },
+    // For CYCLE cat plan
+    { planRef: 'Bene Gesserit Companions', animalRef: 'Reverend Mother (PKDef Carrier Type A Founder Female)', kind: 'vaginal_cytology',
+      collectedAt: new Date('2026-01-22'), valueText: 'cornified', notes: 'Peak estrus confirmed' },
+  ],
+  starfleet: [],
+  richmond: [
+    // For HORMONE_TESTING dog plan - progesterone series
+    { planRef: 'Diamond Dogs Breeding', animalRef: 'Rebecca (PRA Carrier Founder Female)', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-18'), valueNumber: 1.5, units: 'ng/mL', notes: 'Day 3 of cycle' },
+    { planRef: 'Diamond Dogs Breeding', animalRef: 'Rebecca (PRA Carrier Founder Female)', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-21'), valueNumber: 3.2, units: 'ng/mL', notes: 'Day 6 - rising' },
+    { planRef: 'Diamond Dogs Breeding', animalRef: 'Rebecca (PRA Carrier Founder Female)', kind: 'progesterone', method: 'PROGESTERONE_TEST',
+      collectedAt: new Date('2026-01-24'), valueNumber: 7.5, units: 'ng/mL', notes: 'Day 9 - optimal breeding window' },
+    { planRef: 'Diamond Dogs Breeding', animalRef: 'Rebecca (PRA Carrier Founder Female)', kind: 'LH_TEST', method: 'LH_TEST',
+      collectedAt: new Date('2026-01-22'), valueText: 'positive', notes: 'LH surge detected', indicatesOvulationDate: new Date('2026-01-24') },
+  ],
+  zion: [],
+};
+
+export function getTestResults(env: Environment): Record<string, TestResultDefinition[]> {
+  return env === 'prod' ? PROD_TEST_RESULTS : DEV_TEST_RESULTS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREEDING MILESTONES (for pregnant horse plans)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type MilestoneTypeDef =
+  | 'VET_PREGNANCY_CHECK_15D'
+  | 'VET_ULTRASOUND_45D'
+  | 'VET_ULTRASOUND_90D'
+  | 'BEGIN_MONITORING_300D'
+  | 'PREPARE_FOALING_AREA_320D'
+  | 'DAILY_CHECKS_330D'
+  | 'DUE_DATE_340D'
+  | 'OVERDUE_VET_CALL_350D'
+  | 'UDDER_DEVELOPMENT'
+  | 'UDDER_FULL'
+  | 'WAX_APPEARANCE'
+  | 'VULVAR_RELAXATION'
+  | 'TAILHEAD_RELAXATION'
+  | 'MILK_CALCIUM_TEST';
+
+export interface BreedingMilestoneDefinition {
+  planRef: string;
+  milestoneType: MilestoneTypeDef;
+  scheduledDate: Date;
+  isCompleted: boolean;
+  completedDate?: Date;
+  notes?: string;
+}
+
+// DEV Breeding Milestones - for horse pregnancy plans
+export const DEV_BREEDING_MILESTONES: Record<string, BreedingMilestoneDefinition[]> = {
+  rivendell: [
+    // For CYCLE horse plan (Mearas Legacy) - when pregnancy is confirmed, milestones will be created
+  ],
+  hogwarts: [],
+  winterfell: [],
+  'stark-tower': [],
+};
+
+// PROD Breeding Milestones - for PREGNANT horse plan (Caladan Legacy)
+export const PROD_BREEDING_MILESTONES: Record<string, BreedingMilestoneDefinition[]> = {
+  arrakis: [
+    // For PREGNANT horse plan - Caladan Legacy (expected birth 2026-03-15)
+    { planRef: 'Caladan Legacy', milestoneType: 'VET_PREGNANCY_CHECK_15D', scheduledDate: new Date('2025-05-04'), isCompleted: true, completedDate: new Date('2025-05-04'), notes: '15-day check complete' },
+    { planRef: 'Caladan Legacy', milestoneType: 'VET_ULTRASOUND_45D', scheduledDate: new Date('2025-06-03'), isCompleted: true, completedDate: new Date('2025-06-03'), notes: '45-day ultrasound complete' },
+    { planRef: 'Caladan Legacy', milestoneType: 'VET_ULTRASOUND_90D', scheduledDate: new Date('2025-07-18'), isCompleted: true, completedDate: new Date('2025-07-18'), notes: '90-day ultrasound complete' },
+    { planRef: 'Caladan Legacy', milestoneType: 'BEGIN_MONITORING_300D', scheduledDate: new Date('2026-02-08'), isCompleted: false, notes: 'Start close monitoring' },
+    { planRef: 'Caladan Legacy', milestoneType: 'PREPARE_FOALING_AREA_320D', scheduledDate: new Date('2026-02-23'), isCompleted: false, notes: 'Prepare foaling stall' },
+    { planRef: 'Caladan Legacy', milestoneType: 'DAILY_CHECKS_330D', scheduledDate: new Date('2026-03-05'), isCompleted: false, notes: 'Begin daily checks' },
+    { planRef: 'Caladan Legacy', milestoneType: 'DUE_DATE_340D', scheduledDate: new Date('2026-03-15'), isCompleted: false, notes: 'Expected foaling date' },
+  ],
+  starfleet: [],
+  richmond: [
+    // For PLACEMENT horse plan - Nelson Road Horses (born 2025-05-10)
+    { planRef: 'Nelson Road Horses', milestoneType: 'VET_PREGNANCY_CHECK_15D', scheduledDate: new Date('2024-06-16'), isCompleted: true, completedDate: new Date('2024-06-16') },
+    { planRef: 'Nelson Road Horses', milestoneType: 'VET_ULTRASOUND_45D', scheduledDate: new Date('2024-07-16'), isCompleted: true, completedDate: new Date('2024-07-16') },
+    { planRef: 'Nelson Road Horses', milestoneType: 'VET_ULTRASOUND_90D', scheduledDate: new Date('2024-08-30'), isCompleted: true, completedDate: new Date('2024-08-30') },
+    { planRef: 'Nelson Road Horses', milestoneType: 'PREPARE_FOALING_AREA_320D', scheduledDate: new Date('2025-04-20'), isCompleted: true, completedDate: new Date('2025-04-20') },
+    { planRef: 'Nelson Road Horses', milestoneType: 'UDDER_DEVELOPMENT', scheduledDate: new Date('2025-04-26'), isCompleted: true, completedDate: new Date('2025-04-26'), notes: 'Udder beginning to fill' },
+    { planRef: 'Nelson Road Horses', milestoneType: 'WAX_APPEARANCE', scheduledDate: new Date('2025-05-08'), isCompleted: true, completedDate: new Date('2025-05-08'), notes: 'Wax on teats observed' },
+    { planRef: 'Nelson Road Horses', milestoneType: 'DUE_DATE_340D', scheduledDate: new Date('2025-05-10'), isCompleted: true, completedDate: new Date('2025-05-10'), notes: 'Healthy foal born!' },
+  ],
+  zion: [],
+};
+
+export function getBreedingMilestones(env: Environment): Record<string, BreedingMilestoneDefinition[]> {
+  return env === 'prod' ? PROD_BREEDING_MILESTONES : DEV_BREEDING_MILESTONES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FOALING OUTCOMES (for birthed/complete horse plans)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type MareConditionDef = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' | 'VETERINARY_CARE_REQUIRED';
+
+export interface FoalingOutcomeDefinition {
+  planRef: string;
+  hadComplications: boolean;
+  complicationDetails?: string;
+  veterinarianCalled: boolean;
+  veterinarianName?: string;
+  placentaPassed: boolean;
+  placentaPassedMinutes?: number;
+  mareCondition: MareConditionDef;
+  postFoalingHeatDate?: Date;
+  readyForRebreeding: boolean;
+  notes?: string;
+}
+
+// DEV Foaling Outcomes - for COMPLETE horse plan (if any)
+export const DEV_FOALING_OUTCOMES: Record<string, FoalingOutcomeDefinition[]> = {
+  rivendell: [],
+  hogwarts: [],
+  winterfell: [],
+  'stark-tower': [],
+};
+
+// PROD Foaling Outcomes - for PLACEMENT horse plan (Nelson Road Horses)
+export const PROD_FOALING_OUTCOMES: Record<string, FoalingOutcomeDefinition[]> = {
+  arrakis: [],
+  starfleet: [],
+  richmond: [
+    {
+      planRef: 'Nelson Road Horses',
+      hadComplications: false,
+      veterinarianCalled: false,
+      placentaPassed: true,
+      placentaPassedMinutes: 45,
+      mareCondition: 'EXCELLENT',
+      postFoalingHeatDate: new Date('2025-05-19'),
+      readyForRebreeding: true,
+      notes: 'Uncomplicated foaling, healthy colt born',
+    },
+  ],
+  zion: [],
+};
+
+export function getFoalingOutcomes(env: Environment): Record<string, FoalingOutcomeDefinition[]> {
+  return env === 'prod' ? PROD_FOALING_OUTCOMES : DEV_FOALING_OUTCOMES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARE REPRODUCTIVE HISTORY (lifetime stats for broodmares)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface MareReproductiveHistoryDefinition {
+  mareRef: string;  // Reference to mare by name
+  totalFoalings: number;
+  totalLiveFoals: number;
+  totalComplicatedFoalings: number;
+  avgPostFoalingHeatDays?: number;
+  riskScore: number;
+  riskFactors?: string[];
+  notes?: string;
+}
+
+// DEV Mare Reproductive History
+export const DEV_MARE_HISTORY: Record<string, MareReproductiveHistoryDefinition[]> = {
+  rivendell: [
+    { mareRef: 'Nahar', totalFoalings: 2, totalLiveFoals: 2, totalComplicatedFoalings: 0, avgPostFoalingHeatDays: 9, riskScore: 0, notes: 'Excellent broodmare' },
+  ],
+  hogwarts: [],
+  winterfell: [
+    { mareRef: 'Night Mare', totalFoalings: 1, totalLiveFoals: 1, totalComplicatedFoalings: 0, riskScore: 0, notes: 'First-time broodmare' },
+  ],
+  'stark-tower': [
+    { mareRef: 'Valkyrie Mare', totalFoalings: 3, totalLiveFoals: 3, totalComplicatedFoalings: 0, avgPostFoalingHeatDays: 8, riskScore: 0, notes: 'Proven Asgardian broodmare' },
+  ],
+};
+
+// PROD Mare Reproductive History
+export const PROD_MARE_HISTORY: Record<string, MareReproductiveHistoryDefinition[]> = {
+  arrakis: [
+    { mareRef: 'Caladan Jewel (SCID Carrier Founder Mare)', totalFoalings: 2, totalLiveFoals: 2, totalComplicatedFoalings: 0, avgPostFoalingHeatDays: 10, riskScore: 0, notes: 'Foundation mare for Atreides program' },
+  ],
+  starfleet: [],
+  richmond: [
+    { mareRef: 'Nelson Road (GBED Carrier Founder Mare)', totalFoalings: 1, totalLiveFoals: 1, totalComplicatedFoalings: 0, avgPostFoalingHeatDays: 9, riskScore: 0, notes: 'First foal, excellent outcome' },
+  ],
+  zion: [
+    { mareRef: 'Zion (HERDA Carrier Founder Mare)', totalFoalings: 0, totalLiveFoals: 0, totalComplicatedFoalings: 0, riskScore: 0, notes: 'Maiden mare' },
+  ],
+};
+
+export function getMareHistory(env: Environment): Record<string, MareReproductiveHistoryDefinition[]> {
+  return env === 'prod' ? PROD_MARE_HISTORY : DEV_MARE_HISTORY;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CREDENTIAL SUMMARY (for password vault)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -4423,7 +5666,13 @@ export interface ContactMetaDefinition {
   // Waitlist info - if on waitlist
   waitlistPlanIndex?: number;  // Index into tenant breeding plans
   waitlistPosition?: number;
-  waitlistStatus?: 'INQUIRY' | 'APPROVED' | 'DEPOSIT_PAID' | 'ALLOCATED';
+  waitlistStatus?: 'INQUIRY' | 'APPROVED' | 'DEPOSIT_DUE' | 'DEPOSIT_PAID' | 'READY' | 'ALLOCATED' | 'COMPLETED' | 'CANCELED' | 'REJECTED';
+  // Waitlist preferences
+  waitlistSpeciesPref?: Species;
+  waitlistBreedPrefs?: string[];  // e.g., ['Golden Retriever', 'Goldendoodle']
+  // Waitlist origin tracking
+  waitlistOriginSource?: 'marketplace' | 'website' | 'referral' | 'direct';
+  waitlistOriginPagePath?: string;
   // Financial info
   hasActiveDeposit: boolean;
   depositAmountCents?: number;
@@ -4878,4 +6127,1667 @@ export function getDMThreads(env: Environment): Record<string, DMThreadDefinitio
 
 export function getDrafts(env: Environment): Record<string, DraftDefinition[]> {
   return env === 'prod' ? PROD_DRAFTS : DEV_DRAFTS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE BREEDING PROGRAM LISTINGS (MktListingBreedingProgram)
+// These are the actual breeding program listings that appear on the marketplace
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface BreedingProgramListingDefinition {
+  slug: string;
+  name: string;
+  species: Species;
+  breedText: string;
+  description: string;
+  programStory?: string;
+  status: 'DRAFT' | 'LIVE' | 'PAUSED';
+  acceptInquiries: boolean;
+  openWaitlist: boolean;
+  acceptReservations: boolean;
+  comingSoon: boolean;
+  pricingTiers?: { tier: string; priceRange: string; description?: string }[];
+  whatsIncluded?: string;
+  typicalWaitTime?: string;
+  showWhatsIncluded?: boolean;
+  showWaitTime?: boolean;
+  coverImageText?: string;  // Placeholder image text
+}
+
+// DEV Breeding Program Listings - One or more per tenant
+export const DEV_BREEDING_PROGRAM_LISTINGS: Record<string, BreedingProgramListingDefinition[]> = {
+  rivendell: [
+    {
+      slug: 'elven-hounds',
+      name: 'Elven Hound Program',
+      species: 'DOG',
+      breedText: 'German Shepherd',
+      description: 'Our German Shepherds are bred for intelligence, loyalty, and the noble bearing befitting the companions of elven lords. Each puppy is raised with care in our Rivendell home.',
+      programStory: 'For over a decade, we have carefully selected breeding pairs based on temperament, health, and the ancient standards passed down through generations. Our hounds serve as protectors, companions, and friends to families throughout Middle Earth.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$2,500 - $3,000', description: 'Limited registration, pet quality' },
+        { tier: 'Show', priceRange: '$3,500 - $4,500', description: 'Full registration, show potential' },
+      ],
+      whatsIncluded: 'Health guarantee, first vaccinations, microchip, starter kit, lifetime support',
+      typicalWaitTime: '6-12 months',
+      coverImageText: 'Elven+Hounds+Program',
+    },
+    {
+      slug: 'mearas-horses',
+      name: 'Mearas Equestrian Program',
+      species: 'HORSE',
+      breedText: 'Arabian',
+      description: 'The legendary Mearas line - Arabian horses of exceptional quality bred for endurance, intelligence, and the spirit that only true horse lovers understand.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Foal', priceRange: '$15,000 - $25,000', description: 'Weanling or yearling' },
+        { tier: 'Started', priceRange: '$30,000 - $50,000', description: 'Basic training complete' },
+      ],
+      whatsIncluded: 'Registration papers, health records, transport assistance, breeder support',
+      typicalWaitTime: '12-18 months',
+      coverImageText: 'Mearas+Horses',
+    },
+  ],
+  hogwarts: [
+    {
+      slug: 'magical-cats',
+      name: 'Magical Companions - Cats',
+      species: 'CAT',
+      breedText: 'Maine Coon',
+      description: 'Our Maine Coons are bred to be the perfect magical companion - intelligent, majestic, and with just a hint of mystery in their eyes.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$1,500 - $2,000' },
+        { tier: 'Breeding', priceRange: '$2,500 - $3,500' },
+      ],
+      whatsIncluded: 'TICA registration, health guarantee, kitten kit, starter food',
+      typicalWaitTime: '3-6 months',
+      coverImageText: 'Magical+Cats',
+    },
+    {
+      slug: 'wizarding-rabbits',
+      name: 'Enchanted Rabbit Program',
+      species: 'RABBIT',
+      breedText: 'Holland Lop',
+      description: 'Adorable Holland Lops perfect for families and first-time rabbit owners. Each bunny is socialized from birth.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: false,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$200 - $350' },
+        { tier: 'Show', priceRange: '$400 - $600' },
+      ],
+      typicalWaitTime: '1-3 months',
+      coverImageText: 'Enchanted+Rabbits',
+    },
+  ],
+  winterfell: [
+    {
+      slug: 'direwolf-program',
+      name: 'Northern Direwolf Program',
+      species: 'DOG',
+      breedText: 'Samoyed',
+      description: 'Bred for the harsh Northern winters, our Samoyeds embody the spirit of the direwolves. Loyal, protective, and incredibly fluffy.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$3,000 - $4,000' },
+        { tier: 'Show', priceRange: '$4,500 - $6,000' },
+      ],
+      whatsIncluded: 'AKC registration, health testing, starter kit, grooming supplies',
+      typicalWaitTime: '8-14 months',
+      coverImageText: 'Northern+Direwolves',
+    },
+    {
+      slug: 'northern-cats',
+      name: 'Winterfell Cat Program',
+      species: 'CAT',
+      breedText: 'Norwegian Forest Cat',
+      description: 'Hardy Norwegian Forest Cats bred for both beauty and the resilience needed to survive Northern winters.',
+      status: 'DRAFT',
+      acceptInquiries: false,
+      openWaitlist: false,
+      acceptReservations: false,
+      comingSoon: true,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$1,800 - $2,500' },
+      ],
+      typicalWaitTime: '4-8 months',
+      coverImageText: 'Winterfell+Cats',
+    },
+  ],
+  'stark-tower': [
+    {
+      slug: 'avengers-dogs',
+      name: 'Stark Industries K9 Program',
+      species: 'DOG',
+      breedText: 'Belgian Malinois',
+      description: 'High-drive Belgian Malinois bred for exceptional working ability. Perfect for active families or professional handlers.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$3,500 - $5,000' },
+        { tier: 'Working', priceRange: '$8,000 - $15,000' },
+      ],
+      whatsIncluded: 'Health guarantee, training foundation, microchip, lifetime support',
+      typicalWaitTime: '6-10 months',
+      coverImageText: 'Stark+K9+Program',
+    },
+    {
+      slug: 'flerken-cats',
+      name: 'Flerken Companion Program',
+      species: 'CAT',
+      breedText: 'Bengal',
+      description: 'Our Bengals are bred for their wild beauty and playful personalities. Not actual Flerkens... probably.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$2,000 - $3,000' },
+        { tier: 'Breeding', priceRange: '$4,000 - $6,000' },
+      ],
+      typicalWaitTime: '4-8 months',
+      coverImageText: 'Flerken+Program',
+    },
+  ],
+};
+
+// PROD Breeding Program Listings
+export const PROD_BREEDING_PROGRAM_LISTINGS: Record<string, BreedingProgramListingDefinition[]> = {
+  arrakis: [
+    {
+      slug: 'desert-hounds',
+      name: 'Fremen Desert Hound Program',
+      species: 'DOG',
+      breedText: 'Saluki',
+      description: 'The Saluki - ancient desert hound of the Fremen. Bred for speed, endurance, and unwavering loyalty in the harshest conditions.',
+      programStory: 'Our Salukis carry bloodlines traced back to the first settlers of Arrakis. Each hound is raised in the desert tradition, learning to conserve water and energy while maintaining their legendary speed.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Companion', priceRange: '$2,500 - $3,500' },
+        { tier: 'Coursing', priceRange: '$4,000 - $5,500' },
+      ],
+      whatsIncluded: 'Health certification, desert conditioning guide, lifetime breeder support',
+      typicalWaitTime: '8-12 months',
+      coverImageText: 'Desert+Hounds',
+    },
+    {
+      slug: 'spice-cats',
+      name: 'Bene Gesserit Cat Program',
+      species: 'CAT',
+      breedText: 'Abyssinian',
+      description: 'Abyssinians with the alert, knowing gaze of the Bene Gesserit. Intelligent, athletic, and mysteriously captivating.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$1,500 - $2,000' },
+        { tier: 'Show', priceRange: '$2,500 - $3,500' },
+      ],
+      typicalWaitTime: '4-6 months',
+      coverImageText: 'Spice+Cats',
+    },
+  ],
+  starfleet: [
+    {
+      slug: 'enterprise-cats',
+      name: 'Starfleet Feline Program',
+      species: 'CAT',
+      breedText: 'Exotic Shorthair',
+      description: 'Ship cats for the modern starship. Our Exotic Shorthairs are bred for calm temperaments perfect for station life.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Companion', priceRange: '$1,800 - $2,500' },
+        { tier: 'Show', priceRange: '$3,000 - $4,000' },
+      ],
+      whatsIncluded: 'Health guarantee, socialization certification, starter kit',
+      typicalWaitTime: '3-6 months',
+      coverImageText: 'Enterprise+Cats',
+    },
+    {
+      slug: 'academy-dogs',
+      name: 'Starfleet Academy Service Dogs',
+      species: 'DOG',
+      breedText: 'Labrador Retriever',
+      description: 'Labs bred for service and therapy work. Perfect temperaments for cadets and officers alike.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$2,000 - $2,800' },
+        { tier: 'Service', priceRange: '$3,500 - $5,000' },
+      ],
+      typicalWaitTime: '10-14 months',
+      coverImageText: 'Academy+Dogs',
+    },
+  ],
+  richmond: [
+    {
+      slug: 'diamond-dogs',
+      name: 'Diamond Dogs Breeding Program',
+      species: 'DOG',
+      breedText: 'Golden Retriever',
+      description: 'Golden Retrievers with hearts as big as their smiles. The official breed of AFC Richmond supporters.',
+      programStory: 'What started as Coach Lasso bringing his dog to practice has become a full breeding program. Our Goldens have attended matches, visited childrens hospitals, and brought joy wherever they go.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$2,500 - $3,500' },
+        { tier: 'Show', priceRange: '$4,000 - $5,500' },
+      ],
+      whatsIncluded: 'AKC registration, health testing, AFC Richmond bandana, starter kit',
+      typicalWaitTime: '6-10 months',
+      coverImageText: 'Diamond+Dogs',
+    },
+    {
+      slug: 'nelson-road-horses',
+      name: 'Nelson Road Equestrian',
+      species: 'HORSE',
+      breedText: 'Thoroughbred',
+      description: 'Thoroughbreds with championship bloodlines and the heart of a winner. Perfect for racing or sport.',
+      status: 'DRAFT',
+      acceptInquiries: false,
+      openWaitlist: false,
+      acceptReservations: false,
+      comingSoon: true,
+      pricingTiers: [
+        { tier: 'Foal', priceRange: '$20,000 - $40,000' },
+      ],
+      typicalWaitTime: '12-24 months',
+      coverImageText: 'Nelson+Road+Horses',
+    },
+  ],
+  zion: [
+    {
+      slug: 'resistance-cats',
+      name: 'Resistance Feline Program',
+      species: 'CAT',
+      breedText: 'Bombay',
+      description: 'All-black Bombays - the stealth cats of the resistance. Mysterious, intelligent, and utterly captivating.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: true,
+      acceptReservations: true,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Companion', priceRange: '$1,500 - $2,000' },
+        { tier: 'Show', priceRange: '$2,500 - $3,500' },
+      ],
+      whatsIncluded: 'Health guarantee, Matrix-themed carrier, lifetime support',
+      typicalWaitTime: '3-5 months',
+      coverImageText: 'Resistance+Cats',
+    },
+    {
+      slug: 'agent-trackers',
+      name: 'Agent Tracker Dog Program',
+      species: 'DOG',
+      breedText: 'Bloodhound',
+      description: 'Bloodhounds with exceptional tracking abilities. Can find anything... or anyone... in the Matrix.',
+      status: 'LIVE',
+      acceptInquiries: true,
+      openWaitlist: false,
+      acceptReservations: false,
+      comingSoon: false,
+      pricingTiers: [
+        { tier: 'Pet', priceRange: '$2,000 - $3,000' },
+        { tier: 'Working', priceRange: '$4,000 - $6,000' },
+      ],
+      typicalWaitTime: '8-12 months',
+      coverImageText: 'Agent+Trackers',
+    },
+  ],
+};
+
+export function getBreedingProgramListings(env: Environment): Record<string, BreedingProgramListingDefinition[]> {
+  return env === 'prod' ? PROD_BREEDING_PROGRAM_LISTINGS : DEV_BREEDING_PROGRAM_LISTINGS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUD SERVICE LISTINGS (MktListingBreederService with listingType = STUD_SERVICE)
+// For individual stallion stud service listings
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type BreedingGuaranteeTypeDef2 = 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT';
+
+export interface StudServiceListingDefinition {
+  title: string;
+  slug: string;
+  description: string;
+  stallionRef: string;  // Reference to animal by name (must be a MALE HORSE)
+  status: 'DRAFT' | 'LIVE' | 'PAUSED';
+  seasonName: string;
+  seasonStart: Date;
+  seasonEnd: Date;
+  breedingMethods: ('NATURAL' | 'AI_TCI' | 'AI_SI' | 'AI_FROZEN')[];
+  defaultGuarantee: BreedingGuaranteeTypeDef2;
+  priceCents: number;
+  bookingFeeCents?: number;
+  maxBookings?: number;
+  bookingsReceived?: number;
+  horseServiceData?: {
+    collectionDays?: string[];
+    mareRequirements?: {
+      ageMin?: number;
+      ageMax?: number;
+      healthCertRequired?: boolean;
+      requiredTests?: string[];
+    };
+  };
+}
+
+// DEV Stud Service Listings - Only for tenants with HORSE species
+export const DEV_STUD_SERVICE_LISTINGS: Record<string, StudServiceListingDefinition[]> = {
+  rivendell: [
+    {
+      title: 'Shadowfax - Lord of Horses Standing at Stud',
+      slug: 'shadowfax-stud',
+      description: 'The legendary Shadowfax, chief of the Mearas, offers his exceptional bloodlines. Known for speed, intelligence, and an unmatched bond with his rider.',
+      stallionRef: 'Shadowfax',  // Must match a MALE HORSE animal in the tenant
+      status: 'LIVE',
+      seasonName: '2026 Spring Season',
+      seasonStart: new Date('2026-02-01'),
+      seasonEnd: new Date('2026-07-31'),
+      breedingMethods: ['NATURAL', 'AI_TCI'],
+      defaultGuarantee: 'LIVE_FOAL',
+      priceCents: 500000,  // $5,000
+      bookingFeeCents: 50000,  // $500 non-refundable booking fee
+      maxBookings: 20,
+      bookingsReceived: 8,
+      horseServiceData: {
+        collectionDays: ['monday', 'wednesday', 'friday'],
+        mareRequirements: {
+          ageMin: 4,
+          ageMax: 18,
+          healthCertRequired: true,
+          requiredTests: ['coggins', 'culture'],
+        },
+      },
+    },
+  ],
+  hogwarts: [],  // No horses
+  winterfell: [],  // No horses in current data (could add later)
+  'stark-tower': [],  // No horses in current data
+};
+
+// PROD Stud Service Listings
+export const PROD_STUD_SERVICE_LISTINGS: Record<string, StudServiceListingDefinition[]> = {
+  arrakis: [],  // No horses
+  starfleet: [],  // No horses
+  richmond: [
+    {
+      title: 'Sir Championship - Premier Thoroughbred Standing at Stud',
+      slug: 'sir-championship-stud',
+      description: 'AFC Richmond\'s champion Thoroughbred now available for breeding. Known for his heart, determination, and winning spirit.',
+      stallionRef: 'Sir Championship',  // Must match a MALE HORSE in the tenant
+      status: 'DRAFT',  // Coming soon
+      seasonName: '2026 Season',
+      seasonStart: new Date('2026-03-01'),
+      seasonEnd: new Date('2026-08-31'),
+      breedingMethods: ['AI_FROZEN', 'AI_TCI'],
+      defaultGuarantee: 'SIXTY_DAY_PREGNANCY',
+      priceCents: 750000,  // $7,500
+      bookingFeeCents: 75000,
+      maxBookings: 15,
+      horseServiceData: {
+        collectionDays: ['tuesday', 'thursday'],
+        mareRequirements: {
+          ageMin: 3,
+          ageMax: 16,
+          healthCertRequired: true,
+          requiredTests: ['coggins', 'EIA', 'EVA'],
+        },
+      },
+    },
+  ],
+  zion: [],  // No horses
+};
+
+export function getStudServiceListings(env: Environment): Record<string, StudServiceListingDefinition[]> {
+  return env === 'prod' ? PROD_STUD_SERVICE_LISTINGS : DEV_STUD_SERVICE_LISTINGS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INDIVIDUAL ANIMAL LISTINGS (MktListingIndividualAnimal)
+// For standalone animal listings (guardian homes, rehoming, trained animals, etc.)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface IndividualAnimalListingDefinition {
+  animalRef: string;  // Reference to animal by name
+  templateType: 'STUD_SERVICES' | 'GUARDIAN' | 'TRAINED' | 'REHOME' | 'CO_OWNERSHIP' | 'CUSTOM';
+  slug: string;
+  headline: string;
+  summary?: string;
+  description?: string;
+  priceModel: 'fixed' | 'range' | 'inquire';
+  priceCents?: number;
+  priceMinCents?: number;
+  priceMaxCents?: number;
+  status: 'DRAFT' | 'LIVE' | 'PAUSED';
+  listed: boolean;  // true = public, false = unlisted (direct link only)
+  // For stud services templateType:
+  seasonName?: string;
+  seasonStart?: Date;
+  seasonEnd?: Date;
+  breedingMethods?: string[];
+  defaultGuaranteeType?: BreedingGuaranteeTypeDef2;
+  bookingFeeCents?: number;
+}
+
+// DEV Individual Animal Listings
+export const DEV_INDIVIDUAL_ANIMAL_LISTINGS: Record<string, IndividualAnimalListingDefinition[]> = {
+  rivendell: [
+    {
+      animalRef: 'Galadriel',  // Must match an animal in the tenant
+      templateType: 'GUARDIAN',
+      slug: 'galadriel-guardian',
+      headline: 'Galadriel - Guardian Home Opportunity',
+      summary: 'Beautiful breeding cat seeking a guardian home in exchange for occasional litters.',
+      description: 'Galadriel is a stunning Maine Coon queen looking for a loving guardian home. She will live with you full-time and return to us for breeding 1-2 times per year.',
+      priceModel: 'inquire',
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+  hogwarts: [
+    {
+      animalRef: 'Crookshanks',  // Must match an animal in the tenant
+      templateType: 'REHOME',
+      slug: 'crookshanks-rehome',
+      headline: 'Crookshanks - Retired Show Cat Available',
+      summary: 'Champion retired show cat looking for a forever home.',
+      description: 'Crookshanks has enjoyed a wonderful show career and is now ready for retirement. He would do best in a quiet home with adults.',
+      priceModel: 'fixed',
+      priceCents: 50000,  // $500 rehoming fee
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+  winterfell: [
+    {
+      animalRef: 'Grey Wind',  // Must match an animal in the tenant
+      templateType: 'CO_OWNERSHIP',
+      slug: 'grey-wind-co-ownership',
+      headline: 'Grey Wind - Co-Ownership Opportunity',
+      summary: 'Proven breeding male available for co-ownership arrangement.',
+      description: 'Grey Wind is an exceptional Samoyed sire available for co-ownership. Perfect for a serious breeding program.',
+      priceModel: 'inquire',
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+  'stark-tower': [],
+};
+
+// PROD Individual Animal Listings
+export const PROD_INDIVIDUAL_ANIMAL_LISTINGS: Record<string, IndividualAnimalListingDefinition[]> = {
+  arrakis: [
+    {
+      animalRef: 'Muad\'Dib',  // Must match an animal in the tenant
+      templateType: 'TRAINED',
+      slug: 'muaddib-trained',
+      headline: 'Muad\'Dib - Trained Desert Tracker Available',
+      summary: 'Fully trained Saluki ready for a new adventure.',
+      description: 'Muad\'Dib is a trained coursing hound with exceptional prey drive and desert survival skills.',
+      priceModel: 'fixed',
+      priceCents: 800000,  // $8,000
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+  starfleet: [
+    {
+      animalRef: 'Spot II',  // Must match an animal in the tenant
+      templateType: 'GUARDIAN',
+      slug: 'spot-ii-guardian',
+      headline: 'Spot II - Guardian Home Program',
+      summary: 'Breeding queen seeking guardian placement.',
+      description: 'Following in the footsteps of the original Spot, this Exotic Shorthair is looking for a guardian home aboard a starship or station.',
+      priceModel: 'inquire',
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+  richmond: [],
+  zion: [
+    {
+      animalRef: 'Agent Smith',  // Must match an animal in the tenant
+      templateType: 'REHOME',
+      slug: 'agent-smith-rehome',
+      headline: 'Agent Smith - Retired Working Dog',
+      summary: 'Former tracking dog seeking peaceful retirement.',
+      description: 'Agent Smith has served the resistance well and is now looking for a quiet home to enjoy his retirement years.',
+      priceModel: 'fixed',
+      priceCents: 30000,  // $300 rehoming fee
+      status: 'LIVE',
+      listed: true,
+    },
+  ],
+};
+
+export function getIndividualAnimalListings(env: Environment): Record<string, IndividualAnimalListingDefinition[]> {
+  return env === 'prod' ? PROD_INDIVIDUAL_ANIMAL_LISTINGS : DEV_INDIVIDUAL_ANIMAL_LISTINGS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CROSS-TENANT PEDIGREE LINKS
+// Links between animals in different tenants (e.g., sire from another breeder)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CrossTenantLinkDefinition {
+  // The child animal (in the requesting tenant)
+  childTenantSlug: string;
+  childAnimalRef: string;  // Animal name
+  // The parent animal (in another tenant)
+  parentTenantSlug: string;
+  parentAnimalRef: string;  // Animal name
+  parentType: 'SIRE' | 'DAM';
+  linkMethod: 'SEARCH' | 'EXCHANGE_CODE' | 'MANUAL';
+}
+
+// DEV Cross-Tenant Links
+// These represent established pedigree connections between different breeders
+export const DEV_CROSS_TENANT_LINKS: CrossTenantLinkDefinition[] = [
+  // Hogwarts has a cat with a sire from Rivendell (both have Maine Coons)
+  // Note: This will only create if both animals exist
+  {
+    childTenantSlug: 'hogwarts',
+    childAnimalRef: 'Mrs. Norris',  // Hogwarts cat
+    parentTenantSlug: 'rivendell',
+    parentAnimalRef: 'Asfaloth',  // Rivendell cat
+    parentType: 'SIRE',
+    linkMethod: 'SEARCH',
+  },
+];
+
+// PROD Cross-Tenant Links
+export const PROD_CROSS_TENANT_LINKS: CrossTenantLinkDefinition[] = [
+  // Starfleet has a cat with a sire from Arrakis
+  {
+    childTenantSlug: 'starfleet',
+    childAnimalRef: 'Spot',  // Enterprise cat
+    parentTenantSlug: 'arrakis',
+    parentAnimalRef: 'Sietch Cat',  // Arrakis cat
+    parentType: 'SIRE',
+    linkMethod: 'EXCHANGE_CODE',
+  },
+];
+
+export function getCrossTenantLinks(env: Environment): CrossTenantLinkDefinition[] {
+  return env === 'prod' ? PROD_CROSS_TENANT_LINKS : DEV_CROSS_TENANT_LINKS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTRACT TEMPLATES AND INSTANCES
+// For sales agreements, stud service contracts, guardian home agreements, etc.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ContractTemplateDefinition {
+  name: string;
+  slug: string;
+  type: 'SYSTEM' | 'CUSTOM';
+  // Must match Prisma ContractTemplateCategory enum
+  category: 'SALES_AGREEMENT' | 'DEPOSIT_AGREEMENT' | 'CO_OWNERSHIP' | 'GUARDIAN_HOME' | 'STUD_SERVICE' | 'HEALTH_GUARANTEE' | 'CUSTOM';
+  description: string;
+  isActive: boolean;
+}
+
+// System contract templates (not tenant-specific, tenantId = null)
+export const SYSTEM_CONTRACT_TEMPLATES: ContractTemplateDefinition[] = [
+  {
+    name: 'Puppy/Kitten Sales Agreement',
+    slug: 'sales-agreement-v1',
+    type: 'SYSTEM',
+    category: 'SALES_AGREEMENT',
+    description: 'Standard contract for puppy or kitten sales with health guarantee and spay/neuter requirements.',
+    isActive: true,
+  },
+  {
+    name: 'Stud Service Contract',
+    slug: 'stud-service-agreement-v1',
+    type: 'SYSTEM',
+    category: 'STUD_SERVICE',
+    description: 'Contract for breeding services with live foal guarantee options.',
+    isActive: true,
+  },
+  {
+    name: 'Guardian Home Agreement',
+    slug: 'guardian-home-agreement-v1',
+    type: 'SYSTEM',
+    category: 'GUARDIAN_HOME',
+    description: 'Contract for guardian home placements with breeding rights and return conditions.',
+    isActive: true,
+  },
+  {
+    name: 'Co-Ownership Agreement',
+    slug: 'co-ownership-agreement-v1',
+    type: 'SYSTEM',
+    category: 'CO_OWNERSHIP',
+    description: 'Contract for shared ownership arrangements between breeders.',
+    isActive: true,
+  },
+];
+
+export interface ContractInstanceDefinition {
+  templateSlug: string;  // Reference to system or custom template
+  title: string;
+  status: 'draft' | 'pending' | 'sent' | 'viewed' | 'signed' | 'countersigned' | 'completed' | 'declined' | 'voided' | 'expired';
+  contactIndex: number;  // Index into tenant contacts for the buyer/party
+  animalRef?: string;  // Optional reference to animal
+  daysAgo: number;  // How many days ago the contract was created
+}
+
+// DEV Contract Instances
+export const DEV_CONTRACT_INSTANCES: Record<string, ContractInstanceDefinition[]> = {
+  rivendell: [
+    // Completed sale contract
+    { templateSlug: 'sales-agreement-v1', title: 'Puppy Sales Agreement - Shadowmere', status: 'completed', contactIndex: 0, daysAgo: 90 },
+    // Sent but not yet signed
+    { templateSlug: 'sales-agreement-v1', title: 'Kitten Reservation Agreement', status: 'sent', contactIndex: 1, daysAgo: 7 },
+    // Draft contract
+    { templateSlug: 'guardian-home-agreement-v1', title: 'Guardian Home Application - Galadriel', status: 'draft', contactIndex: 2, daysAgo: 2 },
+  ],
+  hogwarts: [
+    // Signed waiting for countersign
+    { templateSlug: 'sales-agreement-v1', title: 'Kitten Purchase Agreement', status: 'signed', contactIndex: 0, daysAgo: 14 },
+    // Expired contract
+    { templateSlug: 'guardian-home-agreement-v1', title: 'Guardian Home Offer (Expired)', status: 'expired', contactIndex: 1, daysAgo: 45 },
+  ],
+  winterfell: [
+    // Completed guardian agreement
+    { templateSlug: 'guardian-home-agreement-v1', title: 'Guardian Home Agreement - Grey Wind', status: 'completed', contactIndex: 0, daysAgo: 180 },
+    // Pending signature
+    { templateSlug: 'sales-agreement-v1', title: 'Direwolf Puppy Contract', status: 'pending', contactIndex: 1, daysAgo: 5 },
+  ],
+  'stark-tower': [
+    // Co-ownership contract
+    { templateSlug: 'co-ownership-agreement-v1', title: 'Co-Ownership Agreement - Lucky', status: 'completed', contactIndex: 0, daysAgo: 365 },
+    // Stud service contract
+    { templateSlug: 'stud-service-agreement-v1', title: 'Stud Service Contract 2026', status: 'sent', contactIndex: 1, daysAgo: 10 },
+  ],
+};
+
+// PROD Contract Instances
+export const PROD_CONTRACT_INSTANCES: Record<string, ContractInstanceDefinition[]> = {
+  arrakis: [
+    { templateSlug: 'sales-agreement-v1', title: 'Saluki Purchase Agreement', status: 'completed', contactIndex: 0, daysAgo: 60 },
+    { templateSlug: 'guardian-home-agreement-v1', title: 'Guardian Home Placement', status: 'sent', contactIndex: 1, daysAgo: 3 },
+  ],
+  starfleet: [
+    { templateSlug: 'sales-agreement-v1', title: 'Ship Cat Adoption Agreement', status: 'signed', contactIndex: 0, daysAgo: 21 },
+    { templateSlug: 'co-ownership-agreement-v1', title: 'Co-Ownership - Station Breeding', status: 'draft', contactIndex: 1, daysAgo: 1 },
+  ],
+  richmond: [
+    { templateSlug: 'sales-agreement-v1', title: 'Diamond Dog Puppy Contract', status: 'completed', contactIndex: 0, daysAgo: 120 },
+    { templateSlug: 'stud-service-agreement-v1', title: 'Thoroughbred Stud Service', status: 'pending', contactIndex: 1, daysAgo: 14 },
+  ],
+  zion: [
+    { templateSlug: 'sales-agreement-v1', title: 'Resistance Cat Adoption', status: 'completed', contactIndex: 0, daysAgo: 45 },
+    { templateSlug: 'guardian-home-agreement-v1', title: 'Guardian Placement - Neo Cat', status: 'viewed', contactIndex: 1, daysAgo: 7 },
+  ],
+};
+
+export function getContractInstances(env: Environment): Record<string, ContractInstanceDefinition[]> {
+  return env === 'prod' ? PROD_CONTRACT_INSTANCES : DEV_CONTRACT_INSTANCES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 7: MESSAGE TEMPLATES & AUTO-REPLY RULES
+// Templates for automated responses and follow-up messaging
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface MessageTemplateDefinition {
+  name: string;
+  key: string;  // stable identifier
+  channel: 'email' | 'dm' | 'social';
+  category: 'auto_reply' | 'invoice_message' | 'birth_announcement' | 'waitlist_update' | 'general_follow_up' | 'custom';
+  status: 'draft' | 'active' | 'archived';
+  description?: string;
+  subject?: string;  // email only
+  bodyText: string;
+  bodyHtml?: string;  // email only
+}
+
+// DEV Message Templates
+export const DEV_MESSAGE_TEMPLATES: Record<string, MessageTemplateDefinition[]> = {
+  rivendell: [
+    {
+      name: 'New Inquiry Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      description: 'Automatic response for new inquiries',
+      subject: 'Thank you for your interest in Rivendell Breeders!',
+      bodyText: 'Dear {{contact.firstName}},\n\nThank you for reaching out to Rivendell Breeders! We appreciate your interest in our {{species}} program.\n\nWe typically respond within 24-48 hours. In the meantime, feel free to browse our available animals on our website.\n\nBest regards,\nThe Rivendell Team',
+      bodyHtml: '<p>Dear {{contact.firstName}},</p><p>Thank you for reaching out to Rivendell Breeders! We appreciate your interest in our {{species}} program.</p><p>We typically respond within 24-48 hours. In the meantime, feel free to browse our available animals on our website.</p><p>Best regards,<br>The Rivendell Team</p>',
+    },
+    {
+      name: 'After Hours Auto-Reply',
+      key: 'after-hours',
+      channel: 'dm',
+      category: 'auto_reply',
+      status: 'active',
+      description: 'Response sent outside business hours',
+      bodyText: 'Thanks for your message! Our team is currently away but will respond during business hours (9 AM - 5 PM EST). For urgent matters, please email us directly.',
+    },
+    {
+      name: 'Waitlist Update',
+      key: 'waitlist-update',
+      channel: 'email',
+      category: 'waitlist_update',
+      status: 'active',
+      description: 'Notify waitlist members of updates',
+      subject: 'Exciting news about your waitlist position!',
+      bodyText: 'Dear {{contact.firstName}},\n\nWe have an update regarding your position on our waitlist. {{message}}\n\nPlease log into your portal for more details.\n\nBest,\nRivendell Breeders',
+    },
+    {
+      name: 'Birth Announcement',
+      key: 'birth-announcement',
+      channel: 'email',
+      category: 'birth_announcement',
+      status: 'draft',
+      description: 'Announce new litter to waitlist',
+      subject: 'New arrivals at Rivendell Breeders!',
+      bodyText: 'Dear {{contact.firstName}},\n\nWe are thrilled to announce the arrival of a new litter! Details coming soon.\n\nBest,\nRivendell Breeders',
+    },
+  ],
+  hogwarts: [
+    {
+      name: 'Magical Creatures Inquiry',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      description: 'Auto-response for new inquiries',
+      subject: 'Your inquiry to Magical Creatures has been received!',
+      bodyText: 'Dear {{contact.firstName}},\n\nThank you for your interest in our magical companions. We will owl you back shortly.\n\nMagically yours,\nMagical Creatures',
+    },
+    {
+      name: 'Weekend Auto-Reply',
+      key: 'weekend-reply',
+      channel: 'dm',
+      category: 'auto_reply',
+      status: 'active',
+      description: 'Weekend response',
+      bodyText: 'The owls are resting for the weekend. We will respond on Monday!',
+    },
+  ],
+  winterfell: [
+    {
+      name: 'Winter Inquiry Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'The North Remembers Your Inquiry',
+      bodyText: 'Dear {{contact.firstName}},\n\nYour message has been received at Winterfell. We will respond as soon as the ravens return.\n\nThe North Remembers,\nSeven Kingdoms Breeders',
+    },
+  ],
+  'stark-tower': [
+    {
+      name: 'Stark Industries Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'JARVIS has received your inquiry',
+      bodyText: 'Good day {{contact.firstName}},\n\nYour inquiry has been logged in our systems. A member of the Stark Industries breeding division will be in touch within 24 hours.\n\nRegards,\nStark Industries',
+    },
+    {
+      name: 'Invoice Follow-up',
+      key: 'invoice-followup',
+      channel: 'email',
+      category: 'invoice_message',
+      status: 'active',
+      subject: 'Friendly reminder: Invoice #{{invoice.number}}',
+      bodyText: 'Hi {{contact.firstName}},\n\nThis is a friendly reminder that invoice #{{invoice.number}} is due. Please let us know if you have any questions.\n\nThanks,\nStark Industries',
+    },
+  ],
+};
+
+// PROD Message Templates
+export const PROD_MESSAGE_TEMPLATES: Record<string, MessageTemplateDefinition[]> = {
+  arrakis: [
+    {
+      name: 'Spice Inquiry Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'House Atreides has received your inquiry',
+      bodyText: 'Dear {{contact.firstName}},\n\nThe spice must flow, and so will our response. Expect to hear from us within 48 hours.\n\nFear is the mind-killer,\nHouse Atreides Breeders',
+    },
+    {
+      name: 'Desert Auto-Reply',
+      key: 'after-hours',
+      channel: 'dm',
+      category: 'auto_reply',
+      status: 'active',
+      bodyText: 'The desert sleeps, but your message has been received. We will respond when the moons rise.',
+    },
+  ],
+  starfleet: [
+    {
+      name: 'Starfleet Academy Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'Starfleet Academy Breeding Division - Inquiry Received',
+      bodyText: 'Greetings {{contact.firstName}},\n\nYour subspace message has been received. A cadet from our breeding division will respond at warp speed.\n\nLive long and prosper,\nStarfleet Academy',
+    },
+    {
+      name: 'Red Alert Auto-Reply',
+      key: 'business-hours',
+      channel: 'dm',
+      category: 'auto_reply',
+      status: 'paused',
+      bodyText: 'Red alert! All personnel are currently at battle stations. Your message will be addressed when we return to normal operations.',
+    },
+  ],
+  richmond: [
+    {
+      name: 'Richmond Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'Believe! AFC Richmond Breeders received your message',
+      bodyText: 'Hey {{contact.firstName}}!\n\nThanks for reaching out! Be a goldfish and know we will get back to you soon.\n\nBelieve,\nAFC Richmond Breeders',
+    },
+    {
+      name: 'Match Day Reply',
+      key: 'match-day',
+      channel: 'dm',
+      category: 'auto_reply',
+      status: 'active',
+      bodyText: 'Its match day! Well be in the stands. Message you after the final whistle! ⚽',
+    },
+  ],
+  zion: [
+    {
+      name: 'Zion Collective Response',
+      key: 'new-inquiry',
+      channel: 'email',
+      category: 'auto_reply',
+      status: 'active',
+      subject: 'Welcome to the real world - Your inquiry received',
+      bodyText: 'Hello {{contact.firstName}},\n\nYou took the red pill by contacting us. We will guide you further down the rabbit hole shortly.\n\nFree your mind,\nZion Collective',
+    },
+  ],
+};
+
+export function getMessageTemplates(env: Environment): Record<string, MessageTemplateDefinition[]> {
+  return env === 'prod' ? PROD_MESSAGE_TEMPLATES : DEV_MESSAGE_TEMPLATES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTO-REPLY RULES
+// Configuration for when and how auto-replies should be triggered
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface AutoReplyRuleDefinition {
+  name: string;
+  description?: string;
+  channel: 'email' | 'dm';
+  status: 'active' | 'paused' | 'archived';
+  templateKey: string;  // Reference to message template
+  triggerType: 'dm_first_message_from_party' | 'dm_after_hours' | 'email_received' | 'time_based' | 'keyword_match' | 'business_hours';
+  // Trigger-specific config (JSON)
+  keywordConfig?: {
+    keywords: string[];
+    matchType: 'any' | 'all';
+    caseSensitive?: boolean;
+  };
+  timeBasedConfig?: {
+    startDate: string;  // ISO date
+    endDate: string;
+  };
+  businessHoursConfig?: {
+    timezone: string;
+    schedule: Record<string, { open: string; close: string } | null>;
+  };
+  cooldownMinutes?: number;
+}
+
+// DEV Auto-Reply Rules
+export const DEV_AUTO_REPLY_RULES: Record<string, AutoReplyRuleDefinition[]> = {
+  rivendell: [
+    {
+      name: 'New DM Auto-Reply',
+      description: 'Send welcome message on first DM from a contact',
+      channel: 'dm',
+      status: 'active',
+      templateKey: 'after-hours',
+      triggerType: 'dm_first_message_from_party',
+      cooldownMinutes: 1440, // 24 hours
+    },
+    {
+      name: 'Email Auto-Acknowledgment',
+      description: 'Acknowledge all incoming emails',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 60,
+    },
+    {
+      name: 'After Hours DM Reply',
+      description: 'Reply when messages arrive outside business hours',
+      channel: 'dm',
+      status: 'active',
+      templateKey: 'after-hours',
+      triggerType: 'business_hours',
+      businessHoursConfig: {
+        timezone: 'America/New_York',
+        schedule: {
+          monday: { open: '09:00', close: '17:00' },
+          tuesday: { open: '09:00', close: '17:00' },
+          wednesday: { open: '09:00', close: '17:00' },
+          thursday: { open: '09:00', close: '17:00' },
+          friday: { open: '09:00', close: '17:00' },
+          saturday: null,
+          sunday: null,
+        },
+      },
+      cooldownMinutes: 240,
+    },
+  ],
+  hogwarts: [
+    {
+      name: 'Owl Post Auto-Reply',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 120,
+    },
+    {
+      name: 'Weekend Owl Rest',
+      description: 'Weekend auto-reply',
+      channel: 'dm',
+      status: 'active',
+      templateKey: 'weekend-reply',
+      triggerType: 'business_hours',
+      businessHoursConfig: {
+        timezone: 'Europe/London',
+        schedule: {
+          monday: { open: '08:00', close: '18:00' },
+          tuesday: { open: '08:00', close: '18:00' },
+          wednesday: { open: '08:00', close: '18:00' },
+          thursday: { open: '08:00', close: '18:00' },
+          friday: { open: '08:00', close: '18:00' },
+          saturday: null,
+          sunday: null,
+        },
+      },
+    },
+  ],
+  winterfell: [
+    {
+      name: 'Raven Response',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 60,
+    },
+  ],
+  'stark-tower': [
+    {
+      name: 'JARVIS Auto-Reply',
+      description: 'AI assistant handles initial contact',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 30,
+    },
+    {
+      name: 'Pricing Keyword Response',
+      description: 'Auto-reply when pricing keywords detected',
+      channel: 'dm',
+      status: 'paused',
+      templateKey: 'new-inquiry',
+      triggerType: 'keyword_match',
+      keywordConfig: {
+        keywords: ['price', 'cost', 'how much', 'pricing', 'fee'],
+        matchType: 'any',
+        caseSensitive: false,
+      },
+    },
+  ],
+};
+
+// PROD Auto-Reply Rules
+export const PROD_AUTO_REPLY_RULES: Record<string, AutoReplyRuleDefinition[]> = {
+  arrakis: [
+    {
+      name: 'Spice Guild Response',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 120,
+    },
+    {
+      name: 'Desert Night Reply',
+      channel: 'dm',
+      status: 'active',
+      templateKey: 'after-hours',
+      triggerType: 'dm_after_hours',
+      businessHoursConfig: {
+        timezone: 'Asia/Dubai',
+        schedule: {
+          monday: { open: '06:00', close: '20:00' },
+          tuesday: { open: '06:00', close: '20:00' },
+          wednesday: { open: '06:00', close: '20:00' },
+          thursday: { open: '06:00', close: '20:00' },
+          friday: null,
+          saturday: { open: '06:00', close: '20:00' },
+          sunday: { open: '06:00', close: '20:00' },
+        },
+      },
+    },
+  ],
+  starfleet: [
+    {
+      name: 'Subspace Auto-Acknowledgment',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 60,
+    },
+  ],
+  richmond: [
+    {
+      name: 'Believe Response',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 60,
+    },
+    {
+      name: 'Match Day Reply',
+      description: 'Auto-reply during matches',
+      channel: 'dm',
+      status: 'paused',
+      templateKey: 'match-day',
+      triggerType: 'time_based',
+      timeBasedConfig: {
+        startDate: '2026-01-25T15:00:00Z',
+        endDate: '2026-01-25T17:00:00Z',
+      },
+    },
+  ],
+  zion: [
+    {
+      name: 'Matrix Response',
+      channel: 'email',
+      status: 'active',
+      templateKey: 'new-inquiry',
+      triggerType: 'email_received',
+      cooldownMinutes: 90,
+    },
+  ],
+};
+
+export function getAutoReplyRules(env: Environment): Record<string, AutoReplyRuleDefinition[]> {
+  return env === 'prod' ? PROD_AUTO_REPLY_RULES : DEV_AUTO_REPLY_RULES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TENANT SETTINGS (Business Hours, Auto-Reply Config)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface TenantSettingDefinition {
+  namespace: string;
+  data: Record<string, unknown>;
+}
+
+// DEV Tenant Settings
+export const DEV_TENANT_SETTINGS: Record<string, TenantSettingDefinition[]> = {
+  rivendell: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'America/New_York',
+        schedule: {
+          monday: { open: '09:00', close: '17:00' },
+          tuesday: { open: '09:00', close: '17:00' },
+          wednesday: { open: '09:00', close: '17:00' },
+          thursday: { open: '09:00', close: '17:00' },
+          friday: { open: '09:00', close: '17:00' },
+          saturday: { open: '10:00', close: '14:00' },
+          sunday: null,
+        },
+        holidays: ['2026-12-25', '2026-01-01'],
+      },
+    },
+    {
+      namespace: 'auto_reply',
+      data: {
+        globalEnabled: true,
+        maxRepliesPerContact24h: 3,
+        cooldownMinutes: 60,
+        emailAcknowledgmentEnabled: true,
+        dmFirstMessageEnabled: true,
+      },
+    },
+  ],
+  hogwarts: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'Europe/London',
+        schedule: {
+          monday: { open: '08:00', close: '18:00' },
+          tuesday: { open: '08:00', close: '18:00' },
+          wednesday: { open: '08:00', close: '18:00' },
+          thursday: { open: '08:00', close: '18:00' },
+          friday: { open: '08:00', close: '18:00' },
+          saturday: null,
+          sunday: null,
+        },
+      },
+    },
+    {
+      namespace: 'auto_reply',
+      data: {
+        globalEnabled: true,
+        maxRepliesPerContact24h: 2,
+      },
+    },
+  ],
+  winterfell: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'America/Chicago',
+        schedule: {
+          monday: { open: '07:00', close: '19:00' },
+          tuesday: { open: '07:00', close: '19:00' },
+          wednesday: { open: '07:00', close: '19:00' },
+          thursday: { open: '07:00', close: '19:00' },
+          friday: { open: '07:00', close: '19:00' },
+          saturday: { open: '08:00', close: '16:00' },
+          sunday: { open: '10:00', close: '14:00' },
+        },
+      },
+    },
+  ],
+  'stark-tower': [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'America/Los_Angeles',
+        schedule: {
+          monday: { open: '08:00', close: '20:00' },
+          tuesday: { open: '08:00', close: '20:00' },
+          wednesday: { open: '08:00', close: '20:00' },
+          thursday: { open: '08:00', close: '20:00' },
+          friday: { open: '08:00', close: '20:00' },
+          saturday: { open: '09:00', close: '17:00' },
+          sunday: null,
+        },
+      },
+    },
+    {
+      namespace: 'auto_reply',
+      data: {
+        globalEnabled: true,
+        maxRepliesPerContact24h: 5,
+        cooldownMinutes: 30,
+        aiAssistEnabled: true,
+      },
+    },
+  ],
+};
+
+// PROD Tenant Settings
+export const PROD_TENANT_SETTINGS: Record<string, TenantSettingDefinition[]> = {
+  arrakis: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'Asia/Dubai',
+        schedule: {
+          monday: { open: '06:00', close: '20:00' },
+          tuesday: { open: '06:00', close: '20:00' },
+          wednesday: { open: '06:00', close: '20:00' },
+          thursday: { open: '06:00', close: '20:00' },
+          friday: null,
+          saturday: { open: '06:00', close: '20:00' },
+          sunday: { open: '06:00', close: '20:00' },
+        },
+      },
+    },
+  ],
+  starfleet: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'UTC',
+        schedule: {
+          monday: { open: '00:00', close: '23:59' },
+          tuesday: { open: '00:00', close: '23:59' },
+          wednesday: { open: '00:00', close: '23:59' },
+          thursday: { open: '00:00', close: '23:59' },
+          friday: { open: '00:00', close: '23:59' },
+          saturday: { open: '00:00', close: '23:59' },
+          sunday: { open: '00:00', close: '23:59' },
+        },
+      },
+    },
+    {
+      namespace: 'auto_reply',
+      data: {
+        globalEnabled: true,
+        maxRepliesPerContact24h: 10,
+      },
+    },
+  ],
+  richmond: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'Europe/London',
+        schedule: {
+          monday: { open: '09:00', close: '17:00' },
+          tuesday: { open: '09:00', close: '17:00' },
+          wednesday: { open: '09:00', close: '17:00' },
+          thursday: { open: '09:00', close: '17:00' },
+          friday: { open: '09:00', close: '17:00' },
+          saturday: null,
+          sunday: null,
+        },
+      },
+    },
+  ],
+  zion: [
+    {
+      namespace: 'business_hours',
+      data: {
+        timezone: 'America/Los_Angeles',
+        schedule: {
+          monday: { open: '10:00', close: '22:00' },
+          tuesday: { open: '10:00', close: '22:00' },
+          wednesday: { open: '10:00', close: '22:00' },
+          thursday: { open: '10:00', close: '22:00' },
+          friday: { open: '10:00', close: '22:00' },
+          saturday: { open: '12:00', close: '20:00' },
+          sunday: { open: '12:00', close: '20:00' },
+        },
+      },
+    },
+  ],
+};
+
+export function getTenantSettings(env: Environment): Record<string, TenantSettingDefinition[]> {
+  return env === 'prod' ? PROD_TENANT_SETTINGS : DEV_TENANT_SETTINGS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 8: ENHANCED INVOICES WITH LINE ITEMS AND PAYMENTS
+// Invoice line items and payment records for comprehensive financial tracking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface InvoiceLineItemDefinition {
+  kind: 'DEPOSIT' | 'SERVICE_FEE' | 'GOODS' | 'DISCOUNT' | 'TAX' | 'OTHER';
+  description: string;
+  qty: number;
+  unitCents: number;
+  discountCents?: number;
+  taxRate?: number;
+}
+
+export interface PaymentDefinition {
+  status: 'pending' | 'succeeded' | 'failed' | 'refunded' | 'disputed' | 'cancelled';
+  amountCents: number;
+  daysAgo: number;
+  methodType: 'card' | 'bank_transfer' | 'cash' | 'check';
+  processor?: 'stripe' | 'square' | 'manual';
+  notes?: string;
+}
+
+export interface EnhancedInvoiceDefinition {
+  invoiceNumber: string;
+  status: 'draft' | 'issued' | 'partially_paid' | 'paid' | 'void' | 'uncollectible';
+  contactIndex: number;
+  category: 'DEPOSIT' | 'SERVICE' | 'GOODS' | 'MIXED' | 'OTHER';
+  daysAgo: number;
+  dueInDays?: number;  // days from creation
+  lineItems: InvoiceLineItemDefinition[];
+  payments: PaymentDefinition[];
+  notes?: string;
+}
+
+// DEV Enhanced Invoices
+export const DEV_ENHANCED_INVOICES: Record<string, EnhancedInvoiceDefinition[]> = {
+  rivendell: [
+    {
+      invoiceNumber: 'INV-2026-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'MIXED',
+      daysAgo: 45,
+      lineItems: [
+        { kind: 'DEPOSIT', description: 'Puppy Deposit - Shadowfax', qty: 1, unitCents: 50000 },
+        { kind: 'GOODS', description: 'Puppy Purchase Balance', qty: 1, unitCents: 200000 },
+        { kind: 'SERVICE_FEE', description: 'Microchip & Registration', qty: 1, unitCents: 7500 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 50000, daysAgo: 90, methodType: 'card', processor: 'stripe' },
+        { status: 'succeeded', amountCents: 207500, daysAgo: 45, methodType: 'card', processor: 'stripe' },
+      ],
+    },
+    {
+      invoiceNumber: 'INV-2026-002',
+      status: 'issued',
+      contactIndex: 1,
+      category: 'DEPOSIT',
+      daysAgo: 7,
+      dueInDays: 14,
+      lineItems: [
+        { kind: 'DEPOSIT', description: 'Kitten Reservation Deposit', qty: 1, unitCents: 30000 },
+      ],
+      payments: [],
+      notes: 'Deposit due within 14 days to secure reservation',
+    },
+    {
+      invoiceNumber: 'INV-2026-003',
+      status: 'partially_paid',
+      contactIndex: 2,
+      category: 'MIXED',
+      daysAgo: 21,
+      lineItems: [
+        { kind: 'GOODS', description: 'Horse Purchase - Elrond Jr', qty: 1, unitCents: 1500000 },
+        { kind: 'SERVICE_FEE', description: 'Transport Fee', qty: 1, unitCents: 75000 },
+        { kind: 'SERVICE_FEE', description: 'Vet Check Certificate', qty: 1, unitCents: 25000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 500000, daysAgo: 21, methodType: 'bank_transfer', processor: 'manual', notes: 'Wire transfer received' },
+      ],
+    },
+  ],
+  hogwarts: [
+    {
+      invoiceNumber: 'INV-HP-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'GOODS',
+      daysAgo: 30,
+      lineItems: [
+        { kind: 'GOODS', description: 'Magical Kitten - Crookshanks Jr', qty: 1, unitCents: 150000 },
+        { kind: 'SERVICE_FEE', description: 'Spell of Protection', qty: 1, unitCents: 5000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 155000, daysAgo: 30, methodType: 'card', processor: 'stripe' },
+      ],
+    },
+    {
+      invoiceNumber: 'INV-HP-002',
+      status: 'void',
+      contactIndex: 1,
+      category: 'DEPOSIT',
+      daysAgo: 60,
+      lineItems: [
+        { kind: 'DEPOSIT', description: 'Puppy Deposit - Cancelled', qty: 1, unitCents: 25000 },
+      ],
+      payments: [],
+      notes: 'Voided - buyer changed mind',
+    },
+  ],
+  winterfell: [
+    {
+      invoiceNumber: 'INV-WF-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'GOODS',
+      daysAgo: 120,
+      lineItems: [
+        { kind: 'GOODS', description: 'Direwolf Puppy - Lady', qty: 1, unitCents: 350000 },
+        { kind: 'GOODS', description: 'Starter Kit', qty: 1, unitCents: 15000 },
+        { kind: 'DISCOUNT', description: 'Loyalty Discount', qty: 1, unitCents: -25000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 100000, daysAgo: 180, methodType: 'check', processor: 'manual' },
+        { status: 'succeeded', amountCents: 240000, daysAgo: 120, methodType: 'cash', processor: 'manual', notes: 'Paid at pickup' },
+      ],
+    },
+  ],
+  'stark-tower': [
+    {
+      invoiceNumber: 'INV-ST-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'SERVICE',
+      daysAgo: 365,
+      lineItems: [
+        { kind: 'SERVICE_FEE', description: 'Stud Service Fee - 2025 Season', qty: 1, unitCents: 500000 },
+        { kind: 'SERVICE_FEE', description: 'Collection & Shipping', qty: 1, unitCents: 25000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 525000, daysAgo: 365, methodType: 'bank_transfer', processor: 'stripe' },
+      ],
+    },
+    {
+      invoiceNumber: 'INV-ST-002',
+      status: 'issued',
+      contactIndex: 1,
+      category: 'SERVICE',
+      daysAgo: 10,
+      dueInDays: 30,
+      lineItems: [
+        { kind: 'SERVICE_FEE', description: 'Stud Service Fee - 2026 Season', qty: 1, unitCents: 550000 },
+        { kind: 'DEPOSIT', description: 'Booking Fee (non-refundable)', qty: 1, unitCents: 50000 },
+      ],
+      payments: [],
+    },
+  ],
+};
+
+// PROD Enhanced Invoices
+export const PROD_ENHANCED_INVOICES: Record<string, EnhancedInvoiceDefinition[]> = {
+  arrakis: [
+    {
+      invoiceNumber: 'INV-AR-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'GOODS',
+      daysAgo: 60,
+      lineItems: [
+        { kind: 'GOODS', description: 'Saluki Puppy - Desert Wind', qty: 1, unitCents: 250000 },
+        { kind: 'SERVICE_FEE', description: 'Health Certificate', qty: 1, unitCents: 10000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 260000, daysAgo: 60, methodType: 'card', processor: 'stripe' },
+      ],
+    },
+  ],
+  starfleet: [
+    {
+      invoiceNumber: 'INV-SF-001',
+      status: 'partially_paid',
+      contactIndex: 0,
+      category: 'MIXED',
+      daysAgo: 21,
+      lineItems: [
+        { kind: 'GOODS', description: 'Ship Cat - Lieutenant Whiskers', qty: 1, unitCents: 120000 },
+        { kind: 'SERVICE_FEE', description: 'Starfleet Registration', qty: 1, unitCents: 5000 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 50000, daysAgo: 21, methodType: 'card', processor: 'stripe' },
+      ],
+    },
+  ],
+  richmond: [
+    {
+      invoiceNumber: 'INV-RC-001',
+      status: 'paid',
+      contactIndex: 0,
+      category: 'GOODS',
+      daysAgo: 90,
+      lineItems: [
+        { kind: 'GOODS', description: 'Diamond Dog Puppy', qty: 1, unitCents: 280000 },
+        { kind: 'GOODS', description: 'AFC Richmond Collar', qty: 1, unitCents: 2500 },
+      ],
+      payments: [
+        { status: 'succeeded', amountCents: 100000, daysAgo: 120, methodType: 'card', processor: 'stripe' },
+        { status: 'succeeded', amountCents: 182500, daysAgo: 90, methodType: 'card', processor: 'stripe' },
+      ],
+    },
+  ],
+  zion: [
+    {
+      invoiceNumber: 'INV-ZN-001',
+      status: 'issued',
+      contactIndex: 0,
+      category: 'DEPOSIT',
+      daysAgo: 5,
+      dueInDays: 7,
+      lineItems: [
+        { kind: 'DEPOSIT', description: 'Resistance Cat Deposit', qty: 1, unitCents: 40000 },
+      ],
+      payments: [],
+    },
+  ],
+};
+
+export function getEnhancedInvoices(env: Environment): Record<string, EnhancedInvoiceDefinition[]> {
+  return env === 'prod' ? PROD_ENHANCED_INVOICES : DEV_ENHANCED_INVOICES;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PARTY ACTIVITY TIMELINE
+// Activity records for contact timeline tracking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PartyActivityDefinition {
+  contactIndex: number;
+  kind: 'NOTE_ADDED' | 'EMAIL_SENT' | 'INVOICE_CREATED' | 'PAYMENT_RECEIVED' | 'MESSAGE_SENT' | 'MESSAGE_RECEIVED' | 'STATUS_CHANGED' | 'TAG_ADDED';
+  title: string;
+  detail?: string;
+  daysAgo: number;
+  metadata?: Record<string, unknown>;
+}
+
+// DEV Party Activities
+export const DEV_PARTY_ACTIVITIES: Record<string, PartyActivityDefinition[]> = {
+  rivendell: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Inquiry received', detail: 'Initial inquiry about available puppies', daysAgo: 100 },
+    { contactIndex: 0, kind: 'MESSAGE_SENT', title: 'Response sent', detail: 'Provided information about upcoming litter', daysAgo: 99 },
+    { contactIndex: 0, kind: 'STATUS_CHANGED', title: 'Added to waitlist', daysAgo: 95 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Deposit invoice created', detail: 'INV-2026-001', daysAgo: 90 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Deposit received', detail: '$500.00 via card', daysAgo: 90 },
+    { contactIndex: 0, kind: 'NOTE_ADDED', title: 'Preference noted', detail: 'Prefers male, darker coloring', daysAgo: 85 },
+    { contactIndex: 0, kind: 'EMAIL_SENT', title: 'Litter announcement', detail: 'Sent birth announcement email', daysAgo: 60 },
+    { contactIndex: 0, kind: 'STATUS_CHANGED', title: 'Puppy assigned', detail: 'Matched with Shadowfax', daysAgo: 50 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Final invoice created', daysAgo: 46 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Final payment received', detail: '$2,075.00 via card', daysAgo: 45 },
+    { contactIndex: 1, kind: 'MESSAGE_RECEIVED', title: 'New inquiry', detail: 'Interest in Maine Coon kittens', daysAgo: 14 },
+    { contactIndex: 1, kind: 'MESSAGE_SENT', title: 'Response sent', daysAgo: 13 },
+    { contactIndex: 1, kind: 'INVOICE_CREATED', title: 'Deposit invoice sent', daysAgo: 7 },
+    { contactIndex: 2, kind: 'MESSAGE_RECEIVED', title: 'Horse inquiry', detail: 'Looking for young gelding', daysAgo: 30 },
+    { contactIndex: 2, kind: 'STATUS_CHANGED', title: 'Negotiating', daysAgo: 28 },
+    { contactIndex: 2, kind: 'INVOICE_CREATED', title: 'Horse sale invoice', daysAgo: 21 },
+    { contactIndex: 2, kind: 'PAYMENT_RECEIVED', title: 'Partial payment', detail: '$5,000.00 wire transfer', daysAgo: 21 },
+  ],
+  hogwarts: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Owl received', detail: 'Interest in magical kittens', daysAgo: 45 },
+    { contactIndex: 0, kind: 'MESSAGE_SENT', title: 'Owl sent', daysAgo: 44 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Invoice created', daysAgo: 31 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Payment complete', daysAgo: 30 },
+    { contactIndex: 0, kind: 'NOTE_ADDED', title: 'Pickup scheduled', detail: 'Will collect kitten on Saturday', daysAgo: 29 },
+    { contactIndex: 1, kind: 'STATUS_CHANGED', title: 'Inquiry cancelled', detail: 'Changed mind about adoption', daysAgo: 60 },
+  ],
+  winterfell: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Raven arrived', daysAgo: 200 },
+    { contactIndex: 0, kind: 'STATUS_CHANGED', title: 'Approved for direwolf', daysAgo: 190 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Deposit received', detail: 'Check payment', daysAgo: 180 },
+    { contactIndex: 0, kind: 'EMAIL_SENT', title: 'Pickup instructions', daysAgo: 121 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Balance paid', detail: 'Cash at pickup', daysAgo: 120 },
+    { contactIndex: 0, kind: 'NOTE_ADDED', title: 'Happy customer', detail: 'Sent thank you card', daysAgo: 115 },
+  ],
+  'stark-tower': [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Stud service inquiry', daysAgo: 400 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Stud fee invoice', daysAgo: 366 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Stud fee paid', daysAgo: 365 },
+    { contactIndex: 0, kind: 'NOTE_ADDED', title: 'Mare ultrasound confirmed', detail: 'Pregnancy confirmed at 45 days', daysAgo: 320 },
+    { contactIndex: 1, kind: 'MESSAGE_RECEIVED', title: '2026 stud inquiry', daysAgo: 20 },
+    { contactIndex: 1, kind: 'MESSAGE_SENT', title: 'Contract sent', daysAgo: 15 },
+    { contactIndex: 1, kind: 'INVOICE_CREATED', title: 'Booking fee invoice', daysAgo: 10 },
+  ],
+};
+
+// PROD Party Activities
+export const PROD_PARTY_ACTIVITIES: Record<string, PartyActivityDefinition[]> = {
+  arrakis: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Spice inquiry', daysAgo: 90 },
+    { contactIndex: 0, kind: 'STATUS_CHANGED', title: 'Added to waiting list', daysAgo: 85 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Purchase invoice', daysAgo: 61 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Payment complete', daysAgo: 60 },
+  ],
+  starfleet: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Subspace message', daysAgo: 30 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Invoice created', daysAgo: 22 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Partial payment', daysAgo: 21 },
+  ],
+  richmond: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Believe inquiry', daysAgo: 150 },
+    { contactIndex: 0, kind: 'STATUS_CHANGED', title: 'Approved', daysAgo: 140 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Deposit received', daysAgo: 120 },
+    { contactIndex: 0, kind: 'EMAIL_SENT', title: 'Puppy photos sent', daysAgo: 100 },
+    { contactIndex: 0, kind: 'PAYMENT_RECEIVED', title: 'Balance paid', daysAgo: 90 },
+    { contactIndex: 0, kind: 'NOTE_ADDED', title: 'Great pickup experience', detail: 'Very happy family!', daysAgo: 89 },
+  ],
+  zion: [
+    { contactIndex: 0, kind: 'MESSAGE_RECEIVED', title: 'Red pill taken', detail: 'New inquiry received', daysAgo: 10 },
+    { contactIndex: 0, kind: 'MESSAGE_SENT', title: 'Welcome to the real', daysAgo: 9 },
+    { contactIndex: 0, kind: 'INVOICE_CREATED', title: 'Deposit invoice', daysAgo: 5 },
+  ],
+};
+
+export function getPartyActivities(env: Environment): Record<string, PartyActivityDefinition[]> {
+  return env === 'prod' ? PROD_PARTY_ACTIVITIES : DEV_PARTY_ACTIVITIES;
 }

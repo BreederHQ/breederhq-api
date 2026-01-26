@@ -31,6 +31,8 @@ interface ServiceListingInput {
   contactPhone?: string;
   city?: string;
   state?: string;
+  zip?: string;
+  country?: string;
   priceCents?: number;
   priceType?: "fixed" | "starting_at" | "contact";
   images?: string[];
@@ -59,7 +61,8 @@ interface ServiceListingResponse {
   contactPhone: string | null;
   city: string | null;
   state: string | null;
-  country: string;
+  zip: string | null;
+  country: string | null;
   priceCents: number | null;
   priceType: string | null;
   images: string[] | null;
@@ -111,6 +114,7 @@ function toServiceResponse(listing: any): ServiceListingResponse {
     contactPhone: listing.contactPhone,
     city: listing.city,
     state: listing.state,
+    zip: listing.zip,
     country: listing.country,
     priceCents: listing.priceCents,
     priceType: listing.priceType,
@@ -228,6 +232,8 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       contactPhone,
       city,
       state,
+      zip,
+      country,
       priceCents,
       priceType,
       images,
@@ -272,6 +278,8 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         contactPhone: contactPhone?.trim() || null,
         city: city?.trim() || null,
         state: state?.trim() || null,
+        zip: zip?.trim() || null,
+        country: country?.trim() || null,
         priceCents: priceCents ?? null,
         priceType: priceType || null,
         images: images ? (images as Prisma.InputJsonValue) : Prisma.JsonNull,
@@ -340,6 +348,8 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
       contactPhone,
       city,
       state,
+      zip,
+      country,
       priceCents,
       priceType,
       images,
@@ -375,6 +385,8 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     if (contactPhone !== undefined) updateData.contactPhone = contactPhone?.trim() || null;
     if (city !== undefined) updateData.city = city?.trim() || null;
     if (state !== undefined) updateData.state = state?.trim() || null;
+    if (zip !== undefined) updateData.zip = zip?.trim() || null;
+    if (country !== undefined) updateData.country = country?.trim() || null;
     if (priceCents !== undefined) updateData.priceCents = priceCents ?? null;
     if (priceType !== undefined) updateData.priceType = priceType || null;
     if (images !== undefined) updateData.images = images ? (images as Prisma.InputJsonValue) : Prisma.JsonNull;
