@@ -375,10 +375,24 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (b.breedId !== undefined) data.breedId = b.breedId;
       if (b.coverImageUrl !== undefined) data.coverImageUrl = b.coverImageUrl;
       if (b.showCoverImage !== undefined) data.showCoverImage = Boolean(b.showCoverImage);
-      if (b.listed !== undefined) {
-        data.status = Boolean(b.listed) ? "LIVE" : "DRAFT";
+      // Accept status directly (preferred) or listed (legacy)
+      if (b.status !== undefined) {
+        const newStatus = b.status === "LIVE" ? "LIVE" : "DRAFT";
+        data.status = newStatus;
         // Set publishedAt when first published
-        if (b.listed && !data.publishedAt) {
+        if (newStatus === "LIVE") {
+          const current = await prisma.mktListingBreedingProgram.findFirst({
+            where: { id, tenantId },
+            select: { publishedAt: true },
+          });
+          if (!current?.publishedAt) {
+            data.publishedAt = new Date();
+          }
+        }
+      } else if (b.listed !== undefined) {
+        // Legacy support for `listed` boolean
+        data.status = Boolean(b.listed) ? "LIVE" : "DRAFT";
+        if (b.listed) {
           const current = await prisma.mktListingBreedingProgram.findFirst({
             where: { id, tenantId },
             select: { publishedAt: true },
