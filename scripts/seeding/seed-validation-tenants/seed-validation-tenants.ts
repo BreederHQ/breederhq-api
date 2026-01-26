@@ -20,7 +20,7 @@
 //   # or directly:
 //   SEED_ENV=prod npx tsx scripts/seed-validation-tenants/seed-validation-tenants.ts
 
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 import bcrypt from 'bcryptjs';
 import {
   PrismaClient,
@@ -29,6 +29,15 @@ import {
   TenantMembershipStatus,
   AnimalStatus,
   BreedingPlanStatus,
+  ReproAnchorMode,
+  ConfidenceLevel,
+  OvulationMethod,
+  AnchorType,
+  BreedingMethod,
+  BreedingGuaranteeType,
+  PregnancyCheckMethod,
+  MilestoneType,
+  MarePostFoalingCondition,
   ListingType,
   ListingStatus,
   TagModule,
@@ -87,6 +96,42 @@ import {
   MARKETPLACE_USERS,
   AnimalTitleDefinition,
   CompetitionEntryDefinition,
+  getStorefronts,
+  StorefrontDefinition,
+  getBreedingAttempts,
+  BreedingAttemptDefinition,
+  getPregnancyChecks,
+  PregnancyCheckDefinition,
+  getTestResults,
+  TestResultDefinition,
+  getBreedingMilestones,
+  BreedingMilestoneDefinition,
+  getFoalingOutcomes,
+  FoalingOutcomeDefinition,
+  getMareHistory,
+  MareReproductiveHistoryDefinition,
+  getBreedingProgramListings,
+  BreedingProgramListingDefinition,
+  getStudServiceListings,
+  StudServiceListingDefinition,
+  getIndividualAnimalListings,
+  IndividualAnimalListingDefinition,
+  getCrossTenantLinks,
+  CrossTenantLinkDefinition,
+  SYSTEM_CONTRACT_TEMPLATES,
+  ContractTemplateDefinition,
+  getContractInstances,
+  ContractInstanceDefinition,
+  getMessageTemplates,
+  MessageTemplateDefinition,
+  getAutoReplyRules,
+  AutoReplyRuleDefinition,
+  getTenantSettings,
+  TenantSettingDefinition,
+  getEnhancedInvoices,
+  EnhancedInvoiceDefinition,
+  getPartyActivities,
+  PartyActivityDefinition,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -676,6 +721,63 @@ async function seedAnimalTitlesAndCompetitions(
 // BREEDING PLAN SEEDING
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Map string status to Prisma enum
+function mapBreedingPlanStatus(status: string): BreedingPlanStatus {
+  const statusMap: Record<string, BreedingPlanStatus> = {
+    PLANNING: BreedingPlanStatus.PLANNING,
+    CYCLE: BreedingPlanStatus.CYCLE,
+    COMMITTED: BreedingPlanStatus.COMMITTED,
+    CYCLE_EXPECTED: BreedingPlanStatus.CYCLE_EXPECTED,
+    HORMONE_TESTING: BreedingPlanStatus.HORMONE_TESTING,
+    BRED: BreedingPlanStatus.BRED,
+    PREGNANT: BreedingPlanStatus.PREGNANT,
+    BIRTHED: BreedingPlanStatus.BIRTHED,
+    WEANED: BreedingPlanStatus.WEANED,
+    PLACEMENT: BreedingPlanStatus.PLACEMENT,
+    COMPLETE: BreedingPlanStatus.COMPLETE,
+    CANCELED: BreedingPlanStatus.CANCELED,
+    UNSUCCESSFUL: BreedingPlanStatus.UNSUCCESSFUL,
+    ON_HOLD: BreedingPlanStatus.ON_HOLD,
+  };
+  return statusMap[status] || BreedingPlanStatus.PLANNING;
+}
+
+function mapReproAnchorMode(mode?: string): ReproAnchorMode | undefined {
+  if (!mode) return undefined;
+  const modeMap: Record<string, ReproAnchorMode> = {
+    CYCLE_START: ReproAnchorMode.CYCLE_START,
+    OVULATION: ReproAnchorMode.OVULATION,
+    BREEDING_DATE: ReproAnchorMode.BREEDING_DATE,
+  };
+  return modeMap[mode];
+}
+
+function mapConfidenceLevel(level?: string): ConfidenceLevel | undefined {
+  if (!level) return undefined;
+  const levelMap: Record<string, ConfidenceLevel> = {
+    HIGH: ConfidenceLevel.HIGH,
+    MEDIUM: ConfidenceLevel.MEDIUM,
+    LOW: ConfidenceLevel.LOW,
+  };
+  return levelMap[level];
+}
+
+function mapOvulationMethod(method?: string): OvulationMethod | undefined {
+  if (!method) return undefined;
+  const methodMap: Record<string, OvulationMethod> = {
+    CALCULATED: OvulationMethod.CALCULATED,
+    PROGESTERONE_TEST: OvulationMethod.PROGESTERONE_TEST,
+    LH_TEST: OvulationMethod.LH_TEST,
+    ULTRASOUND: OvulationMethod.ULTRASOUND,
+    VAGINAL_CYTOLOGY: OvulationMethod.VAGINAL_CYTOLOGY,
+    PALPATION: OvulationMethod.PALPATION,
+    AT_HOME_TEST: OvulationMethod.AT_HOME_TEST,
+    VETERINARY_EXAM: OvulationMethod.VETERINARY_EXAM,
+    BREEDING_INDUCED: OvulationMethod.BREEDING_INDUCED,
+  };
+  return methodMap[method];
+}
+
 async function seedBreedingPlans(
   tenantSlug: string,
   tenantId: number,
@@ -715,24 +817,63 @@ async function seedBreedingPlans(
         sireId = sire?.id || null;
       }
 
+      // Build the data object with all lifecycle fields
+      const planData: any = {
+        tenantId,
+        name: envName,
+        nickname: planDef.nickname,
+        species: planDef.species,
+        breedText: planDef.breedText,
+        damId,
+        sireId,
+        status: mapBreedingPlanStatus(planDef.status),
+        notes: planDef.notes,
+
+        // Anchor mode and cycle tracking
+        reproAnchorMode: mapReproAnchorMode(planDef.reproAnchorMode),
+        cycleStartObserved: planDef.cycleStartObserved,
+        cycleStartConfidence: mapConfidenceLevel(planDef.cycleStartConfidence),
+        ovulationConfirmed: planDef.ovulationConfirmed,
+        ovulationConfirmedMethod: mapOvulationMethod(planDef.ovulationConfirmedMethod),
+        ovulationConfidence: mapConfidenceLevel(planDef.ovulationConfidence),
+
+        // Expected dates
+        expectedCycleStart: planDef.expectedCycleStart,
+        expectedHormoneTestingStart: planDef.expectedHormoneTestingStart,
+        expectedBreedDate: planDef.expectedBreedDate,
+        expectedBirthDate: planDef.expectedBirthDate,
+        expectedWeaned: planDef.expectedWeaned,
+        expectedPlacementStart: planDef.expectedPlacementStart,
+        expectedPlacementCompleted: planDef.expectedPlacementCompleted,
+
+        // Actual dates
+        cycleStartDateActual: planDef.cycleStartDateActual,
+        hormoneTestingStartDateActual: planDef.hormoneTestingStartDateActual,
+        breedDateActual: planDef.breedDateActual,
+        birthDateActual: planDef.birthDateActual,
+        weanedDateActual: planDef.weanedDateActual,
+        placementStartDateActual: planDef.placementStartDateActual,
+        placementCompletedDateActual: planDef.placementCompletedDateActual,
+        completedDateActual: planDef.completedDateActual,
+
+        // Note: countBorn/countAlive are on OffspringGroup, not BreedingPlan
+
+        // Committed intent
+        isCommittedIntent: planDef.isCommittedIntent || false,
+        committedAt: planDef.committedAt,
+      };
+
+      // Set primary anchor based on anchor mode
+      if (planDef.reproAnchorMode === 'OVULATION' && planDef.ovulationConfirmed) {
+        planData.primaryAnchor = AnchorType.OVULATION;
+      } else if (planDef.reproAnchorMode === 'BREEDING_DATE' && planDef.breedDateActual) {
+        planData.primaryAnchor = AnchorType.BREEDING_DATE;
+      } else if (planDef.cycleStartObserved) {
+        planData.primaryAnchor = AnchorType.CYCLE_START;
+      }
+
       plan = await prisma.breedingPlan.create({
-        data: {
-          tenantId,
-          name: envName,
-          nickname: planDef.nickname,
-          species: planDef.species,
-          breedText: planDef.breedText,
-          damId,
-          sireId,
-          status:
-            planDef.status === 'COMMITTED'
-              ? BreedingPlanStatus.COMMITTED
-              : BreedingPlanStatus.PLANNING,
-          notes: planDef.notes,
-          expectedCycleStart: planDef.expectedCycleStart,
-          committedAt:
-            planDef.status === 'COMMITTED' ? new Date() : null,
-        },
+        data: planData,
       });
       console.log(
         `  + Created plan: ${envName} (${planDef.status}) - Dam: ${planDef.damRef}, Sire: ${planDef.sireRef}`
@@ -741,6 +882,409 @@ async function seedBreedingPlans(
       console.log(`  = Plan exists: ${envName}`);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREEDING ATTEMPTS, PREGNANCY CHECKS, AND TEST RESULTS SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function mapBreedingMethod(method: string): BreedingMethod {
+  const methodMap: Record<string, BreedingMethod> = {
+    NATURAL: BreedingMethod.NATURAL,
+    AI_TCI: BreedingMethod.AI_TCI,
+    AI_SI: BreedingMethod.AI_SI,
+    AI_FROZEN: BreedingMethod.AI_FROZEN,
+  };
+  return methodMap[method] || BreedingMethod.NATURAL;
+}
+
+function mapBreedingGuaranteeType(type?: string): BreedingGuaranteeType | undefined {
+  if (!type) return undefined;
+  const typeMap: Record<string, BreedingGuaranteeType> = {
+    NO_GUARANTEE: BreedingGuaranteeType.NO_GUARANTEE,
+    LIVE_FOAL: BreedingGuaranteeType.LIVE_FOAL,
+    STANDS_AND_NURSES: BreedingGuaranteeType.STANDS_AND_NURSES,
+    SIXTY_DAY_PREGNANCY: BreedingGuaranteeType.SIXTY_DAY_PREGNANCY,
+    CERTIFIED_PREGNANT: BreedingGuaranteeType.CERTIFIED_PREGNANT,
+  };
+  return typeMap[type];
+}
+
+function mapPregnancyCheckMethod(method: string): PregnancyCheckMethod {
+  const methodMap: Record<string, PregnancyCheckMethod> = {
+    PALPATION: PregnancyCheckMethod.PALPATION,
+    ULTRASOUND: PregnancyCheckMethod.ULTRASOUND,
+    RELAXIN_TEST: PregnancyCheckMethod.RELAXIN_TEST,
+    XRAY: PregnancyCheckMethod.XRAY,
+    OTHER: PregnancyCheckMethod.OTHER,
+  };
+  return methodMap[method] || PregnancyCheckMethod.OTHER;
+}
+
+async function seedBreedingAttempts(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  breedingAttempts: Record<string, BreedingAttemptDefinition[]>
+): Promise<number> {
+  const attemptDefs = breedingAttempts[tenantSlug] || [];
+  let created = 0;
+
+  for (const attemptDef of attemptDefs) {
+    const planEnvName = getEnvName(attemptDef.planRef, env);
+
+    // Find the plan
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { tenantId, name: planEnvName },
+    });
+
+    if (!plan) {
+      console.log(`  ! Plan not found for breeding attempt: ${planEnvName}`);
+      continue;
+    }
+
+    // Check if attempt already exists for this plan at this time
+    const existing = await prisma.breedingAttempt.findFirst({
+      where: {
+        tenantId,
+        planId: plan.id,
+        attemptAt: attemptDef.attemptAt,
+      },
+    });
+
+    if (!existing) {
+      await prisma.breedingAttempt.create({
+        data: {
+          tenantId,
+          planId: plan.id,
+          damId: plan.damId,
+          sireId: plan.sireId,
+          method: mapBreedingMethod(attemptDef.method),
+          attemptAt: attemptDef.attemptAt,
+          success: attemptDef.success,
+          notes: attemptDef.notes,
+          guaranteeType: mapBreedingGuaranteeType(attemptDef.guaranteeType),
+          agreedFeeCents: attemptDef.agreedFeeCents,
+          feePaidCents: attemptDef.feePaidCents,
+        },
+      });
+      created++;
+      console.log(`  + Created breeding attempt for: ${planEnvName} (${attemptDef.method})`);
+    } else {
+      console.log(`  = Breeding attempt exists for: ${planEnvName}`);
+    }
+  }
+
+  return created;
+}
+
+async function seedPregnancyChecks(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  pregnancyChecks: Record<string, PregnancyCheckDefinition[]>
+): Promise<number> {
+  const checkDefs = pregnancyChecks[tenantSlug] || [];
+  let created = 0;
+
+  for (const checkDef of checkDefs) {
+    const planEnvName = getEnvName(checkDef.planRef, env);
+
+    // Find the plan
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { tenantId, name: planEnvName },
+    });
+
+    if (!plan) {
+      console.log(`  ! Plan not found for pregnancy check: ${planEnvName}`);
+      continue;
+    }
+
+    // Check if pregnancy check already exists for this plan at this time
+    const existing = await prisma.pregnancyCheck.findFirst({
+      where: {
+        tenantId,
+        planId: plan.id,
+        checkedAt: checkDef.checkedAt,
+      },
+    });
+
+    if (!existing) {
+      await prisma.pregnancyCheck.create({
+        data: {
+          tenantId,
+          planId: plan.id,
+          method: mapPregnancyCheckMethod(checkDef.method),
+          result: checkDef.result,
+          checkedAt: checkDef.checkedAt,
+          notes: checkDef.notes,
+        },
+      });
+      created++;
+      console.log(`  + Created pregnancy check for: ${planEnvName} (${checkDef.method} - ${checkDef.result ? 'positive' : 'negative'})`);
+    } else {
+      console.log(`  = Pregnancy check exists for: ${planEnvName}`);
+    }
+  }
+
+  return created;
+}
+
+async function seedTestResults(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  testResults: Record<string, TestResultDefinition[]>
+): Promise<number> {
+  const resultDefs = testResults[tenantSlug] || [];
+  let created = 0;
+
+  for (const resultDef of resultDefs) {
+    const planEnvName = getEnvName(resultDef.planRef, env);
+    const animalEnvName = getEnvName(resultDef.animalRef, env);
+
+    // Find the plan
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { tenantId, name: planEnvName },
+    });
+
+    if (!plan) {
+      console.log(`  ! Plan not found for test result: ${planEnvName}`);
+      continue;
+    }
+
+    // Find the animal (dam)
+    const animal = await prisma.animal.findFirst({
+      where: { tenantId, name: animalEnvName },
+    });
+
+    // Check if test result already exists for this plan/animal at this time
+    const existing = await prisma.testResult.findFirst({
+      where: {
+        tenantId,
+        planId: plan.id,
+        collectedAt: resultDef.collectedAt,
+        kind: resultDef.kind,
+      },
+    });
+
+    if (!existing) {
+      await prisma.testResult.create({
+        data: {
+          tenantId,
+          planId: plan.id,
+          animalId: animal?.id,
+          kind: resultDef.kind,
+          method: resultDef.method,
+          collectedAt: resultDef.collectedAt,
+          valueNumber: resultDef.valueNumber,
+          valueText: resultDef.valueText,
+          units: resultDef.units,
+          indicatesOvulationDate: resultDef.indicatesOvulationDate,
+          notes: resultDef.notes,
+          data: resultDef.data,
+        },
+      });
+      created++;
+      console.log(`  + Created test result for: ${planEnvName} (${resultDef.kind})`);
+    } else {
+      console.log(`  = Test result exists for: ${planEnvName} (${resultDef.kind})`);
+    }
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREEDING MILESTONES, FOALING OUTCOMES, MARE HISTORY SEEDING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function mapMilestoneType(type: string): MilestoneType {
+  const typeMap: Record<string, MilestoneType> = {
+    VET_PREGNANCY_CHECK_15D: MilestoneType.VET_PREGNANCY_CHECK_15D,
+    VET_ULTRASOUND_45D: MilestoneType.VET_ULTRASOUND_45D,
+    VET_ULTRASOUND_90D: MilestoneType.VET_ULTRASOUND_90D,
+    BEGIN_MONITORING_300D: MilestoneType.BEGIN_MONITORING_300D,
+    PREPARE_FOALING_AREA_320D: MilestoneType.PREPARE_FOALING_AREA_320D,
+    DAILY_CHECKS_330D: MilestoneType.DAILY_CHECKS_330D,
+    DUE_DATE_340D: MilestoneType.DUE_DATE_340D,
+    OVERDUE_VET_CALL_350D: MilestoneType.OVERDUE_VET_CALL_350D,
+    UDDER_DEVELOPMENT: MilestoneType.UDDER_DEVELOPMENT,
+    UDDER_FULL: MilestoneType.UDDER_FULL,
+    WAX_APPEARANCE: MilestoneType.WAX_APPEARANCE,
+    VULVAR_RELAXATION: MilestoneType.VULVAR_RELAXATION,
+    TAILHEAD_RELAXATION: MilestoneType.TAILHEAD_RELAXATION,
+    MILK_CALCIUM_TEST: MilestoneType.MILK_CALCIUM_TEST,
+  };
+  return typeMap[type] || MilestoneType.VET_PREGNANCY_CHECK_15D;
+}
+
+function mapMareCondition(condition: string): MarePostFoalingCondition {
+  const conditionMap: Record<string, MarePostFoalingCondition> = {
+    EXCELLENT: MarePostFoalingCondition.EXCELLENT,
+    GOOD: MarePostFoalingCondition.GOOD,
+    FAIR: MarePostFoalingCondition.FAIR,
+    POOR: MarePostFoalingCondition.POOR,
+    VETERINARY_CARE_REQUIRED: MarePostFoalingCondition.VETERINARY_CARE_REQUIRED,
+  };
+  return conditionMap[condition] || MarePostFoalingCondition.GOOD;
+}
+
+async function seedBreedingMilestones(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  breedingMilestones: Record<string, BreedingMilestoneDefinition[]>
+): Promise<number> {
+  const milestoneDefs = breedingMilestones[tenantSlug] || [];
+  let created = 0;
+
+  for (const milestoneDef of milestoneDefs) {
+    const planEnvName = getEnvName(milestoneDef.planRef, env);
+
+    // Find the plan
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { tenantId, name: planEnvName },
+    });
+
+    if (!plan) {
+      console.log(`  ! Plan not found for milestone: ${planEnvName}`);
+      continue;
+    }
+
+    // Check if milestone already exists
+    const existing = await prisma.breedingMilestone.findFirst({
+      where: {
+        tenantId,
+        breedingPlanId: plan.id,
+        milestoneType: mapMilestoneType(milestoneDef.milestoneType),
+      },
+    });
+
+    if (!existing) {
+      await prisma.breedingMilestone.create({
+        data: {
+          tenantId,
+          breedingPlanId: plan.id,
+          milestoneType: mapMilestoneType(milestoneDef.milestoneType),
+          scheduledDate: milestoneDef.scheduledDate,
+          isCompleted: milestoneDef.isCompleted,
+          completedDate: milestoneDef.completedDate,
+          notes: milestoneDef.notes,
+        },
+      });
+      created++;
+      console.log(`  + Created milestone for: ${planEnvName} (${milestoneDef.milestoneType})`);
+    } else {
+      console.log(`  = Milestone exists for: ${planEnvName} (${milestoneDef.milestoneType})`);
+    }
+  }
+
+  return created;
+}
+
+async function seedFoalingOutcomes(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  foalingOutcomes: Record<string, FoalingOutcomeDefinition[]>
+): Promise<number> {
+  const outcomeDefs = foalingOutcomes[tenantSlug] || [];
+  let created = 0;
+
+  for (const outcomeDef of outcomeDefs) {
+    const planEnvName = getEnvName(outcomeDef.planRef, env);
+
+    // Find the plan
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { tenantId, name: planEnvName },
+    });
+
+    if (!plan) {
+      console.log(`  ! Plan not found for foaling outcome: ${planEnvName}`);
+      continue;
+    }
+
+    // Check if foaling outcome already exists (unique per plan)
+    const existing = await prisma.foalingOutcome.findUnique({
+      where: { breedingPlanId: plan.id },
+    });
+
+    if (!existing) {
+      await prisma.foalingOutcome.create({
+        data: {
+          tenantId,
+          breedingPlanId: plan.id,
+          hadComplications: outcomeDef.hadComplications,
+          complicationDetails: outcomeDef.complicationDetails,
+          veterinarianCalled: outcomeDef.veterinarianCalled,
+          veterinarianName: outcomeDef.veterinarianName,
+          placentaPassed: outcomeDef.placentaPassed,
+          placentaPassedMinutes: outcomeDef.placentaPassedMinutes,
+          mareCondition: mapMareCondition(outcomeDef.mareCondition),
+          postFoalingHeatDate: outcomeDef.postFoalingHeatDate,
+          readyForRebreeding: outcomeDef.readyForRebreeding,
+        },
+      });
+      created++;
+      console.log(`  + Created foaling outcome for: ${planEnvName}`);
+    } else {
+      console.log(`  = Foaling outcome exists for: ${planEnvName}`);
+    }
+  }
+
+  return created;
+}
+
+async function seedMareReproductiveHistory(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  mareHistory: Record<string, MareReproductiveHistoryDefinition[]>
+): Promise<number> {
+  const historyDefs = mareHistory[tenantSlug] || [];
+  let created = 0;
+
+  for (const historyDef of historyDefs) {
+    const mareEnvName = getEnvName(historyDef.mareRef, env);
+
+    // Find the mare
+    const mare = await prisma.animal.findFirst({
+      where: { tenantId, name: mareEnvName, sex: 'FEMALE' },
+    });
+
+    if (!mare) {
+      console.log(`  ! Mare not found for reproductive history: ${mareEnvName}`);
+      continue;
+    }
+
+    // Check if history already exists (unique per mare)
+    const existing = await prisma.mareReproductiveHistory.findUnique({
+      where: { mareId: mare.id },
+    });
+
+    if (!existing) {
+      await prisma.mareReproductiveHistory.create({
+        data: {
+          tenantId,
+          mareId: mare.id,
+          totalFoalings: historyDef.totalFoalings,
+          totalLiveFoals: historyDef.totalLiveFoals,
+          totalComplicatedFoalings: historyDef.totalComplicatedFoalings,
+          avgPostFoalingHeatDays: historyDef.avgPostFoalingHeatDays,
+          riskScore: historyDef.riskScore,
+          riskFactors: historyDef.riskFactors || [],
+          notes: historyDef.notes,
+        },
+      });
+      created++;
+      console.log(`  + Created reproductive history for mare: ${mareEnvName}`);
+    } else {
+      console.log(`  = Reproductive history exists for mare: ${mareEnvName}`);
+    }
+  }
+
+  return created;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1046,56 +1590,1124 @@ async function seedVaccinationRecords(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MARKETPLACE LISTING SEEDING
+// MARKETPLACE LISTING SEEDING (LEGACY)
+// NOTE: The old MarketplaceListing model was replaced with:
+// - MktListingBreedingProgram
+// - MktListingBreederService
+// - MktListingAnimalProgram
+// - MktListingIndividualAnimal
+// These are now seeded via separate functions (seedStorefronts, seedBreedingProgramListings, etc.)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function seedMarketplaceListings(
+  _tenantSlug: string,
+  _tenantId: number,
+  _env: Environment,
+  _tenantMarketplaceListings: Record<string, any[]>
+): Promise<void> {
+  // Legacy function - marketplace listings are now seeded via:
+  // - seedStorefronts()
+  // - seedBreedingProgramListings()
+  // - seedStudServiceListings()
+  // - seedIndividualAnimalListings()
+  console.log('  (Legacy function - new marketplace models seeded separately)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE STOREFRONT SEEDING (Business Profile, Breeds, Standards, Policies)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedStorefronts(
   tenantSlug: string,
   tenantId: number,
   env: Environment,
-  tenantMarketplaceListings: Record<string, any[]>
-): Promise<void> {
-  const listingDefs = tenantMarketplaceListings[tenantSlug] || [];
+  ownerUserId: number,
+  storefronts: Record<string, StorefrontDefinition>
+): Promise<{ storefronts: number; tenantProgramBreeds: number }> {
+  const storefrontDef = storefronts[tenantSlug];
+  if (!storefrontDef) {
+    console.log(`  - No storefront definition for tenant: ${tenantSlug}`);
+    return { storefronts: 0, tenantProgramBreeds: 0 };
+  }
 
-  for (const listingDef of listingDefs) {
-    const envTitle = getEnvName(listingDef.title, env);
+  let storefrontsCreated = 0;
+  let tenantProgramBreedsCreated = 0;
 
-    // Check if listing already exists
-    let listing = await prisma.marketplaceListing.findFirst({
-      where: { tenantId, title: envTitle },
+  // Find or create the MarketplaceUser for this tenant's owner
+  // The owner needs a MarketplaceUser record to be a provider
+  const ownerUser = await prisma.user.findUnique({
+    where: { id: ownerUserId },
+  });
+
+  if (!ownerUser) {
+    console.log(`  ! Owner user not found: ${ownerUserId}`);
+    return { storefronts: 0, tenantProgramBreeds: 0 };
+  }
+
+  // Check if a MarketplaceUser already exists for this email
+  let marketplaceUser = await prisma.marketplaceUser.findUnique({
+    where: { email: ownerUser.email },
+  });
+
+  if (!marketplaceUser) {
+    // Create MarketplaceUser for the breeder
+    const passwordHash = await bcrypt.hash('BHQ_Provider_2024!', 12);
+    marketplaceUser = await prisma.marketplaceUser.create({
+      data: {
+        email: ownerUser.email,
+        firstName: ownerUser.firstName || 'Breeder',
+        lastName: ownerUser.lastName || 'Owner',
+        passwordHash,
+        emailVerified: true,
+        userType: 'provider',
+        status: 'active',
+      },
+    });
+    console.log(`  + Created provider MarketplaceUser: ${ownerUser.email}`);
+  }
+
+  // Check if MarketplaceProvider already exists
+  let provider = await prisma.marketplaceProvider.findUnique({
+    where: { userId: marketplaceUser.id },
+  });
+
+  if (!provider) {
+    // Create MarketplaceProvider (storefront)
+    provider = await prisma.marketplaceProvider.create({
+      data: {
+        userId: marketplaceUser.id,
+        tenantId,
+        providerType: 'BREEDER',
+
+        // Business info
+        businessName: storefrontDef.businessName,
+        businessDescription: storefrontDef.businessDescription,
+        logoUrl: `https://placehold.co/400x400/005dc3/ffffff?text=${encodeURIComponent(storefrontDef.logoPlaceholderText)}`,
+        coverImageUrl: `https://placehold.co/1200x400/f27517/ffffff?text=${encodeURIComponent(storefrontDef.bannerPlaceholderText)}`,
+
+        // Contact
+        publicEmail: storefrontDef.publicEmail,
+        publicPhone: storefrontDef.publicPhone,
+        website: storefrontDef.website,
+
+        // Location
+        city: storefrontDef.city,
+        state: storefrontDef.state,
+        country: storefrontDef.country,
+
+        // Business hours & timezone
+        businessHours: storefrontDef.businessHours,
+        timeZone: storefrontDef.timezone,
+
+        // Verification & Badges
+        verificationTier: storefrontDef.verificationTier,
+        verifiedProvider: storefrontDef.verificationTier === 'VERIFIED',
+        quickResponder: storefrontDef.quickResponder,
+
+        // Payment mode (manual for seed data)
+        paymentMode: 'manual',
+        stripeConnectOnboardingComplete: false,
+
+        // Stats (initial values)
+        totalListings: 0,
+        activeListings: 0,
+        averageRating: 4.5,
+        totalReviews: 0,
+      },
+    });
+    storefrontsCreated++;
+    console.log(`  + Created storefront: ${storefrontDef.businessName}`);
+  } else {
+    console.log(`  = Storefront exists: ${storefrontDef.businessName}`);
+  }
+
+  // Seed TenantProgramBreed records (breeder's breeds)
+  for (const breedDef of storefrontDef.breeds) {
+    // Find the canonical breed by name
+    const breed = await prisma.breed.findFirst({
+      where: {
+        name: breedDef.breedName,
+        species: breedDef.species,
+      },
     });
 
-    if (!listing) {
-      const status =
-        listingDef.status === 'ACTIVE'
-          ? ListingStatus.ACTIVE
-          : listingDef.status === 'PAUSED'
-          ? ListingStatus.PAUSED
-          : ListingStatus.DRAFT;
+    if (!breed) {
+      console.log(`  ! Breed not found: ${breedDef.breedName} (${breedDef.species})`);
+      continue;
+    }
 
-      listing = await prisma.marketplaceListing.create({
+    // Check if TenantProgramBreed already exists
+    const existingProgramBreed = await prisma.tenantProgramBreed.findUnique({
+      where: {
+        tenantId_breedId: {
+          tenantId,
+          breedId: breed.id,
+        },
+      },
+    });
+
+    if (!existingProgramBreed) {
+      await prisma.tenantProgramBreed.create({
         data: {
           tenantId,
-          title: envTitle,
-          description: listingDef.description,
-          listingType:
-            listingDef.listingType === 'BREEDING_PROGRAM'
-              ? ListingType.BREEDING_PROGRAM
-              : ListingType.STUD_SERVICE,
-          status,
-          priceCents: listingDef.priceCents,
-          priceType: listingDef.priceType,
-          city: listingDef.city,
-          state: listingDef.state,
-          country: listingDef.country,
-          publishedAt: status === ListingStatus.ACTIVE ? new Date() : null,
+          species: breedDef.species,
+          breedId: breed.id,
+          isPrimary: breedDef.isPrimary,
         },
       });
-      console.log(`  + Created listing: ${envTitle} (${listingDef.status})`);
+      tenantProgramBreedsCreated++;
+      console.log(`    + Added program breed: ${breedDef.breedName} (${breedDef.species})${breedDef.isPrimary ? ' [PRIMARY]' : ''}`);
     } else {
-      console.log(`  = Listing exists: ${envTitle}`);
+      console.log(`    = Program breed exists: ${breedDef.breedName}`);
     }
   }
+
+  // Store Standards & Credentials and Placement Policies in TenantSetting
+  // Health Practices
+  await upsertTenantSetting(tenantId, 'marketplace_health_practices', storefrontDef.healthPractices);
+
+  // Breeding Practices
+  await upsertTenantSetting(tenantId, 'marketplace_breeding_practices', storefrontDef.breedingPractices);
+
+  // Care & Early Life
+  await upsertTenantSetting(tenantId, 'marketplace_care_early_life', storefrontDef.careAndEarlyLife);
+
+  // Placement Policies
+  await upsertTenantSetting(tenantId, 'marketplace_placement_policies', storefrontDef.placementPolicies);
+
+  // Registry Memberships
+  await upsertTenantSetting(tenantId, 'marketplace_registry_memberships', storefrontDef.registryMemberships);
+
+  console.log(`    + Saved Standards & Credentials settings`);
+  console.log(`    + Saved Placement Policies settings`);
+
+  return { storefronts: storefrontsCreated, tenantProgramBreeds: tenantProgramBreedsCreated };
+}
+
+async function upsertTenantSetting(tenantId: number, namespace: string, data: unknown): Promise<void> {
+  const existing = await prisma.tenantSetting.findUnique({
+    where: { tenantId_namespace: { tenantId, namespace } },
+  });
+
+  if (existing) {
+    await prisma.tenantSetting.update({
+      where: { tenantId_namespace: { tenantId, namespace } },
+      data: { data: data as any },
+    });
+  } else {
+    await prisma.tenantSetting.create({
+      data: {
+        tenantId,
+        namespace,
+        data: data as any,
+      },
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETPLACE BREEDING PROGRAM LISTINGS (MktListingBreedingProgram)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedBreedingProgramListings(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  listings: Record<string, BreedingProgramListingDefinition[]>
+): Promise<{ programs: number; media: number }> {
+  const tenantListings = listings[tenantSlug];
+  if (!tenantListings || tenantListings.length === 0) {
+    console.log(`  - No breeding program listings for tenant: ${tenantSlug}`);
+    return { programs: 0, media: 0 };
+  }
+
+  let programsCreated = 0;
+  let mediaCreated = 0;
+
+  for (const listing of tenantListings) {
+    // Check if listing already exists
+    const existing = await prisma.mktListingBreedingProgram.findUnique({
+      where: {
+        tenantId_slug: {
+          tenantId,
+          slug: listing.slug,
+        },
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Breeding program listing exists: ${listing.name}`);
+      continue;
+    }
+
+    // Find the breed ID if we have one that matches
+    const breed = await prisma.breed.findFirst({
+      where: {
+        name: listing.breedText,
+        species: listing.species,
+      },
+    });
+
+    // Map status
+    const statusMap: Record<string, 'DRAFT' | 'LIVE' | 'PAUSED'> = {
+      'DRAFT': 'DRAFT',
+      'LIVE': 'LIVE',
+      'PAUSED': 'PAUSED',
+    };
+
+    // Create the breeding program listing
+    const program = await prisma.mktListingBreedingProgram.create({
+      data: {
+        tenantId,
+        slug: listing.slug,
+        name: listing.name,
+        species: listing.species,
+        breedText: listing.breedText,
+        breedId: breed?.id,
+        description: listing.description,
+        programStory: listing.programStory,
+        status: statusMap[listing.status] || 'DRAFT',
+        acceptInquiries: listing.acceptInquiries,
+        openWaitlist: listing.openWaitlist,
+        acceptReservations: listing.acceptReservations,
+        comingSoon: listing.comingSoon,
+        pricingTiers: listing.pricingTiers || null,
+        whatsIncluded: listing.whatsIncluded,
+        showWhatsIncluded: listing.showWhatsIncluded ?? true,
+        typicalWaitTime: listing.typicalWaitTime,
+        showWaitTime: listing.showWaitTime ?? true,
+        coverImageUrl: listing.coverImageText
+          ? `https://placehold.co/1200x600/005dc3/ffffff?text=${encodeURIComponent(listing.coverImageText)}`
+          : null,
+        showCoverImage: true,
+        publishedAt: listing.status === 'LIVE' ? new Date() : null,
+      },
+    });
+    programsCreated++;
+    console.log(`  + Created breeding program listing: ${listing.name} (${listing.status})`);
+
+    // Create placeholder media for live programs
+    if (listing.status === 'LIVE') {
+      const mediaCount = 2; // 2 gallery images per program
+      for (let i = 0; i < mediaCount; i++) {
+        await prisma.breedingProgramMedia.create({
+          data: {
+            programId: program.id,
+            tenantId,
+            assetUrl: `https://placehold.co/800x600/f27517/ffffff?text=${encodeURIComponent(`${listing.name}+Gallery+${i + 1}`)}`,
+            caption: `${listing.name} - Gallery Image ${i + 1}`,
+            sortOrder: i,
+            isPublic: true,
+          },
+        });
+        mediaCreated++;
+      }
+      console.log(`    + Created ${mediaCount} media items for ${listing.name}`);
+    }
+  }
+
+  return { programs: programsCreated, media: mediaCreated };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUD SERVICE LISTINGS (MktListingBreederService)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedStudServiceListings(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  listings: Record<string, StudServiceListingDefinition[]>
+): Promise<number> {
+  const tenantListings = listings[tenantSlug];
+  if (!tenantListings || tenantListings.length === 0) {
+    console.log(`  - No stud service listings for tenant: ${tenantSlug}`);
+    return 0;
+  }
+
+  let created = 0;
+
+  for (const listing of tenantListings) {
+    // Find the stallion by name
+    const stallion = await prisma.animal.findFirst({
+      where: {
+        tenantId,
+        name: listing.stallionRef,
+        sex: 'MALE',
+        species: 'HORSE',
+      },
+    });
+
+    if (!stallion) {
+      console.log(`  ! Stallion not found: ${listing.stallionRef}`);
+      continue;
+    }
+
+    // Check if listing already exists
+    const existing = await prisma.mktListingBreederService.findUnique({
+      where: { slug: listing.slug },
+    });
+
+    if (existing) {
+      console.log(`  = Stud service listing exists: ${listing.title}`);
+      continue;
+    }
+
+    // Map guarantee type to Prisma enum
+    const guaranteeMap: Record<string, 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT'> = {
+      'NO_GUARANTEE': 'NO_GUARANTEE',
+      'LIVE_FOAL': 'LIVE_FOAL',
+      'STANDS_AND_NURSES': 'STANDS_AND_NURSES',
+      'SIXTY_DAY_PREGNANCY': 'SIXTY_DAY_PREGNANCY',
+      'CERTIFIED_PREGNANT': 'CERTIFIED_PREGNANT',
+    };
+
+    await prisma.mktListingBreederService.create({
+      data: {
+        tenant: { connect: { id: tenantId } },
+        listingType: 'STUD_SERVICE',
+        title: listing.title,
+        slug: listing.slug,
+        description: listing.description,
+        stallion: { connect: { id: stallion.id } },
+        status: listing.status,
+        priceCents: listing.priceCents,
+        priceType: 'fixed',
+        tier: 'PREMIUM',
+        publishedAt: listing.status === 'LIVE' ? new Date() : null,
+        // Stud service specific fields
+        seasonName: listing.seasonName,
+        seasonStart: listing.seasonStart,
+        seasonEnd: listing.seasonEnd,
+        breedingMethods: listing.breedingMethods,
+        defaultGuarantee: guaranteeMap[listing.defaultGuarantee],
+        maxBookings: listing.maxBookings,
+        bookingsReceived: listing.bookingsReceived || 0,
+        // Note: bookingFeeCents moved inside horseServiceData
+        horseServiceData: {
+          ...(listing.horseServiceData || {}),
+          bookingFeeCents: listing.bookingFeeCents,
+        },
+      },
+    });
+    created++;
+    console.log(`  + Created stud service listing: ${listing.title}`);
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INDIVIDUAL ANIMAL LISTINGS (MktListingIndividualAnimal)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedIndividualAnimalListings(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  listings: Record<string, IndividualAnimalListingDefinition[]>
+): Promise<number> {
+  const tenantListings = listings[tenantSlug];
+  if (!tenantListings || tenantListings.length === 0) {
+    console.log(`  - No individual animal listings for tenant: ${tenantSlug}`);
+    return 0;
+  }
+
+  let created = 0;
+
+  for (const listing of tenantListings) {
+    // Find the animal by name
+    const animal = await prisma.animal.findFirst({
+      where: {
+        tenantId,
+        name: listing.animalRef,
+      },
+    });
+
+    if (!animal) {
+      console.log(`  ! Animal not found: ${listing.animalRef}`);
+      continue;
+    }
+
+    // Check if listing already exists
+    const existing = await prisma.mktListingIndividualAnimal.findUnique({
+      where: { slug: listing.slug },
+    });
+
+    if (existing) {
+      console.log(`  = Individual animal listing exists: ${listing.headline}`);
+      continue;
+    }
+
+    // Map guarantee type to Prisma enum (if present)
+    const guaranteeMap: Record<string, 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT' | undefined> = {
+      'NO_GUARANTEE': 'NO_GUARANTEE',
+      'LIVE_FOAL': 'LIVE_FOAL',
+      'STANDS_AND_NURSES': 'STANDS_AND_NURSES',
+      'SIXTY_DAY_PREGNANCY': 'SIXTY_DAY_PREGNANCY',
+      'CERTIFIED_PREGNANT': 'CERTIFIED_PREGNANT',
+    };
+
+    await prisma.mktListingIndividualAnimal.create({
+      data: {
+        tenantId,
+        animalId: animal.id,
+        templateType: listing.templateType,
+        slug: listing.slug,
+        headline: listing.headline,
+        summary: listing.summary,
+        description: listing.description,
+        priceModel: listing.priceModel,
+        priceCents: listing.priceCents,
+        priceMinCents: listing.priceMinCents,
+        priceMaxCents: listing.priceMaxCents,
+        status: listing.status,
+        listed: listing.listed,
+        publishedAt: listing.status === 'LIVE' ? new Date() : null,
+        // Default data drawer config
+        dataDrawerConfig: {
+          identity: { showName: true, showSpecies: true, showBreed: true },
+          media: { showPhotos: true },
+          healthTesting: { showResults: true },
+        },
+        // Stud service fields (if templateType is STUD_SERVICES)
+        seasonName: listing.seasonName,
+        seasonStart: listing.seasonStart,
+        seasonEnd: listing.seasonEnd,
+        breedingMethods: listing.breedingMethods || [],
+        defaultGuaranteeType: listing.defaultGuaranteeType ? guaranteeMap[listing.defaultGuaranteeType] : undefined,
+        bookingFeeCents: listing.bookingFeeCents,
+      },
+    });
+    created++;
+    console.log(`  + Created individual animal listing: ${listing.headline}`);
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CROSS-TENANT PEDIGREE LINKS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTRACT TEMPLATES AND INSTANCES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedContractTemplates(
+  templates: ContractTemplateDefinition[]
+): Promise<number> {
+  let created = 0;
+
+  for (const template of templates) {
+    // Check if template already exists
+    const existing = await prisma.contractTemplate.findUnique({
+      where: { slug: template.slug },
+    });
+
+    if (existing) {
+      console.log(`  = Contract template exists: ${template.name}`);
+      continue;
+    }
+
+    await prisma.contractTemplate.create({
+      data: {
+        tenantId: null,  // System templates have no tenant
+        name: template.name,
+        slug: template.slug,
+        type: template.type === 'SYSTEM' ? 'SYSTEM' : 'CUSTOM',
+        category: template.category,  // Already matches Prisma ContractTemplateCategory enum
+        description: template.description,
+        isActive: template.isActive,
+        bodyHtml: `<p>This is a placeholder for the ${template.name} contract template.</p>`,
+        mergeFields: [
+          { key: 'buyer.name', label: 'Buyer Name', namespace: 'buyer', required: true },
+          { key: 'animal.name', label: 'Animal Name', namespace: 'animal', required: true },
+          { key: 'price', label: 'Price', namespace: 'sale', required: true },
+          { key: 'date', label: 'Date', namespace: 'contract', required: true },
+        ],
+      },
+    });
+    created++;
+    console.log(`  + Created contract template: ${template.name}`);
+  }
+
+  return created;
+}
+
+async function seedContractInstances(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  instances: Record<string, ContractInstanceDefinition[]>,
+  tenantContacts: Record<string, any[]>
+): Promise<number> {
+  const tenantInstances = instances[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let created = 0;
+
+  for (const instance of tenantInstances) {
+    if (instance.contactIndex >= contactDefs.length) continue;
+
+    const contactDef = contactDefs[instance.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+      include: { party: true },
+    });
+
+    if (!contact || !contact.partyId) {
+      console.log(`  ! Contact not found: ${contactEmail}`);
+      continue;
+    }
+
+    // Find the template
+    const template = await prisma.contractTemplate.findUnique({
+      where: { slug: instance.templateSlug },
+    });
+
+    if (!template) {
+      console.log(`  ! Template not found: ${instance.templateSlug}`);
+      continue;
+    }
+
+    // Check if contract already exists
+    const existing = await prisma.contract.findFirst({
+      where: {
+        tenantId,
+        title: instance.title,
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Contract exists: ${instance.title}`);
+      continue;
+    }
+
+    // Calculate dates based on status and daysAgo
+    const createdAt = new Date(Date.now() - instance.daysAgo * 24 * 60 * 60 * 1000);
+    const issuedAt = ['sent', 'viewed', 'signed', 'countersigned', 'completed', 'declined', 'expired'].includes(instance.status)
+      ? new Date(createdAt.getTime() + 1 * 24 * 60 * 60 * 1000)  // 1 day after creation
+      : null;
+    const signedAt = ['signed', 'countersigned', 'completed'].includes(instance.status)
+      ? new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000)  // 5 days after creation
+      : null;
+    const expiresAt = instance.status === 'expired'
+      ? new Date(createdAt.getTime() - 1 * 24 * 60 * 60 * 1000)  // Already expired
+      : new Date(createdAt.getTime() + 30 * 24 * 60 * 60 * 1000);  // 30 days from creation
+
+    // Map status (Prisma ContractStatus: draft, sent, viewed, signed, declined, voided, expired)
+    const statusMap: Record<string, 'draft' | 'sent' | 'viewed' | 'signed' | 'declined' | 'voided' | 'expired'> = {
+      'draft': 'draft',
+      'pending': 'sent',  // pending -> sent
+      'sent': 'sent',
+      'viewed': 'viewed',
+      'signed': 'signed',
+      'countersigned': 'signed',  // countersigned -> signed
+      'completed': 'signed',  // completed -> signed
+      'declined': 'declined',
+      'voided': 'voided',
+      'expired': 'expired',
+    };
+
+    // Create the contract
+    const contract = await prisma.contract.create({
+      data: {
+        tenantId,
+        templateId: template.id,
+        title: instance.title,
+        status: statusMap[instance.status] || 'draft',
+        issuedAt,
+        signedAt,
+        expiresAt,
+        createdAt,
+        provider: 'internal',
+      },
+    });
+
+    // Create contract party (the buyer)
+    await prisma.contractParty.create({
+      data: {
+        tenantId,
+        contractId: contract.id,
+        partyId: contact.partyId,
+        role: 'BUYER',
+        signer: true,
+        status: signedAt ? 'signed' : 'pending',
+        signedAt: signedAt,
+        signatureData: signedAt ? { method: 'TYPED' } : null,
+      },
+    });
+
+    created++;
+    console.log(`  + Created contract: ${instance.title} (${instance.status})`);
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 7: MESSAGE TEMPLATES & AUTO-REPLY RULES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedMessageTemplates(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  templates: Record<string, MessageTemplateDefinition[]>
+): Promise<number> {
+  const tenantTemplates = templates[tenantSlug] || [];
+  let created = 0;
+
+  for (const tpl of tenantTemplates) {
+    // Check if template already exists
+    const existing = await prisma.template.findFirst({
+      where: {
+        tenantId,
+        key: tpl.key,
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Template exists: ${tpl.name}`);
+      continue;
+    }
+
+    // Map status to Prisma TemplateStatus enum (draft, active, archived)
+    const statusMap: Record<string, 'draft' | 'active' | 'archived'> = {
+      'draft': 'draft',
+      'active': 'active',
+      'paused': 'draft',  // paused -> draft (no paused in Prisma enum)
+      'archived': 'archived',
+    };
+
+    // Create the template
+    const template = await prisma.template.create({
+      data: {
+        tenantId,
+        name: tpl.name,
+        key: tpl.key,
+        channel: tpl.channel,
+        category: tpl.category,
+        status: statusMap[tpl.status] || 'draft',
+        description: tpl.description,
+      },
+    });
+
+    // Create template content
+    await prisma.templateContent.create({
+      data: {
+        templateId: template.id,
+        subject: tpl.subject,
+        bodyText: tpl.bodyText,
+        bodyHtml: tpl.bodyHtml,
+      },
+    });
+
+    created++;
+    console.log(`  + Created template: ${tpl.name} (${tpl.channel}/${tpl.status})`);
+  }
+
+  return created;
+}
+
+async function seedAutoReplyRules(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  rules: Record<string, AutoReplyRuleDefinition[]>
+): Promise<number> {
+  const tenantRules = rules[tenantSlug] || [];
+  let created = 0;
+
+  for (const rule of tenantRules) {
+    // Find the template for this rule
+    const template = await prisma.template.findFirst({
+      where: {
+        tenantId,
+        key: rule.templateKey,
+      },
+    });
+
+    if (!template) {
+      console.log(`  ! Template not found for rule: ${rule.name} (key: ${rule.templateKey})`);
+      continue;
+    }
+
+    // Check if rule already exists
+    const existing = await prisma.autoReplyRule.findFirst({
+      where: {
+        tenantId,
+        name: rule.name,
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Auto-reply rule exists: ${rule.name}`);
+      continue;
+    }
+
+    // Create the rule
+    await prisma.autoReplyRule.create({
+      data: {
+        tenantId,
+        name: rule.name,
+        description: rule.description,
+        channel: rule.channel,
+        status: rule.status,
+        templateId: template.id,
+        triggerType: rule.triggerType,
+        keywordConfigJson: rule.keywordConfig ? rule.keywordConfig : undefined,
+        timeBasedConfigJson: rule.timeBasedConfig ? rule.timeBasedConfig : undefined,
+        businessHoursJson: rule.businessHoursConfig ? rule.businessHoursConfig : undefined,
+        cooldownMinutes: rule.cooldownMinutes || 60,
+        enabled: rule.status === 'active',
+      },
+    });
+
+    created++;
+    console.log(`  + Created auto-reply rule: ${rule.name} (${rule.triggerType}/${rule.status})`);
+  }
+
+  return created;
+}
+
+async function seedTenantSettings(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  settings: Record<string, TenantSettingDefinition[]>
+): Promise<number> {
+  const tenantSettings = settings[tenantSlug] || [];
+  let created = 0;
+
+  for (const setting of tenantSettings) {
+    // Check if setting already exists
+    const existing = await prisma.tenantSetting.findUnique({
+      where: {
+        tenantId_namespace: {
+          tenantId,
+          namespace: setting.namespace,
+        },
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Setting exists: ${setting.namespace}`);
+      continue;
+    }
+
+    // Create the setting
+    await prisma.tenantSetting.create({
+      data: {
+        tenantId,
+        namespace: setting.namespace,
+        data: setting.data,
+        version: 1,
+      },
+    });
+
+    created++;
+    console.log(`  + Created setting: ${setting.namespace}`);
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 8: ENHANCED INVOICES, PAYMENTS, PARTY ACTIVITY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedEnhancedInvoices(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  invoices: Record<string, EnhancedInvoiceDefinition[]>,
+  tenantContacts: Record<string, any[]>
+): Promise<{ invoices: number; lineItems: number; payments: number }> {
+  const tenantInvoices = invoices[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let invoiceCount = 0;
+  let lineItemCount = 0;
+  let paymentCount = 0;
+
+  for (const inv of tenantInvoices) {
+    if (inv.contactIndex >= contactDefs.length) continue;
+
+    const contactDef = contactDefs[inv.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+      include: { party: true },
+    });
+
+    if (!contact || !contact.partyId) {
+      console.log(`  ! Contact not found: ${contactEmail}`);
+      continue;
+    }
+
+    // Check if invoice already exists
+    const existing = await prisma.invoice.findFirst({
+      where: {
+        tenantId,
+        invoiceNumber: inv.invoiceNumber,
+      },
+    });
+
+    if (existing) {
+      console.log(`  = Invoice exists: ${inv.invoiceNumber}`);
+      continue;
+    }
+
+    // Calculate totals
+    const subtotalCents = inv.lineItems.reduce((sum, item) => {
+      const itemTotal = item.qty * item.unitCents - (item.discountCents || 0);
+      return sum + itemTotal;
+    }, 0);
+
+    const paidCents = inv.payments
+      .filter(p => p.status === 'succeeded')
+      .reduce((sum, p) => sum + p.amountCents, 0);
+
+    // Calculate dates
+    const createdAt = new Date(Date.now() - inv.daysAgo * 24 * 60 * 60 * 1000);
+    const dueAt = inv.dueInDays
+      ? new Date(createdAt.getTime() + inv.dueInDays * 24 * 60 * 60 * 1000)
+      : new Date(createdAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    // Create the invoice (using schema fields: amountCents, balanceCents, clientPartyId)
+    const balanceCents = subtotalCents - paidCents;
+    const invoice = await prisma.invoice.create({
+      data: {
+        tenantId,
+        clientPartyId: contact.partyId,
+        invoiceNumber: inv.invoiceNumber,
+        status: inv.status,
+        category: inv.category,
+        amountCents: BigInt(subtotalCents),
+        balanceCents: BigInt(balanceCents),
+        scope: FinanceScope.contact,
+        notes: inv.notes,
+        dueAt,
+        createdAt,
+        paidAt: paidCents >= subtotalCents ? new Date() : null,
+      },
+    });
+
+    invoiceCount++;
+    console.log(`  + Created invoice: ${inv.invoiceNumber} (${inv.status})`);
+
+    // Create line items
+    for (const item of inv.lineItems) {
+      const totalCents = item.qty * item.unitCents - (item.discountCents || 0);
+      await prisma.invoiceLineItem.create({
+        data: {
+          tenantId,
+          invoiceId: invoice.id,
+          kind: item.kind,
+          description: item.description,
+          qty: item.qty,
+          unitCents: item.unitCents,
+          discountCents: item.discountCents,
+          taxRate: item.taxRate,
+          totalCents,
+        },
+      });
+      lineItemCount++;
+    }
+
+    // Create payments
+    for (const payment of inv.payments) {
+      const receivedAt = new Date(Date.now() - payment.daysAgo * 24 * 60 * 60 * 1000);
+      await prisma.payment.create({
+        data: {
+          tenantId,
+          invoiceId: invoice.id,
+          status: payment.status,
+          amountCents: BigInt(payment.amountCents),
+          receivedAt,
+          methodType: payment.methodType,
+          processor: payment.processor,
+          notes: payment.notes,
+        },
+      });
+      paymentCount++;
+    }
+  }
+
+  return { invoices: invoiceCount, lineItems: lineItemCount, payments: paymentCount };
+}
+
+async function seedPartyActivities(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  activities: Record<string, PartyActivityDefinition[]>,
+  tenantContacts: Record<string, any[]>
+): Promise<number> {
+  const tenantActivities = activities[tenantSlug] || [];
+  const contactDefs = tenantContacts[tenantSlug] || [];
+  let created = 0;
+
+  for (const activity of tenantActivities) {
+    if (activity.contactIndex >= contactDefs.length) continue;
+
+    const contactDef = contactDefs[activity.contactIndex];
+    const contactEmail = getEnvEmail(contactDef.emailBase, env);
+
+    // Find the contact
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: contactEmail },
+      include: { party: true },
+    });
+
+    if (!contact || !contact.partyId) continue;
+
+    // Check if activity already exists (by title and approximate time)
+    const createdAt = new Date(Date.now() - activity.daysAgo * 24 * 60 * 60 * 1000);
+    const dayStart = new Date(createdAt.setHours(0, 0, 0, 0));
+    const dayEnd = new Date(createdAt.setHours(23, 59, 59, 999));
+
+    const existing = await prisma.partyActivity.findFirst({
+      where: {
+        tenantId,
+        partyId: contact.partyId,
+        title: activity.title,
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+      },
+    });
+
+    if (existing) continue;
+
+    // Create the activity
+    await prisma.partyActivity.create({
+      data: {
+        tenantId,
+        partyId: contact.partyId,
+        kind: activity.kind,
+        title: activity.title,
+        detail: activity.detail,
+        metadata: activity.metadata,
+        createdAt: new Date(Date.now() - activity.daysAgo * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    created++;
+  }
+
+  if (created > 0) {
+    console.log(`  + Created ${created} party activity records`);
+  }
+
+  return created;
+}
+
+async function seedCrossTenantLinks(
+  env: Environment,
+  linkDefs: CrossTenantLinkDefinition[]
+): Promise<number> {
+  if (!linkDefs || linkDefs.length === 0) {
+    console.log('  - No cross-tenant links to seed');
+    return 0;
+  }
+
+  let created = 0;
+
+  for (const linkDef of linkDefs) {
+    // Find the child tenant
+    const childTenantSlug = getEnvSlug(linkDef.childTenantSlug, env);
+    const childTenant = await prisma.tenant.findUnique({
+      where: { slug: childTenantSlug },
+    });
+
+    if (!childTenant) {
+      console.log(`  ! Child tenant not found: ${childTenantSlug}`);
+      continue;
+    }
+
+    // Find the parent tenant
+    const parentTenantSlug = getEnvSlug(linkDef.parentTenantSlug, env);
+    const parentTenant = await prisma.tenant.findUnique({
+      where: { slug: parentTenantSlug },
+    });
+
+    if (!parentTenant) {
+      console.log(`  ! Parent tenant not found: ${parentTenantSlug}`);
+      continue;
+    }
+
+    // Find the child animal
+    const childAnimal = await prisma.animal.findFirst({
+      where: {
+        tenantId: childTenant.id,
+        name: linkDef.childAnimalRef,
+      },
+    });
+
+    if (!childAnimal) {
+      console.log(`  ! Child animal not found: ${linkDef.childAnimalRef} in ${childTenantSlug}`);
+      continue;
+    }
+
+    // Find the parent animal
+    const parentAnimal = await prisma.animal.findFirst({
+      where: {
+        tenantId: parentTenant.id,
+        name: linkDef.parentAnimalRef,
+      },
+    });
+
+    if (!parentAnimal) {
+      console.log(`  ! Parent animal not found: ${linkDef.parentAnimalRef} in ${parentTenantSlug}`);
+      continue;
+    }
+
+    // Check if link already exists
+    const existingLink = await prisma.crossTenantAnimalLink.findUnique({
+      where: {
+        childAnimalId_parentType: {
+          childAnimalId: childAnimal.id,
+          parentType: linkDef.parentType,
+        },
+      },
+    });
+
+    if (existingLink) {
+      console.log(`  = Cross-tenant link exists: ${linkDef.childAnimalRef} <- ${linkDef.parentAnimalRef} (${linkDef.parentType})`);
+      continue;
+    }
+
+    // Map link method
+    const linkMethodMap: Record<string, 'SEARCH' | 'EXCHANGE_CODE' | 'MANUAL'> = {
+      'SEARCH': 'SEARCH',
+      'EXCHANGE_CODE': 'EXCHANGE_CODE',
+      'MANUAL': 'MANUAL',
+    };
+
+    // Create the cross-tenant link
+    await prisma.crossTenantAnimalLink.create({
+      data: {
+        childAnimalId: childAnimal.id,
+        childTenantId: childTenant.id,
+        parentAnimalId: parentAnimal.id,
+        parentTenantId: parentTenant.id,
+        parentType: linkDef.parentType,
+        linkMethod: linkMethodMap[linkDef.linkMethod] || 'MANUAL',
+        active: true,
+      },
+    });
+    created++;
+    console.log(`  + Created cross-tenant link: ${linkDef.childAnimalRef} (${childTenantSlug}) <- ${linkDef.parentAnimalRef} (${parentTenantSlug}) [${linkDef.parentType}]`);
+  }
+
+  return created;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1528,6 +3140,8 @@ async function seedPortalAccess(
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MARKETPLACE USER SEEDING (standalone shoppers with no tenant membership)
+// These users log in via the marketplace app (marketplace.breederhq.com)
+// They need MarketplaceUser records, not regular User records
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function seedMarketplaceUsers(
@@ -1539,27 +3153,28 @@ async function seedMarketplaceUsers(
   for (const userDef of marketplaceUserDefs) {
     const envEmail = getEnvEmail(userDef.emailBase, env);
 
-    // Check if user already exists
-    let user = await prisma.user.findUnique({
+    // Check if marketplace user already exists
+    let marketplaceUser = await prisma.marketplaceUser.findUnique({
       where: { email: envEmail },
     });
 
-    if (!user) {
+    if (!marketplaceUser) {
       const passwordHash = await bcrypt.hash(userDef.password, 12);
-      user = await prisma.user.create({
+      marketplaceUser = await prisma.marketplaceUser.create({
         data: {
           email: envEmail,
           firstName: userDef.firstName,
           lastName: userDef.lastName,
           passwordHash,
-          emailVerifiedAt: new Date(),
-          // No defaultTenantId - these are marketplace-only users
+          emailVerified: true,
+          userType: 'buyer',
+          status: 'active',
         },
       });
-      console.log(`  + Created marketplace user: ${envEmail} (${userDef.description})`);
+      console.log(`  + Created marketplace shopper: ${envEmail} (${userDef.description})`);
       createdCount++;
     } else {
-      console.log(`  = Marketplace user exists: ${envEmail}`);
+      console.log(`  = Marketplace shopper exists: ${envEmail}`);
     }
   }
 
@@ -1626,13 +3241,30 @@ async function seedContactMeta(
           });
 
           if (!existingEntry) {
-            const waitlistStatus = metaDef.waitlistStatus === 'DEPOSIT_PAID'
-              ? WaitlistStatus.DEPOSIT_PAID
-              : metaDef.waitlistStatus === 'APPROVED'
-              ? WaitlistStatus.APPROVED
-              : metaDef.waitlistStatus === 'ALLOCATED'
-              ? WaitlistStatus.ALLOCATED
-              : WaitlistStatus.INQUIRY;
+            // Map waitlist status to Prisma enum
+            const waitlistStatusMap: Record<string, WaitlistStatus> = {
+              'INQUIRY': WaitlistStatus.INQUIRY,
+              'APPROVED': WaitlistStatus.APPROVED,
+              'DEPOSIT_DUE': WaitlistStatus.DEPOSIT_DUE,
+              'DEPOSIT_PAID': WaitlistStatus.DEPOSIT_PAID,
+              'READY': WaitlistStatus.READY,
+              'ALLOCATED': WaitlistStatus.ALLOCATED,
+              'COMPLETED': WaitlistStatus.COMPLETED,
+              'CANCELED': WaitlistStatus.CANCELED,
+              'REJECTED': WaitlistStatus.REJECTED,
+            };
+            const waitlistStatus = waitlistStatusMap[metaDef.waitlistStatus || 'INQUIRY'] || WaitlistStatus.INQUIRY;
+
+            // Determine dates based on status
+            const approvedAt = ['APPROVED', 'DEPOSIT_DUE', 'DEPOSIT_PAID', 'READY', 'ALLOCATED', 'COMPLETED'].includes(metaDef.waitlistStatus || '')
+              ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)  // 30 days ago
+              : null;
+            const depositPaidAt = ['DEPOSIT_PAID', 'READY', 'ALLOCATED', 'COMPLETED'].includes(metaDef.waitlistStatus || '')
+              ? new Date(Date.now() - 20 * 24 * 60 * 60 * 1000)  // 20 days ago
+              : null;
+            const rejectedAt = metaDef.waitlistStatus === 'REJECTED'
+              ? new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+              : null;
 
             await prisma.waitlistEntry.create({
               data: {
@@ -1641,14 +3273,25 @@ async function seedContactMeta(
                 clientPartyId: contact.partyId,
                 priority: metaDef.waitlistPosition,
                 status: waitlistStatus,
+                // Preferences
+                speciesPref: metaDef.waitlistSpeciesPref || null,
+                breedPrefs: metaDef.waitlistBreedPrefs ? { breeds: metaDef.waitlistBreedPrefs } : null,
+                // Financial
                 depositRequiredCents: metaDef.depositAmountCents || 50000,
-                depositPaidCents: metaDef.waitlistStatus === 'DEPOSIT_PAID' ? (metaDef.depositAmountCents || 50000) : 0,
-                depositPaidAt: metaDef.waitlistStatus === 'DEPOSIT_PAID' ? new Date() : null,
+                depositPaidCents: depositPaidAt ? (metaDef.depositAmountCents || 50000) : 0,
+                depositPaidAt,
+                // Status dates
+                approvedAt,
+                rejectedAt,
+                rejectedReason: metaDef.waitlistStatus === 'REJECTED' ? 'Application did not meet requirements' : null,
+                // Origin tracking
+                originSource: metaDef.waitlistOriginSource || null,
+                originPagePath: metaDef.waitlistOriginPagePath || null,
                 notes: `Seeded waitlist entry - position ${metaDef.waitlistPosition}`,
               },
             });
             waitlistEntriesCreated++;
-            console.log(`  + Created waitlist entry: ${contact.display_name} -> ${planEnvName} (#${metaDef.waitlistPosition})`);
+            console.log(`  + Created waitlist entry: ${contact.display_name} -> ${planEnvName} (#${metaDef.waitlistPosition}, ${metaDef.waitlistStatus || 'INQUIRY'})`);
           } else {
             console.log(`  = Waitlist entry exists: ${contact.display_name} -> ${planEnvName}`);
           }
@@ -1669,7 +3312,8 @@ async function seedContactMeta(
 
       if (!existingDepositInvoice) {
         const year = new Date().getFullYear();
-        const invoiceNum = `INV-${year}-DEP${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
+        const tenantShort = tenantSlug.substring(0, 3).toUpperCase();
+        const invoiceNum = `INV-${year}-${tenantShort}-DEP${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
         await prisma.invoice.create({
           data: {
             tenantId,
@@ -1707,7 +3351,8 @@ async function seedContactMeta(
       if (!existingPurchaseInvoice) {
         // Create a single invoice representing lifetime purchases
         const year = new Date().getFullYear();
-        const invoiceNum = `INV-${year}-PUR${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
+        const tenantShort = tenantSlug.substring(0, 3).toUpperCase();
+        const invoiceNum = `INV-${year}-${tenantShort}-PUR${String(metaDef.contactIndex + 1).padStart(4, '0')}`;
         await prisma.invoice.create({
           data: {
             tenantId,
@@ -2031,6 +3676,13 @@ async function main() {
   const emailDefs = getEmails(env);
   const dmThreadDefs = getDMThreads(env);
   const draftDefs = getDrafts(env);
+  const storefrontDefs = getStorefronts(env);
+  const breedingAttemptDefs = getBreedingAttempts(env);
+  const pregnancyCheckDefs = getPregnancyChecks(env);
+  const testResultDefs = getTestResults(env);
+  const breedingMilestoneDefs = getBreedingMilestones(env);
+  const foalingOutcomeDefs = getFoalingOutcomes(env);
+  const mareHistoryDefs = getMareHistory(env);
 
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════════');
@@ -2062,6 +3714,28 @@ async function main() {
     dmThreads: 0,
     dmMessages: 0,
     drafts: 0,
+    storefronts: 0,
+    tenantProgramBreeds: 0,
+    breedingAttempts: 0,
+    pregnancyChecks: 0,
+    testResults: 0,
+    breedingMilestones: 0,
+    foalingOutcomes: 0,
+    mareHistory: 0,
+    breedingProgramListings: 0,
+    breedingProgramMedia: 0,
+    studServiceListings: 0,
+    individualAnimalListings: 0,
+    crossTenantLinks: 0,
+    contractTemplates: 0,
+    contracts: 0,
+    messageTemplates: 0,
+    autoReplyRules: 0,
+    tenantSettings: 0,
+    enhancedInvoices: 0,
+    invoiceLineItems: 0,
+    payments: 0,
+    partyActivities: 0,
   };
 
   // Seed global title definitions FIRST (before any tenant-specific titles)
@@ -2069,6 +3743,13 @@ async function main() {
   console.log('  GLOBAL TITLE DEFINITIONS');
   console.log('─────────────────────────────────────────────────────────────────────────────');
   await seedTitleDefinitions();
+
+  // Seed global contract templates
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  CONTRACT TEMPLATES (System Templates)');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  const contractTemplatesCreated = await seedContractTemplates(SYSTEM_CONTRACT_TEMPLATES);
+  stats.contractTemplates = contractTemplatesCreated;
 
   // Seed marketplace shoppers FIRST so they exist for DM threads
   console.log('─────────────────────────────────────────────────────────────────────────────');
@@ -2134,7 +3815,37 @@ async function main() {
     await seedBreedingPlans(tenantDef.slug, tenantId, env, animalIdMap, tenantBreedingPlans);
     stats.breedingPlans += (tenantBreedingPlans[tenantDef.slug] || []).length;
 
-    // 6b. Create historical offspring groups and offspring
+    // 6a. Create breeding attempts
+    console.log('\n  [Breeding Attempts]');
+    const attemptsCreated = await seedBreedingAttempts(tenantDef.slug, tenantId, env, breedingAttemptDefs);
+    stats.breedingAttempts += attemptsCreated;
+
+    // 6b. Create pregnancy checks
+    console.log('\n  [Pregnancy Checks]');
+    const checksCreated = await seedPregnancyChecks(tenantDef.slug, tenantId, env, pregnancyCheckDefs);
+    stats.pregnancyChecks += checksCreated;
+
+    // 6c. Create test results (progesterone, follicle exams, etc.)
+    console.log('\n  [Test Results]');
+    const resultsCreated = await seedTestResults(tenantDef.slug, tenantId, env, testResultDefs);
+    stats.testResults += resultsCreated;
+
+    // 6d. Create breeding milestones (for horse pregnancy plans)
+    console.log('\n  [Breeding Milestones]');
+    const milestonesCreated = await seedBreedingMilestones(tenantDef.slug, tenantId, env, breedingMilestoneDefs);
+    stats.breedingMilestones += milestonesCreated;
+
+    // 6e. Create foaling outcomes (for birthed/complete horse plans)
+    console.log('\n  [Foaling Outcomes]');
+    const outcomesCreated = await seedFoalingOutcomes(tenantDef.slug, tenantId, env, foalingOutcomeDefs);
+    stats.foalingOutcomes += outcomesCreated;
+
+    // 6f. Create mare reproductive history
+    console.log('\n  [Mare Reproductive History]');
+    const historyCreated = await seedMareReproductiveHistory(tenantDef.slug, tenantId, env, mareHistoryDefs);
+    stats.mareHistory += historyCreated;
+
+    // 6g. Create historical offspring groups and offspring
     console.log('\n  [Offspring Groups & Offspring]');
     const { groups: groupsCreated, offspring: offspringCreated } = await seedOffspringGroups(
       tenantDef.slug,
@@ -2177,6 +3888,52 @@ async function main() {
     stats.marketplaceListings += (
       tenantMarketplaceListings[tenantDef.slug] || []
     ).length;
+
+    // 7b. Create marketplace storefront (business profile, breeds, standards, policies)
+    console.log('\n  [Marketplace Storefront]');
+    const { storefronts: storefrontsCreated, tenantProgramBreeds: breedsCreated } = await seedStorefronts(
+      tenantDef.slug,
+      tenantId,
+      env,
+      ownerUserId,
+      storefrontDefs
+    );
+    stats.storefronts += storefrontsCreated;
+    stats.tenantProgramBreeds += breedsCreated;
+
+    // 7c. Create breeding program listings (MktListingBreedingProgram)
+    console.log('\n  [Breeding Program Listings]');
+    const breedingProgramListingDefs = getBreedingProgramListings(env);
+    const { programs: programsCreated, media: programMediaCreated } = await seedBreedingProgramListings(
+      tenantDef.slug,
+      tenantId,
+      env,
+      breedingProgramListingDefs
+    );
+    stats.breedingProgramListings += programsCreated;
+    stats.breedingProgramMedia += programMediaCreated;
+
+    // 7d. Create stud service listings (MktListingBreederService)
+    console.log('\n  [Stud Service Listings]');
+    const studServiceListingDefs = getStudServiceListings(env);
+    const studServicesCreated = await seedStudServiceListings(
+      tenantDef.slug,
+      tenantId,
+      env,
+      studServiceListingDefs
+    );
+    stats.studServiceListings += studServicesCreated;
+
+    // 7e. Create individual animal listings (MktListingIndividualAnimal)
+    console.log('\n  [Individual Animal Listings]');
+    const individualAnimalListingDefs = getIndividualAnimalListings(env);
+    const individualListingsCreated = await seedIndividualAnimalListings(
+      tenantDef.slug,
+      tenantId,
+      env,
+      individualAnimalListingDefs
+    );
+    stats.individualAnimalListings += individualListingsCreated;
 
     // 8. Create tags and tag assignments
     console.log('\n  [Tags]');
@@ -2262,8 +4019,94 @@ async function main() {
     );
     stats.drafts += draftsCreated;
 
+    // 14. Create contract instances
+    console.log('\n  [Contracts]');
+    const contractInstanceDefs = getContractInstances(env);
+    const contractsCreated = await seedContractInstances(
+      tenantDef.slug,
+      tenantId,
+      env,
+      contractInstanceDefs,
+      tenantContacts
+    );
+    stats.contracts += contractsCreated;
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // PHASE 7: Message Templates & Auto-Reply Rules
+    // ───────────────────────────────────────────────────────────────────────────
+
+    // 15. Create message templates
+    console.log('\n  [Message Templates]');
+    const messageTemplateDefs = getMessageTemplates(env);
+    const templatesCreated = await seedMessageTemplates(
+      tenantDef.slug,
+      tenantId,
+      env,
+      messageTemplateDefs
+    );
+    stats.messageTemplates += templatesCreated;
+
+    // 16. Create auto-reply rules
+    console.log('\n  [Auto-Reply Rules]');
+    const autoReplyRuleDefs = getAutoReplyRules(env);
+    const rulesCreated = await seedAutoReplyRules(
+      tenantDef.slug,
+      tenantId,
+      env,
+      autoReplyRuleDefs
+    );
+    stats.autoReplyRules += rulesCreated;
+
+    // 17. Create tenant settings (business hours, auto-reply config)
+    console.log('\n  [Tenant Settings]');
+    const tenantSettingDefs = getTenantSettings(env);
+    const settingsCreated = await seedTenantSettings(
+      tenantDef.slug,
+      tenantId,
+      env,
+      tenantSettingDefs
+    );
+    stats.tenantSettings += settingsCreated;
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // PHASE 8: Enhanced Invoices & Party Activities
+    // ───────────────────────────────────────────────────────────────────────────
+
+    // 18. Create enhanced invoices with line items and payments
+    console.log('\n  [Enhanced Invoices]');
+    const enhancedInvoiceDefs = getEnhancedInvoices(env);
+    const { invoices: enhancedInvCreated, lineItems: lineItemsCreated, payments: paymentsCreated } = await seedEnhancedInvoices(
+      tenantDef.slug,
+      tenantId,
+      env,
+      enhancedInvoiceDefs,
+      tenantContacts
+    );
+    stats.enhancedInvoices += enhancedInvCreated;
+    stats.invoiceLineItems += lineItemsCreated;
+    stats.payments += paymentsCreated;
+
+    // 19. Create party activity timeline
+    console.log('\n  [Party Activities]');
+    const partyActivityDefs = getPartyActivities(env);
+    const activitiesCreated = await seedPartyActivities(
+      tenantDef.slug,
+      tenantId,
+      env,
+      partyActivityDefs,
+      tenantContacts
+    );
+    stats.partyActivities += activitiesCreated;
+
     console.log('');
   }
+
+  // Cross-tenant pedigree links (must be done after all tenants are seeded)
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  [Cross-Tenant Pedigree Links]');
+  const crossTenantLinkDefs = getCrossTenantLinks(env);
+  const crossTenantLinksCreated = await seedCrossTenantLinks(env, crossTenantLinkDefs);
+  stats.crossTenantLinks = crossTenantLinksCreated;
 
   // Print summary
   console.log('═══════════════════════════════════════════════════════════════════════════════');
@@ -2277,17 +4120,39 @@ async function main() {
   console.log(`  Animal Titles:        ${stats.animalTitles}`);
   console.log(`  Competition Entries:  ${stats.competitionEntries}`);
   console.log(`  Breeding Plans:       ${stats.breedingPlans}`);
+  console.log(`  Breeding Attempts:    ${stats.breedingAttempts}`);
+  console.log(`  Pregnancy Checks:     ${stats.pregnancyChecks}`);
+  console.log(`  Test Results:         ${stats.testResults}`);
+  console.log(`  Breeding Milestones:  ${stats.breedingMilestones}`);
+  console.log(`  Foaling Outcomes:     ${stats.foalingOutcomes}`);
+  console.log(`  Mare History:         ${stats.mareHistory}`);
   console.log(`  Offspring Groups:     ${stats.offspringGroups}`);
   console.log(`  Offspring:            ${stats.offspring}`);
   console.log(`  Health Traits:        ${stats.healthTraits}`);
   console.log(`  Vaccinations:         ${stats.vaccinations}`);
   console.log(`  Marketplace Listings: ${stats.marketplaceListings}`);
+  console.log(`  Storefronts:          ${stats.storefronts}`);
+  console.log(`  Program Breeds:       ${stats.tenantProgramBreeds}`);
+  console.log(`  Breeding Programs:    ${stats.breedingProgramListings}`);
+  console.log(`  Program Media:        ${stats.breedingProgramMedia}`);
+  console.log(`  Stud Services:        ${stats.studServiceListings}`);
+  console.log(`  Individual Listings:  ${stats.individualAnimalListings}`);
+  console.log(`  Cross-Tenant Links:   ${stats.crossTenantLinks}`);
+  console.log(`  Contract Templates:   ${stats.contractTemplates}`);
+  console.log(`  Contracts:            ${stats.contracts}`);
+  console.log(`  Message Templates:    ${stats.messageTemplates}`);
+  console.log(`  Auto-Reply Rules:     ${stats.autoReplyRules}`);
+  console.log(`  Tenant Settings:      ${stats.tenantSettings}`);
   console.log(`  Tags:                 ${stats.tags}`);
   console.log(`  Tag Assignments:      ${stats.tagAssignments}`);
   console.log(`  Portal Users:         ${stats.portalUsers}`);
   console.log(`  Marketplace Users:    ${stats.marketplaceUsers}`);
   console.log(`  Waitlist Entries:     ${stats.waitlistEntries}`);
-  console.log(`  Invoices:             ${stats.invoices}`);
+  console.log(`  Invoices (basic):     ${stats.invoices}`);
+  console.log(`  Enhanced Invoices:    ${stats.enhancedInvoices}`);
+  console.log(`  Invoice Line Items:   ${stats.invoiceLineItems}`);
+  console.log(`  Payments:             ${stats.payments}`);
+  console.log(`  Party Activities:     ${stats.partyActivities}`);
   console.log(`  Emails:               ${stats.emails}`);
   console.log(`  DM Threads:           ${stats.dmThreads}`);
   console.log(`  DM Messages:          ${stats.dmMessages}`);

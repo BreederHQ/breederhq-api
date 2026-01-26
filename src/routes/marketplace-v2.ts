@@ -215,6 +215,7 @@ export default async function marketplaceV2Routes(
       priceMaxCents?: number;
       locationCity?: string;
       locationRegion?: string;
+      locationZip?: string;
       locationCountry?: string;
       // Stud Service fields (P1 Sprint)
       seasonName?: string;
@@ -664,6 +665,10 @@ export default async function marketplaceV2Routes(
       defaultPriceCents?: number;
       defaultPriceMinCents?: number;
       defaultPriceMaxCents?: number;
+      locationCity?: string;
+      locationRegion?: string;
+      locationZip?: string;
+      locationCountry?: string;
       published: boolean;
       listed: boolean;
       acceptInquiries: boolean;

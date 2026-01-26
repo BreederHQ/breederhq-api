@@ -1,6 +1,6 @@
 // Quick script to check Neo's user and tenant membership
 import { PrismaClient } from '@prisma/client';
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 
 const prisma = new PrismaClient();
 

@@ -94,12 +94,19 @@ async function ensureTenantSlug(tenantId: number, businessName: string): Promise
 // ============================================================================
 
 /**
- * Sync marketplace profile listedPrograms to BreedingProgram database records.
+ * Sync marketplace profile listedPrograms to MktListingBreedingProgram database records.
  * This ensures rules can be managed at the PROGRAM level.
+ *
+ * This function:
+ * 1. Creates/updates records for programs in the profile
+ * 2. Deletes orphaned records that are no longer in the profile
  */
 async function syncBreedingPrograms(tenantId: number, profileData: any): Promise<void> {
   const listedPrograms = profileData?.listedPrograms;
   if (!Array.isArray(listedPrograms)) return;
+
+  // Track which slugs are valid (in the profile)
+  const validSlugs = new Set<string>();
 
   for (const program of listedPrograms) {
     // Require minimum name length (3 chars) to avoid creating records for partial typing
@@ -107,6 +114,7 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
     if (!program.name || program.name.trim().length < 3 || !program.species) continue;
 
     const slug = generateSlug(program.name);
+    validSlugs.add(slug);
 
     // Check if record exists
     const existing = await prisma.mktListingBreedingProgram.findFirst({
@@ -153,6 +161,28 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
           openWaitlist: program.openWaitlist === true,
           acceptReservations: program.acceptReservations === true,
           comingSoon: program.comingSoon === true,
+        },
+      });
+    }
+  }
+
+  // Delete orphaned records that are no longer in the profile
+  // Only delete if we have at least one valid program (prevents accidental mass deletion)
+  if (validSlugs.size > 0) {
+    const allRecords = await prisma.mktListingBreedingProgram.findMany({
+      where: { tenantId },
+      select: { id: true, slug: true },
+    });
+
+    const orphanedIds = allRecords
+      .filter(record => !validSlugs.has(record.slug))
+      .map(record => record.id);
+
+    if (orphanedIds.length > 0) {
+      await prisma.mktListingBreedingProgram.deleteMany({
+        where: {
+          id: { in: orphanedIds },
+          tenantId, // Safety: ensure we only delete for this tenant
         },
       });
     }
