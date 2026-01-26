@@ -1,6 +1,6 @@
 // Quick script to check communications data
 import { PrismaClient } from '@prisma/client';
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 
 const prisma = new PrismaClient();
 

@@ -5,7 +5,7 @@
 // Usage:
 //   npx tsx scripts/seed-validation-tenants/seed-title-definitions.ts
 
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 import { PrismaClient, Species, TitleCategory } from '@prisma/client';
 import { fileURLToPath } from 'url';
 

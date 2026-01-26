@@ -1,4 +1,4 @@
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();

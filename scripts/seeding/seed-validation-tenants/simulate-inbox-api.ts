@@ -1,6 +1,6 @@
 // Simulates exactly what /api/v1/communications/inbox returns for tenant 93
 import { PrismaClient } from '@prisma/client';
-import '../../prisma/seed/seed-env-bootstrap';
+import '../../../prisma/seed/seed-env-bootstrap';
 
 const prisma = new PrismaClient();
 
