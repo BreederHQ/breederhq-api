@@ -374,7 +374,8 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
     // expose a breed name for convenience, derived from the plan for now
     breedName: G.plan?.breedText ?? null,
 
-    published: !!G.published,
+    // Derive published from status field (LIVE = published, DRAFT = not published)
+    published: G.status === "LIVE",
     counts: {
       animals: animalsCt ?? 0,
       waitlist: waitlistCt ?? 0,
@@ -432,7 +433,8 @@ function groupDetail(
     tenantId: G.tenantId,
     identifier: G.name ?? null,
     notes: G.notes ?? null,
-    published: !!G.published,
+    // Derive published from status field (LIVE = published, DRAFT = not published)
+    published: G.status === "LIVE",
     coverImageUrl: G.coverImageUrl ?? null,
     themeName: G.themeName ?? null,
 
@@ -1677,7 +1679,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const data: any = {};
     if ("identifier" in body) data.name = body.identifier ?? null;
     if ("notes" in body) data.notes = body.notes ?? null;
-    if ("published" in body) data.published = !!body.published;
+    // "published" is a convenience alias for status: convert boolean to "LIVE"/"DRAFT"
+    if ("published" in body) data.status = body.published ? "LIVE" : "DRAFT";
     if ("statusOverride" in body) data.statusOverride = body.statusOverride ?? null;
     if ("statusOverrideReason" in body) data.statusOverrideReason = body.statusOverrideReason ?? null;
     if ("data" in body) data.data = body.data ?? null;
