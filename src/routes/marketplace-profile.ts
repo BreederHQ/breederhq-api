@@ -102,7 +102,9 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
   if (!Array.isArray(listedPrograms)) return;
 
   for (const program of listedPrograms) {
-    if (!program.name || !program.species) continue;
+    // Require minimum name length (3 chars) to avoid creating records for partial typing
+    // This is defensive - frontend should debounce saves, but this prevents DB pollution
+    if (!program.name || program.name.trim().length < 3 || !program.species) continue;
 
     const slug = generateSlug(program.name);
 
