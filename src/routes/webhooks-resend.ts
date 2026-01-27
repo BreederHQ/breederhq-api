@@ -11,6 +11,7 @@ import {
   parseTenantInboundAddress,
   stripEmailReplyContent,
   extractNameFromEmail,
+  parseFromHeader,
 } from "../services/inbound-email-service.js";
 import { sendNewMessageNotification } from "../services/portal-provisioning-service.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
@@ -67,14 +68,18 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const toAddress = Array.isArray(to) ? to[0] : to;
     const body = text || html || "";
 
-    req.log.info({ from, to: toAddress, subject }, "Inbound email received");
+    // Parse the From header to extract display name and email
+    const { displayName, email: fromEmail } = parseFromHeader(from);
+
+    req.log.info({ from, fromEmail, displayName, to: toAddress, subject }, "Inbound email received");
 
     // Try to parse as reply-to-thread address
     const threadInfo = parseReplyToAddress(toAddress);
     if (threadInfo) {
       const result = await handleThreadReply(
         threadInfo.threadId,
-        from,
+        fromEmail,
+        displayName,
         body,
         subject,
         event.data.attachments?.length || 0,
@@ -88,7 +93,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (tenantInfo) {
       const result = await handleNewInboundThread(
         tenantInfo.slug,
-        from,
+        fromEmail,
+        displayName,
         body,
         subject,
         event.data.attachments?.length || 0,
@@ -109,6 +115,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 async function handleThreadReply(
   threadId: number,
   fromEmail: string,
+  displayName: string | null,
   body: string,
   subject: string,
   attachmentCount: number,
@@ -144,11 +151,11 @@ async function handleThreadReply(
         data: {
           tenantId: thread.tenantId,
           email: fromEmail,
-          name: extractNameFromEmail(fromEmail),
+          name: displayName || extractNameFromEmail(fromEmail),
           type: "CONTACT",
         },
       });
-      log.info({ partyId: senderParty.id, email: fromEmail }, "Created new contact from inbound email");
+      log.info({ partyId: senderParty.id, email: fromEmail, displayName }, "Created new contact from inbound email");
     }
 
     // Check if sender is already a participant, if not add them
@@ -186,7 +193,7 @@ async function handleThreadReply(
       updateData.guestEmail = fromEmail;
     }
     if (!thread.guestName) {
-      updateData.guestName = senderParty.name || extractNameFromEmail(fromEmail);
+      updateData.guestName = displayName || senderParty.name || extractNameFromEmail(fromEmail);
     }
     await prisma.messageThread.update({
       where: { id: threadId },
@@ -237,6 +244,7 @@ async function handleThreadReply(
 async function handleNewInboundThread(
   slug: string,
   fromEmail: string,
+  displayName: string | null,
   body: string,
   subject: string,
   attachmentCount: number,
@@ -286,11 +294,11 @@ async function handleNewInboundThread(
         data: {
           tenantId: tenant.id,
           email: fromEmail,
-          name: extractNameFromEmail(fromEmail),
+          name: displayName || extractNameFromEmail(fromEmail),
           type: "CONTACT",
         },
       });
-      log.info({ partyId: senderParty.id, email: fromEmail }, "Created new contact from inbound email");
+      log.info({ partyId: senderParty.id, email: fromEmail, displayName }, "Created new contact from inbound email");
     }
 
     // Strip reply cruft and build message body
@@ -310,7 +318,7 @@ async function handleNewInboundThread(
         lastMessageAt: now,
         firstInboundAt: now,
         guestEmail: fromEmail,
-        guestName: senderParty.name || extractNameFromEmail(fromEmail),
+        guestName: displayName || senderParty.name || extractNameFromEmail(fromEmail),
         participants: {
           create: [
             { partyId: orgParty.id },

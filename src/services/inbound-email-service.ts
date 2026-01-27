@@ -122,6 +122,34 @@ export function stripEmailReplyContent(body: string): string {
 }
 
 /**
+ * Parse RFC 5322 "From" header to extract display name and email.
+ * Formats:
+ *   - "Display Name" <email@example.com>
+ *   - Display Name <email@example.com>
+ *   - email@example.com
+ *
+ * @param from - The "From" header value
+ * @returns Object with displayName and email
+ */
+export function parseFromHeader(from: string): { displayName: string | null; email: string } {
+  // Match "Name" <email> or Name <email> format
+  const match = from.match(/^(.+?)\s*<(.+?)>$/);
+
+  if (match) {
+    let displayName = match[1].trim();
+    const email = match[2].trim();
+
+    // Remove surrounding quotes if present
+    displayName = displayName.replace(/^["']|["']$/g, "");
+
+    return { displayName: displayName || null, email };
+  }
+
+  // Just an email address with no display name
+  return { displayName: null, email: from.trim() };
+}
+
+/**
  * Extract a display name from an email address.
  * Converts "john.doe@example.com" to "John Doe"
  *
