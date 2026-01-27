@@ -4,7 +4,7 @@ import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { getActorId } from "../utils/session.js";
+import { getActorId, getValidatedActor } from "../utils/session.js";
 import { sendTenantWelcomeEmail } from "../services/email-service.js";
 import { generateSlugFromName, validateInboundSlug } from "../services/inbound-email-service.js";
 
@@ -582,9 +582,28 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   /** GET /tenants/:id/inbound-email - Get tenant's inbound email address */
   fastify.get<{ Params: { id: string } }>("/tenants/:id/inbound-email", async (req, reply) => {
     try {
+      // Authentication check - validates session AND user exists in database
+      const actor = await getValidatedActor(req, prisma);
+      if (!actor) {
+        return reply.status(401).send({ error: "unauthorized" });
+      }
+
       const tenantId = Number(req.params.id);
       if (!Number.isFinite(tenantId)) {
         return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      // Authorization check - verify user has access to this tenant
+      let allowed = !!actor.isSuperAdmin;
+      if (!allowed) {
+        const membership = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: actor.id, tenantId } },
+          select: { tenantId: true },
+        });
+        allowed = !!membership;
+      }
+      if (!allowed) {
+        return reply.status(403).send({ error: "forbidden" });
       }
 
       const tenant = await prisma.tenant.findUnique({
@@ -613,9 +632,28 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     Body: { slug: string };
   }>("/tenants/:id/inbound-email", async (req, reply) => {
     try {
+      // Authentication check - validates session AND user exists in database
+      const actor = await getValidatedActor(req, prisma);
+      if (!actor) {
+        return reply.status(401).send({ error: "unauthorized" });
+      }
+
       const tenantId = Number(req.params.id);
       if (!Number.isFinite(tenantId)) {
         return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      // Authorization check - verify user has access to this tenant (OWNER or ADMIN only)
+      let allowed = !!actor.isSuperAdmin;
+      if (!allowed) {
+        const membership = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: actor.id, tenantId } },
+          select: { role: true },
+        });
+        allowed = !!membership && (membership.role === "OWNER" || membership.role === "ADMIN");
+      }
+      if (!allowed) {
+        return reply.status(403).send({ error: "forbidden" });
       }
 
       const { slug } = req.body;
@@ -661,9 +699,28 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     Querystring: { slug: string };
   }>("/tenants/:id/inbound-email/check-availability", async (req, reply) => {
     try {
+      // Authentication check - validates session AND user exists in database
+      const actor = await getValidatedActor(req, prisma);
+      if (!actor) {
+        return reply.status(401).send({ error: "unauthorized" });
+      }
+
       const tenantId = Number(req.params.id);
       if (!Number.isFinite(tenantId)) {
         return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      // Authorization check - verify user has access to this tenant
+      let allowed = !!actor.isSuperAdmin;
+      if (!allowed) {
+        const membership = await prisma.tenantMembership.findUnique({
+          where: { userId_tenantId: { userId: actor.id, tenantId } },
+          select: { tenantId: true },
+        });
+        allowed = !!membership;
+      }
+      if (!allowed) {
+        return reply.status(403).send({ error: "forbidden" });
       }
 
       const { slug } = req.query;
