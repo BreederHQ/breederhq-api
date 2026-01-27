@@ -1237,6 +1237,7 @@ model Tenant {
   // Communications Hub
   drafts          Draft[]
   documentBundles DocumentBundle[]
+  emailFilters    EmailFilter[]
 
   // Notifications
   notifications           Notification[]
@@ -5388,6 +5389,12 @@ model MessageThread {
   originUtmCampaign String? // utm_campaign parameter
   originPagePath    String? // Page path where conversion occurred
 
+  // Spam/security tracking
+  spamScore          Int?     @default(0) // Calculated spam score (0-10)
+  spamFlags          String[] @default([]) // Array of spam indicators detected
+  isQuarantined      Boolean  @default(false) // Auto-quarantined for manual review
+  authenticationPass Boolean? // SPF/DKIM/DMARC validation result
+
   participants   MessageParticipant[]
   messages       Message[]
   autoReplyLogs  AutoReplyLog[]
@@ -8198,3 +8205,34 @@ model BreedingProgramRuleExecution {
   @@index([executedAt])
   @@schema("public")
 }
+
+/**
+ * EmailFilter - Tenant-level allowlist/blocklist for inbound email security
+ * Allows tenants to block spam senders or ensure important contacts always get through
+ */
+model EmailFilter {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Email address or domain pattern to filter
+  // Examples: "spam@example.com", "*@spammydomain.com", "*.tk"
+  pattern String @db.VarChar(255)
+
+  // Filter type
+  type String @db.VarChar(20) // "ALLOW" | "BLOCK"
+
+  // Why was this filter created?
+  reason   String? @db.Text
+  autoAdded Boolean @default(false) // System auto-added vs user-created
+
+  // Metadata
+  createdAt   DateTime @default(now())
+  createdBy   String?  // User ID who created the filter
+  lastMatched DateTime? // Last time this filter matched an email
+
+  @@index([tenantId, pattern])
+  @@index([tenantId, type])
+  @@schema("public")
+}
+
