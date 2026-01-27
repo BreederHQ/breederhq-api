@@ -196,10 +196,17 @@ async function handleThreadReply(
       },
     });
 
-    // Update thread timestamp
+    // Update thread timestamp and guest info if missing
+    const updateData: any = { lastMessageAt: new Date() };
+    if (!thread.guestEmail) {
+      updateData.guestEmail = fromEmail;
+    }
+    if (!thread.guestName) {
+      updateData.guestName = senderParty.name || extractNameFromEmail(fromEmail);
+    }
     await prisma.messageThread.update({
       where: { id: threadId },
-      data: { lastMessageAt: new Date() },
+      data: updateData,
     });
 
     // Broadcast via WebSocket
@@ -318,6 +325,8 @@ async function handleNewInboundThread(
         subject: subject || "New message",
         lastMessageAt: now,
         firstInboundAt: now,
+        guestEmail: fromEmail,
+        guestName: senderParty.name || extractNameFromEmail(fromEmail),
         participants: {
           create: [
             { partyId: orgParty.id },
