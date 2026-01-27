@@ -171,15 +171,31 @@ async function seedTenant(
   });
 
   if (!tenant) {
+    // Import the assignUniqueSlug helper
+    const { assignUniqueSlug } = await import('../../../src/services/inbound-email-service.js');
+    const inboundEmailSlug = await assignUniqueSlug(envName, prisma);
+
     tenant = await prisma.tenant.create({
       data: {
         name: envName,
         slug: envSlug,
+        inboundEmailSlug,
       },
     });
-    console.log(`  + Created tenant: ${tenant.name} (ID: ${tenant.id})`);
+    console.log(`  + Created tenant: ${tenant.name} (ID: ${tenant.id}, email: ${inboundEmailSlug}@mail.breederhq.com)`);
   } else {
-    console.log(`  = Tenant exists: ${tenant.name} (ID: ${tenant.id})`);
+    // Check if existing tenant needs inboundEmailSlug
+    if (!tenant.inboundEmailSlug) {
+      const { assignUniqueSlug } = await import('../../../src/services/inbound-email-service.js');
+      const inboundEmailSlug = await assignUniqueSlug(envName, prisma);
+      tenant = await prisma.tenant.update({
+        where: { id: tenant.id },
+        data: { inboundEmailSlug },
+      });
+      console.log(`  = Tenant exists: ${tenant.name} (ID: ${tenant.id}) - added email slug: ${inboundEmailSlug}@mail.breederhq.com`);
+    } else {
+      console.log(`  = Tenant exists: ${tenant.name} (ID: ${tenant.id}, email: ${tenant.inboundEmailSlug}@mail.breederhq.com)`);
+    }
   }
 
   // Create theme settings

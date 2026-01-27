@@ -8,7 +8,7 @@ import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
-import type { IdentifierType } from "@prisma/client";
+import type { IdentifierType, OwnerRole } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
 import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 
@@ -762,6 +762,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               partyId: defaultOwner.partyId,
               percent: 100,
               isPrimary: true,
+              // P2.1-P2.5: Enhanced ownership fields for default owner
+              role: "SOLE_OWNER",
+              effectiveDate: new Date(),
+              isPrimaryContact: true,
+              receiveNotifications: true,
             },
           });
         } catch (ownerErr) {
@@ -1367,6 +1372,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         partyId: true,
         percent: true,
         isPrimary: true,
+        role: true,
+        effectiveDate: true,
+        endDate: true,
+        isPrimaryContact: true,
+        receiveNotifications: true,
+        notes: true,
         createdAt: true,
         updatedAt: true,
         party: {
@@ -1380,6 +1391,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Calculate aggregate info
+    const totalPercent = rows.reduce((sum, r) => sum + r.percent, 0);
+    const hasMultipleOwners = rows.length > 1;
+
     reply.send({
       items: rows.map((r) => {
         return {
@@ -1391,11 +1406,19 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             : r.party?.organization?.name ?? null,
           percent: r.percent,
           isPrimary: r.isPrimary,
+          role: r.role,
+          effectiveDate: r.effectiveDate,
+          endDate: r.endDate,
+          isPrimaryContact: r.isPrimaryContact,
+          receiveNotifications: r.receiveNotifications,
+          notes: r.notes,
           createdAt: r.createdAt,
           updatedAt: r.updatedAt,
         };
       }),
       total: rows.length,
+      totalPercent,
+      hasMultipleOwners,
     });
   });
 
@@ -1412,6 +1435,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       partyId: number;
       percent: number;
       isPrimary?: boolean;
+      role?: OwnerRole;
+      effectiveDate?: string;
+      isPrimaryContact?: boolean;
+      receiveNotifications?: boolean;
+      notes?: string;
     };
 
     const partyId = parseIntStrict(b.partyId);
@@ -1423,6 +1451,15 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
       return reply.code(400).send({ error: "percent_invalid" });
     }
+
+    // Validate role if provided
+    const validRoles: OwnerRole[] = ["SOLE_OWNER", "CO_OWNER", "MANAGING_PARTNER", "SILENT_PARTNER", "BREEDING_RIGHTS", "INVESTOR"];
+    if (b.role && !validRoles.includes(b.role)) {
+      return reply.code(400).send({ error: "role_invalid" });
+    }
+
+    // Parse effectiveDate if provided
+    const effectiveDate = b.effectiveDate ? parseDateIso(b.effectiveDate) : undefined;
 
     // Verify party exists and belongs to tenant
     const party = await prisma.party.findUnique({
@@ -1440,12 +1477,23 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           partyId,
           percent,
           isPrimary: !!b.isPrimary,
+          role: b.role ?? "CO_OWNER",
+          effectiveDate: effectiveDate ?? new Date(),
+          isPrimaryContact: b.isPrimaryContact ?? false,
+          receiveNotifications: b.receiveNotifications ?? true,
+          notes: b.notes ?? null,
         },
         select: {
           id: true,
           partyId: true,
           percent: true,
           isPrimary: true,
+          role: true,
+          effectiveDate: true,
+          endDate: true,
+          isPrimaryContact: true,
+          receiveNotifications: true,
+          notes: true,
           createdAt: true,
           updatedAt: true,
           party: {
@@ -1468,6 +1516,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : created.party?.organization?.name ?? null,
         percent: created.percent,
         isPrimary: created.isPrimary,
+        role: created.role,
+        effectiveDate: created.effectiveDate,
+        endDate: created.endDate,
+        isPrimaryContact: created.isPrimaryContact,
+        receiveNotifications: created.receiveNotifications,
+        notes: created.notes,
         createdAt: created.createdAt,
         updatedAt: created.updatedAt,
       });
@@ -1514,7 +1568,19 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       percent: number;
       isPrimary: boolean;
       partyId: number;
+      role: OwnerRole;
+      effectiveDate: string;
+      endDate: string | null;
+      isPrimaryContact: boolean;
+      receiveNotifications: boolean;
+      notes: string | null;
     }>;
+
+    // Validate role if provided
+    const validRoles: OwnerRole[] = ["SOLE_OWNER", "CO_OWNER", "MANAGING_PARTNER", "SILENT_PARTNER", "BREEDING_RIGHTS", "INVESTOR"];
+    if (b.role !== undefined && !validRoles.includes(b.role)) {
+      return reply.code(400).send({ error: "role_invalid" });
+    }
 
     const data: any = {};
     if (b.percent !== undefined) {
@@ -1523,6 +1589,17 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.percent = pct;
     }
     if (b.isPrimary !== undefined) data.isPrimary = !!b.isPrimary;
+    if (b.role !== undefined) data.role = b.role;
+    if (b.effectiveDate !== undefined) {
+      const dt = parseDateIso(b.effectiveDate);
+      if (dt) data.effectiveDate = dt;
+    }
+    if (b.endDate !== undefined) {
+      data.endDate = b.endDate ? parseDateIso(b.endDate) : null;
+    }
+    if (b.isPrimaryContact !== undefined) data.isPrimaryContact = !!b.isPrimaryContact;
+    if (b.receiveNotifications !== undefined) data.receiveNotifications = !!b.receiveNotifications;
+    if (b.notes !== undefined) data.notes = b.notes;
 
     if (b.partyId !== undefined) {
       const partyId = parseIntStrict(b.partyId);
@@ -1549,6 +1626,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           partyId: true,
           percent: true,
           isPrimary: true,
+          role: true,
+          effectiveDate: true,
+          endDate: true,
+          isPrimaryContact: true,
+          receiveNotifications: true,
+          notes: true,
           createdAt: true,
           updatedAt: true,
           party: {
@@ -1571,6 +1654,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : updated.party?.organization?.name ?? null,
         percent: updated.percent,
         isPrimary: updated.isPrimary,
+        role: updated.role,
+        effectiveDate: updated.effectiveDate,
+        endDate: updated.endDate,
+        isPrimaryContact: updated.isPrimaryContact,
+        receiveNotifications: updated.receiveNotifications,
+        notes: updated.notes,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       });
@@ -1600,6 +1689,123 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await prisma.animalOwner.delete({ where: { id: ownerId } });
     reply.send({ ok: true });
+  });
+
+  // GET /animals/:id/owners/history - Ownership history with current, past, and changes
+  app.get("/animals/:id/owners/history", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    // Helper function to map owner row to DTO
+    const mapOwnerToDto = (r: {
+      id: number;
+      partyId: number;
+      percent: number;
+      isPrimary: boolean;
+      role: OwnerRole;
+      effectiveDate: Date;
+      endDate: Date | null;
+      isPrimaryContact: boolean;
+      receiveNotifications: boolean;
+      notes: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      party: {
+        type: string;
+        contact: { display_name: string | null } | null;
+        organization: { name: string | null } | null;
+      } | null;
+    }) => ({
+      id: r.id,
+      partyId: r.partyId,
+      kind: r.party?.type ?? null,
+      displayName: r.party?.type === "CONTACT"
+        ? r.party?.contact?.display_name
+        : r.party?.organization?.name ?? null,
+      percent: r.percent,
+      isPrimary: r.isPrimary,
+      role: r.role,
+      effectiveDate: r.effectiveDate,
+      endDate: r.endDate,
+      isPrimaryContact: r.isPrimaryContact,
+      receiveNotifications: r.receiveNotifications,
+      notes: r.notes,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    });
+
+    // Fetch all owners (current and past)
+    const allOwners = await prisma.animalOwner.findMany({
+      where: { animalId },
+      orderBy: [{ effectiveDate: "desc" }, { id: "desc" }],
+      select: {
+        id: true,
+        partyId: true,
+        percent: true,
+        isPrimary: true,
+        role: true,
+        effectiveDate: true,
+        endDate: true,
+        isPrimaryContact: true,
+        receiveNotifications: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        party: {
+          select: {
+            type: true,
+            contact: { select: { display_name: true } },
+            organization: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    // Separate current owners (endDate is null) from past owners
+    const currentOwners = allOwners.filter((o) => o.endDate === null).map(mapOwnerToDto);
+    const pastOwners = allOwners.filter((o) => o.endDate !== null).map(mapOwnerToDto);
+
+    // Fetch ownership changes from audit table
+    const changes = await prisma.animalOwnershipChange.findMany({
+      where: { animalId, tenantId },
+      orderBy: { occurredAt: "desc" },
+      take: 50, // Limit to recent changes
+      select: {
+        id: true,
+        kind: true,
+        effectiveDate: true,
+        occurredAt: true,
+        valueCents: true,
+        currency: true,
+        fromOwners: true,
+        toOwners: true,
+        fromOwnerParties: true,
+        toOwnerParties: true,
+        notes: true,
+        createdAt: true,
+      },
+    });
+
+    reply.send({
+      currentOwners,
+      pastOwners,
+      changes: changes.map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        effectiveDate: c.effectiveDate,
+        occurredAt: c.occurredAt,
+        valueCents: c.valueCents,
+        currency: c.currency,
+        fromOwners: c.fromOwnerParties ?? c.fromOwners,
+        toOwners: c.toOwnerParties ?? c.toOwners,
+        notes: c.notes,
+        createdAt: c.createdAt,
+      })),
+    });
   });
 
   /* REGISTRY MASTER DATA */

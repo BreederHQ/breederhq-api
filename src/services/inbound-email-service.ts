@@ -191,3 +191,38 @@ export function validateInboundSlug(slug: string): { valid: boolean; reason?: st
 
   return { valid: true };
 }
+
+/**
+ * Assign a unique inbound email slug to a tenant based on organization name.
+ * Handles duplicates by appending a numeric suffix.
+ *
+ * @param orgName - Organization name to generate slug from
+ * @param prismaClient - Prisma client instance (supports transactions)
+ * @returns Unique slug for the tenant
+ */
+export async function assignUniqueSlug(
+  orgName: string,
+  prismaClient: any
+): Promise<string> {
+  const baseSlug = generateSlugFromName(orgName);
+  let finalSlug = baseSlug;
+  let suffix = 2;
+
+  // Find unique slug by checking for existing tenants
+  while (suffix < 100) {
+    const existing = await prismaClient.tenant.findFirst({
+      where: { inboundEmailSlug: finalSlug },
+    });
+
+    if (!existing) break;
+
+    finalSlug = `${baseSlug}-${suffix}`;
+    suffix++;
+  }
+
+  if (suffix >= 100) {
+    throw new Error(`Could not find unique slug for organization: ${orgName}`);
+  }
+
+  return finalSlug;
+}

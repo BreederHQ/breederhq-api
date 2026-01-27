@@ -75,15 +75,20 @@ async function ensureTenant(slug: string, name: string, resetType: 'fresh' | 'li
   });
 
   if (!tenant) {
+    // Import the assignUniqueSlug helper
+    const { assignUniqueSlug } = await import('../../../src/services/inbound-email-service.js');
+    const inboundEmailSlug = await assignUniqueSlug(name, prisma);
+
     tenant = await prisma.tenant.create({
       data: {
         name,
         slug,
         isDemoTenant: true,
         demoResetType: resetType,
+        inboundEmailSlug,
       },
     });
-    console.log(`Created demo tenant: ${name} (ID: ${tenant.id})`);
+    console.log(`Created demo tenant: ${name} (ID: ${tenant.id}, email: ${inboundEmailSlug}@mail.breederhq.com)`);
   } else {
     // Update to ensure it's marked as demo
     tenant = await prisma.tenant.update({

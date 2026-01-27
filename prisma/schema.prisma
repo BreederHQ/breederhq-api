@@ -91,6 +91,18 @@ enum OwnershipChangeKind {
   @@schema("public")
 }
 
+// P2.1: Enhanced Ownership - Role clarification for multi-owner scenarios
+enum OwnerRole {
+  SOLE_OWNER       // 100% owner, full control
+  CO_OWNER         // Shared ownership with decision rights
+  MANAGING_PARTNER // Day-to-day management responsibility
+  SILENT_PARTNER   // Owns percentage but no management involvement
+  BREEDING_RIGHTS  // Has breeding rights only (may not own physically)
+  INVESTOR         // Financial interest only, no operational role
+
+  @@schema("public")
+}
+
 enum PaymentIntentStatus {
   PLANNED
   EXTERNAL
@@ -2554,6 +2566,20 @@ model AnimalOwner {
   // Party migration step 6H: unified party reference for co-owner (party-only)
   partyId Int
   party   Party @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: SetNull)
+
+  // P2.2: Role clarification (defaults to CO_OWNER for migration compatibility)
+  role OwnerRole @default(CO_OWNER)
+
+  // P2.3: Temporal tracking
+  effectiveDate DateTime  @default(now())
+  endDate       DateTime?
+
+  // P2.4: Communication preferences
+  isPrimaryContact     Boolean @default(false)
+  receiveNotifications Boolean @default(true)
+
+  // P2.5: Notes
+  notes String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
