@@ -183,8 +183,10 @@ async function handleThreadReply(
     }
 
     // Strip email reply cruft and sanitize message body
+    log.info({ bodyLength: body.length, bodySample: body.substring(0, 200) }, "Raw email body before processing");
     let cleanBody = stripEmailReplyContent(body);
     cleanBody = sanitizeMessageBody(cleanBody);
+    log.info({ cleanBodyLength: cleanBody.length, cleanBodySample: cleanBody.substring(0, 200) }, "Cleaned email body");
 
     // Check for malicious URLs (Google Safe Browsing)
     const threatResult = await checkUrlThreatIntelligence(cleanBody + " " + subject);
@@ -387,8 +389,10 @@ async function handleNewInboundThread(
     }
 
     // Strip reply cruft and sanitize message body
+    log.info({ bodyLength: body.length, bodySample: body.substring(0, 200) }, "Raw email body before processing");
     let cleanBody = stripEmailReplyContent(body);
     cleanBody = sanitizeMessageBody(cleanBody);
+    log.info({ cleanBodyLength: cleanBody.length, cleanBodySample: cleanBody.substring(0, 200) }, "Cleaned email body");
 
     // Check for malicious URLs (Google Safe Browsing)
     const threatResult = await checkUrlThreatIntelligence(cleanBody + " " + subject);
