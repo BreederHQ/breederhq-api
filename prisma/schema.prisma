@@ -1238,6 +1238,7 @@ model Tenant {
   drafts          Draft[]
   documentBundles DocumentBundle[]
   emailFilters    EmailFilter[]
+  blockedEmails   BlockedEmail[]
 
   // Notifications
   notifications           Notification[]
@@ -8233,6 +8234,48 @@ model EmailFilter {
 
   @@index([tenantId, pattern])
   @@index([tenantId, type])
+  @@schema("public")
+}
+
+/**
+ * Blocked/rejected inbound emails - audit log for troubleshooting
+ * Tracks all emails that were blocked by security checks
+ */
+model BlockedEmail {
+  id Int @id @default(autoincrement())
+
+  // Tenant affected (who would have received this email)
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Email metadata
+  fromEmail   String  @db.VarChar(255) // Who sent it
+  toEmail     String  @db.VarChar(255) // Where it was sent
+  subject     String  @db.VarChar(500)
+  bodySnippet String? @db.Text // First 500 chars for context
+
+  // Resend email ID (for cross-reference with Resend dashboard)
+  resendEmailId String? @db.VarChar(100)
+
+  // Why was it blocked?
+  reason String @db.VarChar(50) // "malicious_content", "spam_detected", "rate_limit_exceeded", "sender_blocked"
+
+  // Detailed context (JSON with specifics)
+  // Examples:
+  // - { "threats": ["http://phishing.com"], "threatTypes": ["SOCIAL_ENGINEERING"] }
+  // - { "spamScore": 8, "flags": ["SPAM_KEYWORDS_SUBJECT", "ALL_CAPS_SUBJECT"] }
+  // - { "count": 51, "limit": 50 }
+  // - { "pattern": "*@spammer.com", "filterType": "BLOCK" }
+  details Json?
+
+  // When was it blocked?
+  blockedAt DateTime @default(now())
+
+  // Indexes for common queries
+  @@index([tenantId, blockedAt])
+  @@index([fromEmail, blockedAt])
+  @@index([reason, blockedAt])
+  @@index([blockedAt])
   @@schema("public")
 }
 

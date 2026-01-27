@@ -377,3 +377,37 @@ export async function checkUrlThreatIntelligence(text: string): Promise<ThreatIn
     return { safe: true, threats: [], threatTypes: [] };
   }
 }
+
+/**
+ * Log blocked email to database for audit trail and troubleshooting
+ */
+export async function logBlockedEmail(
+  tenantId: number,
+  fromEmail: string,
+  toEmail: string,
+  subject: string,
+  body: string,
+  reason: string,
+  details: any,
+  resendEmailId: string | undefined,
+  prisma: any
+): Promise<void> {
+  try {
+    await prisma.blockedEmail.create({
+      data: {
+        tenantId,
+        fromEmail,
+        toEmail,
+        subject,
+        bodySnippet: body.substring(0, 500), // First 500 chars for context
+        resendEmailId,
+        reason,
+        details,
+      },
+    });
+    console.log(`📝 Logged blocked email to audit log: ${fromEmail} -> ${toEmail} (reason: ${reason})`);
+  } catch (err) {
+    // Don't fail the whole operation if logging fails
+    console.error("❌ Failed to log blocked email to database:", err);
+  }
+}
