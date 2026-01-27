@@ -377,8 +377,38 @@ export function maybeRotateSession(
 /**
  * Get actor user ID from verified session.
  * Returns null if session is invalid or expired.
+ *
+ * WARNING: This does NOT verify the user exists in the database.
+ * For security-critical operations, use requireValidActor() instead.
  */
 export function getActorId(req: FastifyRequest): string | null {
   const sess = parseVerifiedSession(req);
   return sess?.userId ?? null;
+}
+
+/**
+ * Validate that the user in the session cookie actually exists in the database.
+ * Returns the user if valid, or null if:
+ * - Session is invalid/expired
+ * - User ID doesn't exist in database (deleted user)
+ *
+ * This prevents deleted users from continuing to access the system with stale cookies.
+ *
+ * @param req - Fastify request
+ * @param prisma - Prisma client instance
+ */
+export async function getValidatedActor(req: FastifyRequest, prisma: any): Promise<{
+  id: string;
+  isSuperAdmin: boolean;
+} | null> {
+  const userId = getActorId(req);
+  if (!userId) return null;
+
+  // Validate user still exists in database
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, isSuperAdmin: true },
+  });
+
+  return user;
 }

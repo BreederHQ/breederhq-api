@@ -55,17 +55,19 @@ The `createTestTenant()` helper now assigns slugs for all test tenant creation.
 
 **File**: [scripts/populate-inbound-email-slugs.ts](../scripts/populate-inbound-email-slugs.ts)
 
-One-time script to populate slugs for existing tenants. Already executed:
-- Development DB: 5/8 tenants have slugs
-- Production DB: 5/8 tenants have slugs
+One-time script to populate slugs for existing tenants.
+
+**Status** (2026-01-27):
+- ✅ **Production DB**: 11/15 tenants populated with slugs
+- ⚠️  **4 tenants without slugs** (no organization name to derive from)
 
 Run with:
 ```bash
-# Development
-NODE_ENV=development npx tsx scripts/populate-inbound-email-slugs.ts
+# Production (requires actual production DATABASE_URL)
+DATABASE_URL="postgresql://..." npx tsx scripts/populate-inbound-email-slugs.ts
 
-# Production
-NODE_ENV=production npx tsx scripts/populate-inbound-email-slugs.ts
+# Note: NODE_ENV=production does NOT change which database is used
+# You must explicitly set DATABASE_URL to the production connection string
 ```
 
 ---

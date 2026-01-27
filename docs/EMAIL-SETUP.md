@@ -348,7 +348,12 @@ Free tier is sufficient for development and small production use.
 - `src/services/email-templates.ts` - HTML email templates
 - `src/services/comm-prefs-service.ts` - Communication preferences
 - `src/services/template-renderer.ts` - Mustache template rendering
+- `src/services/notification-delivery.ts` - Notification email delivery
 - `prisma/schema.prisma` - `EmailSendLog`, `Template`, `PartyCommPreference` models
+
+## Related Documentation
+
+- [NOTIFICATION-DELIVERY-SYSTEM.md](./NOTIFICATION-DELIVERY-SYSTEM.md) - Notification generation and delivery to owners
 
 ---
 
