@@ -287,10 +287,13 @@ export function sanitizeMessageBody(body: string): string {
 export async function checkUrlThreatIntelligence(text: string): Promise<ThreatIntelResult> {
   if (!GOOGLE_SAFE_BROWSING_API_KEY) {
     // API key not configured - skip check (allow through)
+    console.warn("⚠️  Google Safe Browsing API key not configured - skipping URL threat check");
     return { safe: true, threats: [], threatTypes: [] };
   }
 
   const urls = extractLinks(text);
+
+  console.log(`🔍 Checking ${urls.length} URLs against Google Safe Browsing:`, urls);
 
   if (urls.length === 0) {
     return { safe: true, threats: [], threatTypes: [] };
@@ -332,12 +335,15 @@ export async function checkUrlThreatIntelligence(text: string): Promise<ThreatIn
 
     if (!data.matches || data.matches.length === 0) {
       // No threats found
+      console.log("✅ Google Safe Browsing: No threats detected");
       return { safe: true, threats: [], threatTypes: [] };
     }
 
     // Threats detected
     const threats = data.matches.map((match: any) => match.threat.url) as string[];
     const threatTypes = [...new Set(data.matches.map((match: any) => match.threatType))] as string[];
+
+    console.error(`🚨 THREATS DETECTED: ${threats.length} malicious URLs found:`, { threats, threatTypes });
 
     return {
       safe: false,
