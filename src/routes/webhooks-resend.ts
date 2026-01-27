@@ -72,6 +72,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.send({ ok: true, ignored: true, reason: "not_email_received" });
     }
 
+    // Log the full webhook payload for debugging
+    req.log.info({
+      eventType: event.type,
+      dataKeys: Object.keys(event.data),
+      hasText: !!event.data.text,
+      hasHtml: !!event.data.html,
+      textLength: event.data.text?.length || 0,
+      htmlLength: event.data.html?.length || 0,
+    }, "Webhook payload received");
+
     const { from, to, subject, text, html } = event.data;
     const toAddress = Array.isArray(to) ? to[0] : to;
     const body = text || html || "";
@@ -79,7 +89,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // Parse the From header to extract display name and email
     const { displayName, email: fromEmail } = parseFromHeader(from);
 
-    req.log.info({ from, fromEmail, displayName, to: toAddress, subject }, "Inbound email received");
+    req.log.info({ from, fromEmail, displayName, to: toAddress, subject, bodyLength: body.length }, "Inbound email received");
 
     // Try to parse as reply-to-thread address
     const threadInfo = parseReplyToAddress(toAddress);
