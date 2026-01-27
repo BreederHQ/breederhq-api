@@ -29,33 +29,50 @@ const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 /**
- * Fetch full email content from Resend API
+ * Fetch full email content from Resend's Received Email API
+ * Webhook only includes metadata - must call API to get body content
+ * Docs: https://resend.com/docs/api-reference/emails/retrieve-received-email
  */
-async function fetchEmailBody(emailId: string): Promise<{ text?: string; html?: string }> {
+async function fetchEmailBody(emailId: string): Promise<{
+  text?: string;
+  html?: string;
+  headers?: Record<string, string>;
+}> {
   if (!RESEND_API_KEY) {
-    console.warn("RESEND_API_KEY not configured - cannot fetch email body");
+    console.warn("⚠️  RESEND_API_KEY not configured - cannot fetch email body");
     return {};
   }
 
   try {
-    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+    // CORRECT endpoint for INBOUND emails (not /emails/{id} which is for outbound)
+    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
     });
 
     if (!response.ok) {
-      console.error(`Failed to fetch email ${emailId} from Resend:`, response.status, response.statusText);
+      const errorText = await response.text();
+      console.error(`❌ Failed to fetch email ${emailId} from Resend:`, response.status, response.statusText, errorText);
       return {};
     }
 
     const data = await response.json();
+    console.log(`✅ Retrieved email body from Resend API:`, {
+      emailId,
+      textLength: data.text?.length || 0,
+      htmlLength: data.html?.length || 0,
+      hasHeaders: !!data.headers,
+      hasAttachments: data.attachments?.length || 0,
+    });
+
     return {
       text: data.text,
       html: data.html,
+      headers: data.headers,
     };
   } catch (err) {
-    console.error(`Error fetching email ${emailId} from Resend:`, err);
+    console.error(`❌ Error fetching email ${emailId} from Resend:`, err);
     return {};
   }
 }
@@ -118,7 +135,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }, "Webhook payload received");
 
     const { from, to, subject, email_id } = event.data;
-    let { text, html } = event.data;
+    let { text, html, headers } = event.data;
 
     // If body content is missing, fetch it from Resend API
     if (!text && !html && email_id) {
@@ -126,10 +143,15 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const fetchedBody = await fetchEmailBody(email_id);
       text = fetchedBody.text;
       html = fetchedBody.html;
+      // Also extract headers for authentication checks (SPF/DKIM/DMARC)
+      if (fetchedBody.headers) {
+        headers = fetchedBody.headers;
+      }
       req.log.info({
         emailId: email_id,
         fetchedTextLength: text?.length || 0,
         fetchedHtmlLength: html?.length || 0,
+        hasHeaders: !!fetchedBody.headers,
       }, "Fetched email body from Resend API");
     }
 
