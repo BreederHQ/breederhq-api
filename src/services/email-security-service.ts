@@ -120,11 +120,28 @@ export function calculateSpamScore(email: {
 }
 
 /**
- * Extract URLs from text
+ * Extract URLs from text (handles both plain text and HTML)
  */
 function extractLinks(text: string): string[] {
-  const urlRegex = /https?:\/\/[^\s<>"]+/gi;
-  return text.match(urlRegex) || [];
+  const urls: string[] = [];
+
+  // Pattern 1: URLs in href attributes (HTML)
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  let match;
+  while ((match = hrefRegex.exec(text)) !== null) {
+    const url = match[1];
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      urls.push(url);
+    }
+  }
+
+  // Pattern 2: Plain URLs in text
+  const urlRegex = /https?:\/\/[^\s<>"']+/gi;
+  const plainUrls = text.match(urlRegex) || [];
+  urls.push(...plainUrls);
+
+  // Deduplicate
+  return [...new Set(urls)];
 }
 
 /**
@@ -291,11 +308,15 @@ export async function checkUrlThreatIntelligence(text: string): Promise<ThreatIn
     return { safe: true, threats: [], threatTypes: [] };
   }
 
+  // Log text sample for debugging (first 200 chars)
+  console.log(`📧 Email content sample (first 200 chars):`, text.substring(0, 200));
+
   const urls = extractLinks(text);
 
   console.log(`🔍 Checking ${urls.length} URLs against Google Safe Browsing:`, urls);
 
   if (urls.length === 0) {
+    console.log("ℹ️  No URLs found in email content");
     return { safe: true, threats: [], threatTypes: [] };
   }
 
