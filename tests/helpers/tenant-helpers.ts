@@ -58,12 +58,20 @@ export async function createTestTenant(
   const prisma = getPrisma();
   const slug = createTenantSlug(prefix);
 
+  // Import the assignUniqueSlug helper
+  const { assignUniqueSlug } = await import('../../src/services/inbound-email-service.js');
+  const inboundEmailSlug = await assignUniqueSlug(name, prisma);
+
   const tenant = await prisma.tenant.create({
-    data: { name, slug },
+    data: { name, slug, inboundEmailSlug },
     select: { id: true, slug: true },
   });
 
-  return tenant;
+  if (!tenant.slug) {
+    throw new Error('Tenant created without slug');
+  }
+
+  return { id: tenant.id, slug: tenant.slug };
 }
 
 /**

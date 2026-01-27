@@ -1,12 +1,16 @@
 // src/routes/dashboard-config.ts
-// Dashboard configuration and presets API
+// Dashboard configuration API
 //
-// GET  /api/v1/dashboard/config           - Get current config
+// The API only stores/retrieves configuration - it does NOT define presets.
+// Preset definitions live in the frontend (apps/platform/src/features/dashboard/presets/).
+// This separation keeps presentation concerns in the frontend.
+//
+// GET  /api/v1/dashboard/config           - Get current config (or null if none)
 // PUT  /api/v1/dashboard/config           - Update config
-// GET  /api/v1/dashboard/presets          - List all presets
+// DELETE /api/v1/dashboard/config         - Reset to default (delete saved config)
+// GET  /api/v1/dashboard/presets          - List custom presets
 // POST /api/v1/dashboard/presets          - Create custom preset
 // DELETE /api/v1/dashboard/presets/:id    - Delete custom preset
-// POST /api/v1/dashboard/presets/:id/apply - Apply preset
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
@@ -63,105 +67,6 @@ interface DashboardPreset {
   createdBy?: string;
 }
 
-// ───────────────────────── System Presets ─────────────────────────
-
-const STANDARD_WIDGETS: WidgetPlacement[] = [
-  { widgetId: "alert-banner", size: "full", order: 0 },
-  { widgetId: "greeting-banner", size: "full", order: 1 },
-  { widgetId: "breeding-pipeline-tile", size: "small", order: 2 },
-  { widgetId: "offspring-tile", size: "small", order: 3 },
-  { widgetId: "waitlist-tile", size: "small", order: 4 },
-  { widgetId: "finances-tile", size: "small", order: 5 },
-  { widgetId: "todays-agenda", size: "large", order: 6 },
-  { widgetId: "quick-actions", size: "medium", order: 7 },
-  { widgetId: "contact-followups", size: "large", order: 8 },
-  { widgetId: "breeding-pipeline", size: "full", order: 9 },
-  { widgetId: "offspring-groups", size: "medium", order: 10 },
-  { widgetId: "waitlist-gauge", size: "medium", order: 11 },
-  { widgetId: "financial-snapshot", size: "medium", order: 12 },
-  { widgetId: "kpi-panel", size: "large", order: 13 },
-  { widgetId: "activity-feed", size: "large", order: 14 },
-];
-
-const STANDARD_PRESET: DashboardPreset = {
-  id: "standard",
-  name: "BreederHQ - Standard",
-  description: "Default dashboard layout optimized for all species.",
-  isSystem: true,
-  isDefault: true,
-  config: {
-    version: 1,
-    presetId: "standard",
-    presetName: "BreederHQ - Standard",
-    widgets: STANDARD_WIDGETS,
-    layouts: {
-      desktop: STANDARD_WIDGETS,
-      tablet: STANDARD_WIDGETS,
-      mobile: STANDARD_WIDGETS.map((w) => ({ ...w, size: "full" as const })),
-    },
-    preferences: {
-      compactMode: false,
-      showEmptyWidgets: false,
-      refreshInterval: 0,
-    },
-  },
-};
-
-const HORSE_BREEDER_WIDGETS: WidgetPlacement[] = [
-  { widgetId: "alert-banner", size: "full", order: 0 },
-  { widgetId: "greeting-banner", size: "full", order: 1 },
-  { widgetId: "breeding-pipeline-tile", size: "small", order: 2 },
-  { widgetId: "offspring-tile", size: "small", order: 3 },
-  { widgetId: "waitlist-tile", size: "small", order: 4 },
-  { widgetId: "finances-tile", size: "small", order: 5 },
-  { widgetId: "mare-status-grid", size: "full", order: 6 },
-  { widgetId: "pre-foaling-alerts", size: "medium", order: 7 },
-  { widgetId: "foaling-dashboard", size: "medium", order: 8 },
-  { widgetId: "todays-agenda", size: "medium", order: 9 },
-  { widgetId: "quick-actions", size: "small", order: 10 },
-  { widgetId: "mare-performance", size: "medium", order: 11 },
-  { widgetId: "ovulation-tracker", size: "medium", order: 12 },
-  { widgetId: "breeding-pipeline", size: "large", order: 13 },
-  { widgetId: "stallion-calendar", size: "medium", order: 14 },
-  { widgetId: "contact-followups", size: "medium", order: 15 },
-  { widgetId: "financial-snapshot", size: "medium", order: 16 },
-  { widgetId: "foaling-analytics", size: "medium", order: 17 },
-  { widgetId: "genetic-intelligence", size: "large", order: 18 },
-  { widgetId: "activity-feed", size: "large", order: 19 },
-];
-
-const HORSE_BREEDER_PRESET: DashboardPreset = {
-  id: "horse-breeder",
-  name: "BreederHQ - Horse Breeder",
-  description:
-    "Optimized for equine breeding operations with mare tracking and foaling alerts.",
-  species: ["HORSE"],
-  isSystem: true,
-  isDefault: false,
-  config: {
-    version: 1,
-    presetId: "horse-breeder",
-    presetName: "BreederHQ - Horse Breeder",
-    species: ["HORSE"],
-    widgets: HORSE_BREEDER_WIDGETS,
-    layouts: {
-      desktop: HORSE_BREEDER_WIDGETS,
-      tablet: HORSE_BREEDER_WIDGETS,
-      mobile: HORSE_BREEDER_WIDGETS.map((w) => ({
-        ...w,
-        size: "full" as const,
-      })),
-    },
-    preferences: {
-      compactMode: false,
-      showEmptyWidgets: false,
-      refreshInterval: 0,
-    },
-  },
-};
-
-const SYSTEM_PRESETS: DashboardPreset[] = [STANDARD_PRESET, HORSE_BREEDER_PRESET];
-
 // ───────────────────────── Helpers ─────────────────────────
 
 function generatePresetId(): string {
@@ -207,6 +112,20 @@ async function writeTenantSetting<T>(
   return { data: row.data as T, version: row.version, updatedAt: row.updatedAt };
 }
 
+async function deleteTenantSetting(
+  tenantId: number,
+  namespace: string
+): Promise<boolean> {
+  try {
+    await prisma.tenantSetting.delete({
+      where: { tenantId_namespace: { tenantId, namespace } },
+    });
+    return true;
+  } catch {
+    return false; // Didn't exist
+  }
+}
+
 // ───────────────────────── Routes ─────────────────────────
 
 const dashboardConfigRoutes: FastifyPluginAsync = async (
@@ -214,7 +133,8 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
 ) => {
   /**
    * GET /api/v1/dashboard/config
-   * Get current dashboard configuration and available presets
+   * Get current dashboard configuration and custom presets.
+   * Returns null for config if user hasn't customized - frontend applies default preset.
    */
   app.get("/dashboard/config", async (req, reply) => {
     try {
@@ -223,7 +143,7 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
         return reply.code(400).send({ error: "missing_tenant" });
       }
 
-      // Get user's current config (or default)
+      // Get user's current config (null if not set)
       const { data: storedConfig, updatedAt } =
         await readTenantSetting<DashboardLayoutConfig | null>(
           tenantId,
@@ -231,24 +151,16 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
           null
         );
 
-      // Get user's custom presets
+      // Get user's custom presets only (system presets come from frontend)
       const { data: customPresets } = await readTenantSetting<DashboardPreset[]>(
         tenantId,
         DASHBOARD_PRESETS_NS,
         []
       );
 
-      // Determine which config to use
-      // Always default to standard preset - user can switch to horse-breeder
-      // via the gear menu, which will persist their preference
-      const config: DashboardLayoutConfig = storedConfig ?? STANDARD_PRESET.config;
-
-      // Combine system presets with user's custom presets
-      const allPresets: DashboardPreset[] = [...SYSTEM_PRESETS, ...customPresets];
-
       return reply.send({
-        config,
-        presets: allPresets,
+        config: storedConfig, // null if no saved config - frontend applies default
+        customPresets,
         updatedAt: updatedAt?.toISOString() ?? null,
       });
     } catch (err) {
@@ -302,8 +214,28 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
   );
 
   /**
+   * DELETE /api/v1/dashboard/config
+   * Reset dashboard to default (delete saved config)
+   */
+  app.delete("/dashboard/config", async (req, reply) => {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      await deleteTenantSetting(tenantId, DASHBOARD_CONFIG_NS);
+
+      return reply.send({ ok: true });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to reset dashboard config");
+      return reply.code(500).send({ error: "reset_config_failed" });
+    }
+  });
+
+  /**
    * GET /api/v1/dashboard/presets
-   * Get all available presets (system + custom)
+   * Get user's custom presets only (system presets come from frontend)
    */
   app.get("/dashboard/presets", async (req, reply) => {
     try {
@@ -312,16 +244,13 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
         return reply.code(400).send({ error: "missing_tenant" });
       }
 
-      // Get user's custom presets
       const { data: customPresets } = await readTenantSetting<DashboardPreset[]>(
         tenantId,
         DASHBOARD_PRESETS_NS,
         []
       );
 
-      const allPresets: DashboardPreset[] = [...SYSTEM_PRESETS, ...customPresets];
-
-      return reply.send({ presets: allPresets });
+      return reply.send({ presets: customPresets });
     } catch (err) {
       req.log?.error?.({ err }, "Failed to get dashboard presets");
       return reply.code(500).send({ error: "get_presets_failed" });
@@ -425,11 +354,6 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
         const userId = getActorId(req);
         const { id } = req.params;
 
-        // Can't delete system presets
-        if (SYSTEM_PRESETS.some((p) => p.id === id)) {
-          return reply.code(403).send({ error: "cannot_delete_system_preset" });
-        }
-
         // Get existing presets
         const { data: existingPresets } = await readTenantSetting<DashboardPreset[]>(
           tenantId,
@@ -452,59 +376,6 @@ const dashboardConfigRoutes: FastifyPluginAsync = async (
       } catch (err) {
         req.log?.error?.({ err }, "Failed to delete dashboard preset");
         return reply.code(500).send({ error: "delete_preset_failed" });
-      }
-    }
-  );
-
-  /**
-   * POST /api/v1/dashboard/presets/:id/apply
-   * Apply a preset to current configuration
-   */
-  app.post<{ Params: { id: string } }>(
-    "/dashboard/presets/:id/apply",
-    async (req, reply) => {
-      try {
-        const tenantId = await getTenantFromRequest(req);
-        if (!tenantId) {
-          return reply.code(400).send({ error: "missing_tenant" });
-        }
-
-        const userId = getActorId(req);
-        const { id } = req.params;
-
-        // Find preset (system or custom)
-        let preset: DashboardPreset | undefined = SYSTEM_PRESETS.find(
-          (p) => p.id === id
-        );
-
-        if (!preset) {
-          const { data: customPresets } = await readTenantSetting<DashboardPreset[]>(
-            tenantId,
-            DASHBOARD_PRESETS_NS,
-            []
-          );
-          preset = customPresets.find((p) => p.id === id);
-        }
-
-        if (!preset) {
-          return reply.code(404).send({ error: "preset_not_found" });
-        }
-
-        // Apply preset config
-        const { data: savedConfig, updatedAt } = await writeTenantSetting(
-          tenantId,
-          DASHBOARD_CONFIG_NS,
-          preset.config,
-          userId
-        );
-
-        return reply.send({
-          config: savedConfig,
-          updatedAt: updatedAt.toISOString(),
-        });
-      } catch (err) {
-        req.log?.error?.({ err }, "Failed to apply dashboard preset");
-        return reply.code(500).send({ error: "apply_preset_failed" });
       }
     }
   );
