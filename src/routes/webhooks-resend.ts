@@ -16,6 +16,14 @@ import {
 import { sendNewMessageNotification } from "../services/portal-provisioning-service.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
 import { sendInactiveAddressAutoReply } from "../services/marketplace-email-service.js";
+import {
+  checkRateLimit,
+  checkEmailFilter,
+  calculateSpamScore,
+  checkAuthentication,
+  sanitizeMessageBody,
+  checkUrlThreatIntelligence,
+} from "../services/email-security-service.js";
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 
@@ -83,6 +91,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         body,
         subject,
         event.data.attachments?.length || 0,
+        event.data.headers,
         req.log
       );
       return reply.send({ ok: true, type: "thread_reply", ...result });
@@ -98,6 +107,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         body,
         subject,
         event.data.attachments?.length || 0,
+        event.data.headers,
         req.log
       );
       return reply.send({ ok: true, type: "new_thread", ...result });
@@ -119,6 +129,7 @@ async function handleThreadReply(
   body: string,
   subject: string,
   attachmentCount: number,
+  headers: Record<string, string> | undefined,
   log: any
 ): Promise<{ threadId?: number; messageId?: number; error?: string }> {
   try {
@@ -158,6 +169,64 @@ async function handleThreadReply(
       log.info({ partyId: senderParty.id, email: fromEmail, displayName }, "Created new contact from inbound email");
     }
 
+    // Security checks - BLOCK email if any fail
+    const rateLimitResult = await checkRateLimit(fromEmail, thread.tenantId, prisma);
+    if (!rateLimitResult.allowed) {
+      log.warn({ fromEmail, threadId, count: rateLimitResult.count }, "Rate limit exceeded - email rejected");
+      return { error: "rate_limit_exceeded" };
+    }
+
+    const filterResult = await checkEmailFilter(fromEmail, thread.tenantId, prisma);
+    if (filterResult.blocked) {
+      log.warn({ fromEmail, threadId, pattern: filterResult.filter?.pattern, reason: filterResult.filter?.reason }, "Sender blocked by filter - email rejected");
+      return { error: "sender_blocked" };
+    }
+
+    // Strip email reply cruft and sanitize message body
+    let cleanBody = stripEmailReplyContent(body);
+    cleanBody = sanitizeMessageBody(cleanBody);
+
+    // Check for malicious URLs (Google Safe Browsing)
+    const threatResult = await checkUrlThreatIntelligence(cleanBody + " " + subject);
+    if (!threatResult.safe) {
+      log.warn({
+        fromEmail,
+        threadId,
+        threats: threatResult.threats,
+        threatTypes: threatResult.threatTypes,
+      }, "Email rejected - malicious URLs detected");
+      return { error: "malicious_content" };
+    }
+
+    // Calculate spam score - REJECT if score too high
+    const spamResult = calculateSpamScore({
+      from: fromEmail,
+      displayName,
+      subject,
+      body: cleanBody,
+    });
+
+    if (spamResult.score >= 7) {
+      log.warn({
+        fromEmail,
+        threadId,
+        spamScore: spamResult.score,
+        flags: spamResult.flags,
+        warnings: spamResult.warnings
+      }, "Email rejected - spam score too high");
+      return { error: "spam_detected" };
+    }
+
+    if (spamResult.warnings.length > 0) {
+      log.info({ fromEmail, threadId, warnings: spamResult.warnings }, "Spam warnings detected (email allowed)");
+    }
+
+    // Check email authentication
+    const authResult = checkAuthentication(headers);
+    if (!authResult.passed) {
+      log.info({ fromEmail, threadId, spf: authResult.spf, dkim: authResult.dkim, dmarc: authResult.dmarc }, "Email authentication failed (email allowed)");
+    }
+
     // Check if sender is already a participant, if not add them
     const isParticipant = thread.participants.some((p) => p.partyId === senderParty!.id);
     if (!isParticipant) {
@@ -168,9 +237,6 @@ async function handleThreadReply(
         },
       });
     }
-
-    // Strip email reply cruft and build message body
-    let cleanBody = stripEmailReplyContent(body);
 
     // Add note about attachments if any
     if (attachmentCount > 0) {
@@ -187,8 +253,13 @@ async function handleThreadReply(
       },
     });
 
-    // Update thread timestamp and guest info if missing
-    const updateData: any = { lastMessageAt: new Date() };
+    // Update thread timestamp, guest info, and spam tracking
+    const updateData: any = {
+      lastMessageAt: new Date(),
+      spamScore: spamResult.score,
+      spamFlags: spamResult.flags,
+      authenticationPass: authResult.passed,
+    };
     if (!thread.guestEmail) {
       updateData.guestEmail = fromEmail;
     }
@@ -248,6 +319,7 @@ async function handleNewInboundThread(
   body: string,
   subject: string,
   attachmentCount: number,
+  headers: Record<string, string> | undefined,
   log: any
 ): Promise<{ threadId?: number; error?: string }> {
   try {
@@ -301,8 +373,63 @@ async function handleNewInboundThread(
       log.info({ partyId: senderParty.id, email: fromEmail, displayName }, "Created new contact from inbound email");
     }
 
-    // Strip reply cruft and build message body
+    // Security checks - BLOCK email if any fail (before creating thread)
+    const rateLimitResult = await checkRateLimit(fromEmail, tenant.id, prisma);
+    if (!rateLimitResult.allowed) {
+      log.warn({ fromEmail, tenantId: tenant.id, count: rateLimitResult.count }, "Rate limit exceeded - email rejected");
+      return { error: "rate_limit_exceeded" };
+    }
+
+    const filterResult = await checkEmailFilter(fromEmail, tenant.id, prisma);
+    if (filterResult.blocked) {
+      log.warn({ fromEmail, tenantId: tenant.id, pattern: filterResult.filter?.pattern, reason: filterResult.filter?.reason }, "Sender blocked by filter - email rejected");
+      return { error: "sender_blocked" };
+    }
+
+    // Strip reply cruft and sanitize message body
     let cleanBody = stripEmailReplyContent(body);
+    cleanBody = sanitizeMessageBody(cleanBody);
+
+    // Check for malicious URLs (Google Safe Browsing)
+    const threatResult = await checkUrlThreatIntelligence(cleanBody + " " + subject);
+    if (!threatResult.safe) {
+      log.warn({
+        fromEmail,
+        tenantId: tenant.id,
+        threats: threatResult.threats,
+        threatTypes: threatResult.threatTypes,
+      }, "Email rejected - malicious URLs detected");
+      return { error: "malicious_content" };
+    }
+
+    // Calculate spam score - REJECT if score too high
+    const spamResult = calculateSpamScore({
+      from: fromEmail,
+      displayName,
+      subject,
+      body: cleanBody,
+    });
+
+    if (spamResult.score >= 7) {
+      log.warn({
+        fromEmail,
+        tenantId: tenant.id,
+        spamScore: spamResult.score,
+        flags: spamResult.flags,
+        warnings: spamResult.warnings
+      }, "Email rejected - spam score too high");
+      return { error: "spam_detected" };
+    }
+
+    if (spamResult.warnings.length > 0) {
+      log.info({ fromEmail, tenantId: tenant.id, warnings: spamResult.warnings }, "Spam warnings detected (email allowed)");
+    }
+
+    // Check email authentication
+    const authResult = checkAuthentication(headers);
+    if (!authResult.passed) {
+      log.info({ fromEmail, tenantId: tenant.id, spf: authResult.spf, dkim: authResult.dkim, dmarc: authResult.dmarc }, "Email authentication failed (email allowed)");
+    }
 
     if (attachmentCount > 0) {
       cleanBody += `\n\n[This email had ${attachmentCount} attachment${attachmentCount > 1 ? "s" : ""} that could not be imported]`;
@@ -310,7 +437,7 @@ async function handleNewInboundThread(
 
     const now = new Date();
 
-    // Create new thread with initial message
+    // Create new thread with initial message and security tracking
     const thread = await prisma.messageThread.create({
       data: {
         tenantId: tenant.id,
@@ -319,6 +446,9 @@ async function handleNewInboundThread(
         firstInboundAt: now,
         guestEmail: fromEmail,
         guestName: displayName || senderParty.name || extractNameFromEmail(fromEmail),
+        spamScore: spamResult.score,
+        spamFlags: spamResult.flags,
+        authenticationPass: authResult.passed,
         participants: {
           create: [
             { partyId: orgParty.id },
