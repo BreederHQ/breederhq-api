@@ -23,6 +23,7 @@ import {
   checkAuthentication,
   sanitizeMessageBody,
   checkUrlThreatIntelligence,
+  logBlockedEmail,
 } from "../services/email-security-service.js";
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
@@ -174,6 +175,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         subject,
         event.data.attachments?.length || 0,
         event.data.headers,
+        toAddress,
+        email_id,
         req.log
       );
       return reply.send({ ok: true, type: "thread_reply", ...result });
@@ -212,6 +215,8 @@ async function handleThreadReply(
   subject: string,
   attachmentCount: number,
   headers: Record<string, string> | undefined,
+  toAddress: string,
+  resendEmailId: string | undefined,
   log: any
 ): Promise<{ threadId?: number; messageId?: number; error?: string }> {
   try {
@@ -255,12 +260,34 @@ async function handleThreadReply(
     const rateLimitResult = await checkRateLimit(fromEmail, thread.tenantId, prisma);
     if (!rateLimitResult.allowed) {
       log.warn({ fromEmail, threadId, count: rateLimitResult.count }, "Rate limit exceeded - email rejected");
+      await logBlockedEmail(
+        thread.tenantId,
+        fromEmail,
+        toAddress,
+        subject,
+        body,
+        "rate_limit_exceeded",
+        { count: rateLimitResult.count, limit: 50 },
+        resendEmailId,
+        prisma
+      );
       return { error: "rate_limit_exceeded" };
     }
 
     const filterResult = await checkEmailFilter(fromEmail, thread.tenantId, prisma);
     if (filterResult.blocked) {
       log.warn({ fromEmail, threadId, pattern: filterResult.filter?.pattern, reason: filterResult.filter?.reason }, "Sender blocked by filter - email rejected");
+      await logBlockedEmail(
+        thread.tenantId,
+        fromEmail,
+        toAddress,
+        subject,
+        body,
+        "sender_blocked",
+        { pattern: filterResult.filter?.pattern, filterReason: filterResult.filter?.reason },
+        resendEmailId,
+        prisma
+      );
       return { error: "sender_blocked" };
     }
 
@@ -279,6 +306,17 @@ async function handleThreadReply(
         threats: threatResult.threats,
         threatTypes: threatResult.threatTypes,
       }, "Email rejected - malicious URLs detected");
+      await logBlockedEmail(
+        thread.tenantId,
+        fromEmail,
+        toAddress,
+        subject,
+        cleanBody,
+        "malicious_content",
+        { threats: threatResult.threats, threatTypes: threatResult.threatTypes },
+        resendEmailId,
+        prisma
+      );
       return { error: "malicious_content" };
     }
 
@@ -298,6 +336,17 @@ async function handleThreadReply(
         flags: spamResult.flags,
         warnings: spamResult.warnings
       }, "Email rejected - spam score too high");
+      await logBlockedEmail(
+        thread.tenantId,
+        fromEmail,
+        toAddress,
+        subject,
+        cleanBody,
+        "spam_detected",
+        { spamScore: spamResult.score, flags: spamResult.flags, warnings: spamResult.warnings },
+        resendEmailId,
+        prisma
+      );
       return { error: "spam_detected" };
     }
 
@@ -461,12 +510,34 @@ async function handleNewInboundThread(
     const rateLimitResult = await checkRateLimit(fromEmail, tenant.id, prisma);
     if (!rateLimitResult.allowed) {
       log.warn({ fromEmail, tenantId: tenant.id, count: rateLimitResult.count }, "Rate limit exceeded - email rejected");
+      await logBlockedEmail(
+        tenant.id,
+        fromEmail,
+        `${slug}@mail.breederhq.com`,
+        subject,
+        body,
+        "rate_limit_exceeded",
+        { count: rateLimitResult.count, limit: 50 },
+        undefined, // resendEmailId not available in this context
+        prisma
+      );
       return { error: "rate_limit_exceeded" };
     }
 
     const filterResult = await checkEmailFilter(fromEmail, tenant.id, prisma);
     if (filterResult.blocked) {
       log.warn({ fromEmail, tenantId: tenant.id, pattern: filterResult.filter?.pattern, reason: filterResult.filter?.reason }, "Sender blocked by filter - email rejected");
+      await logBlockedEmail(
+        tenant.id,
+        fromEmail,
+        `${slug}@mail.breederhq.com`,
+        subject,
+        body,
+        "sender_blocked",
+        { pattern: filterResult.filter?.pattern, filterReason: filterResult.filter?.reason },
+        undefined,
+        prisma
+      );
       return { error: "sender_blocked" };
     }
 
@@ -485,6 +556,17 @@ async function handleNewInboundThread(
         threats: threatResult.threats,
         threatTypes: threatResult.threatTypes,
       }, "Email rejected - malicious URLs detected");
+      await logBlockedEmail(
+        tenant.id,
+        fromEmail,
+        `${slug}@mail.breederhq.com`,
+        subject,
+        cleanBody,
+        "malicious_content",
+        { threats: threatResult.threats, threatTypes: threatResult.threatTypes },
+        undefined,
+        prisma
+      );
       return { error: "malicious_content" };
     }
 
@@ -504,6 +586,17 @@ async function handleNewInboundThread(
         flags: spamResult.flags,
         warnings: spamResult.warnings
       }, "Email rejected - spam score too high");
+      await logBlockedEmail(
+        tenant.id,
+        fromEmail,
+        `${slug}@mail.breederhq.com`,
+        subject,
+        cleanBody,
+        "spam_detected",
+        { spamScore: spamResult.score, flags: spamResult.flags, warnings: spamResult.warnings },
+        undefined,
+        prisma
+      );
       return { error: "spam_detected" };
     }
 
