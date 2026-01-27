@@ -26,6 +26,39 @@ import {
 } from "../services/email-security-service.js";
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+
+/**
+ * Fetch full email content from Resend API
+ */
+async function fetchEmailBody(emailId: string): Promise<{ text?: string; html?: string }> {
+  if (!RESEND_API_KEY) {
+    console.warn("RESEND_API_KEY not configured - cannot fetch email body");
+    return {};
+  }
+
+  try {
+    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`Failed to fetch email ${emailId} from Resend:`, response.status, response.statusText);
+      return {};
+    }
+
+    const data = await response.json();
+    return {
+      text: data.text,
+      html: data.html,
+    };
+  } catch (err) {
+    console.error(`Error fetching email ${emailId} from Resend:`, err);
+    return {};
+  }
+}
 
 interface ResendInboundEvent {
   type: string;
@@ -33,6 +66,7 @@ interface ResendInboundEvent {
     from: string;
     to: string | string[];
     subject: string;
+    email_id: string;
     text?: string;
     html?: string;
     headers?: Record<string, string>;
@@ -80,9 +114,25 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       hasHtml: !!event.data.html,
       textLength: event.data.text?.length || 0,
       htmlLength: event.data.html?.length || 0,
+      emailId: event.data.email_id,
     }, "Webhook payload received");
 
-    const { from, to, subject, text, html } = event.data;
+    const { from, to, subject, email_id } = event.data;
+    let { text, html } = event.data;
+
+    // If body content is missing, fetch it from Resend API
+    if (!text && !html && email_id) {
+      req.log.info({ emailId: email_id }, "Email body missing from webhook - fetching from Resend API");
+      const fetchedBody = await fetchEmailBody(email_id);
+      text = fetchedBody.text;
+      html = fetchedBody.html;
+      req.log.info({
+        emailId: email_id,
+        fetchedTextLength: text?.length || 0,
+        fetchedHtmlLength: html?.length || 0,
+      }, "Fetched email body from Resend API");
+    }
+
     const toAddress = Array.isArray(to) ? to[0] : to;
     const body = text || html || "";
 
