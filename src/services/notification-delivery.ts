@@ -8,6 +8,7 @@
 
 import prisma from "../prisma.js";
 import { sendEmail } from "./email-service.js";
+import { canContactViaChannel } from "./comm-prefs-service.js";
 import type { Notification, NotificationPriority } from "@prisma/client";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -246,7 +247,33 @@ export async function deliverNotification(notificationId: number): Promise<{ sen
     }
   }
 
-  console.log(`[notification-delivery] Delivered notification ${notificationId}: ${sent} sent, ${failed} failed`);
+  // Also deliver to animal owners who have receiveNotifications enabled
+  const ownerResult = await deliverToAnimalOwners(notification);
+  sent += ownerResult.sent;
+  failed += ownerResult.failed;
+
+  // Update notification metadata with delivery info so breeders can see who was notified
+  if (ownerResult.recipients.length > 0) {
+    const existingMetadata = (notification.metadata as Record<string, unknown>) || {};
+    await prisma.notification.update({
+      where: { id: notificationId },
+      data: {
+        metadata: {
+          ...existingMetadata,
+          ownerDelivery: {
+            sentAt: new Date().toISOString(),
+            recipientCount: ownerResult.recipients.length,
+            recipients: ownerResult.recipients.map((r) => ({
+              name: r.name,
+              // Don't store full email in metadata for privacy - just show it was sent
+            })),
+          },
+        },
+      },
+    });
+  }
+
+  console.log(`[notification-delivery] Delivered notification ${notificationId}: ${sent} sent (${ownerResult.sent} to owners), ${failed} failed`);
 
   return { sent, failed };
 }
@@ -280,6 +307,116 @@ function shouldSendNotificationType(
 
   // Default to enabled for unknown types
   return true;
+}
+
+/** Info about an owner who received a notification */
+interface OwnerDeliveryRecipient {
+  partyId: number;
+  name: string | null;
+  email: string;
+}
+
+/** Result of delivering to animal owners */
+interface OwnerDeliveryResult {
+  sent: number;
+  failed: number;
+  skipped: number;
+  recipients: OwnerDeliveryRecipient[];
+}
+
+/**
+ * Deliver notification to animal owners who have receiveNotifications enabled
+ * Extracts animal IDs from notification metadata and sends to owners
+ * Respects AnimalOwner.receiveNotifications and PartyCommPreference
+ * Returns list of recipients so breeders can be informed
+ */
+export async function deliverToAnimalOwners(
+  notification: Notification & { tenant: { id: number; name: string; slug: string | null } }
+): Promise<OwnerDeliveryResult> {
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  const recipients: OwnerDeliveryRecipient[] = [];
+
+  // Extract animal IDs from notification metadata
+  const metadata = notification.metadata as Record<string, unknown> | null;
+  if (!metadata) {
+    return { sent: 0, failed: 0, skipped: 0, recipients: [] };
+  }
+
+  const animalIds: number[] = [];
+
+  // Collect all animal IDs from metadata (damId, sireId, animalId)
+  if (typeof metadata.damId === "number") animalIds.push(metadata.damId);
+  if (typeof metadata.sireId === "number") animalIds.push(metadata.sireId);
+  if (typeof metadata.animalId === "number") animalIds.push(metadata.animalId);
+
+  if (animalIds.length === 0) {
+    return { sent: 0, failed: 0, skipped: 0, recipients: [] };
+  }
+
+  // Get all owners for these animals who want to receive notifications
+  const owners = await prisma.animalOwner.findMany({
+    where: {
+      animalId: { in: animalIds },
+      receiveNotifications: true,
+    },
+    include: {
+      party: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  // Track emails we've already sent to (prevent duplicates if same owner owns dam and sire)
+  const sentEmails = new Set<string>();
+
+  for (const owner of owners) {
+    const email = owner.party?.email;
+    if (!email) {
+      skipped++;
+      continue;
+    }
+
+    // Skip if we've already sent to this email
+    if (sentEmails.has(email.toLowerCase())) {
+      continue;
+    }
+
+    // Check PartyCommPreference - respect email channel blocking
+    const canContact = await canContactViaChannel(owner.partyId, "EMAIL");
+    if (!canContact) {
+      skipped++;
+      console.log(`[notification-delivery] Skipping owner party ${owner.partyId} - email blocked by PartyCommPreference`);
+      continue;
+    }
+
+    // Send email
+    const success = await sendNotificationEmail(notification, email, notification.tenant.name);
+
+    if (success) {
+      sent++;
+      sentEmails.add(email.toLowerCase());
+      recipients.push({
+        partyId: owner.partyId,
+        name: owner.party?.name ?? null,
+        email,
+      });
+      console.log(`[notification-delivery] Sent to animal owner: ${email} (party ${owner.partyId})`);
+    } else {
+      failed++;
+    }
+  }
+
+  if (sent > 0 || failed > 0 || skipped > 0) {
+    console.log(`[notification-delivery] Animal owner delivery for notification ${notification.id}: ${sent} sent, ${failed} failed, ${skipped} skipped`);
+  }
+
+  return { sent, failed, skipped, recipients };
 }
 
 /**
