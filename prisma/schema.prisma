@@ -93,12 +93,12 @@ enum OwnershipChangeKind {
 
 // P2.1: Enhanced Ownership - Role clarification for multi-owner scenarios
 enum OwnerRole {
-  SOLE_OWNER       // 100% owner, full control
-  CO_OWNER         // Shared ownership with decision rights
+  SOLE_OWNER // 100% owner, full control
+  CO_OWNER // Shared ownership with decision rights
   MANAGING_PARTNER // Day-to-day management responsibility
-  SILENT_PARTNER   // Owns percentage but no management involvement
-  BREEDING_RIGHTS  // Has breeding rights only (may not own physically)
-  INVESTOR         // Financial interest only, no operational role
+  SILENT_PARTNER // Owns percentage but no management involvement
+  BREEDING_RIGHTS // Has breeding rights only (may not own physically)
+  INVESTOR // Financial interest only, no operational role
 
   @@schema("public")
 }
@@ -141,6 +141,8 @@ enum TagModule {
   MESSAGE_THREAD
   DRAFT
   BREEDING_PLAN
+  BUYER
+  DEAL
 
   @@schema("public")
 }
@@ -260,6 +262,7 @@ enum FeatureModule {
   PORTAL
   REPORTING
   SETTINGS
+  DASHBOARD // Horse MVP - stallion revenue dashboard features
 
   @@schema("public")
 }
@@ -383,6 +386,111 @@ enum PreferenceLevel {
 enum ComplianceStatus {
   SUBSCRIBED
   UNSUBSCRIBED
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Buyer CRM Enums (P4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BuyerStatus {
+  LEAD // Initial contact
+  ACTIVE // Actively looking
+  QUALIFIED // Budget confirmed, serious buyer
+  NEGOTIATING // In deal discussions
+  PURCHASED // Completed a purchase
+  INACTIVE // Gone cold
+  ARCHIVED // No longer relevant
+
+  @@schema("public")
+}
+
+enum InterestLevel {
+  BROWSING // Just looking
+  INTERESTED // Wants more info
+  SERIOUS // Ready to discuss
+  OFFERED // Made an offer
+  DECLINED // Passed on this horse
+
+  @@schema("public")
+}
+
+enum DealStage {
+  INQUIRY // Initial contact
+  VIEWING // Scheduled/completed viewing
+  NEGOTIATION // Price discussions
+  VET_CHECK // Pre-purchase exam
+  CONTRACT // Paperwork stage
+  CLOSED_WON // Sale completed
+  CLOSED_LOST // Did not purchase
+
+  @@schema("public")
+}
+
+enum DealOutcome {
+  WON
+  LOST
+  CANCELLED
+
+  @@schema("public")
+}
+
+enum DealActivityType {
+  CALL
+  EMAIL
+  MEETING
+  VIEWING
+  NOTE
+  STATUS_CHANGE
+  OFFER_MADE
+  OFFER_RECEIVED
+  CONTRACT_SENT
+  CONTRACT_SIGNED
+
+  @@schema("public")
+}
+
+enum BuyerEmailTemplateCategory {
+  GENERAL          // Generic responses
+  INITIAL_CONTACT  // First response to inquiry
+  FOLLOW_UP        // Follow-up emails
+  VIEWING          // Related to viewings/visits
+  NEGOTIATION      // Price/deal discussions
+  CLOSING          // Final steps of sale
+
+  @@schema("public")
+}
+
+enum BuyerTaskType {
+  FOLLOW_UP        // General follow-up
+  CALL             // Phone call needed
+  EMAIL            // Send email
+  SCHEDULE_VIEWING // Arrange a viewing
+  SEND_INFO        // Send information/media
+  VET_CHECK        // Coordinate vet check
+  CONTRACT         // Contract-related task
+  PAYMENT          // Payment follow-up
+  OTHER            // Miscellaneous
+
+  @@schema("public")
+}
+
+enum BuyerTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+
+  @@schema("public")
+}
+
+enum BuyerTaskStatus {
+  PENDING          // Not started
+  IN_PROGRESS      // Being worked on
+  COMPLETED        // Done
+  CANCELLED        // No longer needed
+  DEFERRED         // Postponed
 
   @@schema("public")
 }
@@ -781,6 +889,10 @@ enum NotificationType {
   contract_declined
   contract_voided
   contract_expired
+  // Breeding Guarantee notifications (P3.3 - Horse MVP)
+  guarantee_expiring_30d // 30 days before guarantee expires
+  guarantee_expiring_7d // 7 days before guarantee expires
+  guarantee_expired // Guarantee has expired, no resolution recorded
 
   @@schema("public")
 }
@@ -921,6 +1033,12 @@ model User {
 
   // Contract templates created by this user
   contractTemplatesCreated ContractTemplate[] @relation("ContractTemplateCreatedBy")
+
+  // Buyer CRM (P4)
+  dealActivities DealActivity[]
+  // Buyer CRM (P5)
+  buyerTasksAssigned  BuyerTask[] @relation("BuyerTaskAssignee")
+  buyerTasksCompleted BuyerTask[] @relation("BuyerTaskCompleter")
 
   @@index([partyId])
   @@index([defaultTenantId])
@@ -1229,6 +1347,14 @@ model Tenant {
   partyEmails     PartyEmail[]
   partyActivity   PartyActivity[]
   unlinkedEmails  UnlinkedEmail[]
+
+  // Buyer CRM (P4)
+  buyers              Buyer[]
+  deals               Deal[]
+  dealActivities      DealActivity[]
+  // Buyer CRM (P5)
+  buyerEmailTemplates BuyerEmailTemplate[]
+  buyerTasks          BuyerTask[]
 
   // Client profile change requests
   contactChangeRequests ContactChangeRequest[]
@@ -1821,9 +1947,9 @@ model MktListingBreederService {
   seasonEnd   DateTime?
 
   // Breeding Details
-  breedingMethods   String[]               @default([])
-  defaultGuarantee  BreedingGuaranteeType?
-  horseServiceData  Json?                  @db.JsonB
+  breedingMethods  String[]               @default([])
+  defaultGuarantee BreedingGuaranteeType?
+  horseServiceData Json?                  @db.JsonB
 
   // Booking Management
   maxBookings      Int?
@@ -1976,33 +2102,33 @@ model Party {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization         Organization?              @relation("OrganizationParty")
-  contact              Contact?                   @relation("ContactParty")
-  users                User[]                     @relation("UserParty")
-  attachments          Attachment[]               @relation("AttachmentParty")
-  tagAssignments       TagAssignment[]            @relation("TagAssignmentTaggedParty")
-  breedingAttempts     BreedingAttempt[]          @relation("BreedingAttemptStudOwner")
-  planParties          PlanParty[]                @relation("PlanPartyRole")
-  waitlistEntries      WaitlistEntry[]            @relation("WaitlistParty")
-  offspringGroupBuyers OffspringGroupBuyer[]      @relation("OffspringGroupBuyerParty")
-  breedingPlanBuyers   BreedingPlanBuyer[]        @relation("BreedingPlanBuyerParty")
-  offspringBuyers      Offspring[]                @relation("OffspringBuyerParty")
-  invoiceParties       Invoice[]                  @relation("InvoiceParty")
-  contractParties      ContractParty[]            @relation("ContractPartyRole")
-  offspringContracts   OffspringContract[]        @relation("OffspringContractBuyerParty")
-  animalBuyers         Animal[]                   @relation("AnimalBuyerParty")
-  animalOwnerships     AnimalOwner[]              @relation("AnimalOwnerParty")
-  expenseVendors       Expense[]                  @relation("ExpenseVendor")
-  commPreferences      PartyCommPreference[]
-  commPreferenceEvents PartyCommPreferenceEvent[]
-  messageParticipants  MessageParticipant[]       @relation("MessageParticipantParty")
-  sentMessages         Message[]                  @relation("MessageSenderParty")
-  createdTemplates     Template[]                 @relation("TemplateCreatedBy")
-  autoReplyLogs        AutoReplyLog[]             @relation("AutoReplyLogParty")
-  autoReplyRulesCreated AutoReplyRule[]           @relation("AutoReplyRuleCreatedBy")
-  portalAccess         PortalAccess?              @relation("PortalAccessParty")
-  portalInvites        PortalInvite[]             @relation("PortalInviteParty")
-  schedulingBookings   SchedulingBooking[]        @relation("SchedulingBookingParty")
+  organization          Organization?              @relation("OrganizationParty")
+  contact               Contact?                   @relation("ContactParty")
+  users                 User[]                     @relation("UserParty")
+  attachments           Attachment[]               @relation("AttachmentParty")
+  tagAssignments        TagAssignment[]            @relation("TagAssignmentTaggedParty")
+  breedingAttempts      BreedingAttempt[]          @relation("BreedingAttemptStudOwner")
+  planParties           PlanParty[]                @relation("PlanPartyRole")
+  waitlistEntries       WaitlistEntry[]            @relation("WaitlistParty")
+  offspringGroupBuyers  OffspringGroupBuyer[]      @relation("OffspringGroupBuyerParty")
+  breedingPlanBuyers    BreedingPlanBuyer[]        @relation("BreedingPlanBuyerParty")
+  offspringBuyers       Offspring[]                @relation("OffspringBuyerParty")
+  invoiceParties        Invoice[]                  @relation("InvoiceParty")
+  contractParties       ContractParty[]            @relation("ContractPartyRole")
+  offspringContracts    OffspringContract[]        @relation("OffspringContractBuyerParty")
+  animalBuyers          Animal[]                   @relation("AnimalBuyerParty")
+  animalOwnerships      AnimalOwner[]              @relation("AnimalOwnerParty")
+  expenseVendors        Expense[]                  @relation("ExpenseVendor")
+  commPreferences       PartyCommPreference[]
+  commPreferenceEvents  PartyCommPreferenceEvent[]
+  messageParticipants   MessageParticipant[]       @relation("MessageParticipantParty")
+  sentMessages          Message[]                  @relation("MessageSenderParty")
+  createdTemplates      Template[]                 @relation("TemplateCreatedBy")
+  autoReplyLogs         AutoReplyLog[]             @relation("AutoReplyLogParty")
+  autoReplyRulesCreated AutoReplyRule[]            @relation("AutoReplyRuleCreatedBy")
+  portalAccess          PortalAccess?              @relation("PortalAccessParty")
+  portalInvites         PortalInvite[]             @relation("PortalInviteParty")
+  schedulingBookings    SchedulingBooking[]        @relation("SchedulingBookingParty")
 
   // Marketplace blocklist (who blocked, who lifted)
   marketplaceBlocksCreated MarketplaceUserBlock[] @relation("MarketplaceBlockCreator")
@@ -2014,6 +2140,9 @@ model Party {
   milestones PartyMilestone[] @relation("PartyMilestones")
   emails     PartyEmail[]     @relation("PartyEmails")
   activity   PartyActivity[]  @relation("PartyActivity")
+
+  // Buyer CRM relations (P4)
+  buyer Buyer? @relation("BuyerParty")
 
   // Communications Hub relations
   emailSendLogs EmailSendLog[] @relation("EmailSendLogParty")
@@ -2500,6 +2629,12 @@ model Animal {
   // Contracts (e.g., sales agreements for this animal)
   contracts Contract[] @relation("ContractAnimal")
 
+  // Buyer CRM relations (P4)
+  buyerInterests BuyerInterest[] @relation("BuyerInterestAnimal")
+  deals          Deal[]          @relation("DealAnimal")
+  // Buyer CRM relations (P5)
+  buyerTasks     BuyerTask[]     @relation("BuyerTaskAnimal")
+
   // Mare reproductive history (horses only)
   mareReproductiveHistory MareReproductiveHistory?
 
@@ -2709,7 +2844,7 @@ model MktListingIndividualAnimal {
   seasonEnd   DateTime?
 
   // Breeding Details
-  breedingMethods      String[]                  @default([])
+  breedingMethods      String[]               @default([])
   defaultGuaranteeType BreedingGuaranteeType?
 
   // Booking Management
@@ -2796,7 +2931,7 @@ model MktListingAnimalProgram {
   seasonEnd   DateTime?
 
   // Breeding Details
-  breedingMethods      String[]                  @default([])
+  breedingMethods      String[]               @default([])
   defaultGuaranteeType BreedingGuaranteeType?
 
   // Default Booking Settings (per animal)
@@ -3094,6 +3229,13 @@ model TagAssignment {
   breedingPlanId Int?
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
 
+  // Buyer CRM (P4)
+  buyerId Int?
+  buyer   Buyer? @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  dealId Int?
+  deal   Deal? @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
 
   @@unique([tagId, taggedPartyId])
@@ -3104,6 +3246,8 @@ model TagAssignment {
   @@unique([tagId, messageThreadId])
   @@unique([tagId, draftId])
   @@unique([tagId, breedingPlanId])
+  @@unique([tagId, buyerId])
+  @@unique([tagId, dealId])
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
@@ -3112,6 +3256,8 @@ model TagAssignment {
   @@index([messageThreadId])
   @@index([draftId])
   @@index([breedingPlanId])
+  @@index([buyerId])
+  @@index([dealId])
   @@index([tagId, taggedPartyId])
   @@schema("public")
 }
@@ -3731,21 +3877,21 @@ model BreedingAttempt {
   // Guarantee Tracking (P1 Sprint - P1.3)
   // Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md Section 3.2
   // ─────────────────────────────────────────────────────────────────────────────
-  guaranteeType          BreedingGuaranteeType?
-  guaranteeExpiresAt     DateTime?
-  guaranteeTriggered     Boolean   @default(false)
-  guaranteeTriggeredAt   DateTime?
-  guaranteeReason        String?   // "Stillborn", "Failed to conceive"
-  guaranteeResolution    GuaranteeResolution?
+  guaranteeType        BreedingGuaranteeType?
+  guaranteeExpiresAt   DateTime?
+  guaranteeTriggered   Boolean                @default(false)
+  guaranteeTriggeredAt DateTime?
+  guaranteeReason      String? // "Stillborn", "Failed to conceive"
+  guaranteeResolution  GuaranteeResolution?
 
   // Return Breeding (if guarantee triggered)
-  returnBreedingGranted    Boolean   @default(false)
-  returnBreedingExpiresAt  DateTime?
-  returnBreedingUsedAt     DateTime?
+  returnBreedingGranted   Boolean   @default(false)
+  returnBreedingExpiresAt DateTime?
+  returnBreedingUsedAt    DateTime?
 
   // Fee snapshot at time of breeding
-  agreedFeeCents         Int?
-  feePaidCents           Int?      @default(0)
+  agreedFeeCents Int?
+  feePaidCents   Int? @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5173,10 +5319,10 @@ enum AutoReplyTriggerType {
   dm_after_hours
 
   // New comprehensive triggers
-  email_received       // Instant acknowledgment for emails
-  time_based          // Away messages with date range
-  keyword_match       // FAQ responses based on keywords
-  business_hours      // Out of office during non-business hours
+  email_received // Instant acknowledgment for emails
+  time_based // Away messages with date range
+  keyword_match // FAQ responses based on keywords
+  business_hours // Out of office during non-business hours
 
   @@schema("public")
 }
@@ -5250,7 +5396,7 @@ model AutoReplyRule {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String
-  description String?          @db.Text
+  description String?             @db.Text
   channel     TemplateChannel
   status      AutoReplyRuleStatus @default(active)
 
@@ -5669,11 +5815,11 @@ enum BundleStatus {
 }
 
 model DocumentBundle {
-  id          Int          @id @default(autoincrement())
-  tenantId    Int
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name        String       // e.g., "Go Home Document Bundle"
+  name        String // e.g., "Go Home Document Bundle"
   description String?      @db.Text
   status      BundleStatus @default(active)
 
@@ -5689,11 +5835,11 @@ model DocumentBundle {
 }
 
 model DocumentBundleItem {
-  id         Int      @id @default(autoincrement())
+  id         Int            @id @default(autoincrement())
   bundleId   Int
   bundle     DocumentBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
   documentId Int
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document   Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   sortOrder Int      @default(0)
   addedAt   DateTime @default(now())
@@ -8224,12 +8370,12 @@ model EmailFilter {
   type String @db.VarChar(20) // "ALLOW" | "BLOCK"
 
   // Why was this filter created?
-  reason   String? @db.Text
+  reason    String? @db.Text
   autoAdded Boolean @default(false) // System auto-added vs user-created
 
   // Metadata
-  createdAt   DateTime @default(now())
-  createdBy   String?  // User ID who created the filter
+  createdAt   DateTime  @default(now())
+  createdBy   String? // User ID who created the filter
   lastMatched DateTime? // Last time this filter matched an email
 
   @@index([tenantId, pattern])
@@ -8279,3 +8425,243 @@ model BlockedEmail {
   @@schema("public")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Buyer CRM (P4) - Sales pipeline to track prospective horse buyers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Buyer - A prospective horse purchaser
+ * Links to Party for unified contact management (notes, events, activity all inherited)
+ */
+model Buyer {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Link to existing Party system for unified contact management
+  partyId Int   @unique
+  party   Party @relation("BuyerParty", fields: [partyId], references: [id], onDelete: Restrict)
+
+  // Buyer-specific fields
+  status         BuyerStatus @default(ACTIVE)
+  source         String?     @db.VarChar(100) // "Referral", "Website", "Trade Show", etc.
+  budget         Decimal?    @db.Decimal(12, 2)
+  budgetCurrency String      @default("USD") @db.Char(3)
+  notes          String?     @db.Text
+
+  // Preferences
+  preferredBreeds String[] // ["Thoroughbred", "Quarter Horse"]
+  preferredUses   String[] // ["Racing", "Breeding", "Show"]
+  preferredAgeMin Int?
+  preferredAgeMax Int?
+  preferredSex    Sex?
+
+  // Relationships
+  interests      BuyerInterest[]
+  deals          Deal[]
+  tagAssignments TagAssignment[]
+  tasks          BuyerTask[]     @relation("BuyerTasks")
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  @@index([tenantId])
+  @@index([partyId])
+  @@index([status])
+  @@index([tenantId, status])
+  @@index([tenantId, archivedAt])
+  @@schema("public")
+}
+
+/**
+ * BuyerInterest - Links buyers to specific horses they're interested in
+ */
+model BuyerInterest {
+  id       Int    @id @default(autoincrement())
+  buyerId  Int
+  buyer    Buyer  @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation("BuyerInterestAnimal", fields: [animalId], references: [id], onDelete: Cascade)
+
+  level InterestLevel @default(INTERESTED)
+  notes String?       @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([buyerId, animalId])
+  @@index([buyerId])
+  @@index([animalId])
+  @@index([level])
+  @@schema("public")
+}
+
+/**
+ * Deal - A sales opportunity in the pipeline
+ */
+model Deal {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  buyerId  Int
+  buyer    Buyer   @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  animalId Int? // Optional - may be general inquiry
+  animal   Animal? @relation("DealAnimal", fields: [animalId], references: [id], onDelete: SetNull)
+
+  name  String    @db.VarChar(255) // "John Smith - Starlight Purchase"
+  stage DealStage @default(INQUIRY)
+
+  // Financials
+  askingPrice Decimal? @db.Decimal(12, 2)
+  offerPrice  Decimal? @db.Decimal(12, 2)
+  finalPrice  Decimal? @db.Decimal(12, 2)
+  currency    String   @default("USD") @db.Char(3)
+
+  // Dates
+  expectedCloseDate DateTime?
+  closedAt          DateTime?
+
+  // Outcome
+  outcome    DealOutcome?
+  lostReason String?      @db.VarChar(500)
+
+  notes String? @db.Text
+
+  // Relationships
+  activities     DealActivity[]
+  tagAssignments TagAssignment[]
+  tasks          BuyerTask[]     @relation("DealTasks")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([buyerId])
+  @@index([animalId])
+  @@index([stage])
+  @@index([tenantId, stage])
+  @@index([tenantId, buyerId])
+  @@index([outcome])
+  @@schema("public")
+}
+
+/**
+ * DealActivity - Log of interactions on a deal
+ * Separate from PartyActivity since deals aren't parties
+ */
+model DealActivity {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  dealId Int
+  deal   Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  type        DealActivityType
+  title       String           @db.VarChar(255)
+  description String?          @db.Text
+
+  // For scheduled activities
+  scheduledAt DateTime?
+  completedAt DateTime?
+
+  // Who performed the activity
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([dealId])
+  @@index([type])
+  @@index([dealId, createdAt])
+  @@schema("public")
+}
+
+/**
+ * BuyerEmailTemplate - Quick-response email templates for buyer communications
+ * User-customizable templates (different from system Template model used for documents)
+ */
+model BuyerEmailTemplate {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String @db.VarChar(100) // "Initial Interest Response", "Follow-up After Viewing"
+  subject     String @db.VarChar(255)
+  bodyHtml    String @db.Text
+  bodyText    String @db.Text
+  category    BuyerEmailTemplateCategory @default(GENERAL)
+
+  // Usage tracking
+  useCount    Int    @default(0)
+  lastUsedAt  DateTime?
+
+  // Ordering and status
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, category])
+  @@index([tenantId, isActive])
+  @@schema("public")
+}
+
+/**
+ * BuyerTask - Tasks related to buyer/deal management
+ * E.g., "Follow up with John Smith", "Schedule viewing for Starlight"
+ */
+model BuyerTask {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Task details
+  title       String          @db.VarChar(255)
+  description String?         @db.Text
+  taskType    BuyerTaskType   @default(FOLLOW_UP)
+  priority    BuyerTaskPriority @default(MEDIUM)
+  status      BuyerTaskStatus @default(PENDING)
+
+  // Due date
+  dueAt       DateTime?
+  reminderAt  DateTime? // When to send reminder notification
+
+  // Relationships - at least one should be set
+  buyerId  Int?
+  buyer    Buyer? @relation("BuyerTasks", fields: [buyerId], references: [id], onDelete: Cascade)
+  dealId   Int?
+  deal     Deal?  @relation("DealTasks", fields: [dealId], references: [id], onDelete: Cascade)
+  animalId Int?
+  animal   Animal? @relation("BuyerTaskAnimal", fields: [animalId], references: [id], onDelete: SetNull)
+
+  // Assignment
+  assignedToUserId String?
+  assignedToUser   User? @relation("BuyerTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  // Completion tracking
+  completedAt   DateTime?
+  completedById String?
+  completedBy   User? @relation("BuyerTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+
+  // Auto-generated task tracking (for automation)
+  isAutoGenerated Boolean @default(false)
+  automationRule  String? @db.VarChar(100) // e.g., "follow_up_after_inquiry"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, dueAt])
+  @@index([buyerId])
+  @@index([dealId])
+  @@index([assignedToUserId])
+  @@index([tenantId, status, dueAt])
+  @@schema("public")
+}
