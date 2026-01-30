@@ -1040,6 +1040,10 @@ model User {
   buyerTasksAssigned  BuyerTask[] @relation("BuyerTaskAssignee")
   buyerTasksCompleted BuyerTask[] @relation("BuyerTaskCompleter")
 
+  // Registry integration (P6)
+  registryVerifications RegistryVerification[] @relation("RegistryVerificationVerifier")
+  registrySyncLogs      RegistrySyncLog[]      @relation("RegistrySyncLogInitiator")
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -1377,6 +1381,10 @@ model Tenant {
   // Demo tenants can be reset to a known state via the reset endpoint
   isDemoTenant  Boolean @default(false)
   demoResetType String? // 'fresh' | 'lived-in' - determines which seed script to run on reset
+
+  // Registry integration (P6)
+  registryConnections RegistryConnection[]
+  registrySyncLogs    RegistrySyncLog[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -2646,6 +2654,9 @@ model Animal {
   crossTenantLinksAsChild  CrossTenantAnimalLink[] @relation("LinkedChild")
   crossTenantLinksAsParent CrossTenantAnimalLink[] @relation("LinkedParent")
 
+  // Registry pedigree links (P6)
+  registryPedigrees RegistryPedigree[] @relation("RegistryPedigreeLinkedAnimal")
+
   @@unique([tenantId, microchip])
   @@index([organizationId])
   @@index([tenantId])
@@ -2738,6 +2749,7 @@ model Registry {
   updatedAt         DateTime                   @updatedAt
   identifiers       AnimalRegistryIdentifier[]
   BreedRegistryLink BreedRegistryLink[]
+  connections       RegistryConnection[]
 
   @@schema("public")
 }
@@ -2753,6 +2765,10 @@ model AnimalRegistryIdentifier {
   issuedAt          DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+
+  // P6: Verification and pedigree relations
+  verification RegistryVerification?
+  pedigrees    RegistryPedigree[]
 
   @@unique([registryId, identifier])
   @@index([animalId])
@@ -8663,5 +8679,167 @@ model BuyerTask {
   @@index([dealId])
   @@index([assignedToUserId])
   @@index([tenantId, status, dueAt])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Registry Integration (P6 Sprint)
+ * OAuth connections, verification, pedigree import
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum RegistryConnectionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  ERROR
+  TOKEN_EXPIRED
+
+  @@schema("public")
+}
+
+enum VerificationMethod {
+  API      // Verified via registry API
+  MANUAL   // Manually verified by user/admin
+  DOCUMENT // Verified via uploaded document
+
+  @@schema("public")
+}
+
+enum VerificationConfidence {
+  HIGH   // Strong match (API verification or document review)
+  MEDIUM // Partial match (name similar but not exact)
+  LOW    // Weak match (only identifier format validated)
+  NONE   // Not verified
+
+  @@schema("public")
+}
+
+// Registry API connection config per tenant
+model RegistryConnection {
+  id         Int      @id @default(autoincrement())
+  tenantId   Int
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  registryId Int
+  registry   Registry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+
+  status RegistryConnectionStatus @default(DISCONNECTED)
+
+  // OAuth tokens (encrypted in production via application layer)
+  accessToken    String?   @db.Text
+  refreshToken   String?   @db.Text
+  tokenExpiresAt DateTime?
+
+  // API credentials (for non-OAuth registries)
+  apiKey    String?
+  apiSecret String?
+
+  // Connection metadata
+  connectedAt  DateTime?
+  lastSyncAt   DateTime?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, registryId])
+  @@index([tenantId])
+  @@index([registryId])
+  @@schema("public")
+}
+
+// Verification status for existing AnimalRegistryIdentifier
+model RegistryVerification {
+  id                         Int                      @id @default(autoincrement())
+  animalRegistryIdentifierId Int                      @unique
+  animalRegistryIdentifier   AnimalRegistryIdentifier @relation(fields: [animalRegistryIdentifierId], references: [id], onDelete: Cascade)
+
+  verified   Boolean                @default(false)
+  verifiedAt DateTime?
+  method     VerificationMethod?
+  confidence VerificationConfidence @default(NONE)
+
+  // Data returned from registry (if API verification)
+  registryData Json? @db.JsonB
+
+  // Document evidence (if manual/document verification)
+  documentUrl   String? @db.Text // S3/storage URL for uploaded document
+  documentNotes String? @db.Text // Notes about verification
+
+  // Who performed manual verification
+  verifiedByUserId String?
+  verifiedByUser   User?   @relation("RegistryVerificationVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([verified])
+  @@schema("public")
+}
+
+// Pedigree data from registry (separate from our lineage system)
+model RegistryPedigree {
+  id                         Int                      @id @default(autoincrement())
+  animalRegistryIdentifierId Int
+  animalRegistryIdentifier   AnimalRegistryIdentifier @relation(fields: [animalRegistryIdentifierId], references: [id], onDelete: Cascade)
+
+  generation Int    // 1 = parents, 2 = grandparents, etc.
+  position   String // "sire", "dam", "sire_sire", "sire_dam", "dam_sire", "dam_dam", etc.
+
+  // Registry data for ancestor
+  registrationNumber String?
+  name               String
+  color              String?
+  birthYear          Int?
+  sex                String? // "M", "F", "G" (gelding)
+
+  // Link to animal if exists in our system
+  linkedAnimalId Int?
+  linkedAnimal   Animal? @relation("RegistryPedigreeLinkedAnimal", fields: [linkedAnimalId], references: [id], onDelete: SetNull)
+
+  // Raw data from registry
+  rawData Json? @db.JsonB
+
+  createdAt DateTime @default(now())
+
+  @@unique([animalRegistryIdentifierId, position])
+  @@index([animalRegistryIdentifierId])
+  @@index([linkedAnimalId])
+  @@schema("public")
+}
+
+// Audit log for registry operations
+model RegistrySyncLog {
+  id         Int    @id @default(autoincrement())
+  tenantId   Int
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  registryId Int
+
+  action String // "verify", "import_pedigree", "refresh_token", "lookup"
+  status String // "success", "error", "pending"
+
+  // Optional references
+  animalId   Int?
+  identifier String?
+
+  // Request/response data
+  requestData  Json?   @db.JsonB
+  responseData Json?   @db.JsonB
+  errorMessage String? @db.Text
+
+  // Performance tracking
+  durationMs Int?
+
+  // User who initiated the action
+  initiatedByUserId String?
+  initiatedByUser   User?   @relation("RegistrySyncLogInitiator", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, registryId])
+  @@index([createdAt])
+  @@index([action])
   @@schema("public")
 }
