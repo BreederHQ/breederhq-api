@@ -12,11 +12,19 @@ build/
 
 # Local env files (never commit secrets)
 .env
-.env.*
+.env.local
+.env.*.local
+.env.dev
+.env.dev.*
+.env.test
+.env.test.*
+.env.production.local
+.env.prod.migrate
 
-# Env templates (commit these only)
-!.env.example
+# Env templates (commit these)
+!.env.dev.example
 !.env.dev.migrate.example
+!.env.studio.example
 !.env.prod.migrate.example
 
 # Logs
@@ -33,53 +41,14 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
-nul
 
 # Other files
 *repo-structure*
+.claude/settings.local.json
 
 # route tests (excluded)
 src/routes/__tests__/
 prisma/migrations.bak/
 tmp/route-backups/
 prisma/schema.backup.prisma
-cookies.txt
-.env.proto
-*.cookies.txt
-*-cookies.txt
 
-
-# Playwright test artifacts
-test-results/
-playwright-report/
-playwright/.cache/
-
-# Screenshots (Playwright, debug, etc)
-./screenshots
-screenshot*.png
-*.screenshot.png
-docs/marketplace/audit/screenshots/
-
-# Cookie files (sensitive session data)
-cookies.txt
-*.cookies.txt
-*-cookies.txt
-
-# Other files
-repo-structure-output.txt
-breederhq-repo-structure.txt
-.claudeignore
-.eslintcache
-*.nul
-/nul
-
-# Claude Code config - track CLAUDE.md but ignore local settings
-.claude/*
-!.claude/CLAUDE.md
-
-# Claude Code temporary files
-tmpclaude-*-cwd
-
-# Temporary folders
-.tmp/
-tmp/
