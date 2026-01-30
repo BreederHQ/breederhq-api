@@ -550,6 +550,7 @@ import dealsRoutes from "./routes/deals.js"; // Deals/Sales pipeline (P4)
 import buyerTasksRoutes from "./routes/buyer-tasks.js"; // Buyer CRM Tasks (P5)
 import buyerAnalyticsRoutes from "./routes/buyer-analytics.js"; // Buyer CRM Analytics (P5)
 import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P5)
+import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -605,7 +606,7 @@ app.register(
 );
 
 // ---------- Global error handler ----------
-app.setErrorHandler((err, req, reply) => {
+app.setErrorHandler((err: Error, req, reply) => {
   req.log.error(
     {
       err: {
@@ -960,6 +961,7 @@ app.register(
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
+    api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
