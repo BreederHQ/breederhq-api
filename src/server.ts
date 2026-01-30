@@ -545,6 +545,11 @@ import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-executi
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
+import buyersRoutes from "./routes/buyers.js"; // Buyer CRM (P4)
+import dealsRoutes from "./routes/deals.js"; // Deals/Sales pipeline (P4)
+import buyerTasksRoutes from "./routes/buyer-tasks.js"; // Buyer CRM Tasks (P5)
+import buyerAnalyticsRoutes from "./routes/buyer-analytics.js"; // Buyer CRM Analytics (P5)
+import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P5)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -932,6 +937,11 @@ app.register(
     api.register(contactsRoutes);      // /api/v1/contacts/*
     api.register(partiesRoutes);       // /api/v1/parties/*
     api.register(partyCrmRoutes);      // /api/v1/parties/:partyId/notes|events|milestones|emails|activity
+    api.register(buyersRoutes);        // /api/v1/buyers/* Buyer CRM (P4)
+    api.register(dealsRoutes);         // /api/v1/deals/* Sales pipeline (P4)
+    api.register(buyerTasksRoutes);    // /api/v1/buyer-tasks/* Buyer CRM Tasks (P5)
+    api.register(buyerAnalyticsRoutes); // /api/v1/buyer-analytics/* Buyer CRM Analytics (P5)
+    api.register(buyerEmailsRoutes);   // /api/v1/buyer-email-templates/*, /api/v1/buyers/:id/emails (P5)
     api.register(templatesRoutes);     // /api/v1/templates/* Email/message templates
     api.register(autoRepliesRoutes);   // /api/v1/auto-replies/* Auto-reply rules
     api.register(contractsRoutes);     // /api/v1/contracts/* Contract e-signatures

@@ -32,6 +32,13 @@ export const TENANT_PREFIXES = {
   animalPublicListing: "animal-listing-test",
   invoiceBuyerEnforcement: "invoice-buyer-test",
   traitDefinitions: "trait-def-test",
+  // Horse MVP integration tests (P3.5)
+  studService: "stud-service-test",
+  booking: "booking-test",
+  ownership: "ownership-test",
+  guaranteeNotifications: "guarantee-notifications-test",
+  // Buyer CRM tests (P4)
+  buyerCrm: "buyer-crm-test",
 } as const;
 
 export type TenantPrefix = (typeof TENANT_PREFIXES)[keyof typeof TENANT_PREFIXES];
@@ -103,6 +110,21 @@ export async function teardownTestTenant(
 ): Promise<void> {
   const prisma = prismaClient ?? getPrisma();
 
+  // 0. Notifications (FK to tenant)
+  await prisma.notification.deleteMany({ where: { tenantId } });
+
+  // 0a. Deal activities (FK to Deal)
+  await prisma.dealActivity.deleteMany({ where: { deal: { tenantId } } });
+
+  // 0b. Deals (FK to Buyer, Animal)
+  await prisma.deal.deleteMany({ where: { tenantId } });
+
+  // 0c. Buyer interests (FK to Buyer, Animal)
+  await prisma.buyerInterest.deleteMany({ where: { buyer: { tenantId } } });
+
+  // 0d. Buyers (FK to Party)
+  await prisma.buyer.deleteMany({ where: { tenantId } });
+
   // 1. Invoice line items
   await prisma.invoiceLineItem.deleteMany({ where: { tenantId } });
 
@@ -114,15 +136,18 @@ export async function teardownTestTenant(
     where: { animal: { tenantId } },
   });
 
-  // 4. Animal public listings
-  await prisma.animalPublicListing.deleteMany({ where: { tenantId } });
+  // 4. Individual animal listings (FK to Animal)
+  await prisma.mktListingIndividualAnimal.deleteMany({ where: { tenantId } });
 
   // 4b. Animal trait values (FK to Animal, TraitDefinition)
   await prisma.animalTraitValue.deleteMany({ where: { tenantId } });
 
-  // 5. Breeding attempts
+  // 4c. Breeder service listings (FK to Animal via stallionId)
+  await prisma.mktListingBreederService.deleteMany({ where: { tenantId } });
+
+  // 5. Breeding attempts (can have direct tenantId or via plan)
   await prisma.breedingAttempt.deleteMany({
-    where: { plan: { tenantId } },
+    where: { tenantId },
   });
 
   // 6. Offspring
