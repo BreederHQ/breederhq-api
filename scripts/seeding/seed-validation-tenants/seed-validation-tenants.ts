@@ -2321,6 +2321,72 @@ async function seedContractTemplates(
   return created;
 }
 
+// Feature flag definitions
+const FEATURE_FLAGS = [
+  {
+    key: 'HORSE_STALLION_REVENUE',
+    name: 'Stallion Revenue Dashboard',
+    description: 'Revenue tracking widget, booking utilization, and related KPI tiles for horse breeders',
+    module: 'DASHBOARD' as const,
+    entitlementKey: 'BREEDING_PLANS' as const,
+    uiHint: 'Horse Dashboard > Stallion Revenue widget, Foals YTD tile, Season Bookings tile',
+    isActive: true,
+  },
+  {
+    key: 'HORSE_ENHANCED_OWNERSHIP',
+    name: 'Enhanced Ownership Management',
+    description: 'Multi-owner support with roles, temporal tracking, and owner notifications',
+    module: 'ANIMALS' as const,
+    entitlementKey: 'PLATFORM_ACCESS' as const,
+    uiHint: 'Animal Details > Ownership section, Owner editor modal',
+    isActive: true,
+  },
+];
+
+async function seedFeatureFlags(): Promise<number> {
+  let created = 0;
+
+  for (const featureConfig of FEATURE_FLAGS) {
+    // Check if feature already exists
+    let feature = await prisma.feature.findUnique({
+      where: { key: featureConfig.key },
+    });
+
+    if (feature) {
+      // Update existing feature
+      await prisma.feature.update({
+        where: { id: feature.id },
+        data: {
+          name: featureConfig.name,
+          description: featureConfig.description,
+          module: featureConfig.module,
+          entitlementKey: featureConfig.entitlementKey,
+          uiHint: featureConfig.uiHint,
+          isActive: featureConfig.isActive,
+        },
+      });
+      console.log(`  = Feature flag exists: ${featureConfig.key}`);
+    } else {
+      // Create new feature
+      await prisma.feature.create({
+        data: {
+          key: featureConfig.key,
+          name: featureConfig.name,
+          description: featureConfig.description,
+          module: featureConfig.module,
+          entitlementKey: featureConfig.entitlementKey,
+          uiHint: featureConfig.uiHint,
+          isActive: featureConfig.isActive,
+        },
+      });
+      created++;
+      console.log(`  + Created feature flag: ${featureConfig.key}`);
+    }
+  }
+
+  return created;
+}
+
 async function seedContractInstances(
   tenantSlug: string,
   tenantId: number,
@@ -3966,6 +4032,7 @@ async function main() {
     individualAnimalListings: 0,
     crossTenantLinks: 0,
     contractTemplates: 0,
+    featureFlags: 0,
     contracts: 0,
     messageTemplates: 0,
     autoReplyRules: 0,
@@ -3988,6 +4055,13 @@ async function main() {
   console.log('─────────────────────────────────────────────────────────────────────────────');
   const contractTemplatesCreated = await seedContractTemplates(SYSTEM_CONTRACT_TEMPLATES);
   stats.contractTemplates = contractTemplatesCreated;
+
+  // Seed feature flags
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  FEATURE FLAGS');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  const featureFlagsCreated = await seedFeatureFlags();
+  stats.featureFlags = featureFlagsCreated;
 
   // Seed marketplace shoppers FIRST so they exist for DM threads
   console.log('─────────────────────────────────────────────────────────────────────────────');
@@ -4382,6 +4456,7 @@ async function main() {
   console.log(`  Individual Listings:  ${stats.individualAnimalListings}`);
   console.log(`  Cross-Tenant Links:   ${stats.crossTenantLinks}`);
   console.log(`  Contract Templates:   ${stats.contractTemplates}`);
+  console.log(`  Feature Flags:        ${stats.featureFlags}`);
   console.log(`  Contracts:            ${stats.contracts}`);
   console.log(`  Message Templates:    ${stats.messageTemplates}`);
   console.log(`  Auto-Reply Rules:     ${stats.autoReplyRules}`);

@@ -40,6 +40,18 @@ interface BreedingAlert {
   tenantId: number;
 }
 
+interface GuaranteeAlert {
+  breedingAttemptId: number;
+  damId: number | null;
+  damName: string | null;
+  sireId: number | null;
+  sireName: string | null;
+  guaranteeType: string;
+  expiresAt: Date;
+  daysUntilExpiration: number;
+  tenantId: number;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Date Utilities
 // ────────────────────────────────────────────────────────────────────────────
@@ -562,6 +574,220 @@ export async function createBreedingNotifications(alerts: BreedingAlert[]): Prom
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Guarantee Expiration Scanning (P3.3, P3.4 - Horse MVP)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Format guarantee type for display
+ */
+function formatGuaranteeType(guaranteeType: string): string {
+  const labels: Record<string, string> = {
+    NO_GUARANTEE: "No Guarantee",
+    LIVE_FOAL: "Live Foal",
+    STANDS_AND_NURSES: "Stands and Nurses",
+    SIXTY_DAY_PREGNANCY: "60-Day Pregnancy",
+    CERTIFIED_PREGNANT: "Certified Pregnant",
+  };
+  return labels[guaranteeType] || guaranteeType.replace(/_/g, " ");
+}
+
+/**
+ * Determine notification type based on days until expiration
+ */
+function getGuaranteeNotificationType(
+  daysUntil: number
+): { type: NotificationType; priority: NotificationPriority } {
+  if (daysUntil < 0) {
+    return { type: "guarantee_expired", priority: "URGENT" };
+  }
+  if (daysUntil <= 7) {
+    return { type: "guarantee_expiring_7d", priority: "HIGH" };
+  }
+  if (daysUntil <= 30) {
+    return { type: "guarantee_expiring_30d", priority: "MEDIUM" };
+  }
+  throw new Error(`Invalid days until expiration: ${daysUntil}`);
+}
+
+/**
+ * Generate notification title for guarantee alerts
+ */
+function getGuaranteeNotificationTitle(
+  alert: GuaranteeAlert,
+  type: NotificationType
+): string {
+  const sireName = alert.sireName || "Unknown Stallion";
+
+  switch (type) {
+    case "guarantee_expiring_30d":
+      return `Breeding Guarantee Expiring Soon - ${sireName}`;
+    case "guarantee_expiring_7d":
+      return `Breeding Guarantee Expires in ${alert.daysUntilExpiration} Days`;
+    case "guarantee_expired":
+      return `Breeding Guarantee Expired - Action Required`;
+    default:
+      return "Breeding Guarantee Alert";
+  }
+}
+
+/**
+ * Generate notification message for guarantee alerts
+ */
+function getGuaranteeNotificationMessage(
+  alert: GuaranteeAlert,
+  type: NotificationType
+): string {
+  const guaranteeLabel = formatGuaranteeType(alert.guaranteeType);
+  const damInfo = alert.damName ? ` (${alert.damName})` : "";
+  const expiresDate = alert.expiresAt.toLocaleDateString();
+
+  switch (type) {
+    case "guarantee_expiring_30d":
+      return `${guaranteeLabel} guarantee for breeding${damInfo} expires on ${expiresDate}. Review breeding outcome and guarantee status.`;
+    case "guarantee_expiring_7d":
+      return `${guaranteeLabel} guarantee for breeding${damInfo} expires in ${alert.daysUntilExpiration} days. Take action before expiration.`;
+    case "guarantee_expired":
+      return `${guaranteeLabel} guarantee for breeding${damInfo} has expired. Record outcome or trigger return breeding if applicable.`;
+    default:
+      return "Review breeding guarantee status.";
+  }
+}
+
+/**
+ * Scan for breeding guarantees expiring within alert windows
+ * Alert windows: 30 days, 7 days, expired (no resolution)
+ */
+export async function scanGuaranteeExpirations(): Promise<GuaranteeAlert[]> {
+  const today = startOfDay(new Date());
+  const thirtyDaysFromNow = addDays(today, 30);
+  const sevenDaysAgo = addDays(today, -7);
+
+  // Find breeding attempts with guarantees that:
+  // 1. Have a guarantee type set (not NO_GUARANTEE)
+  // 2. Have an expiration date set
+  // 3. Are NOT yet resolved (guaranteeResolution is null)
+  // 4. Guarantee has not been triggered
+  // 5. Expire within alert window OR recently expired
+  const attempts = await prisma.breedingAttempt.findMany({
+    where: {
+      guaranteeType: { notIn: ["NO_GUARANTEE"] },
+      guaranteeExpiresAt: { not: null },
+      guaranteeTriggered: false,
+      guaranteeResolution: null,
+      OR: [
+        // Expiring within 30 days
+        {
+          guaranteeExpiresAt: {
+            gte: today,
+            lte: thirtyDaysFromNow,
+          },
+        },
+        // Expired within last 7 days (needs attention)
+        {
+          guaranteeExpiresAt: {
+            gte: sevenDaysAgo,
+            lt: today,
+          },
+        },
+      ],
+    },
+    include: {
+      dam: { select: { id: true, name: true, tenantId: true } },
+      sire: { select: { id: true, name: true, tenantId: true } },
+    },
+  });
+
+  const alerts: GuaranteeAlert[] = [];
+
+  for (const attempt of attempts) {
+    if (!attempt.guaranteeExpiresAt || !attempt.guaranteeType) continue;
+
+    const expiresAtStartOfDay = startOfDay(attempt.guaranteeExpiresAt);
+    const daysUntilExpiration = differenceInDays(expiresAtStartOfDay, today);
+
+    // Only alert for specific day thresholds: 30, 7, and expired (0 to -7)
+    const shouldAlert =
+      daysUntilExpiration === 30 ||
+      daysUntilExpiration === 7 ||
+      (daysUntilExpiration <= 0 && daysUntilExpiration >= -7);
+
+    if (!shouldAlert) continue;
+
+    // Use dam's tenant (mare owner is typically guarantee beneficiary)
+    const tenantId = attempt.dam?.tenantId ?? attempt.sire?.tenantId ?? attempt.tenantId;
+
+    alerts.push({
+      breedingAttemptId: attempt.id,
+      damId: attempt.dam?.id ?? null,
+      damName: attempt.dam?.name ?? null,
+      sireId: attempt.sire?.id ?? null,
+      sireName: attempt.sire?.name ?? null,
+      guaranteeType: attempt.guaranteeType,
+      expiresAt: attempt.guaranteeExpiresAt,
+      daysUntilExpiration,
+      tenantId,
+    });
+  }
+
+  return alerts;
+}
+
+/**
+ * Create notification records for guarantee alerts
+ */
+export async function createGuaranteeNotifications(alerts: GuaranteeAlert[]): Promise<number> {
+  const today = startOfDay(new Date());
+  let created = 0;
+
+  for (const alert of alerts) {
+    const { type, priority } = getGuaranteeNotificationType(alert.daysUntilExpiration);
+    const title = getGuaranteeNotificationTitle(alert, type);
+    const message = getGuaranteeNotificationMessage(alert, type);
+
+    // Generate idempotency key to prevent duplicate notifications
+    const idempotencyKey = `${type}:BreedingAttempt:${alert.breedingAttemptId}:${today.toISOString().split("T")[0]}`;
+
+    // Check if notification already exists for today
+    const existing = await prisma.notification.findUnique({
+      where: { idempotencyKey },
+    });
+
+    if (existing) {
+      continue; // Already notified today
+    }
+
+    // Create notification record
+    await prisma.notification.create({
+      data: {
+        tenantId: alert.tenantId,
+        userId: null, // Null = notify all tenant users
+        type,
+        priority,
+        title,
+        message,
+        linkUrl: `/breeding/attempts/${alert.breedingAttemptId}`,
+        status: "UNREAD",
+        idempotencyKey,
+        metadata: {
+          breedingAttemptId: alert.breedingAttemptId,
+          damId: alert.damId,
+          damName: alert.damName,
+          sireId: alert.sireId,
+          sireName: alert.sireName,
+          guaranteeType: alert.guaranteeType,
+          expiresAt: alert.expiresAt.toISOString(),
+          daysUntilExpiration: alert.daysUntilExpiration,
+        },
+      },
+    });
+
+    created++;
+  }
+
+  return created;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main Scanner Function
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -569,7 +795,7 @@ export async function createBreedingNotifications(alerts: BreedingAlert[]): Prom
  * Run all notification scans
  * Returns total number of notifications created
  */
-export async function runNotificationScan(): Promise<{ vaccinations: number; breeding: number; total: number }> {
+export async function runNotificationScan(): Promise<{ vaccinations: number; breeding: number; guarantees: number; total: number }> {
   console.log("[notification-scanner] Starting notification scan...");
 
   // Scan vaccinations
@@ -586,12 +812,20 @@ export async function runNotificationScan(): Promise<{ vaccinations: number; bre
   const breedingCreated = await createBreedingNotifications(breedingAlerts);
   console.log(`[notification-scanner] Created ${breedingCreated} breeding notifications`);
 
-  const total = vaccinationsCreated + breedingCreated;
+  // Scan guarantee expirations (P3.4 - Horse MVP)
+  const guaranteeAlerts = await scanGuaranteeExpirations();
+  console.log(`[notification-scanner] Found ${guaranteeAlerts.length} guarantee alerts`);
+
+  const guaranteesCreated = await createGuaranteeNotifications(guaranteeAlerts);
+  console.log(`[notification-scanner] Created ${guaranteesCreated} guarantee notifications`);
+
+  const total = vaccinationsCreated + breedingCreated + guaranteesCreated;
   console.log(`[notification-scanner] Scan complete. Created ${total} total notifications`);
 
   return {
     vaccinations: vaccinationsCreated,
     breeding: breedingCreated,
+    guarantees: guaranteesCreated,
     total,
   };
 }

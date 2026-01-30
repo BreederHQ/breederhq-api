@@ -105,7 +105,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const threads = await prisma.messageThread.findMany({
         where: threadWhere,
-        include: {
+        select: {
+          id: true,
+          subject: true,
+          flagged: true,
+          archived: true,
+          guestEmail: true,
+          guestName: true,
+          createdAt: true,
+          lastMessageAt: true,
+          updatedAt: true,
           participants: {
             include: { party: { select: { id: true, name: true, type: true } } },
           },
@@ -140,17 +149,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // For unread filter, skip if already read
         if (status === "unread" && isRead) continue;
 
+        // Determine channel: if guestEmail is present, it's an inbound email thread, otherwise it's a DM
+        const isEmailThread = !!thread.guestEmail;
+
         items.push({
           id: `thread:${thread.id}`,
-          type: "dm",
+          type: isEmailThread ? "email" : "dm",
           partyId: contactParticipant?.partyId || null,
           partyName: contactParticipant?.party.name || thread.guestName || "Unknown",
+          toEmail: isEmailThread ? thread.guestEmail : undefined,
           subject: thread.subject,
           preview: lastMessage?.body?.substring(0, 100) || "",
           isRead,
           flagged: thread.flagged,
           archived: thread.archived,
-          channel: "dm",
+          channel: isEmailThread ? "email" : "dm",
+          direction: isEmailThread ? "inbound" : undefined,
           createdAt: thread.createdAt.toISOString(),
           updatedAt: (thread.lastMessageAt || thread.updatedAt).toISOString(),
         });
