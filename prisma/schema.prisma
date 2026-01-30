@@ -3714,6 +3714,10 @@ model BreedingPlanBuyer {
   partyId         Int?
   party           Party?         @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id], onDelete: SetNull)
 
+  // P4/P5: Link to Buyer CRM for unified buyer management
+  buyerId Int?
+  buyer   Buyer? @relation("BreedingPlanBuyerCRM", fields: [buyerId], references: [id], onDelete: SetNull)
+
   // Stage
   stage BreedingPlanBuyerStage @default(POSSIBLE_MATCH)
 
@@ -3739,6 +3743,7 @@ model BreedingPlanBuyer {
   @@index([planId, stage])
   @@index([waitlistEntryId])
   @@index([partyId])
+  @@index([buyerId])
   @@schema("public")
 }
 
@@ -4223,6 +4228,10 @@ model OffspringGroupBuyer {
   // Phase 6: Placement rank for scheduling fairness (lower rank = earlier pick)
   placementRank Int?
 
+  // P4/P5: Link to Buyer CRM for unified buyer management
+  buyerId Int?
+  buyer   Buyer? @relation("OffspringGroupBuyerCRM", fields: [buyerId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -4233,6 +4242,7 @@ model OffspringGroupBuyer {
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
   @@index([waitlistEntryId])
+  @@index([buyerId])
   @@schema("public")
 }
 
@@ -4480,6 +4490,10 @@ model WaitlistEntry {
   // Contracts tied to this waitlist entry (e.g., deposit agreements)
   contracts Contract[]
 
+  // P4/P5: Link to Buyer CRM for unified buyer management
+  buyerId Int?
+  buyer   Buyer? @relation("WaitlistEntryCRM", fields: [buyerId], references: [id], onDelete: SetNull)
+
   skipCount  Int?
   lastSkipAt DateTime?
 
@@ -4516,6 +4530,7 @@ model WaitlistEntry {
   @@index([damPrefId])
   @@index([animalId])
   @@index([tenantId, depositPaidAt])
+  @@index([buyerId])
   @@schema("public")
 }
 
@@ -8477,6 +8492,11 @@ model Buyer {
   deals          Deal[]
   tagAssignments TagAssignment[]
   tasks          BuyerTask[]     @relation("BuyerTasks")
+
+  // P4/P5: Links to old buyer systems for unified view
+  breedingPlanBuyers   BreedingPlanBuyer[]   @relation("BreedingPlanBuyerCRM")
+  offspringGroupBuyers OffspringGroupBuyer[] @relation("OffspringGroupBuyerCRM")
+  waitlistEntries      WaitlistEntry[]       @relation("WaitlistEntryCRM")
 
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
