@@ -516,6 +516,7 @@ import competitionsRoutes from "./routes/competitions.js"; // Competition entry 
 import dashboardRoutes from "./routes/dashboard.js"; // Dashboard Mission Control
 import dashboardConfigRoutes from "./routes/dashboard-config.js"; // Dashboard config & presets
 import horseDashboardRoutes from "./routes/horse-dashboard.js"; // Horse-specific dashboard widgets
+import horseWorkflowRoutes from "./routes/horse-workflows.js"; // Horse workflow pages (mare status, stallion calendar, etc.)
 import partyCrmRoutes from "./routes/party-crm.js"; // Party CRM (notes, events, milestones, emails)
 import templatesRoutes from "./routes/templates.js"; // Email/message templates
 import autoRepliesRoutes from "./routes/auto-replies.js"; // Auto-reply rules for email/DM
@@ -541,6 +542,7 @@ import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketp
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
+import studVisibilityRoutes from "./routes/stud-visibility.js"; // Stud Listing Visibility Rules (P11)
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
@@ -551,6 +553,8 @@ import buyerTasksRoutes from "./routes/buyer-tasks.js"; // Buyer CRM Tasks (P5)
 import buyerAnalyticsRoutes from "./routes/buyer-analytics.js"; // Buyer CRM Analytics (P5)
 import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P5)
 import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
+import semenInventoryRoutes from "./routes/semen-inventory.js"; // Semen Inventory (P7)
+import stallionBookingsRoutes from "./routes/stallion-bookings.js"; // Stallion Bookings (P8)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -930,6 +934,7 @@ app.register(
     api.register(dashboardRoutes);       // /api/v1/dashboard/*
     api.register(dashboardConfigRoutes); // /api/v1/dashboard/config, /api/v1/dashboard/presets/*
     api.register(horseDashboardRoutes);  // /api/v1/dashboard/horse/* (horse-specific widgets)
+    api.register(horseWorkflowRoutes);   // /api/v1/horses/* (horse workflow pages: mare status, stallion calendar, etc.)
 
     // Platform-wide search (Command Palette)
     api.register(searchRoutes);        // /api/v1/search
@@ -952,6 +957,7 @@ app.register(
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
+    api.register(studVisibilityRoutes); // /api/v1/stud-visibility/* (stud listing visibility rules - P11)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
     api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
@@ -962,6 +968,8 @@ app.register(
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
+    api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
+    api.register(stallionBookingsRoutes); // /api/v1/stallion-bookings/* (Stallion Bookings - P8)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*

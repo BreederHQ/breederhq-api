@@ -55,6 +55,10 @@ import {
   OffspringPaperworkState,
   TraitStatus,
   TraitSource,
+  SubscriptionStatus,
+  BillingInterval,
+  BookingStatus,
+  StudVisibilityLevel,
 } from '@prisma/client';
 
 import { seedTitleDefinitions } from './seed-title-definitions';
@@ -132,6 +136,9 @@ import {
   EnhancedInvoiceDefinition,
   getPartyActivities,
   PartyActivityDefinition,
+  getStallionBookings,
+  StallionBookingDefinition,
+  DEFAULT_STUD_VISIBILITY_CONFIG,
 } from './seed-data-config';
 
 const prisma = new PrismaClient();
@@ -2184,6 +2191,193 @@ async function seedStudServiceListings(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// STALLION BOOKINGS (P9 - Stallion Revenue Testing)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function seedStallionBookings(
+  tenantSlug: string,
+  tenantId: number,
+  env: Environment,
+  bookings: Record<string, StallionBookingDefinition[]>,
+  tenantContacts: { emailBase: string }[]
+): Promise<number> {
+  const tenantBookings = bookings[tenantSlug];
+  if (!tenantBookings || tenantBookings.length === 0) {
+    console.log(`  - No stallion bookings for tenant: ${tenantSlug}`);
+    return 0;
+  }
+
+  let created = 0;
+
+  for (const booking of tenantBookings) {
+    // Check if booking already exists
+    const existing = await prisma.stallionBooking.findUnique({
+      where: { bookingNumber: booking.bookingNumber },
+    });
+
+    if (existing) {
+      console.log(`  = Stallion booking exists: ${booking.bookingNumber}`);
+      continue;
+    }
+
+    // Find the stallion
+    const stallion = await prisma.animal.findFirst({
+      where: {
+        tenantId,
+        name: booking.stallionRef,
+        sex: 'MALE',
+        species: 'HORSE',
+      },
+    });
+
+    if (!stallion) {
+      console.log(`  ! Stallion not found: ${booking.stallionRef}`);
+      continue;
+    }
+
+    // Find the stud service listing
+    const serviceListing = await prisma.mktListingBreederService.findUnique({
+      where: { slug: booking.serviceListingSlug },
+    });
+
+    if (!serviceListing) {
+      console.log(`  ! Stud service listing not found: ${booking.serviceListingSlug}`);
+      continue;
+    }
+
+    // Find mare if internal
+    let mareId: number | null = null;
+    if (booking.mareRef) {
+      const mare = await prisma.animal.findFirst({
+        where: {
+          tenantId,
+          name: booking.mareRef,
+          sex: 'FEMALE',
+          species: 'HORSE',
+        },
+      });
+      if (mare) {
+        mareId = mare.id;
+      }
+    }
+
+    // Find mare owner party (contact)
+    const contactDef = tenantContacts[booking.mareOwnerContactIndex];
+    if (!contactDef) {
+      console.log(`  ! Mare owner contact not found at index: ${booking.mareOwnerContactIndex}`);
+      continue;
+    }
+
+    const envEmail = getEnvEmail(contactDef.emailBase, env);
+    const contact = await prisma.contact.findFirst({
+      where: { tenantId, email: envEmail },
+      include: { party: true },
+    });
+
+    if (!contact || !contact.partyId) {
+      console.log(`  ! Mare owner contact/party not found: ${envEmail}`);
+      continue;
+    }
+
+    // Map booking status
+    const statusMap: Record<string, BookingStatus> = {
+      INQUIRY: BookingStatus.INQUIRY,
+      PENDING_REQUIREMENTS: BookingStatus.PENDING_REQUIREMENTS,
+      APPROVED: BookingStatus.APPROVED,
+      DEPOSIT_PAID: BookingStatus.DEPOSIT_PAID,
+      CONFIRMED: BookingStatus.CONFIRMED,
+      SCHEDULED: BookingStatus.SCHEDULED,
+      IN_PROGRESS: BookingStatus.IN_PROGRESS,
+      COMPLETED: BookingStatus.COMPLETED,
+      CANCELLED: BookingStatus.CANCELLED,
+    };
+
+    // Map breeding method
+    const methodMap: Record<string, BreedingMethod | undefined> = {
+      NATURAL: BreedingMethod.NATURAL,
+      AI_TCI: BreedingMethod.AI_TCI,
+      AI_SI: BreedingMethod.AI_SI,
+      AI_FROZEN: BreedingMethod.AI_FROZEN,
+    };
+
+    // Map guarantee type
+    const guaranteeMap: Record<string, BreedingGuaranteeType | undefined> = {
+      NO_GUARANTEE: BreedingGuaranteeType.NO_GUARANTEE,
+      LIVE_FOAL: BreedingGuaranteeType.LIVE_FOAL,
+      STANDS_AND_NURSES: BreedingGuaranteeType.STANDS_AND_NURSES,
+      SIXTY_DAY_PREGNANCY: BreedingGuaranteeType.SIXTY_DAY_PREGNANCY,
+      CERTIFIED_PREGNANT: BreedingGuaranteeType.CERTIFIED_PREGNANT,
+    };
+
+    await prisma.stallionBooking.create({
+      data: {
+        tenantId,
+        bookingNumber: booking.bookingNumber,
+        serviceListingId: serviceListing.id,
+        stallionId: stallion.id,
+        mareId,
+        externalMareName: booking.externalMareName,
+        externalMareReg: booking.externalMareReg,
+        externalMareBreed: booking.externalMareBreed,
+        mareOwnerPartyId: contact.partyId,
+        status: statusMap[booking.status] || BookingStatus.INQUIRY,
+        preferredMethod: booking.preferredMethod ? methodMap[booking.preferredMethod] : undefined,
+        scheduledDate: booking.scheduledDate,
+        agreedFeeCents: booking.agreedFeeCents,
+        bookingFeeCents: booking.bookingFeeCents,
+        totalPaidCents: booking.totalPaidCents,
+        guaranteeType: booking.guaranteeType ? guaranteeMap[booking.guaranteeType] : undefined,
+        notes: booking.notes,
+        cancellationReason: booking.cancellationReason,
+      },
+    });
+    created++;
+    console.log(`  + Created stallion booking: ${booking.bookingNumber} (${booking.status})`);
+  }
+
+  return created;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUD VISIBILITY RULES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Seeds default stud visibility rules at the TENANT level.
+ * These provide inheritance defaults for all stud listings in the tenant.
+ */
+async function seedStudVisibilityRules(tenantId: number): Promise<number> {
+  // Check if tenant already has a TENANT-level rule
+  const existingRule = await prisma.studVisibilityRule.findFirst({
+    where: {
+      tenantId,
+      level: StudVisibilityLevel.TENANT,
+      levelId: String(tenantId),
+    },
+  });
+
+  if (existingRule) {
+    console.log(`  = Stud visibility rule exists for tenant ${tenantId}`);
+    return 0;
+  }
+
+  // Create default TENANT-level rule
+  await prisma.studVisibilityRule.create({
+    data: {
+      tenantId,
+      level: StudVisibilityLevel.TENANT,
+      levelId: String(tenantId),
+      config: DEFAULT_STUD_VISIBILITY_CONFIG,
+      enabled: true,
+      inheritsFromId: null, // Root level - no parent
+    },
+  });
+
+  console.log(`  + Created stud visibility rule for tenant ${tenantId}`);
+  return 1;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // INDIVIDUAL ANIMAL LISTINGS (MktListingIndividualAnimal)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2341,6 +2535,15 @@ const FEATURE_FLAGS = [
     uiHint: 'Animal Details > Ownership section, Owner editor modal',
     isActive: true,
   },
+  {
+    key: 'HORSE_SEMEN_INVENTORY',
+    name: 'Semen Inventory Management',
+    description: 'Track frozen and cooled semen at the dose level with collection, dispense, and expiration workflows',
+    module: 'ANIMALS' as const,
+    entitlementKey: 'BREEDING_PLANS' as const,
+    uiHint: 'Semen Inventory page, Dashboard widget, Add Collection modal, Dispense modal',
+    isActive: true,
+  },
 ];
 
 async function seedFeatureFlags(): Promise<number> {
@@ -2385,6 +2588,109 @@ async function seedFeatureFlags(): Promise<number> {
   }
 
   return created;
+}
+
+// Free Unlimited product for validation tenants
+const FREE_UNLIMITED_PRODUCT = {
+  name: 'Free Unlimited',
+  description: 'Free unlimited access for validation and testing',
+  type: 'SUBSCRIPTION' as const,
+  billingInterval: 'MONTHLY' as const,
+  priceUSD: 0,
+  sortOrder: 0,
+  features: ['Unlimited everything for testing'],
+  entitlements: [
+    { key: 'ANIMAL_QUOTA' as const, limitValue: null },
+    { key: 'CONTACT_QUOTA' as const, limitValue: null },
+    { key: 'PORTAL_USER_QUOTA' as const, limitValue: null },
+    { key: 'BREEDING_PLAN_QUOTA' as const, limitValue: null },
+    { key: 'MARKETPLACE_LISTING_QUOTA' as const, limitValue: null },
+    { key: 'STORAGE_QUOTA_GB' as const, limitValue: null },
+    { key: 'SMS_QUOTA' as const, limitValue: null },
+    { key: 'PLATFORM_ACCESS' as const, limitValue: null },
+    { key: 'MARKETPLACE_ACCESS' as const, limitValue: null },
+    { key: 'PORTAL_ACCESS' as const, limitValue: null },
+    { key: 'BREEDING_PLANS' as const, limitValue: null },
+    { key: 'FINANCIAL_SUITE' as const, limitValue: null },
+    { key: 'DOCUMENT_MANAGEMENT' as const, limitValue: null },
+    { key: 'HEALTH_RECORDS' as const, limitValue: null },
+    { key: 'WAITLIST_MANAGEMENT' as const, limitValue: null },
+    { key: 'ADVANCED_REPORTING' as const, limitValue: null },
+    { key: 'API_ACCESS' as const, limitValue: null },
+    { key: 'MULTI_LOCATION' as const, limitValue: null },
+    { key: 'E_SIGNATURES' as const, limitValue: null },
+    { key: 'DATA_EXPORT' as const, limitValue: null },
+  ],
+};
+
+async function seedFreeUnlimitedProduct(): Promise<number> {
+  // Check if product exists
+  let product = await prisma.product.findFirst({
+    where: { name: FREE_UNLIMITED_PRODUCT.name },
+  });
+
+  if (product) {
+    console.log(`  = Product exists: ${product.name}`);
+    return product.id;
+  }
+
+  // Create product
+  product = await prisma.product.create({
+    data: {
+      name: FREE_UNLIMITED_PRODUCT.name,
+      description: FREE_UNLIMITED_PRODUCT.description,
+      type: FREE_UNLIMITED_PRODUCT.type,
+      billingInterval: FREE_UNLIMITED_PRODUCT.billingInterval,
+      priceUSD: FREE_UNLIMITED_PRODUCT.priceUSD,
+      sortOrder: FREE_UNLIMITED_PRODUCT.sortOrder,
+      features: FREE_UNLIMITED_PRODUCT.features,
+      active: true,
+    },
+  });
+  console.log(`  + Created product: ${product.name}`);
+
+  // Create entitlements
+  for (const ent of FREE_UNLIMITED_PRODUCT.entitlements) {
+    await prisma.productEntitlement.create({
+      data: {
+        productId: product.id,
+        entitlementKey: ent.key,
+        limitValue: ent.limitValue,
+      },
+    });
+  }
+  console.log(`    → ${FREE_UNLIMITED_PRODUCT.entitlements.length} entitlements configured`);
+
+  return product.id;
+}
+
+async function seedTenantSubscription(tenantId: number, productId: number): Promise<boolean> {
+  // Check if tenant already has an active subscription
+  const existing = await prisma.subscription.findFirst({
+    where: {
+      tenantId,
+      status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] },
+    },
+  });
+
+  if (existing) {
+    return false; // Already has subscription
+  }
+
+  // Create subscription
+  await prisma.subscription.create({
+    data: {
+      tenantId,
+      productId,
+      status: SubscriptionStatus.ACTIVE,
+      amountCents: 0,
+      billingInterval: BillingInterval.MONTHLY,
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
+    },
+  });
+
+  return true;
 }
 
 async function seedContractInstances(
@@ -3996,6 +4302,7 @@ async function main() {
 
   const stats = {
     tenants: 0,
+    subscriptions: 0,
     users: 0,
     organizations: 0,
     contacts: 0,
@@ -4029,6 +4336,7 @@ async function main() {
     breedingProgramListings: 0,
     breedingProgramMedia: 0,
     studServiceListings: 0,
+    stallionBookings: 0,
     individualAnimalListings: 0,
     crossTenantLinks: 0,
     contractTemplates: 0,
@@ -4041,6 +4349,7 @@ async function main() {
     invoiceLineItems: 0,
     payments: 0,
     partyActivities: 0,
+    studVisibilityRules: 0,
   };
 
   // Seed global title definitions FIRST (before any tenant-specific titles)
@@ -4063,6 +4372,12 @@ async function main() {
   const featureFlagsCreated = await seedFeatureFlags();
   stats.featureFlags = featureFlagsCreated;
 
+  // Seed Free Unlimited product for subscriptions
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  console.log('  SUBSCRIPTION PRODUCT');
+  console.log('─────────────────────────────────────────────────────────────────────────────');
+  const freeUnlimitedProductId = await seedFreeUnlimitedProduct();
+
   // Seed marketplace shoppers FIRST so they exist for DM threads
   console.log('─────────────────────────────────────────────────────────────────────────────');
   console.log('  MARKETPLACE SHOPPERS (seeding first for DM conversations)');
@@ -4081,6 +4396,15 @@ async function main() {
     console.log('\n  [Tenant]');
     const tenantId = await seedTenant(tenantDef.slug, env, tenantDefinitions);
     stats.tenants++;
+
+    // 1b. Create subscription for tenant
+    const subscriptionCreated = await seedTenantSubscription(tenantId, freeUnlimitedProductId);
+    if (subscriptionCreated) {
+      console.log(`    + Created Free Unlimited subscription`);
+      stats.subscriptions++;
+    } else {
+      console.log(`    = Subscription already exists`);
+    }
 
     // 2. Create owner/admin user
     console.log('\n  [User]');
@@ -4235,6 +4559,24 @@ async function main() {
       studServiceListingDefs
     );
     stats.studServiceListings += studServicesCreated;
+
+    // 7d-2. Create stallion bookings (P9 - Stallion Revenue Testing)
+    console.log('\n  [Stallion Bookings]');
+    const stallionBookingDefs = getStallionBookings(env);
+    const tenantContactDefs = tenantContacts[tenantDef.slug] || [];
+    const stallionBookingsCreated = await seedStallionBookings(
+      tenantDef.slug,
+      tenantId,
+      env,
+      stallionBookingDefs,
+      tenantContactDefs
+    );
+    stats.stallionBookings += stallionBookingsCreated;
+
+    // 7d-3. Create stud visibility rules (default tenant-level settings)
+    console.log('\n  [Stud Visibility Rules]');
+    const visibilityRulesCreated = await seedStudVisibilityRules(tenantId);
+    stats.studVisibilityRules += visibilityRulesCreated;
 
     // 7e. Create individual animal listings (MktListingIndividualAnimal)
     console.log('\n  [Individual Animal Listings]');
@@ -4430,6 +4772,7 @@ async function main() {
   console.log('  SEED COMPLETE');
   console.log('═══════════════════════════════════════════════════════════════════════════════');
   console.log(`  Tenants:              ${stats.tenants}`);
+  console.log(`  Subscriptions:        ${stats.subscriptions}`);
   console.log(`  Users:                ${stats.users}`);
   console.log(`  Organizations:        ${stats.organizations}`);
   console.log(`  Contacts:             ${stats.contacts}`);
@@ -4453,6 +4796,8 @@ async function main() {
   console.log(`  Breeding Programs:    ${stats.breedingProgramListings}`);
   console.log(`  Program Media:        ${stats.breedingProgramMedia}`);
   console.log(`  Stud Services:        ${stats.studServiceListings}`);
+  console.log(`  Stallion Bookings:    ${stats.stallionBookings}`);
+  console.log(`  Stud Visibility:      ${stats.studVisibilityRules}`);
   console.log(`  Individual Listings:  ${stats.individualAnimalListings}`);
   console.log(`  Cross-Tenant Links:   ${stats.crossTenantLinks}`);
   console.log(`  Contract Templates:   ${stats.contractTemplates}`);
