@@ -181,7 +181,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Broadcast new thread/message via WebSocket for real-time updates
       const firstMessage = thread.messages[0];
-      if (firstMessage) {
+      if (firstMessage && firstMessage.senderPartyId !== null) {
         broadcastNewMessage(tenantId, thread.id, {
           id: firstMessage.id,
           body: firstMessage.body,
@@ -471,12 +471,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Broadcast new message via WebSocket for real-time updates
       const participantPartyIds = thread.participants.map((p) => p.partyId);
-      broadcastNewMessage(tenantId, threadId, {
-        id: message.id,
-        body: message.body,
-        senderPartyId: message.senderPartyId,
-        createdAt: message.createdAt.toISOString(),
-      }, participantPartyIds);
+      if (message.senderPartyId !== null) {
+        broadcastNewMessage(tenantId, threadId, {
+          id: message.id,
+          body: message.body,
+          senderPartyId: message.senderPartyId,
+          createdAt: message.createdAt.toISOString(),
+        }, participantPartyIds);
+      }
 
       // Send email notification to recipient(s) when breeder/org sends a reply
       if (isOrgSending) {
@@ -615,15 +617,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Broadcast new message via WebSocket
       const participantPartyIds = thread.participants.map((p) => p.partyId);
-      broadcastNewMessage(tenantId, threadId, {
-        id: message.id,
-        body: message.body,
-        senderPartyId: message.senderPartyId,
-        createdAt: message.createdAt.toISOString(),
-        attachmentFilename: message.attachmentFilename,
-        attachmentMime: message.attachmentMime,
-        attachmentBytes: message.attachmentBytes,
-      }, participantPartyIds);
+      if (message.senderPartyId !== null) {
+        broadcastNewMessage(tenantId, threadId, {
+          id: message.id,
+          body: message.body,
+          senderPartyId: message.senderPartyId,
+          createdAt: message.createdAt.toISOString(),
+          attachmentFilename: message.attachmentFilename,
+          attachmentMime: message.attachmentMime,
+          attachmentBytes: message.attachmentBytes,
+        }, participantPartyIds);
+      }
 
       return reply.send({
         ok: true,
