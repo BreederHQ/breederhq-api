@@ -5920,6 +5920,8 @@ model MessageParticipant {
   threadId Int
   thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
+  // Cascade delete is intentional: when party is deleted, remove their participant record
+  // Thread will remain if it still has messages (Message.senderParty uses SetNull)
   partyId Int
   party   Party @relation("MessageParticipantParty", fields: [partyId], references: [id], onDelete: Cascade)
 
@@ -5938,8 +5940,11 @@ model Message {
   threadId Int
   thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
-  senderPartyId Int
-  senderParty   Party @relation("MessageSenderParty", fields: [senderPartyId], references: [id], onDelete: Cascade)
+  // Changed to nullable with SetNull to prevent orphaned threads when party deleted
+  // When a party is deleted, their messages remain but senderPartyId becomes null
+  // UI should display "Deleted User" for null senderPartyId
+  senderPartyId Int?
+  senderParty   Party? @relation("MessageSenderParty", fields: [senderPartyId], references: [id], onDelete: SetNull)
 
   body String @db.Text
 

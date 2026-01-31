@@ -330,6 +330,82 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     }
   });
 
+  // PUT: PUT /breeds/custom/:id/recipe - Update breed composition/recipe
+  app.put("/breeds/custom/:id/recipe", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body || {}) as {
+      ingredients?: Array<{ canonicalBreedId: number; percentage: number | null }>;
+    };
+    const tenantId = readTenantId(req);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const ingredients = body.ingredients || [];
+    if (!Array.isArray(ingredients)) {
+      return reply.code(400).send({ error: "ingredients_must_be_array" });
+    }
+
+    // Validate ingredients
+    if (ingredients.length === 0) {
+      return reply.code(400).send({ error: "ingredients_required" });
+    }
+
+    // Check for valid breed IDs and percentages
+    for (const ing of ingredients) {
+      if (!Number.isInteger(ing.canonicalBreedId) || ing.canonicalBreedId <= 0) {
+        return reply.code(400).send({ error: "invalid_breed_id" });
+      }
+      if (typeof ing.percentage !== "number" || ing.percentage < 0 || ing.percentage > 100) {
+        return reply.code(400).send({ error: "invalid_percentage" });
+      }
+    }
+
+    // Check for duplicates
+    const breedIds = ingredients.map((i) => i.canonicalBreedId);
+    const uniqueIds = new Set(breedIds);
+    if (breedIds.length !== uniqueIds.size) {
+      return reply.code(400).send({ error: "duplicate_breeds" });
+    }
+
+    // Validate total percentage
+    const total = ingredients.reduce((sum, i) => sum + (i.percentage || 0), 0);
+    if (Math.abs(total - 100) > 0.01) {
+      return reply.code(400).send({
+        error: "invalid_total_percentage",
+        details: { total, expected: 100 }
+      });
+    }
+
+    try {
+      // Verify breed exists and belongs to tenant
+      const existing = await prisma.customBreed.findUnique({
+        where: { id: Number(id) },
+        select: { tenantId: true },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+      if (existing.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+      // Update composition
+      const updated = await prisma.customBreed.update({
+        where: { id: Number(id) },
+        data: { composition: ingredients },
+        select: {
+          id: true,
+          tenantId: true,
+          species: true,
+          name: true,
+          composition: true,
+          createdAt: true,
+          updatedAt: true
+        },
+      });
+
+      reply.send(updated);
+    } catch (e: any) {
+      if (e?.code === "P2025") return reply.code(404).send({ error: "not_found" });
+      throw e;
+    }
+  });
+
   // ───────────────────────────────────────────────────────────────────────────
   // Program breeds (tenant-scoped)
   // Base: /breeds/program
