@@ -1115,8 +1115,8 @@ export default async function stallionBookingsRoutes(app: FastifyInstance) {
     const existing = await prisma.stallionBooking.findFirst({
       where: { id, tenantId },
       include: {
-        stallion: { select: { id: true, name: true } },
-        mare: { select: { id: true, name: true } },
+        stallion: { select: { id: true, name: true, species: true } },
+        mare: { select: { id: true, name: true, species: true } },
       },
     });
 
@@ -1157,6 +1157,10 @@ export default async function stallionBookingsRoutes(app: FastifyInstance) {
           tenantId,
           organizationId: org.id,
           code: `BP-${existing.bookingNumber}`,
+          name: existing.mare
+            ? `${existing.mare.name} x ${existing.stallion.name}`
+            : `Breeding to ${existing.stallion.name}`,
+          species: existing.stallion.species,
           status: "BRED",
           damId: existing.mareId ?? null,
           sireId: existing.stallionId,
