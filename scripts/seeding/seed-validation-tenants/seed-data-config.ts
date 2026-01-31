@@ -360,6 +360,10 @@ export const TENANT_CONTACTS: Record<string, ContactDefinition[]> = {
     { firstName: 'Legolas', lastName: 'Greenleaf', emailBase: 'legolas@mirkwood.local', phone: '+1-555-0303', city: 'Woodland Realm', state: 'Mirkwood', country: 'US' },
     { firstName: 'Gimli', lastName: 'GloinSon', emailBase: 'gimli@erebor.local', phone: '+1-555-0304', city: 'Erebor', state: 'Dale', country: 'US' },
     { firstName: 'Samwise', lastName: 'Gamgee', nickname: 'Sam', emailBase: 'sam@shire.local', phone: '+1-555-0305', city: 'Hobbiton', state: 'The Shire', country: 'US' },
+    // P9: Mare owners for stallion revenue testing
+    { firstName: 'Eowyn', lastName: 'Shieldmaiden', emailBase: 'eowyn@rohan.local', phone: '+1-555-0306', city: 'Edoras', state: 'Rohan', country: 'US' },
+    { firstName: 'Eomer', lastName: 'Marshaller', emailBase: 'eomer@rohan.local', phone: '+1-555-0307', city: 'Aldburg', state: 'Rohan', country: 'US' },
+    { firstName: 'Theoden', lastName: 'KingOfMark', emailBase: 'theoden@rohan.local', phone: '+1-555-0308', city: 'Edoras', state: 'Rohan', country: 'US' },
   ],
   // Hogwarts contacts
   hogwarts: [
@@ -446,6 +450,10 @@ export const PROD_TENANT_CONTACTS: Record<string, ContactDefinition[]> = {
     { firstName: 'Keeley', lastName: 'Jones', emailBase: 'keeley@afcrichmond.local', phone: '+1-555-0423', city: 'Richmond', state: 'London', country: 'GB' },
     { firstName: 'Jamie', lastName: 'Tartt', emailBase: 'jamie.tartt@afcrichmond.local', phone: '+1-555-0424', city: 'Richmond', state: 'London', country: 'GB' },
     { firstName: 'Coach', lastName: 'Beard', emailBase: 'beard@afcrichmond.local', phone: '+1-555-0425', city: 'Richmond', state: 'London', country: 'GB' },
+    // P9 Mare Owners for Stallion Revenue Testing
+    { firstName: 'Jane', lastName: 'Smith', emailBase: 'jane@example.com', phone: '+1-555-0431', city: 'London', state: 'London', country: 'GB' },
+    { firstName: 'Bob', lastName: 'Johnson', emailBase: 'bob@example.com', phone: '+1-555-0432', city: 'Manchester', state: 'Manchester', country: 'GB' },
+    { firstName: 'Sarah', lastName: 'Williams', emailBase: 'sarah@example.com', phone: '+1-555-0433', city: 'Liverpool', state: 'Liverpool', country: 'GB' },
   ],
   zion: [
     { firstName: 'Morpheus', lastName: 'Captain', emailBase: 'morpheus@zion.local', phone: '+1-555-0431', city: 'Zion', state: 'Underground', country: 'US' },
@@ -579,6 +587,7 @@ export interface AnimalDefinition {
   sireRef?: string;   // Reference to sire by name
   damRef?: string;    // Reference to dam by name
   birthYear: number;
+  status?: AnimalStatus; // Animal status (ACTIVE, BREEDING, etc.)
   notes?: string;
   genetics: GeneticsData;
   testProvider?: string;
@@ -860,6 +869,54 @@ export const RIVENDELL_ANIMALS: AnimalDefinition[] = [
     notes: "Legolas's horse. Safe breeding - OLWS Clear.",
     genetics: {
       coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'G', 'g'), locus('Cr', 'Cream', 'Cr', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    }
+  },
+
+  // === P9 STALLION REVENUE TEST DATA (DEV) ===
+  // Stallions and mares for testing stallion breeding revenue feature
+  { name: 'Thunder Storm', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2016, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Stallion - Active breeding stallion with revenue tracking data.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    },
+    titles: [
+      { titleAbbreviation: 'CH', dateEarned: '2019-06-15', eventName: 'Middle Earth Horse Show', eventLocation: 'Rivendell' },
+    ]
+  },
+  { name: 'Rising Star', species: 'HORSE', sex: 'MALE', breed: 'Andalusian', generation: 0, birthYear: 2020, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Stallion - New stallion with no breeding revenue yet.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    }
+  },
+  { name: 'Morning Glory', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2017, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Active broodmare for Thunder Storm breedings.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    }
+  },
+  { name: 'Desert Rose', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2018, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - External mare for stud service booking.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'a', 'a'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    }
+  },
+  { name: 'Silver Belle', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2016, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Mare with partial payment status.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'e', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('G', 'Grey', 'G', 'g'), locus('Cr', 'Cream', 'Cr', 'n')],
+      health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
+    }
+  },
+  { name: 'Queen Bee', species: 'HORSE', sex: 'FEMALE', breed: 'Andalusian', generation: 0, birthYear: 2019, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Previous year breeding.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('G', 'Grey', 'g', 'g'), locus('Cr', 'Cream', 'n', 'n')],
       health: [healthLocus('OLWS', 'Lethal White Overo Syndrome', 'n/n')]
     }
   },
@@ -2524,6 +2581,54 @@ export const RICHMOND_ANIMALS: AnimalDefinition[] = [
     }
   },
 
+  // === P9 STALLION REVENUE TEST DATA ===
+  // Stallions and mares for testing stallion breeding revenue feature
+  { name: 'Thunder Storm', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 0, birthYear: 2016, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Stallion - Active breeding stallion with revenue tracking data.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'A', 'a'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    },
+    titles: [
+      { titleAbbreviation: 'CH', dateEarned: '2019-06-15', eventName: 'Richmond Derby', eventLocation: 'Nelson Road' },
+    ]
+  },
+  { name: 'Rising Star', species: 'HORSE', sex: 'MALE', breed: 'Thoroughbred', generation: 0, birthYear: 2020, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Stallion - New stallion with no breeding revenue yet.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    }
+  },
+  { name: 'Morning Glory', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2017, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Active broodmare for Thunder Storm breedings.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    }
+  },
+  { name: 'Desert Rose', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2018, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - External mare for stud service booking.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'E'), locus('A', 'Agouti', 'a', 'a'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    }
+  },
+  { name: 'Silver Belle', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2016, status: 'BREEDING', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Mare with partial payment status.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'e', 'e'), locus('A', 'Agouti', 'A', 'A'), locus('Cr', 'Cream', 'Cr', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    }
+  },
+  { name: 'Queen Bee', species: 'HORSE', sex: 'FEMALE', breed: 'Thoroughbred', generation: 0, birthYear: 2019, status: 'ACTIVE', testProvider: 'UC Davis VGL',
+    notes: 'P9 Test Mare - Previous year breeding.',
+    genetics: {
+      coatColor: [locus('E', 'Extension', 'E', 'e'), locus('A', 'Agouti', 'A', 'a'), locus('Cr', 'Cream', 'n', 'n')],
+      health: [healthLocus('GBED', 'Glycogen Branching Enzyme Deficiency', 'N/N')]
+    }
+  },
+
   // === INCOMPLETE GENETICS - What's Missing Analysis ===
   { name: 'New Signing (Incomplete Genetics)', species: 'DOG', sex: 'MALE', breed: 'Golden Retriever', generation: 0, birthYear: 2024,
     notes: 'NO GENETICS YET. New transfer, awaiting DNA test. For testing What\'s Missing analysis.',
@@ -3681,6 +3786,31 @@ export const DEV_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]>
       birthDateActual: new Date('2025-08-15'), weanedDateActual: new Date('2025-10-10'),
       placementCompletedDateActual: new Date('2025-11-01'), completedDateActual: new Date('2025-11-01'),
       countBorn: 6, countAlive: 6 },
+    // P9: Thunder Storm breeding plans for stallion revenue testing
+    // Attempt 1 - Fully Paid (2026) - Morning Glory
+    { name: 'Thunder Storm x Morning Glory 2026', species: 'HORSE', breedText: 'Quarter Horse', damRef: 'Morning Glory', sireRef: 'Thunder Storm', status: 'PREGNANT', notes: 'Pregnancy confirmed. Full stud fee paid.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-15'),
+      expectedBirthDate: new Date('2026-12-20'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-01') },
+    // Attempt 2 - Fully Paid (2026) - Desert Rose
+    { name: 'Thunder Storm x Desert Rose 2026', species: 'HORSE', breedText: 'Quarter Horse', damRef: 'Desert Rose', sireRef: 'Thunder Storm', status: 'PREGNANT', notes: 'Pregnancy confirmed at 60 days.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-18'),
+      expectedBirthDate: new Date('2026-12-23'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-05') },
+    // Attempt 3 - Partially Paid (2026) - Silver Belle
+    { name: 'Thunder Storm x Silver Belle 2026', species: 'HORSE', breedText: 'Quarter Horse', damRef: 'Silver Belle', sireRef: 'Thunder Storm', status: 'BRED', notes: 'Breeding completed, awaiting pregnancy confirmation. 50% deposit paid.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-20'),
+      expectedBirthDate: new Date('2027-01-01'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-10') },
+    // Attempt 4 - Previous Year (2025) - Queen Bee - COMPLETE
+    { name: 'Thunder Storm x Queen Bee 2025', species: 'HORSE', breedText: 'Quarter Horse', damRef: 'Queen Bee', sireRef: 'Thunder Storm', status: 'COMPLETE', notes: 'Successful 2025 foaling. Full stud fee paid.',
+      breedDateActual: new Date('2025-09-10'),
+      birthDateActual: new Date('2026-08-15'), weanedDateActual: new Date('2026-01-15'),
+      completedDateActual: new Date('2026-01-20'),
+      countBorn: 1, countAlive: 1 },
+    // Attempt 5 - Failed (2025) - Morning Glory
+    { name: 'Thunder Storm x Morning Glory 2025 (Failed)', species: 'HORSE', breedText: 'Quarter Horse', damRef: 'Morning Glory', sireRef: 'Thunder Storm', status: 'UNSUCCESSFUL', notes: 'Breeding did not result in pregnancy. Guarantee honored.',
+      breedDateActual: new Date('2025-06-15') },
   ],
   hogwarts: [
     // PLANNING
@@ -3783,6 +3913,24 @@ export const PROD_TENANT_BREEDING_PLANS: Record<string, BreedingPlanDefinition[]
       countBorn: 1, countAlive: 1 },
     // CANCELED
     { name: 'Wonder Kids Program', species: 'DOG', breedText: 'Golden Retriever', damRef: 'Biscuits (PRA Affected Gen1 Female)', sireRef: 'Believe (PRA+ICH Carrier Gen1 Male)', status: 'CANCELED', notes: 'Canceled - genetic risk assessment indicated high likelihood of affected offspring.' },
+    // P9 Thunder Storm Breeding Plans - Stallion Revenue Testing
+    { name: 'Thunder Storm x Morning Glory 2026', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Morning Glory', sireRef: 'Thunder Storm', status: 'PREGNANT', notes: 'P9: Fully paid breeding - AI frozen, live foal guarantee.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-15'), expectedBirthDate: new Date('2026-12-20'),
+      isCommittedIntent: true, committedAt: new Date('2025-12-01') },
+    { name: 'Thunder Storm x Desert Rose 2026', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Desert Rose', sireRef: 'Thunder Storm', status: 'PREGNANT', notes: 'P9: Fully paid breeding - AI fresh, 60-day pregnancy guarantee.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-18'), expectedBirthDate: new Date('2026-12-23'),
+      isCommittedIntent: true, committedAt: new Date('2025-12-15') },
+    { name: 'Thunder Storm x Silver Belle 2026', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Silver Belle', sireRef: 'Thunder Storm', status: 'BRED', notes: 'P9: Partially paid breeding - natural, outcome pending.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2026-01-20'),
+      isCommittedIntent: true, committedAt: new Date('2026-01-01') },
+    { name: 'Thunder Storm x Queen Bee 2025', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Queen Bee', sireRef: 'Thunder Storm', status: 'COMPLETE', notes: 'P9: 2025 breeding - fully paid, successful.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2025-09-10'), birthDateActual: new Date('2026-08-15'),
+      weanedDateActual: new Date('2027-02-15'), completedDateActual: new Date('2027-03-01'),
+      countBorn: 1, countAlive: 1,
+      isCommittedIntent: true, committedAt: new Date('2025-08-01') },
+    { name: 'Thunder Storm x Morning Glory 2025', species: 'HORSE', breedText: 'Thoroughbred', damRef: 'Morning Glory', sireRef: 'Thunder Storm', status: 'UNSUCCESSFUL', notes: 'P9: 2025 breeding - failed, fully paid.',
+      reproAnchorMode: 'BREEDING_DATE', breedDateActual: new Date('2025-06-15'),
+      isCommittedIntent: true, committedAt: new Date('2025-05-01') },
   ],
   zion: [
     // PREGNANT - Confirmed pregnancy
@@ -5235,6 +5383,17 @@ export const DEV_BREEDING_ATTEMPTS: Record<string, BreedingAttemptDefinition[]> 
     // For COMPLETE plan - successful breeding
     { planRef: 'Silmaril Line', method: 'AI_TCI', attemptAt: new Date('2025-06-12'), success: true, notes: 'TCI insemination successful',
       guaranteeType: 'LIVE_FOAL', agreedFeeCents: 150000, feePaidCents: 150000 },
+    // P9: Thunder Storm Breeding Attempts - Stallion Revenue Testing
+    { planRef: 'Thunder Storm x Morning Glory 2026', method: 'AI_FROZEN', attemptAt: new Date('2026-01-15'), success: true, notes: 'P9: Frozen semen insemination - confirmed pregnant.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 500000, feePaidCents: 500000 },
+    { planRef: 'Thunder Storm x Desert Rose 2026', method: 'AI_TCI', attemptAt: new Date('2026-01-18'), success: true, notes: 'P9: Fresh cooled semen - confirmed pregnant.',
+      guaranteeType: 'SIXTY_DAY_PREGNANCY', agreedFeeCents: 375000, feePaidCents: 375000 },
+    { planRef: 'Thunder Storm x Silver Belle 2026', method: 'NATURAL', attemptAt: new Date('2026-01-20'), success: null, notes: 'P9: Natural cover - outcome pending.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 500000, feePaidCents: 250000 },  // Partially paid - $2,500 outstanding
+    { planRef: 'Thunder Storm x Queen Bee 2025', method: 'AI_FROZEN', attemptAt: new Date('2025-09-10'), success: true, notes: 'P9: 2025 breeding - fully paid, successful foaling.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 450000, feePaidCents: 450000 },
+    { planRef: 'Thunder Storm x Morning Glory 2025', method: 'AI_TCI', attemptAt: new Date('2025-06-15'), success: false, notes: 'P9: 2025 breeding - failed, return breeding offered under guarantee.',
+      guaranteeType: 'SIXTY_DAY_PREGNANCY', agreedFeeCents: 400000, feePaidCents: 400000 },
   ],
   hogwarts: [
     // For BRED plan
@@ -5275,6 +5434,17 @@ export const PROD_BREEDING_ATTEMPTS: Record<string, BreedingAttemptDefinition[]>
       guaranteeType: 'LIVE_FOAL', agreedFeeCents: 250000, feePaidCents: 125000 },
     { planRef: 'Nelson Road Horses', method: 'AI_FROZEN', attemptAt: new Date('2024-06-01'), success: true, notes: 'Frozen semen breeding',
       guaranteeType: 'LIVE_FOAL', agreedFeeCents: 350000, feePaidCents: 350000 },
+    // P9 Thunder Storm Breeding Attempts - Stallion Revenue Testing
+    { planRef: 'Thunder Storm x Morning Glory 2026', method: 'AI_FROZEN', attemptAt: new Date('2026-01-15'), success: true, notes: 'P9: Frozen semen insemination - confirmed pregnant.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 500000, feePaidCents: 500000 },
+    { planRef: 'Thunder Storm x Desert Rose 2026', method: 'AI_TCI', attemptAt: new Date('2026-01-18'), success: true, notes: 'P9: Fresh cooled semen - confirmed pregnant.',
+      guaranteeType: 'SIXTY_DAY_PREGNANCY', agreedFeeCents: 375000, feePaidCents: 375000 },
+    { planRef: 'Thunder Storm x Silver Belle 2026', method: 'NATURAL', attemptAt: new Date('2026-01-20'), success: null, notes: 'P9: Natural cover - outcome pending.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 500000, feePaidCents: 250000 },  // Partially paid - $2,500 outstanding
+    { planRef: 'Thunder Storm x Queen Bee 2025', method: 'AI_FROZEN', attemptAt: new Date('2025-09-10'), success: true, notes: 'P9: 2025 breeding - fully paid, successful foaling.',
+      guaranteeType: 'LIVE_FOAL', agreedFeeCents: 450000, feePaidCents: 450000 },
+    { planRef: 'Thunder Storm x Morning Glory 2025', method: 'AI_TCI', attemptAt: new Date('2025-06-15'), success: false, notes: 'P9: 2025 breeding - failed, return breeding offered under guarantee.',
+      guaranteeType: 'SIXTY_DAY_PREGNANCY', agreedFeeCents: 400000, feePaidCents: 400000 },
   ],
   zion: [
     { planRef: 'Resistance Cat Program', method: 'NATURAL', attemptAt: new Date('2025-12-28'), success: true, notes: 'Matrix breeding protocol' },
@@ -6541,6 +6711,32 @@ export const DEV_STUD_SERVICE_LISTINGS: Record<string, StudServiceListingDefinit
         },
       },
     },
+    // P9: Thunder Storm stud service listing for stallion revenue testing
+    {
+      title: 'Thunder Storm - 2026 Stud Service',
+      slug: 'thunder-storm-2026',
+      description: 'Thunder Storm stands at stud for the 2026 breeding season. Proven sire with excellent temperament and athletic ability.',
+      stallionRef: 'Thunder Storm',  // Must match P9 stallion
+      status: 'LIVE',
+      seasonName: '2026 Spring Season',
+      seasonStart: new Date('2026-02-01'),
+      seasonEnd: new Date('2026-07-31'),
+      breedingMethods: ['NATURAL', 'AI_TCI', 'AI_FROZEN'],
+      defaultGuarantee: 'LIVE_FOAL',
+      priceCents: 500000,  // $5,000
+      bookingFeeCents: 100000,  // $1,000 booking fee
+      maxBookings: 25,
+      bookingsReceived: 5,
+      horseServiceData: {
+        collectionDays: ['tuesday', 'thursday'],
+        mareRequirements: {
+          ageMin: 3,
+          ageMax: 18,
+          healthCertRequired: true,
+          requiredTests: ['coggins', 'culture'],
+        },
+      },
+    },
   ],
   hogwarts: [],  // No horses
   winterfell: [],  // No horses in current data (could add later)
@@ -6573,6 +6769,32 @@ export const PROD_STUD_SERVICE_LISTINGS: Record<string, StudServiceListingDefini
           ageMax: 16,
           healthCertRequired: true,
           requiredTests: ['coggins', 'EIA', 'EVA'],
+        },
+      },
+    },
+    // P9 Thunder Storm Stud Service
+    {
+      title: 'Thunder Storm - 2026 Stud Service',
+      slug: 'thunder-storm-stud',
+      description: 'Thunder Storm, champion Thoroughbred stallion, standing at stud for the 2026 breeding season. Proven producer with exceptional bloodlines.',
+      stallionRef: 'Thunder Storm',  // P9 test stallion
+      status: 'LIVE',
+      seasonName: '2026 Spring Season',
+      seasonStart: new Date('2026-02-01'),
+      seasonEnd: new Date('2026-07-31'),
+      breedingMethods: ['NATURAL', 'AI_FROZEN', 'AI_TCI'],
+      defaultGuarantee: 'LIVE_FOAL',
+      priceCents: 500000,  // $5,000
+      bookingFeeCents: 100000,  // $1,000 booking fee
+      maxBookings: 25,
+      bookingsReceived: 5,
+      horseServiceData: {
+        collectionDays: ['monday', 'wednesday', 'friday'],
+        mareRequirements: {
+          ageMin: 3,
+          ageMax: 18,
+          healthCertRequired: true,
+          requiredTests: ['coggins', 'culture', 'uterine_biopsy'],
         },
       },
     },
@@ -7791,3 +8013,276 @@ export const PROD_PARTY_ACTIVITIES: Record<string, PartyActivityDefinition[]> = 
 export function getPartyActivities(env: Environment): Record<string, PartyActivityDefinition[]> {
   return env === 'prod' ? PROD_PARTY_ACTIVITIES : DEV_PARTY_ACTIVITIES;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STALLION BOOKINGS (P9 - Stallion Breeding Revenue Testing)
+// For tracking stud service bookings, payments, and booking status
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type BookingStatusDef = 'INQUIRY' | 'PENDING_REQUIREMENTS' | 'APPROVED' | 'DEPOSIT_PAID' | 'CONFIRMED' | 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+export interface StallionBookingDefinition {
+  bookingNumber: string;
+  stallionRef: string;  // Reference to stallion animal by name
+  serviceListingSlug: string;  // Reference to stud service listing by slug
+  // Mare information
+  mareRef?: string;  // Reference to mare animal by name (if in system)
+  externalMareName?: string;  // If mare not in system
+  externalMareReg?: string;  // External registration number
+  externalMareBreed?: string;  // External mare breed
+  // Mare owner - reference to contact by index in tenant contacts
+  mareOwnerContactIndex: number;  // Index into tenant contacts array
+  // Status
+  status: BookingStatusDef;
+  // Scheduling
+  preferredMethod?: 'NATURAL' | 'AI_TCI' | 'AI_SI' | 'AI_FROZEN';
+  scheduledDate?: Date;
+  // Pricing
+  agreedFeeCents: number;
+  bookingFeeCents: number;
+  totalPaidCents: number;
+  // Guarantee
+  guaranteeType?: 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT';
+  // Notes
+  notes?: string;
+  cancellationReason?: string;
+}
+
+// DEV Stallion Bookings
+export const DEV_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]> = {
+  rivendell: [
+    // P9: Stallion Bookings for Thunder Storm
+    // Booking 1 - Deposit Paid
+    {
+      bookingNumber: 'SB-2026-001',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-2026',
+      externalMareName: 'Lady Luck',
+      externalMareReg: 'TB-12345',
+      externalMareBreed: 'Thoroughbred',
+      mareOwnerContactIndex: 5,  // Eowyn (P9 mare owner)
+      status: 'DEPOSIT_PAID',
+      preferredMethod: 'AI_FROZEN',
+      scheduledDate: new Date('2026-03-15'),
+      agreedFeeCents: 500000,  // $5,000
+      bookingFeeCents: 100000,  // $1,000 deposit
+      totalPaidCents: 100000,  // Only deposit paid
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Deposit paid, awaiting mare arrival.',
+    },
+    // Booking 2 - Confirmed (Fully Paid)
+    {
+      bookingNumber: 'SB-2026-002',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-2026',
+      mareRef: 'Morning Glory',  // Internal mare
+      mareOwnerContactIndex: 6,  // Eomer (P9 mare owner)
+      status: 'CONFIRMED',
+      preferredMethod: 'NATURAL',
+      scheduledDate: new Date('2026-02-20'),
+      agreedFeeCents: 500000,
+      bookingFeeCents: 100000,
+      totalPaidCents: 500000,  // Fully paid
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Fully paid and confirmed.',
+    },
+    // Booking 3 - Approved (Overdue - No Payment)
+    {
+      bookingNumber: 'SB-2026-003',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-2026',
+      mareRef: 'Queen Bee',  // Internal mare
+      mareOwnerContactIndex: 7,  // Theoden (P9 mare owner)
+      status: 'APPROVED',
+      preferredMethod: 'AI_TCI',
+      scheduledDate: new Date('2026-01-15'),  // Past date = overdue
+      agreedFeeCents: 500000,
+      bookingFeeCents: 0,
+      totalPaidCents: 0,  // Nothing paid - overdue
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Approved but no payment received - OVERDUE.',
+    },
+    // Booking 4 - Cancelled
+    {
+      bookingNumber: 'SB-2026-004',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-2026',
+      externalMareName: 'Storm Chaser',
+      externalMareReg: 'TB-67890',
+      externalMareBreed: 'Thoroughbred',
+      mareOwnerContactIndex: 5,  // Eowyn
+      status: 'CANCELLED',
+      agreedFeeCents: 500000,
+      bookingFeeCents: 100000,
+      totalPaidCents: 100000,  // Deposit was paid (refunded)
+      cancellationReason: 'Mare health issue - veterinary concern.',
+      notes: 'P9: Cancelled due to mare health, deposit refunded.',
+    },
+  ],
+  hogwarts: [],
+  winterfell: [],
+  'stark-tower': [],
+};
+
+// PROD Stallion Bookings - P9 Test Data
+export const PROD_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]> = {
+  arrakis: [],
+  starfleet: [],
+  richmond: [
+    // Booking 1 - Deposit Paid
+    {
+      bookingNumber: 'SB-2026-001',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-stud',
+      externalMareName: 'Lady Luck',
+      externalMareReg: 'TB-12345',
+      externalMareBreed: 'Thoroughbred',
+      mareOwnerContactIndex: 5,  // Jane Smith (P9 mare owner)
+      status: 'DEPOSIT_PAID',
+      preferredMethod: 'AI_FROZEN',
+      scheduledDate: new Date('2026-03-15'),
+      agreedFeeCents: 500000,  // $5,000
+      bookingFeeCents: 100000,  // $1,000 deposit
+      totalPaidCents: 100000,  // Only deposit paid
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Deposit paid, awaiting mare arrival.',
+    },
+    // Booking 2 - Confirmed (Fully Paid)
+    {
+      bookingNumber: 'SB-2026-002',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-stud',
+      mareRef: 'Morning Glory',  // Internal mare
+      mareOwnerContactIndex: 6,  // Bob Johnson (P9 mare owner)
+      status: 'CONFIRMED',
+      preferredMethod: 'NATURAL',
+      scheduledDate: new Date('2026-02-20'),
+      agreedFeeCents: 500000,
+      bookingFeeCents: 100000,
+      totalPaidCents: 500000,  // Fully paid
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Fully paid and confirmed.',
+    },
+    // Booking 3 - Approved (Overdue - No Payment)
+    {
+      bookingNumber: 'SB-2026-003',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-stud',
+      mareRef: 'Queen Bee',  // Internal mare
+      mareOwnerContactIndex: 7,  // Sarah Williams (P9 mare owner)
+      status: 'APPROVED',
+      preferredMethod: 'AI_TCI',
+      scheduledDate: new Date('2026-01-15'),  // Past date = overdue
+      agreedFeeCents: 500000,
+      bookingFeeCents: 0,
+      totalPaidCents: 0,  // Nothing paid - overdue
+      guaranteeType: 'LIVE_FOAL',
+      notes: 'P9: Approved but no payment received - OVERDUE.',
+    },
+    // Booking 4 - Cancelled
+    {
+      bookingNumber: 'SB-2026-004',
+      stallionRef: 'Thunder Storm',
+      serviceListingSlug: 'thunder-storm-stud',
+      externalMareName: 'Storm Chaser',
+      externalMareReg: 'TB-67890',
+      externalMareBreed: 'Thoroughbred',
+      mareOwnerContactIndex: 5,  // Jane Smith
+      status: 'CANCELLED',
+      agreedFeeCents: 500000,
+      bookingFeeCents: 100000,
+      totalPaidCents: 100000,  // Deposit was paid (refunded)
+      cancellationReason: 'Mare health issue - veterinary concern.',
+      notes: 'P9: Cancelled due to mare health, deposit refunded.',
+    },
+  ],
+  zion: [],
+};
+
+export function getStallionBookings(env: Environment): Record<string, StallionBookingDefinition[]> {
+  return env === 'prod' ? PROD_STALLION_BOOKINGS : DEV_STALLION_BOOKINGS;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUD VISIBILITY RULES - Default tenant-level visibility configuration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Default visibility configuration for stud listings.
+ * Conservative defaults - breeders opt-in to more visibility.
+ *
+ * Hierarchy: TENANT (defaults) → PROGRAM → PARTICIPANT (individual stallion)
+ */
+export const DEFAULT_STUD_VISIBILITY_CONFIG = {
+  booking: {
+    enabled: true,
+    showSlotsAvailable: true,
+    showTotalSlots: false,
+    showSeasonDates: true,
+    showAcceptingBookings: true,
+    showHealthCertRequired: true,
+    showCogginsRequired: true,
+    showCultureRequired: true,
+    showUterineExamRequired: true,
+    showRequirementsNotes: false,
+    showBookingFee: true,
+    showFullFee: true,
+    showFeeRange: false,
+    showPaymentTerms: false,
+    showGuaranteeType: true,
+    showGuaranteeTerms: false,
+    showShippingAvailable: true,
+    showShippingRegions: false,
+    showShippingFee: false,
+  },
+  semen: {
+    enabled: true,
+    showStorageTypes: true,
+    showDosesAvailable: false,
+    showStorageFacility: false,
+    showQualityGrade: true,
+    showMotility: false,
+    showMorphology: false,
+    showConcentration: false,
+    showCollectionDates: false,
+    showCollectionMethod: false,
+    showExpirationDates: false,
+    showBatchInfo: false,
+  },
+  calendar: {
+    enabled: true,
+    showAvailableDates: true,
+    showBlockedPeriods: false,
+    showBookedDates: false,
+    showCollectionDays: false,
+    showNextAvailable: true,
+    showLiveCoverAvailable: true,
+    showAIFreshAvailable: true,
+    showAIFrozenAvailable: true,
+    showShippingOptions: true,
+  },
+  performance: {
+    enabled: false, // Entire section disabled by default - opt-in
+    showSuccessRate: false,
+    showTotalBreedings: false,
+    showCompletedBreedings: false,
+    showCurrentPregnancies: false,
+    showYearlyBreedings: false,
+    showLifetimeStats: false,
+    showCurrentSeason: false,
+    showBookingCount: false,
+  },
+  breedingTerms: {
+    enabled: true,
+    showMethods: true,
+    showPreferredMethod: false,
+    showMareAgeRequirements: true,
+    showMareBreedRequirements: true,
+    showMareHealthRequirements: true,
+    showContractRequired: true,
+    showContractTerms: false,
+    showBestTimeToBreed: false,
+    showSeasonalAvailability: true,
+  },
+  version: 1,
+};

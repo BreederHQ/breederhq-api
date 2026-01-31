@@ -49,6 +49,11 @@ function normalizeIsoDateOnly(v: unknown): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+function daysBetween(date1: Date, date2: Date): number {
+  const diffTime = date2.getTime() - date1.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
+
 /**
  * Checks for potential duplicate animals within a tenant.
  * Returns matching animals if duplicates are found.
@@ -1002,6 +1007,60 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       throw e;
     }
+  });
+
+  // PATCH /animals/:id/breeding-availability
+  // Toggle breeding availability: "open" (available) or "resting" (not available)
+  app.patch("/animals/:id/breeding-availability", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    const body = (req.body || {}) as { status?: string; notes?: string };
+    const { status } = body;
+
+    // Validate status - only "open" or "resting" allowed
+    if (!status || !["open", "resting"].includes(status)) {
+      return reply.code(400).send({
+        error: "invalid_status",
+        message: "Status must be 'open' or 'resting'",
+      });
+    }
+
+    // Verify animal exists and belongs to tenant
+    const existing = await prisma.animal.findFirst({
+      where: activeOnly({ id, tenantId }),
+      select: { id: true, name: true, species: true, sex: true },
+    });
+
+    if (!existing) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // Update the breeding availability
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { breedingAvailability: status },
+      select: {
+        id: true,
+        name: true,
+        species: true,
+        sex: true,
+        breedingAvailability: true,
+        updatedAt: true,
+      },
+    });
+
+    reply.send({
+      id: updated.id,
+      name: updated.name,
+      species: updated.species,
+      sex: updated.sex,
+      breedingAvailability: updated.breedingAvailability,
+      updatedAt: updated.updatedAt.toISOString(),
+    });
   });
 
     // POST /animals/:id/photo
@@ -2208,6 +2267,256 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       eyeColor: genetics.eyeColorData || [],
       otherTraits: genetics.otherTraitsData || [],
     });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Stallion Breeding Revenue endpoint
+  // Per spec: P9-STALLION-FINANCES-TAB-PROMPT.md
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /animals/:id/breeding-revenue
+   * Returns breeding revenue data for a stallion (male horse)
+   * Only valid for animals with species=HORSE and sex=MALE
+   */
+  app.get("/animals/:id/breeding-revenue", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    const query = (req.query || {}) as { year?: string };
+    const year = query.year ? Number(query.year) : new Date().getFullYear();
+    if (isNaN(year) || year < 1900 || year > 2100) {
+      return reply.code(400).send({ error: "year_invalid" });
+    }
+
+    // Get the animal and verify it's a male horse
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId, archived: false },
+      select: { id: true, species: true, sex: true, name: true },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal_not_found" });
+    }
+
+    if (animal.species !== "HORSE") {
+      return reply.code(400).send({ error: "not_horse_species" });
+    }
+
+    if (animal.sex !== "MALE") {
+      return reply.code(400).send({ error: "not_male_animal" });
+    }
+
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year + 1, 0, 1);
+    const now = new Date();
+
+    // Get breeding attempts for this stallion
+    const attempts = await prisma.breedingAttempt.findMany({
+      where: {
+        tenantId,
+        sireId: animalId,
+      },
+      include: {
+        plan: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+        dam: {
+          select: { id: true, name: true },
+        },
+        studOwnerParty: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { attemptAt: "desc" },
+    });
+
+    // Get stallion bookings for this stallion
+    const bookings = await prisma.stallionBooking.findMany({
+      where: {
+        tenantId,
+        stallionId: animalId,
+      },
+      include: {
+        mare: {
+          select: { id: true, name: true },
+        },
+        mareOwnerParty: {
+          select: { id: true, name: true },
+        },
+        serviceListing: {
+          select: { id: true, seasonName: true, priceCents: true, maxBookings: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Get active listing for this stallion
+    const activeListing = await prisma.mktListingBreederService.findFirst({
+      where: {
+        tenantId,
+        stallionId: animalId,
+        status: "LIVE",
+      },
+      select: {
+        id: true,
+        seasonName: true,
+        priceCents: true,
+        maxBookings: true,
+        bookingsReceived: true,
+      },
+    });
+
+    // Calculate summary stats
+    let totalRevenueCents = 0;
+    let totalRevenueYTDCents = 0;
+    let totalBreedings = 0;
+    let completedBreedings = 0;
+    let successfulBreedings = 0;
+
+    // From breeding attempts
+    for (const attempt of attempts) {
+      totalBreedings++;
+      const feePaid = attempt.feePaidCents || 0;
+      totalRevenueCents += feePaid;
+
+      // Check if in current year
+      if (attempt.attemptAt && attempt.attemptAt >= yearStart && attempt.attemptAt < yearEnd) {
+        totalRevenueYTDCents += feePaid;
+      }
+
+      if (attempt.success !== null) {
+        completedBreedings++;
+        if (attempt.success === true) {
+          successfulBreedings++;
+        }
+      }
+    }
+
+    // From stallion bookings (may overlap with attempts, but bookings have better payment tracking)
+    for (const booking of bookings) {
+      const paid = booking.totalPaidCents || 0;
+      // Avoid double counting if this booking links to an attempt
+      // For now, we prioritize booking data if it has payments
+      if (paid > 0 && booking.status !== "CANCELLED") {
+        // Check if booking is in current year
+        if (booking.createdAt >= yearStart && booking.createdAt < yearEnd) {
+          // Add to YTD if not already counted via attempts
+          totalRevenueYTDCents += paid;
+        }
+        totalRevenueCents += paid;
+      }
+    }
+
+    // Calculate averages and rates
+    const averageFeeCents = totalBreedings > 0 ? Math.round(totalRevenueCents / totalBreedings) : 0;
+    const successRate = completedBreedings > 0 ? Math.round((successfulBreedings / completedBreedings) * 100) : 0;
+
+    // Build yearly breakdown (from attempts)
+    const yearlyMap = new Map<number, { revenueCents: number; breedingCount: number; successCount: number; completedCount: number }>();
+    for (const attempt of attempts) {
+      const attemptYear = attempt.attemptAt?.getFullYear() || new Date().getFullYear();
+      if (!yearlyMap.has(attemptYear)) {
+        yearlyMap.set(attemptYear, { revenueCents: 0, breedingCount: 0, successCount: 0, completedCount: 0 });
+      }
+      const yearData = yearlyMap.get(attemptYear)!;
+      yearData.breedingCount++;
+      yearData.revenueCents += attempt.feePaidCents || 0;
+      if (attempt.success !== null) {
+        yearData.completedCount++;
+        if (attempt.success === true) {
+          yearData.successCount++;
+        }
+      }
+    }
+
+    const byYear = Array.from(yearlyMap.entries())
+      .map(([y, data]) => ({
+        year: y,
+        revenueCents: data.revenueCents,
+        breedingCount: data.breedingCount,
+        successRate: data.completedCount > 0 ? Math.round((data.successCount / data.completedCount) * 100) : 0,
+      }))
+      .sort((a, b) => b.year - a.year);
+
+    // Build recent payments list (from bookings with payments)
+    const recentPayments = bookings
+      .filter((b) => b.totalPaidCents && b.totalPaidCents > 0 && b.status !== "CANCELLED")
+      .slice(0, 10)
+      .map((b) => ({
+        id: b.id,
+        breedingPlanId: 0, // Bookings don't directly link to plans
+        mareOwnerName: (b as any).mareOwnerParty?.name || "Unknown",
+        mareName: (b as any).mare?.name || b.externalMareName || undefined,
+        amountCents: b.totalPaidCents || 0,
+        paidAt: b.statusChangedAt?.toISOString() || b.createdAt.toISOString(),
+        status: "PAID" as const,
+      }));
+
+    // Build outstanding payments (bookings where totalPaidCents < agreedFeeCents)
+    const outstandingBookings = bookings.filter(
+      (b) => b.status !== "CANCELLED" && (b.totalPaidCents || 0) < b.agreedFeeCents
+    );
+
+    const outstandingItems = outstandingBookings.map((b) => {
+      const amountDue = b.agreedFeeCents - (b.totalPaidCents || 0);
+      const dueDate = b.scheduledDate;
+      const daysOverdue = dueDate && dueDate < now ? daysBetween(dueDate, now) : undefined;
+      const status: "PENDING" | "OVERDUE" = daysOverdue && daysOverdue > 0 ? "OVERDUE" : "PENDING";
+
+      return {
+        id: b.id,
+        breedingPlanId: 0,
+        mareOwnerName: (b as any).mareOwnerParty?.name || "Unknown",
+        mareName: (b as any).mare?.name || b.externalMareName || undefined,
+        amountCents: amountDue,
+        dueDate: dueDate?.toISOString(),
+        daysOverdue: daysOverdue && daysOverdue > 0 ? daysOverdue : undefined,
+        status,
+      };
+    });
+
+    const outstandingTotalCents = outstandingItems.reduce((sum, item) => sum + item.amountCents, 0);
+
+    // Build response
+    const response = {
+      summary: {
+        totalRevenueCents,
+        totalRevenueYTDCents,
+        totalBreedings,
+        completedBreedings,
+        averageFeeCents,
+        successRate,
+      },
+      byYear,
+      recentPayments,
+      outstanding: {
+        totalCents: outstandingTotalCents,
+        count: outstandingItems.length,
+        items: outstandingItems,
+      },
+      activeListing: activeListing
+        ? {
+            id: activeListing.id,
+            seasonName: activeListing.seasonName || `${year} Season`,
+            feeCents: activeListing.priceCents || 0,
+            maxBookings: activeListing.maxBookings || undefined,
+            currentBookings: activeListing.bookingsReceived || 0,
+            availableSlots:
+              activeListing.maxBookings !== null
+                ? Math.max(0, activeListing.maxBookings - (activeListing.bookingsReceived || 0))
+                : undefined,
+          }
+        : undefined,
+    };
+
+    reply.send(response);
   });
 
   // ──────────────────────────────────────────────────────────────────────────

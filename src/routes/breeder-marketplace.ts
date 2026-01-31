@@ -83,7 +83,20 @@ export default async function breederMarketplaceRoutes(
     }
 
     if (intent) {
-      where.intent = intent.toUpperCase();
+      // Map intent to templateType field
+      // Frontend uses "STUD" but schema uses "STUD_SERVICES"
+      const intentMapping: Record<string, string> = {
+        "STUD": "STUD_SERVICES",
+        "STUD_SERVICES": "STUD_SERVICES",
+        "GUARDIAN": "GUARDIAN",
+        "TRAINED": "TRAINED",
+        "REHOME": "REHOME",
+        "BROOD_PLACEMENT": "REHOME", // alias
+        "CO_OWNERSHIP": "CO_OWNERSHIP",
+        "CUSTOM": "CUSTOM",
+      };
+      const upperIntent = intent.toUpperCase();
+      where.templateType = intentMapping[upperIntent] || upperIntent;
     }
 
     // Filter by breeding program if specified

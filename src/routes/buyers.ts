@@ -888,6 +888,420 @@ const buyersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "remove_tag_failed" });
     }
   });
+
+  // ─────────────────────────────────────────────────────────
+  // P4/P5: UNIFIED BUYER INTERESTS (CRM Integration)
+  // Returns all interest sources across old and new systems
+  // ─────────────────────────────────────────────────────────
+
+  // GET /buyers/:id/all-interests - Unified view of buyer interests
+  app.get("/buyers/:id/all-interests", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const buyerId = toNum((req.params as any).id);
+      if (!buyerId) return reply.code(400).send({ error: "invalid_buyer_id" });
+
+      // Get buyer with all interest sources
+      const buyer = await prisma.buyer.findFirst({
+        where: { id: buyerId, tenantId },
+        include: {
+          party: {
+            select: { id: true, name: true },
+          },
+          // Direct BuyerInterest (new CRM)
+          interests: {
+            include: {
+              animal: {
+                select: {
+                  id: true,
+                  name: true,
+                  species: true,
+                  sex: true,
+                  breed: true,
+                  photoUrl: true,
+                  forSale: true,
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+          // Breeding plan interests (old system)
+          breedingPlanBuyers: {
+            include: {
+              plan: {
+                select: {
+                  id: true,
+                  name: true,
+                  status: true,
+                  sire: { select: { id: true, name: true, photoUrl: true } },
+                  dam: { select: { id: true, name: true, photoUrl: true } },
+                  offspringGroup: {
+                    select: {
+                      id: true,
+                      name: true,
+                      _count: { select: { Offspring: true } },
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+          // Offspring group interests (old system)
+          offspringGroupBuyers: {
+            include: {
+              group: {
+                select: {
+                  id: true,
+                  name: true,
+                  status: true,
+                  plan: { select: { id: true, name: true } },
+                  Offspring: {
+                    select: {
+                      id: true,
+                      name: true,
+                      sex: true,
+                      status: true,
+                    },
+                    take: 10,
+                  },
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+          // Waitlist entries (old system)
+          waitlistEntries: {
+            include: {
+              plan: { select: { id: true, name: true } },
+              program: { select: { id: true, name: true } },
+              offspring: { select: { id: true, name: true } },
+              animal: { select: { id: true, name: true, photoUrl: true } },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+        },
+      });
+
+      if (!buyer) {
+        return reply.code(404).send({ error: "buyer_not_found" });
+      }
+
+      // Format unified response
+      const response = {
+        buyer: {
+          id: buyer.id,
+          partyId: buyer.partyId,
+          partyName: buyer.party.name,
+        },
+        // Direct animal interests (new CRM system)
+        directInterests: buyer.interests.map((i) => ({
+          id: i.id,
+          type: "DIRECT" as const,
+          level: i.level,
+          notes: i.notes,
+          createdAt: i.createdAt,
+          animal: i.animal,
+        })),
+        // Breeding plan interests (old system)
+        breedingPlanInterests: buyer.breedingPlanBuyers.map((pb) => ({
+          id: pb.id,
+          type: "BREEDING_PLAN" as const,
+          stage: pb.stage,
+          matchScore: pb.matchScore,
+          priority: pb.priority,
+          notes: pb.notes,
+          createdAt: pb.createdAt,
+          plan: pb.plan,
+        })),
+        // Offspring group interests (old system)
+        offspringGroupInterests: buyer.offspringGroupBuyers.map((gb) => ({
+          id: gb.id,
+          type: "OFFSPRING_GROUP" as const,
+          placementRank: gb.placementRank,
+          createdAt: gb.createdAt,
+          group: gb.group,
+        })),
+        // Waitlist positions (old system)
+        waitlistPositions: buyer.waitlistEntries.map((w) => ({
+          id: w.id,
+          type: "WAITLIST" as const,
+          status: w.status,
+          priority: w.priority,
+          depositPaidAt: w.depositPaidAt,
+          createdAt: w.createdAt,
+          plan: w.plan,
+          program: w.program,
+          offspring: w.offspring,
+          animal: w.animal,
+        })),
+        // Summary counts
+        summary: {
+          directInterests: buyer.interests.length,
+          breedingPlanInterests: buyer.breedingPlanBuyers.length,
+          offspringGroupInterests: buyer.offspringGroupBuyers.length,
+          waitlistPositions: buyer.waitlistEntries.length,
+          total:
+            buyer.interests.length +
+            buyer.breedingPlanBuyers.length +
+            buyer.offspringGroupBuyers.length +
+            buyer.waitlistEntries.length,
+        },
+      };
+
+      return reply.send(response);
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get unified buyer interests");
+      return reply.code(500).send({ error: "get_all_interests_failed" });
+    }
+  });
+
+  // GET /buyers/:id/timeline - Unified activity timeline
+  app.get("/buyers/:id/timeline", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const buyerId = toNum((req.params as any).id);
+      if (!buyerId) return reply.code(400).send({ error: "invalid_buyer_id" });
+
+      const query = req.query as Record<string, unknown>;
+      const { limit } = parsePaging(query);
+
+      // Get buyer
+      const buyer = await prisma.buyer.findFirst({
+        where: { id: buyerId, tenantId },
+        select: { id: true, partyId: true, createdAt: true },
+      });
+
+      if (!buyer) {
+        return reply.code(404).send({ error: "buyer_not_found" });
+      }
+
+      // Fetch activities from multiple sources
+      const [
+        partyActivities,
+        dealActivities,
+        breedingPlanBuyers,
+        waitlistEntries,
+      ] = await Promise.all([
+        // Party activities (CRM interactions)
+        prisma.partyActivity.findMany({
+          where: { tenantId, partyId: buyer.partyId },
+          take: limit,
+          orderBy: { createdAt: "desc" },
+        }),
+        // Deal activities
+        prisma.dealActivity.findMany({
+          where: {
+            tenantId,
+            deal: { buyerId },
+          },
+          include: {
+            deal: { select: { name: true, animalId: true } },
+          },
+          take: limit,
+          orderBy: { createdAt: "desc" },
+        }),
+        // Breeding plan buyer additions
+        prisma.breedingPlanBuyer.findMany({
+          where: { tenantId, buyerId },
+          select: {
+            id: true,
+            stage: true,
+            createdAt: true,
+            plan: { select: { id: true, name: true } },
+          },
+          take: limit,
+          orderBy: { createdAt: "desc" },
+        }),
+        // Waitlist entries
+        prisma.waitlistEntry.findMany({
+          where: { tenantId, buyerId },
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            approvedAt: true,
+            depositPaidAt: true,
+            plan: { select: { id: true, name: true } },
+            program: { select: { id: true, name: true } },
+          },
+          take: limit,
+          orderBy: { createdAt: "desc" },
+        }),
+      ]);
+
+      // Merge and sort timeline events
+      type TimelineEvent = {
+        id: string;
+        type: string;
+        title: string;
+        detail?: string | null;
+        timestamp: Date;
+        source: string;
+        metadata?: Record<string, unknown>;
+      };
+
+      const timeline: TimelineEvent[] = [];
+
+      // Add party activities
+      for (const activity of partyActivities) {
+        timeline.push({
+          id: `party-${activity.id}`,
+          type: activity.kind,
+          title: activity.title,
+          detail: activity.detail,
+          timestamp: activity.createdAt,
+          source: "PARTY_CRM",
+        });
+      }
+
+      // Add deal activities
+      for (const activity of dealActivities) {
+        timeline.push({
+          id: `deal-${activity.id}`,
+          type: activity.type,
+          title: activity.title,
+          detail: activity.description,
+          timestamp: activity.createdAt,
+          source: "DEAL",
+          metadata: {
+            dealName: activity.deal.name,
+            animalId: activity.deal.animalId,
+          },
+        });
+      }
+
+      // Add breeding plan buyer events
+      for (const pb of breedingPlanBuyers) {
+        timeline.push({
+          id: `plan-buyer-${pb.id}`,
+          type: "PLAN_INTEREST",
+          title: `Added to breeding plan`,
+          detail: `Interested in ${pb.plan.name} (${pb.stage})`,
+          timestamp: pb.createdAt,
+          source: "BREEDING_PLAN",
+          metadata: {
+            planId: pb.plan.id,
+            planName: pb.plan.name,
+            stage: pb.stage,
+          },
+        });
+      }
+
+      // Add waitlist events
+      for (const entry of waitlistEntries) {
+        timeline.push({
+          id: `waitlist-${entry.id}`,
+          type: "WAITLIST_ENTRY",
+          title: `Joined waitlist`,
+          detail: entry.plan
+            ? `Waitlist for ${entry.plan.name}`
+            : entry.program
+            ? `Waitlist for ${entry.program.name}`
+            : "General waitlist",
+          timestamp: entry.createdAt,
+          source: "WAITLIST",
+          metadata: {
+            status: entry.status,
+            planId: entry.plan?.id,
+            programId: entry.program?.id,
+          },
+        });
+
+        // Add deposit paid event if applicable
+        if (entry.depositPaidAt) {
+          timeline.push({
+            id: `waitlist-deposit-${entry.id}`,
+            type: "DEPOSIT_PAID",
+            title: "Deposit paid",
+            detail: entry.plan
+              ? `Deposit for ${entry.plan.name}`
+              : "Waitlist deposit",
+            timestamp: entry.depositPaidAt,
+            source: "WAITLIST",
+          });
+        }
+
+        // Add approval event if applicable
+        if (entry.approvedAt) {
+          timeline.push({
+            id: `waitlist-approved-${entry.id}`,
+            type: "WAITLIST_APPROVED",
+            title: "Waitlist approved",
+            detail: entry.plan
+              ? `Approved for ${entry.plan.name}`
+              : "Waitlist approved",
+            timestamp: entry.approvedAt,
+            source: "WAITLIST",
+          });
+        }
+      }
+
+      // Add buyer creation event
+      timeline.push({
+        id: `buyer-created-${buyer.id}`,
+        type: "BUYER_CREATED",
+        title: "Added to buyer CRM",
+        timestamp: buyer.createdAt,
+        source: "BUYER_CRM",
+      });
+
+      // Sort by timestamp descending
+      timeline.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+      return reply.send({
+        items: timeline.slice(0, limit),
+        total: timeline.length,
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get buyer timeline");
+      return reply.code(500).send({ error: "get_timeline_failed" });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // P4/P5: MIGRATION ENDPOINTS
+  // ─────────────────────────────────────────────────────────
+
+  // GET /buyers/migration/status - Get migration status
+  app.get("/buyers/migration/status", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      // Dynamically import migration service to avoid circular dependencies
+      const { getMigrationStatus } = await import("../services/buyer-migration-service.js");
+      const status = await getMigrationStatus(tenantId);
+
+      return reply.send(status);
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get migration status");
+      return reply.code(500).send({ error: "get_migration_status_failed" });
+    }
+  });
+
+  // POST /buyers/migrate - Run buyer migration for tenant
+  app.post("/buyers/migrate", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      // TODO: Add admin/permission check here
+      // This is a potentially expensive operation
+
+      const { runFullBuyerMigration } = await import("../services/buyer-migration-service.js");
+      const result = await runFullBuyerMigration(tenantId);
+
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to run buyer migration");
+      return reply.code(500).send({ error: "migration_failed" });
+    }
+  });
 };
 
 export default buyersRoutes;
