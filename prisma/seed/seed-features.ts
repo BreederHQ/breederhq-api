@@ -48,6 +48,19 @@ const FEATURES: FeatureConfig[] = [
     uiHint: "Animal Details > Ownership section, Owner editor modal",
     isActive: true,
   },
+
+  // P7: Semen Inventory Management feature flag
+  {
+    key: "HORSE_SEMEN_INVENTORY",
+    name: "Semen Inventory Management",
+    description:
+      "Track frozen and cooled semen at the dose level with collection, dispense, and expiration workflows",
+    module: "ANIMALS",
+    entitlementKey: "BREEDING_PLANS", // Available to users with breeding plans access
+    uiHint:
+      "Semen Inventory page, Dashboard widget, Add Collection modal, Dispense modal",
+    isActive: true,
+  },
 ];
 
 async function seedFeatures() {

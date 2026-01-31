@@ -452,26 +452,26 @@ enum DealActivityType {
 }
 
 enum BuyerEmailTemplateCategory {
-  GENERAL          // Generic responses
-  INITIAL_CONTACT  // First response to inquiry
-  FOLLOW_UP        // Follow-up emails
-  VIEWING          // Related to viewings/visits
-  NEGOTIATION      // Price/deal discussions
-  CLOSING          // Final steps of sale
+  GENERAL // Generic responses
+  INITIAL_CONTACT // First response to inquiry
+  FOLLOW_UP // Follow-up emails
+  VIEWING // Related to viewings/visits
+  NEGOTIATION // Price/deal discussions
+  CLOSING // Final steps of sale
 
   @@schema("public")
 }
 
 enum BuyerTaskType {
-  FOLLOW_UP        // General follow-up
-  CALL             // Phone call needed
-  EMAIL            // Send email
+  FOLLOW_UP // General follow-up
+  CALL // Phone call needed
+  EMAIL // Send email
   SCHEDULE_VIEWING // Arrange a viewing
-  SEND_INFO        // Send information/media
-  VET_CHECK        // Coordinate vet check
-  CONTRACT         // Contract-related task
-  PAYMENT          // Payment follow-up
-  OTHER            // Miscellaneous
+  SEND_INFO // Send information/media
+  VET_CHECK // Coordinate vet check
+  CONTRACT // Contract-related task
+  PAYMENT // Payment follow-up
+  OTHER // Miscellaneous
 
   @@schema("public")
 }
@@ -486,11 +486,11 @@ enum BuyerTaskPriority {
 }
 
 enum BuyerTaskStatus {
-  PENDING          // Not started
-  IN_PROGRESS      // Being worked on
-  COMPLETED        // Done
-  CANCELLED        // No longer needed
-  DEFERRED         // Postponed
+  PENDING // Not started
+  IN_PROGRESS // Being worked on
+  COMPLETED // Done
+  CANCELLED // No longer needed
+  DEFERRED // Postponed
 
   @@schema("public")
 }
@@ -669,6 +669,55 @@ enum GuaranteeResolution {
   @@schema("public")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Semen Inventory (P7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SemenCollectionMethod {
+  AV // Artificial vagina
+  EE // Electroejaculation
+  MANUAL
+
+  @@schema("public")
+}
+
+enum SemenStorageType {
+  FRESH // Same-day use
+  COOLED // Extended, 24-72 hour viability
+  FROZEN // Cryopreserved, long-term storage
+
+  @@schema("public")
+}
+
+enum SemenQualityGrade {
+  EXCELLENT // >70% motility, >70% morphology
+  GOOD // 50-70% motility
+  FAIR // 30-50% motility
+  POOR // <30% motility
+
+  @@schema("public")
+}
+
+enum SemenInventoryStatus {
+  AVAILABLE // In inventory, can be used
+  RESERVED // Reserved for a specific breeding
+  DEPLETED // All doses used
+  EXPIRED // Past expiration date
+  DISCARDED // Removed from inventory (quality issues, etc.)
+
+  @@schema("public")
+}
+
+enum SemenUsageType {
+  BREEDING_ON_SITE // Used for breeding at the station
+  BREEDING_SHIPPED // Shipped to mare owner for AI
+  TRANSFERRED // Moved to another storage facility
+  SAMPLE_TESTING // Used for quality testing
+  DISCARDED // Disposed (quality degradation, etc.)
+
+  @@schema("public")
+}
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -679,6 +728,20 @@ enum WaitlistStatus {
   COMPLETED
   CANCELED
   REJECTED
+
+  @@schema("public")
+}
+
+enum BookingStatus {
+  INQUIRY // Initial inquiry received
+  PENDING_REQUIREMENTS // Waiting for mare health docs
+  APPROVED // Approved, awaiting payment
+  DEPOSIT_PAID // Booking fee received
+  CONFIRMED // Full payment or balance confirmed
+  SCHEDULED // Breeding date set
+  IN_PROGRESS // Breeding underway (linked to BreedingPlan)
+  COMPLETED // Successfully completed
+  CANCELLED // Cancelled by either party
 
   @@schema("public")
 }
@@ -1035,10 +1098,10 @@ model User {
   contractTemplatesCreated ContractTemplate[] @relation("ContractTemplateCreatedBy")
 
   // Buyer CRM (P4)
-  dealActivities DealActivity[]
+  dealActivities      DealActivity[]
   // Buyer CRM (P5)
-  buyerTasksAssigned  BuyerTask[] @relation("BuyerTaskAssignee")
-  buyerTasksCompleted BuyerTask[] @relation("BuyerTaskCompleter")
+  buyerTasksAssigned  BuyerTask[]    @relation("BuyerTaskAssignee")
+  buyerTasksCompleted BuyerTask[]    @relation("BuyerTaskCompleter")
 
   // Registry integration (P6)
   registryVerifications RegistryVerification[] @relation("RegistryVerificationVerifier")
@@ -1239,6 +1302,10 @@ model Tenant {
   breedingMilestones        BreedingMilestone[]
   mareReproductiveHistories MareReproductiveHistory[]
 
+  // Semen inventory (P7)
+  semenInventory SemenInventory[]
+  semenUsage     SemenUsage[]
+
   availabilityPrefs Json?
 
   settings TenantSetting[]
@@ -1250,6 +1317,9 @@ model Tenant {
   breedingProgramMedia     BreedingProgramMedia[]
   breedingProgramInquiries BreedingProgramInquiry[]
   breedingProgramRules     BreedingProgramRule[]
+
+  // Stud listing visibility rules
+  studVisibilityRules StudVisibilityRule[]
 
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -1385,6 +1455,9 @@ model Tenant {
   // Registry integration (P6)
   registryConnections RegistryConnection[]
   registrySyncLogs    RegistrySyncLog[]
+
+  // Stallion Booking Pipeline (P8)
+  stallionBookings StallionBooking[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1964,6 +2037,9 @@ model MktListingBreederService {
   bookingsReceived Int     @default(0)
   bookingsClosed   Boolean @default(false)
 
+  // Bookings for this listing (P8)
+  bookings StallionBooking[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2158,6 +2234,9 @@ model Party {
 
   // MessagingHub - unlinked emails that were later linked to this party
   unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
+
+  // Stallion bookings (P8) - mare owner
+  stallionBookings StallionBooking[]
 
   @@index([tenantId, type])
   @@index([tenantId, name])
@@ -2536,6 +2615,11 @@ model Animal {
   // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
   femaleCycleLenOverrideDays Int?
 
+  // Breeding availability: Manual toggle for whether animal is available for breeding
+  // Values: "open" (available) | "resting" (recovery/not available) | null (default = open)
+  // Applies to all species, for females indicates reproductive readiness
+  breedingAvailability String?
+
   // legacy links
   litterId         Int?
   litter           Litter?         @relation(fields: [litterId], references: [id], onDelete: SetNull)
@@ -2645,6 +2729,13 @@ model Animal {
 
   // Mare reproductive history (horses only)
   mareReproductiveHistory MareReproductiveHistory?
+
+  // Semen inventory (stallions only) - P7
+  semenInventory SemenInventory[] @relation("StallionSemenInventory")
+
+  // Stallion bookings (P8)
+  stallionBookings StallionBooking[] @relation("StallionBookings")
+  mareBookings     StallionBooking[] @relation("MareBookings")
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
@@ -3660,6 +3751,9 @@ model BreedingPlan {
   foalingOutcome     FoalingOutcome?
   breedingMilestones BreedingMilestone[]
 
+  // Stallion booking that originated this plan (P8)
+  stallionBooking StallionBooking?
+
   archived      Boolean   @default(false)
   archiveReason String? /// Optional reason/note provided when archiving the plan
   deletedAt     DateTime?
@@ -3914,6 +4008,9 @@ model BreedingAttempt {
   agreedFeeCents Int?
   feePaidCents   Int? @default(0)
 
+  // Semen usage link (P7 - for AI breedings)
+  semenUsage SemenUsage?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3922,6 +4019,216 @@ model BreedingAttempt {
   @@index([damId])
   @@index([sireId])
   @@index([studOwnerPartyId])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semen Inventory Management (P7)
+// Tracks frozen and cooled semen at the dose level for stallion stations
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SemenInventory {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Stallion
+  stallionId Int
+  stallion   Animal @relation("StallionSemenInventory", fields: [stallionId], references: [id])
+
+  // Batch identification
+  batchNumber      String
+  collectionDate   DateTime
+  collectionMethod SemenCollectionMethod @default(AV)
+
+  // Storage
+  storageType     SemenStorageType
+  storageLocation String? // "Tank A, Canister 3, Cane 2"
+  storageFacility String? // External facility name if off-site
+
+  // Quantity
+  initialDoses   Int // Doses from this collection
+  availableDoses Int // Current available (decrements on use)
+  doseVolumeMl   Decimal? @db.Decimal(5, 2) // Volume per dose
+
+  // Quality assessment
+  concentration Int? // Million sperm/ml
+  motility      Int? // Percentage (0-100)
+  morphology    Int? // Percentage normal (0-100)
+  qualityGrade  SemenQualityGrade?
+
+  // Expiration
+  expiresAt DateTime? // For cooled/extended semen
+  isExpired Boolean   @default(false)
+
+  // Status
+  status SemenInventoryStatus @default(AVAILABLE)
+  notes  String?              @db.Text
+
+  // Audit
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  createdBy  Int?
+  archivedAt DateTime?
+
+  // Relations
+  usages SemenUsage[]
+
+  @@unique([tenantId, batchNumber])
+  @@index([tenantId, stallionId])
+  @@index([tenantId, status])
+  @@schema("public")
+}
+
+model SemenUsage {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Source batch
+  inventoryId Int
+  inventory   SemenInventory @relation(fields: [inventoryId], references: [id])
+
+  // Usage details
+  usageType SemenUsageType
+  usageDate DateTime       @default(now())
+  dosesUsed Int            @default(1)
+
+  // Destination (one of these should be set based on usageType)
+  breedingAttemptId Int?             @unique
+  breedingAttempt   BreedingAttempt? @relation(fields: [breedingAttemptId], references: [id])
+
+  // For shipped semen
+  shippedToName    String?
+  shippedToAddress String? @db.Text
+  shippingCarrier  String?
+  trackingNumber   String?
+
+  // For transfers between facilities
+  transferredToFacility String?
+
+  // Notes
+  notes String? @db.Text
+
+  // Audit
+  recordedBy Int?
+  createdAt  DateTime @default(now())
+
+  // Link to booking (for shipped semen)
+  bookingId Int?             @unique
+  booking   StallionBooking? @relation(fields: [bookingId], references: [id])
+
+  @@index([tenantId, inventoryId])
+  @@index([tenantId, usageDate])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stallion Booking Pipeline (P8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model StallionBooking {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Booking identification
+  bookingNumber String @unique // "SB-2026-001"
+
+  // Service listing (links to stud service)
+  serviceListingId Int
+  serviceListing   MktListingBreederService @relation(fields: [serviceListingId], references: [id])
+
+  // Stallion (denormalized for easy access)
+  stallionId Int
+  stallion   Animal @relation("StallionBookings", fields: [stallionId], references: [id])
+
+  // Mare information
+  mareId            Int? // If mare is in our system
+  mare              Animal? @relation("MareBookings", fields: [mareId], references: [id])
+  externalMareName  String? // If mare not in system
+  externalMareReg   String? // External registration number
+  externalMareBreed String? // Breed if external
+
+  // Mare owner (contact)
+  mareOwnerPartyId Int
+  mareOwnerParty   Party @relation(fields: [mareOwnerPartyId], references: [id])
+
+  // Status
+  status          BookingStatus @default(INQUIRY)
+  statusChangedAt DateTime      @default(now())
+
+  // Scheduling
+  preferredMethod    BreedingMethod?
+  preferredDateStart DateTime? // Earliest acceptable date
+  preferredDateEnd   DateTime? // Latest acceptable date
+  scheduledDate      DateTime? // Confirmed breeding date
+
+  // For shipped semen
+  shippingRequired Boolean @default(false)
+  shippingAddress  String? @db.Text
+
+  // Pricing
+  agreedFeeCents  Int // Agreed stud fee
+  bookingFeeCents Int @default(0) // Non-refundable deposit
+  totalPaidCents  Int @default(0) // Amount received so far
+
+  // Guarantee
+  guaranteeType BreedingGuaranteeType?
+
+  // Mare requirements checklist
+  requirementsJson Json? @db.JsonB
+  // Schema: {
+  //   healthCertReceived?: boolean,
+  //   healthCertDate?: string,
+  //   cogginsReceived?: boolean,
+  //   cogginsDate?: string,
+  //   cultureReceived?: boolean,
+  //   cultureDate?: string,
+  //   uterineExamReceived?: boolean,
+  //   notes?: string,
+  // }
+
+  // Link to BreedingPlan (created when breeding begins)
+  breedingPlanId Int?          @unique
+  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id])
+
+  // Link to SemenUsage (for shipped semen bookings)
+  semenUsage SemenUsage?
+
+  // Communication
+  notes         String? @db.Text
+  internalNotes String? @db.Text // Not visible to mare owner
+
+  // Audit
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  createdBy          Int?
+  cancelledAt        DateTime?
+  cancellationReason String?
+
+  // Status history
+  statusHistory BookingStatusHistory[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, stallionId])
+  @@index([tenantId, mareOwnerPartyId])
+  @@index([serviceListingId])
+  @@schema("public")
+}
+
+model BookingStatusHistory {
+  id        Int             @id @default(autoincrement())
+  bookingId Int
+  booking   StallionBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  fromStatus BookingStatus?
+  toStatus   BookingStatus
+  changedAt  DateTime       @default(now())
+  changedBy  Int?
+  notes      String?
+
+  @@index([bookingId])
   @@schema("public")
 }
 
@@ -4035,6 +4342,10 @@ model MareReproductiveHistory {
   // Risk Indicators (derived from history)
   riskScore   Int      @default(0)
   riskFactors String[]
+
+  // Manual Status Overrides
+  isBarren Boolean @default(false) // Permanently barren mare
+  // NOTE: Breeding availability (open/resting) now uses Animal.breedingAvailability (generic for all species)
 
   // Notes and metadata
   notes                    String?
@@ -8385,6 +8696,51 @@ model BreedingProgramRuleExecution {
 }
 
 /**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Stud Listing Visibility Rules
+ * ────────────────────────────────────────────────────────────────────────────
+ * Granular visibility control for stud listings with inheritance hierarchy:
+ * TENANT (defaults) → PROGRAM (stud service program) → PARTICIPANT (individual stallion)
+ */
+
+enum StudVisibilityLevel {
+  TENANT
+  PROGRAM
+  PARTICIPANT
+
+  @@schema("public")
+}
+
+model StudVisibilityRule {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Hierarchy tracking
+  level          StudVisibilityLevel
+  levelId        String               @db.VarChar(50) // tenantId, programId, or participantId
+  inheritsFromId Int?
+  inheritsFrom   StudVisibilityRule?  @relation("StudVisibilityInheritance", fields: [inheritsFromId], references: [id], onDelete: SetNull)
+  overriddenBy   StudVisibilityRule[] @relation("StudVisibilityInheritance")
+
+  // Configuration (JSON with section toggles)
+  config  Json    @default("{}")
+  enabled Boolean @default(true)
+
+  // Audit fields
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  updatedBy Int?
+
+  @@unique([tenantId, level, levelId])
+  @@index([tenantId])
+  @@index([level, levelId])
+  @@index([inheritsFromId])
+  @@schema("public")
+}
+
+/**
  * EmailFilter - Tenant-level allowlist/blocklist for inbound email security
  * Allows tenants to block spam senders or ensure important contacts always get through
  */
@@ -8625,19 +8981,19 @@ model BuyerEmailTemplate {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name        String @db.VarChar(100) // "Initial Interest Response", "Follow-up After Viewing"
-  subject     String @db.VarChar(255)
-  bodyHtml    String @db.Text
-  bodyText    String @db.Text
-  category    BuyerEmailTemplateCategory @default(GENERAL)
+  name     String                     @db.VarChar(100) // "Initial Interest Response", "Follow-up After Viewing"
+  subject  String                     @db.VarChar(255)
+  bodyHtml String                     @db.Text
+  bodyText String                     @db.Text
+  category BuyerEmailTemplateCategory @default(GENERAL)
 
   // Usage tracking
-  useCount    Int    @default(0)
-  lastUsedAt  DateTime?
+  useCount   Int       @default(0)
+  lastUsedAt DateTime?
 
   // Ordering and status
-  sortOrder   Int     @default(0)
-  isActive    Boolean @default(true)
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -8658,32 +9014,32 @@ model BuyerTask {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Task details
-  title       String          @db.VarChar(255)
-  description String?         @db.Text
-  taskType    BuyerTaskType   @default(FOLLOW_UP)
+  title       String            @db.VarChar(255)
+  description String?           @db.Text
+  taskType    BuyerTaskType     @default(FOLLOW_UP)
   priority    BuyerTaskPriority @default(MEDIUM)
-  status      BuyerTaskStatus @default(PENDING)
+  status      BuyerTaskStatus   @default(PENDING)
 
   // Due date
-  dueAt       DateTime?
-  reminderAt  DateTime? // When to send reminder notification
+  dueAt      DateTime?
+  reminderAt DateTime? // When to send reminder notification
 
   // Relationships - at least one should be set
   buyerId  Int?
-  buyer    Buyer? @relation("BuyerTasks", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyer    Buyer?  @relation("BuyerTasks", fields: [buyerId], references: [id], onDelete: Cascade)
   dealId   Int?
-  deal     Deal?  @relation("DealTasks", fields: [dealId], references: [id], onDelete: Cascade)
+  deal     Deal?   @relation("DealTasks", fields: [dealId], references: [id], onDelete: Cascade)
   animalId Int?
   animal   Animal? @relation("BuyerTaskAnimal", fields: [animalId], references: [id], onDelete: SetNull)
 
   // Assignment
   assignedToUserId String?
-  assignedToUser   User? @relation("BuyerTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUser   User?   @relation("BuyerTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
 
   // Completion tracking
   completedAt   DateTime?
   completedById String?
-  completedBy   User? @relation("BuyerTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  completedBy   User?     @relation("BuyerTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
 
   // Auto-generated task tracking (for automation)
   isAutoGenerated Boolean @default(false)
@@ -8720,18 +9076,18 @@ enum RegistryConnectionStatus {
 }
 
 enum VerificationMethod {
-  API      // Verified via registry API
-  MANUAL   // Manually verified by user/admin
+  API // Verified via registry API
+  MANUAL // Manually verified by user/admin
   DOCUMENT // Verified via uploaded document
 
   @@schema("public")
 }
 
 enum VerificationConfidence {
-  HIGH   // Strong match (API verification or document review)
+  HIGH // Strong match (API verification or document review)
   MEDIUM // Partial match (name similar but not exact)
-  LOW    // Weak match (only identifier format validated)
-  NONE   // Not verified
+  LOW // Weak match (only identifier format validated)
+  NONE // Not verified
 
   @@schema("public")
 }
@@ -8804,7 +9160,7 @@ model RegistryPedigree {
   animalRegistryIdentifierId Int
   animalRegistryIdentifier   AnimalRegistryIdentifier @relation(fields: [animalRegistryIdentifierId], references: [id], onDelete: Cascade)
 
-  generation Int    // 1 = parents, 2 = grandparents, etc.
+  generation Int // 1 = parents, 2 = grandparents, etc.
   position   String // "sire", "dam", "sire_sire", "sire_dam", "dam_sire", "dam_dam", etc.
 
   // Registry data for ancestor

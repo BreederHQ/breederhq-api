@@ -104,12 +104,36 @@ npx tsx scripts/seed-validation-tenants/print-credentials.ts prod
 
 ---
 
+## Global Data Seeded (once, shared across all tenants)
+
+### Feature Flags
+- `HORSE_STALLION_REVENUE` - Stallion revenue dashboard widgets
+- `HORSE_ENHANCED_OWNERSHIP` - Multi-owner support with roles
+- `HORSE_SEMEN_INVENTORY` - Semen inventory tracking at dose level
+
+### Products & Subscriptions
+- "Free Unlimited" product with all entitlements (unlimited quotas)
+- Each validation tenant gets an ACTIVE subscription to Free Unlimited
+
+### Contract Templates (System Templates)
+- Sale contracts, stud service contracts, co-ownership agreements
+
+### Title Definitions
+- Dog titles (CH, GCH, GCHB, etc.)
+- Cat titles (CH, GC, DGC, etc.)
+- Horse titles (performance, racing, etc.)
+
+---
+
 ## Data Seeded Per Tenant
+
+### Subscription
+- Each tenant gets a "Free Unlimited" subscription with ACTIVE status
 
 ### Users
 - 1 owner/admin user per tenant with predictable password
 
-### Contacts (5 per tenant, no portal access)
+### Contacts (5 per tenant)
 **DEV:**
 - Middle Earth: Gandalf, Aragorn, Legolas, Gimli, Samwise
 - Hogwarts: Dumbledore, McGonagall, Newt Scamander, Luna Lovegood, Charlie Weasley
@@ -142,10 +166,62 @@ Each tenant has species-specific animals with:
 - Linked to seeded dam and sire animals
 - Expected cycle dates where applicable
 
-### Marketplace Listings (varies by tenant)
-- BREEDING_PROGRAM listings
-- STUD_SERVICE listings
-- Mix of ACTIVE, DRAFT, and PAUSED statuses
+### Breeding Data (reproductive tracking)
+- **Breeding Attempts** - Documented breeding events
+- **Pregnancy Checks** - Ultrasound/palpation records
+- **Test Results** - Lab results (hormone levels, etc.)
+- **Breeding Milestones** - Key events in breeding cycle
+- **Foaling Outcomes** - Birth records with complications
+- **Mare Reproductive History** - Historical breeding records
+
+### Offspring Management
+- **Offspring Groups** - Litters/foals grouped together
+- **Offspring** - Individual offspring records with placement status
+
+### Health Records
+- **Health Traits** - Genetic test results (DM, PRA, etc.)
+- **Vaccinations** - Vaccination history
+
+### Marketplace Data
+- **Storefronts** - Marketplace profile (TenantSetting with namespace 'marketplace-profile')
+- **Tenant Program Breeds** - Breeds offered by program
+- **Breeding Program Listings** - Public breeding program pages
+- **Breeding Program Media** - Photos/videos for programs
+- **Stud Service Listings** - Stud at service listings
+- **Individual Animal Listings** - Animals for sale
+
+### Cross-Tenant Features
+- **Cross-Tenant Links** - Animal relationships across tenants
+- **Marketplace Users** - Shoppers who interact with marketplace
+
+### Communications
+- **Message Templates** - Reusable message templates
+- **Auto-Reply Rules** - Automated response rules
+- **Emails** - Email history records
+- **DM Threads** - Direct message conversations
+- **DM Messages** - Individual messages in threads
+- **Drafts** - Saved draft messages
+
+### Finance & Contracts
+- **Contract Templates** - Tenant-specific templates
+- **Contracts** - Signed/pending contract instances
+- **Invoices** - Basic invoice records
+- **Enhanced Invoices** - Detailed invoices with line items
+- **Invoice Line Items** - Individual line items
+- **Payments** - Payment records
+- **Waitlist Entries** - Waitlist with deposits
+
+### Organization & Tagging
+- **Tags** - Custom tags by module (Contact, Animal, etc.)
+- **Tag Assignments** - Tags applied to entities
+- **Party Activities** - Activity log entries
+
+### Portal Access
+- **Portal Users** - Contact/org users with portal credentials
+
+### Tenant Settings
+- **Theme settings** - Branding/colors
+- **Lineage visibility** - Privacy settings for bloodlines
 
 ---
 
@@ -345,9 +421,12 @@ scripts/seed-validation-tenants/
 ├── README.md                    # This file
 ├── seed-data-config.ts          # All tenant/animal/contact definitions
 ├── seed-validation-tenants.ts   # Main orchestrator script
+├── seed-title-definitions.ts    # Global title definitions (CH, GCH, etc.)
 ├── seed-dev.ts                  # DEV environment entry point
 ├── seed-prod.ts                 # PROD environment entry point
-└── print-credentials.ts         # Print credentials for password vault
+├── print-credentials.ts         # Print credentials for password vault
+├── cleanup-validation-tenants.ts # Remove all validation tenant data
+└── check-*.ts / fix-*.ts        # Diagnostic and repair scripts
 ```
 
 ---
@@ -364,8 +443,54 @@ To modify the seeded data, edit `seed-data-config.ts`:
 - `getTenantAnimals(env)` - Animal definitions with genetics and lineage
 - `getTenantBreedingPlans(env)` - Breeding plan definitions
 - `getTenantMarketplaceListings(env)` - Marketplace listing definitions
+- `getTenantOffspringGroups(env)` - Offspring group definitions
+- `getTenantHealth(env)` - Health trait definitions
+- `getTenantVaccinations(env)` - Vaccination definitions
+- `getPortalAccessDefinitions(env)` - Portal user definitions
+- `getMarketplaceUsers()` - Marketplace shopper definitions
+- `getContactMeta(env)` - Waitlist and invoice definitions
+- `getEmails(env)` - Email history definitions
+- `getDMThreads(env)` - Direct message thread definitions
+- `getDrafts(env)` - Draft message definitions
+- `getStorefronts(env)` - Marketplace storefront definitions
+- `getBreedingAttempts(env)` - Breeding attempt definitions
+- `getPregnancyChecks(env)` - Pregnancy check definitions
+- `getTestResults(env)` - Test result definitions
+- `getBreedingMilestones(env)` - Milestone definitions
+- `getFoalingOutcomes(env)` - Foaling outcome definitions
+- `getMareHistory(env)` - Mare reproductive history definitions
 
 **Legacy exports (default to DEV):**
 - `TENANT_DEFINITIONS`, `TENANT_USERS`, `TENANT_CONTACTS`, etc.
 
 All entities are prefixed with `[DEV]` or `[PROD]` in their names to distinguish environments.
+
+---
+
+## Summary Statistics (typical seed run)
+
+After a full seed, expect approximately:
+- 4 tenants per environment
+- 4 subscriptions (Free Unlimited)
+- 4 users (1 per tenant)
+- 8-12 organizations
+- 20 contacts
+- 50-100 animals (varies by species/tenant)
+- 100+ animal titles
+- 100+ competition entries
+- 15+ breeding plans
+- 20+ breeding attempts
+- 10+ pregnancy checks
+- 10+ foaling outcomes
+- 50+ offspring
+- 100+ health traits
+- 50+ vaccinations
+- 4 storefronts
+- 20+ tags
+- 50+ tag assignments
+- 4+ portal users
+- 5+ marketplace users (shoppers)
+- 10+ waitlist entries
+- 10+ invoices
+- 20+ DM messages
+- 3 feature flags
