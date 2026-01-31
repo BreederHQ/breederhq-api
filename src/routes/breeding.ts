@@ -803,20 +803,30 @@ function validateImmutability(existingPlan: any, updates: any): void {
   }
 
   // breedDateActual validation
+  // Allow clearing (null) in BRED phase - this is for the "Change" button flow
   if (updates.breedDateActual !== undefined && existingPlan.breedDateActual) {
-    // Check if value is actually changing (allow same-value passthrough)
-    const existingDate = new Date(existingPlan.breedDateActual).toISOString().split("T")[0];
-    const newDate = new Date(updates.breedDateActual).toISOString().split("T")[0];
-    if (existingDate !== newDate) {
+    // Allow clearing the date in BRED phase (user wants to re-enter it)
+    if (updates.breedDateActual === null) {
       const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
       if (postBreedStatuses.includes(status)) {
-        throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
+        throw new ImmutabilityError("breedDateActual", "Breeding date cannot be cleared after BRED status");
       }
-      if (status === "BRED") {
-        const oldDate = new Date(existingPlan.breedDateActual);
-        const diffDays = Math.abs((new Date(updates.breedDateActual).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (diffDays > 2) {
-          throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+      // Allow clearing in BRED phase - skip further validation
+    } else {
+      // Check if value is actually changing (allow same-value passthrough)
+      const existingDate = new Date(existingPlan.breedDateActual).toISOString().split("T")[0];
+      const newDate = new Date(updates.breedDateActual).toISOString().split("T")[0];
+      if (existingDate !== newDate) {
+        const postBreedStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+        if (postBreedStatuses.includes(status)) {
+          throw new ImmutabilityError("breedDateActual", "Breeding date is locked after BRED status");
+        }
+        if (status === "BRED") {
+          const oldDate = new Date(existingPlan.breedDateActual);
+          const diffDays = Math.abs((new Date(updates.breedDateActual).getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 2) {
+            throw new ImmutabilityError("breedDateActual", `Cannot change breeding date by more than 2 days in BRED status (attempted ${Math.round(diffDays)} days)`);
+          }
         }
       }
     }
