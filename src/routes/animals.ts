@@ -536,6 +536,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       .map((s) => s.trim())
       .filter(Boolean);
     const wantRepro = includeParts.includes("repro") || includeParts.includes("last_heat");
+    const wantProgramParticipants = includeParts.includes("programParticipants") || includeParts.includes("marketplace");
 
     const rec = await prisma.animal.findFirst({
       where: activeOnly({ id, tenantId }),
@@ -567,6 +568,27 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         forSale: true,
         inSyndication: true,
         isLeased: true,
+        // Marketplace program participants (conditional)
+        ...(wantProgramParticipants && {
+          programParticipants: {
+            select: {
+              id: true,
+              programId: true,
+              status: true,
+              listed: true,
+              featured: true,
+              program: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  templateType: true,
+                  status: true,
+                },
+              },
+            },
+          },
+        }),
       },
     });
     if (!rec) return reply.code(404).send({ error: "not_found" });
