@@ -34,7 +34,7 @@ function parseDateIso(v: unknown): Date | null {
 }
 function parsePaging(q: any) {
   const page = Math.max(1, Number(q?.page ?? 1) || 1);
-  const limit = Math.min(100, Math.max(1, Number(q?.limit ?? 25) || 25));
+  const limit = Math.min(1000, Math.max(1, Number(q?.limit ?? 25) || 25));
   const skip = (page - 1) * limit;
   return { page, limit, skip };
 }
@@ -559,6 +559,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         createdAt: true,
         updatedAt: true,
         femaleCycleLenOverrideDays: true,
+        // Parent IDs for pedigree
+        sireId: true,
+        damId: true,
         // Valuation fields (primarily for horses)
         intendedUse: true,
         declaredValueCents: true,
