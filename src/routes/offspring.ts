@@ -305,6 +305,10 @@ import {
   triggerOnOffspringGroupCreated,
   triggerOnOffspringGroupUpdated,
 } from "../lib/rule-triggers.js";
+import {
+  transferMicrochipOwnership,
+  isPlacementTransition,
+} from "../services/microchip-ownership-transfer.js";
 
 /* ========= helpers ========= */
 
@@ -2598,6 +2602,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     triggerOnOffspringUpdated(id, tenantId, changedFields).catch(err =>
       req.log.error({ err, offspringId: id }, 'Failed to trigger rules on offspring update')
     );
+
+    // Check if placement state transitioned to PLACED - trigger microchip ownership transfer
+    if (isPlacementTransition(existing.placementState, updated.placementState)) {
+      transferMicrochipOwnership(id, tenantId).catch(err =>
+        req.log.error({ err, offspringId: id }, 'Failed to transfer microchip ownership on placement')
+      );
+    }
 
     reply.send(mapOffspringToAnimalLite(updated));
   });

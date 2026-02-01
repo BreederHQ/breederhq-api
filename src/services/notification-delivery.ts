@@ -283,7 +283,7 @@ export async function deliverNotification(notificationId: number): Promise<{ sen
  */
 function shouldSendNotificationType(
   type: string,
-  prefs: { vaccinationExpiring: boolean; vaccinationOverdue: boolean; breedingTimeline: boolean; pregnancyCheck: boolean; foalingApproaching: boolean; heatCycleExpected: boolean } | null
+  prefs: { vaccinationExpiring: boolean; vaccinationOverdue: boolean; breedingTimeline: boolean; pregnancyCheck: boolean; foalingApproaching: boolean; heatCycleExpected: boolean; microchipRenewal: boolean } | null
 ): boolean {
   // If no preferences, default to enabled
   if (!prefs) return true;
@@ -303,6 +303,10 @@ function shouldSendNotificationType(
   }
   if (type === "breeding_heat_cycle_expected") {
     return prefs.heatCycleExpected;
+  }
+  // Microchip renewal notifications
+  if (type.startsWith("microchip_renewal_") || type === "microchip_expired") {
+    return prefs.microchipRenewal;
   }
 
   // Default to enabled for unknown types

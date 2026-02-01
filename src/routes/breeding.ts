@@ -290,6 +290,7 @@ import {
   getFoalingAnalytics,
 } from "../services/mare-reproductive-history-service.js";
 import { checkArchiveReadiness } from "../services/archive-validation-service.js";
+import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detection.js";
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -1077,10 +1078,24 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const expand = includeFlags((req.query as any)?.include);
+      const query = req.query as any;
+      const expand = includeFlags(query?.include);
+      const checkCarrierRisk = query?.checkCarrierRisk === "true";
+
       const plan = await prisma.breedingPlan.findFirst({ where: { id, tenantId }, include: expand });
       if (!plan) return reply.code(404).send({ error: "not_found" });
-      reply.send(plan);
+
+      // Optionally check for carrier warnings (add ?checkCarrierRisk=true)
+      if (checkCarrierRisk && plan.damId && plan.sireId) {
+        const carrierRisk = await checkBreedingPlanCarrierRisk(prisma, plan.id, tenantId, null, false);
+        reply.send({
+          ...plan,
+          carrierWarnings: carrierRisk.warnings,
+          hasLethalRisk: carrierRisk.hasLethalRisk,
+        });
+      } else {
+        reply.send(plan);
+      }
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
@@ -1259,7 +1274,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update usage snapshot after successful creation
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
 
-      reply.code(201).send(created);
+      // Check for carrier × carrier lethal pairings (creates notification if found)
+      let carrierRisk: { hasLethalRisk: boolean; hasWarnings: boolean; warnings: any[] } | null = null;
+      if (created.damId && created.sireId) {
+        carrierRisk = await checkBreedingPlanCarrierRisk(prisma, created.id, tenantId, userId, true);
+      }
+
+      reply.code(201).send({
+        ...created,
+        carrierWarnings: carrierRisk?.warnings ?? [],
+        hasLethalRisk: carrierRisk?.hasLethalRisk ?? false,
+      });
     } catch (err) {
       const { status, payload} = errorReply(err);
       reply.status(status).send(payload);
@@ -1929,7 +1954,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      reply.send(updated);
+      // Check for carrier × carrier lethal pairings when dam or sire changes
+      let carrierRisk: { hasLethalRisk: boolean; hasWarnings: boolean; warnings: any[] } | null = null;
+      if ((damChanged || sireChanged) && updated.damId && updated.sireId) {
+        const userId = (req as any).user?.id ?? null;
+        carrierRisk = await checkBreedingPlanCarrierRisk(prisma, updated.id, tenantId, userId, true);
+      }
+
+      reply.send({
+        ...updated,
+        carrierWarnings: carrierRisk?.warnings ?? [],
+        hasLethalRisk: carrierRisk?.hasLethalRisk ?? false,
+      });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

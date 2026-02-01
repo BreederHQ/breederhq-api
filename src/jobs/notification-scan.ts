@@ -14,6 +14,7 @@ import cron from "node-cron";
 import { runNotificationScan } from "../services/notification-scanner.js";
 import { deliverPendingNotifications } from "../services/notification-delivery.js";
 import { runContractScan } from "../services/contracts/contract-scanner.js";
+import { runMicrochipRenewalScan } from "../services/microchip-renewal-scanner.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -44,7 +45,11 @@ export async function runNotificationScanJob(): Promise<void> {
     const contractResults = await runContractScan();
     console.log(`[notification-scan-job] Contract scan complete:`, contractResults);
 
-    // Step 3: Deliver all pending notifications via email
+    // Step 3: Scan for microchip renewal reminders
+    const microchipResults = await runMicrochipRenewalScan();
+    console.log(`[notification-scan-job] Microchip renewal scan complete:`, microchipResults);
+
+    // Step 4: Deliver all pending notifications via email
     const deliveryResults = await deliverPendingNotifications();
     console.log(`[notification-scan-job] Delivery complete:`, deliveryResults);
 
@@ -52,11 +57,12 @@ export async function runNotificationScanJob(): Promise<void> {
     const durationMs = endTime.getTime() - startTime.getTime();
     console.log(`[notification-scan-job] Job complete in ${durationMs}ms`);
     console.log(`[notification-scan-job] Summary:
-  - Notifications created: ${scanResults.total + contractResults.total}
+  - Notifications created: ${scanResults.total + contractResults.total + microchipResults.notificationsCreated}
     - Vaccinations: ${scanResults.vaccinations}
     - Breeding: ${scanResults.breeding}
     - Contract reminders: ${contractResults.reminders}
     - Contract expirations: ${contractResults.expired}
+    - Microchip renewals: ${microchipResults.notificationsCreated}
   - Emails sent: ${deliveryResults.sent}
   - Emails failed: ${deliveryResults.failed}
     `);
