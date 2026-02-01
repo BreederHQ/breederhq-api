@@ -2294,6 +2294,83 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
   });
 
+  /**
+   * GET /animals/:id/genetic-test-status
+   * Returns genetic test status for an animal
+   * Used by GeneticAlertsBanner to determine if banner should show
+   */
+  app.get("/animals/:id/genetic-test-status", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+    const animalId = parseIntStrict((req.params as { id: string }).id);
+    if (!animalId) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    // Fetch animal with genetics data
+    const animal = await prisma.animal.findUnique({
+      where: { id: animalId },
+      select: {
+        id: true,
+        species: true,
+        breed: true,
+        genetics: {
+          select: {
+            healthGeneticsData: true,
+            coatColorData: true,
+          },
+        },
+      },
+    });
+
+    if (!animal) {
+      return reply.code(404).send({ error: "animal_not_found" });
+    }
+
+    const hasGenetics = !!animal.genetics;
+    const hasHealthGenetics =
+      hasGenetics &&
+      animal.genetics?.healthGeneticsData != null &&
+      Array.isArray(animal.genetics.healthGeneticsData) &&
+      animal.genetics.healthGeneticsData.length > 0;
+
+    // Determine required tests based on species (simplified for now)
+    // In future, this could be expanded based on breed-specific requirements
+    const requiredTestsBySpecies: Record<string, string[]> = {
+      HORSE: ["HYPP", "GBED", "PSSM1", "MH", "HERDA"],
+      DOG: ["MDR1", "DM", "vWD"],
+      CAT: ["PKD", "PRA", "HCM"],
+      GOAT: [],
+      SHEEP: [],
+      RABBIT: [],
+    };
+
+    const species = animal.species?.toUpperCase() || "HORSE";
+    const requiredTests = requiredTestsBySpecies[species] || [];
+
+    // Get completed tests from health genetics data
+    const completedTests: string[] = [];
+    if (hasHealthGenetics && Array.isArray(animal.genetics?.healthGeneticsData)) {
+      for (const item of animal.genetics.healthGeneticsData as Array<{ locus?: string }>) {
+        if (item.locus) {
+          completedTests.push(item.locus);
+        }
+      }
+    }
+
+    // Calculate missing tests
+    const missingTests = requiredTests.filter(
+      (test) => !completedTests.some((completed) => completed.toUpperCase() === test.toUpperCase())
+    );
+
+    return reply.send({
+      hasMissingTests: !hasGenetics || !hasHealthGenetics || missingTests.length > 0,
+      missingTests: !hasGenetics || !hasHealthGenetics ? requiredTests : missingTests,
+      completedTests,
+      hasFullPanel: hasHealthGenetics && missingTests.length === 0,
+    });
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // Stallion Breeding Revenue endpoint
   // Per spec: P9-STALLION-FINANCES-TAB-PROMPT.md

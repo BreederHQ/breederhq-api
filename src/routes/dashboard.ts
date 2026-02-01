@@ -239,6 +239,71 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
+      // Check for microchip registrations expiring soon or expired
+      const fourteenDaysFromNow = addDays(now, 14);
+      const expiringRegistrations = await prisma.animalMicrochipRegistration.findMany({
+        where: {
+          tenantId,
+          expirationDate: {
+            not: null,
+            lte: fourteenDaysFromNow,
+          },
+          registry: {
+            renewalType: { in: ["ANNUAL", "UNKNOWN"] },
+          },
+        },
+        include: {
+          registry: { select: { name: true, website: true } },
+          animal: { select: { id: true, name: true, status: true } },
+          offspring: { select: { id: true, name: true, status: true } },
+        },
+        take: 5,
+      });
+
+      for (const reg of expiringRegistrations) {
+        // Skip deceased animals
+        if (reg.animal?.status === "DECEASED" || reg.offspring?.status === "DECEASED") continue;
+
+        const entityName = reg.animal?.name || reg.offspring?.name || `Microchip ${reg.microchipNumber}`;
+        const entityHref = reg.animalId ? `/animals/${reg.animalId}` : `/offspring/${reg.offspringId}`;
+        const entityType = reg.animalId ? "animal" : "offspring";
+        const entityId = String(reg.animalId || reg.offspringId);
+
+        const expirationDate = reg.expirationDate!;
+        const daysUntil = Math.ceil((expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+        let severity: AlertSeverity;
+        let title: string;
+        let message: string;
+
+        if (daysUntil <= 0) {
+          severity = "critical";
+          title = "Microchip Registration Expired";
+          message = `${entityName}'s registration with ${reg.registry.name} has expired`;
+        } else if (daysUntil <= 7) {
+          severity = "warning";
+          title = "Microchip Expiring Soon";
+          message = `${entityName}'s registration with ${reg.registry.name} expires in ${daysUntil} day${daysUntil === 1 ? "" : "s"}`;
+        } else {
+          severity = "info";
+          title = "Microchip Renewal Due";
+          message = `${entityName}'s registration with ${reg.registry.name} expires in ${daysUntil} days`;
+        }
+
+        alerts.push({
+          id: `microchip-${reg.id}`,
+          severity,
+          title,
+          message,
+          actionLabel: "View",
+          actionHref: entityHref,
+          entityType: entityType as "animal" | "offspring",
+          entityId,
+          dismissible: true,
+          createdAt: reg.updatedAt?.toISOString() || now.toISOString(),
+        });
+      }
+
       // Sort by severity (critical first) then by date
       const severityOrder = { critical: 0, warning: 1, info: 2 };
       alerts.sort((a, b) => {

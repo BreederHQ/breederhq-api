@@ -957,6 +957,21 @@ enum NotificationType {
   guarantee_expiring_7d // 7 days before guarantee expires
   guarantee_expired // Guarantee has expired, no resolution recorded
 
+  // Microchip renewal notifications
+  microchip_renewal_30d // 30 days before registration expires
+  microchip_renewal_14d // 14 days before registration expires
+  microchip_renewal_7d // 7 days before registration expires
+  microchip_renewal_3d // 3 days before registration expires
+  microchip_expired // Registration has expired
+
+  // Genetic Test Notifications
+  genetic_test_missing // Animal has no genetic panel on file
+  genetic_test_incomplete // Animal has partial testing (missing key markers)
+  genetic_test_prebreeding // About to breed without required tests
+  genetic_test_carrier_warning // Carrier × Carrier pairing detected (URGENT)
+  genetic_test_registration // Registry requires tests before deadline
+  genetic_test_recommended // Recommended tests for breed/discipline
+
   @@schema("public")
 }
 
@@ -1444,6 +1459,9 @@ model Tenant {
   notifications           Notification[]
   notificationPreferences UserNotificationPreferences[]
 
+  // Microchip registrations
+  microchipRegistrations AnimalMicrochipRegistration[]
+
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
 
@@ -1561,6 +1579,9 @@ model UserNotificationPreferences {
   // ─── Marketplace Alerts (Future) ───────────────────────────────
   marketplaceInquiry Boolean @default(true) // New inquiries
   waitlistSignup     Boolean @default(true) // Waitlist signups
+
+  // ─── Microchip Alerts ──────────────────────────────────────────
+  microchipRenewal Boolean @default(true) // Microchip renewal reminders (30d, 14d, 7d, 3d)
 
   // ─── Channel Preferences (Phase 2) ─────────────────────────────
   emailEnabled Boolean @default(true) // Email delivery
@@ -2332,6 +2353,9 @@ model Contact {
   changeRequests      ContactChangeRequest[]
   emailChangeRequests EmailChangeRequest[]
 
+  // Microchip registrations where this contact is the registered owner
+  microchipRegistrations AnimalMicrochipRegistration[] @relation("MicrochipRegisteredTo")
+
   @@unique([tenantId, email])
   @@unique([marketplaceUserId, tenantId])
   @@index([organizationId])
@@ -2689,12 +2713,13 @@ model Animal {
   tagAssignments           TagAssignment[]
   owners                   AnimalOwner[]
   registryIds              AnimalRegistryIdentifier[]
-  shares                   AnimalShare[]                @relation("ShareAnimal")
-  individualAnimalListings MktListingIndividualAnimal[] @relation("AnimalIndividualAnimalListings")
-  programParticipants      AnimalProgramParticipant[]   @relation("AnimalProgramParticipants")
-  createdAt                DateTime                     @default(now())
-  updatedAt                DateTime                     @updatedAt
-  archived                 Boolean                      @default(false)
+  microchipRegistrations   AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
+  shares                   AnimalShare[]                 @relation("ShareAnimal")
+  individualAnimalListings MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
+  programParticipants      AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
+  createdAt                DateTime                      @default(now())
+  updatedAt                DateTime                      @updatedAt
+  archived                 Boolean                       @default(false)
 
   // Soft delete
   deletedAt         DateTime?
@@ -4633,10 +4658,11 @@ model Offspring {
   archivedAt    DateTime?
   archiveReason String?   @db.Text
 
-  Tags                TagAssignment[]
-  Attachments         Attachment[]
-  Events              OffspringEvent[]
-  WaitlistAllocations WaitlistEntry[]  @relation("WaitlistAllocationOffspring")
+  Tags                   TagAssignment[]
+  Attachments            Attachment[]
+  Events                 OffspringEvent[]
+  WaitlistAllocations    WaitlistEntry[]               @relation("WaitlistAllocationOffspring")
+  microchipRegistrations AnimalMicrochipRegistration[] @relation("OffspringMicrochipRegistrations")
 
   // finance, tasks, health, documents, contracts
   Invoices   Invoice[]
@@ -9222,5 +9248,72 @@ model RegistrySyncLog {
   @@index([tenantId, registryId])
   @@index([createdAt])
   @@index([action])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Microchip Registry Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MicrochipRenewalType {
+  LIFETIME // No renewal needed (FreePetChipRegistry, AKC Reunite)
+  ANNUAL // Yearly renewal (HomeAgain, 24PetWatch)
+  UNKNOWN // User-entered registry, renewal unknown
+
+  @@schema("public")
+}
+
+// Lookup table of known microchip registries (seeded data)
+model MicrochipRegistry {
+  id          Int                  @id @default(autoincrement())
+  name        String // Display name: "HomeAgain", "AKC Reunite"
+  slug        String               @unique // URL-safe: "homeagain", "akc-reunite"
+  website     String? // "https://www.homeagain.com"
+  renewalType MicrochipRenewalType @default(UNKNOWN)
+  species     String[] // ["DOG", "CAT", "HORSE", "ALL"]
+  isActive    Boolean              @default(true)
+  sortOrder   Int                  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  registrations AnimalMicrochipRegistration[]
+
+  @@index([isActive, sortOrder])
+  @@schema("public")
+}
+
+// Tracks an animal's microchip registration with a specific registry
+model AnimalMicrochipRegistration {
+  id       Int @id @default(autoincrement())
+  tenantId Int
+
+  // Polymorphic link - one of these will be set
+  animalId    Int? // FK to Animal (adult animals)
+  offspringId Int? // FK to Offspring (litter offspring)
+
+  microchipNumber String // The actual chip number (denormalized for display)
+  registryId      Int // FK to MicrochipRegistry
+
+  registrationDate      DateTime? // When registered with this registry
+  expirationDate        DateTime? // Null for lifetime registrations
+  accountNumber         String? // Registry's confirmation/account number
+  registeredToContactId Int? // FK to Contact (current owner/buyer)
+  notes                 String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animal       Animal?           @relation("AnimalMicrochipRegistrations", fields: [animalId], references: [id], onDelete: Cascade)
+  offspring    Offspring?        @relation("OffspringMicrochipRegistrations", fields: [offspringId], references: [id], onDelete: Cascade)
+  registry     MicrochipRegistry @relation(fields: [registryId], references: [id])
+  registeredTo Contact?          @relation("MicrochipRegisteredTo", fields: [registeredToContactId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, animalId, registryId], name: "unique_animal_registry")
+  @@unique([tenantId, offspringId, registryId], name: "unique_offspring_registry")
+  @@index([tenantId, expirationDate])
+  @@index([registeredToContactId])
   @@schema("public")
 }
