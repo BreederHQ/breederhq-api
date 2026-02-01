@@ -10,6 +10,8 @@
  * Endpoints:
  *   GET  /animal-listings              - List breeder's animal listings
  *   GET  /animal-listings/:id          - Get single animal listing
+ *   GET  /animals/:animalId/public-listing  - Get listing for a specific animal
+ *   GET  /marketplace/listings/:id/stats    - Get statistics for a listing
  *   GET  /offspring-groups             - List breeder's offspring groups
  *   GET  /offspring-groups/:id         - Get single offspring group
  *   GET  /inquiries                    - List inquiries received by breeder
@@ -242,6 +244,134 @@ export default async function breederMarketplaceRoutes(
       return reply.code(500).send({
         error: "get_failed",
         message: "Failed to get animal listing. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * GET /animals/:animalId/public-listing - Get listing for a specific animal
+   * Returns the individual animal listing for this animal, or 404 if none exists
+   */
+  app.get<{
+    Params: { animalId: string };
+  }>("/animals/:animalId/public-listing", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt(req.params.animalId, 10);
+    if (isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    try {
+      const listing: any = await prisma.mktListingIndividualAnimal.findFirst({
+        where: {
+          animalId,
+          tenantId,
+        },
+        include: {
+          animal: true,
+        },
+      });
+
+      if (!listing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      return reply.send({
+        id: listing.id,
+        animalId: listing.animalId,
+        slug: listing.slug,
+        templateType: listing.templateType,
+        status: listing.status,
+        headline: listing.headline,
+        title: listing.title,
+        summary: listing.summary,
+        description: listing.description,
+        priceCents: listing.priceCents,
+        priceMinCents: listing.priceMinCents,
+        priceMaxCents: listing.priceMaxCents,
+        priceModel: listing.priceModel,
+        locationCity: listing.locationCity,
+        locationRegion: listing.locationRegion,
+        locationCountry: listing.locationCountry,
+        publishedAt: listing.publishedAt?.toISOString() ?? null,
+        pausedAt: listing.pausedAt?.toISOString() ?? null,
+        createdAt: listing.createdAt.toISOString(),
+        updatedAt: listing.updatedAt.toISOString(),
+        viewCount: listing.viewCount ?? 0,
+        inquiryCount: listing.inquiryCount ?? 0,
+        animal: listing.animal
+          ? {
+              id: listing.animal.id,
+              name: listing.animal.name,
+              species: listing.animal.species,
+              sex: listing.animal.sex,
+              birthDate: listing.animal.birthDate?.toISOString() ?? null,
+              photoUrl: listing.animal.photoUrl,
+              breed: listing.animal.breed,
+            }
+          : null,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, animalId }, "Failed to get animal listing");
+      return reply.code(500).send({
+        error: "get_failed",
+        message: "Failed to get animal listing. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * GET /marketplace/listings/:id/stats - Get statistics for a listing
+   * Returns view count, inquiry count, and saves count
+   */
+  app.get<{
+    Params: { id: string };
+  }>("/marketplace/listings/:id/stats", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    try {
+      // Get the listing
+      const listing = await prisma.mktListingIndividualAnimal.findFirst({
+        where: {
+          id,
+          tenantId,
+        },
+        select: {
+          viewCount: true,
+          inquiryCount: true,
+        },
+      });
+
+      if (!listing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Count saves for this listing
+      const savesCount = await prisma.marketplaceSavedListing.count({
+        where: {
+          listingType: "animal",
+          listingId: id,
+        },
+      });
+
+      return reply.send({
+        views: listing.viewCount ?? 0,
+        inquiries: listing.inquiryCount ?? 0,
+        saves: savesCount,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, id }, "Failed to get listing stats");
+      return reply.code(500).send({
+        error: "get_failed",
+        message: "Failed to get listing stats. Please try again.",
       });
     }
   });
