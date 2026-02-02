@@ -9,6 +9,7 @@
  */
 
 import type { PrismaClient, Prisma } from "@prisma/client";
+import { deliverNotification } from "../notification-delivery.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -433,7 +434,7 @@ export async function checkBreedingPlanCarrierRisk(
     });
 
     if (!existing) {
-      await prisma.notification.create({
+      const notification = await prisma.notification.create({
         data: {
           tenantId,
           userId: userId ?? null, // Null = notify all tenant users
@@ -474,6 +475,17 @@ export async function checkBreedingPlanCarrierRisk(
       console.log(
         `[carrier-detection] Created URGENT notification for plan ${breedingPlanId}: ${lethalWarning.geneName} carrier × carrier`
       );
+
+      // Immediately send email for URGENT carrier warnings
+      try {
+        const deliveryResult = await deliverNotification(notification.id);
+        console.log(
+          `[carrier-detection] Email delivery for notification ${notification.id}: ${deliveryResult.sent} sent, ${deliveryResult.failed} failed`
+        );
+      } catch (emailErr) {
+        // Don't fail the whole operation if email fails - notification is still created
+        console.error(`[carrier-detection] Email delivery failed for notification ${notification.id}:`, emailErr);
+      }
     }
   }
 

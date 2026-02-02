@@ -999,6 +999,129 @@ async function scanPrebreedingTests(tenantId?: number): Promise<GeneticTestAlert
   return alerts;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Genetic Notification Preference Checking
+// ────────────────────────────────────────────────────────────────────────────
+
+// Default preferences (used when no record exists)
+const DEFAULT_GENETIC_PREFS = {
+  inAppMissing: true,
+  inAppIncomplete: true,
+  inAppCarrier: true, // Cannot be disabled
+  inAppPrebreeding: true,
+  inAppRegistry: true,
+  inAppRecommended: false,
+  emailMissing: false,
+  emailIncomplete: false,
+  emailCarrier: true,
+  emailPrebreeding: true,
+  emailRegistry: true,
+  emailRecommended: false,
+};
+
+// Map notification types to preference fields
+const GENETIC_PREF_MAP: Record<string, { inApp: keyof typeof DEFAULT_GENETIC_PREFS; email: keyof typeof DEFAULT_GENETIC_PREFS }> = {
+  genetic_test_missing: { inApp: "inAppMissing", email: "emailMissing" },
+  genetic_test_incomplete: { inApp: "inAppIncomplete", email: "emailIncomplete" },
+  genetic_test_carrier_warning: { inApp: "inAppCarrier", email: "emailCarrier" },
+  genetic_test_prebreeding: { inApp: "inAppPrebreeding", email: "emailPrebreeding" },
+  genetic_test_registration: { inApp: "inAppRegistry", email: "emailRegistry" },
+  genetic_test_recommended: { inApp: "inAppRecommended", email: "emailRecommended" },
+};
+
+/**
+ * Check if a genetic notification should be shown/sent to a specific user
+ * Takes into account user preferences and active snoozes.
+ *
+ * @param userId - User ID to check preferences for
+ * @param tenantId - Tenant ID
+ * @param notificationType - The genetic notification type (e.g., "genetic_test_missing")
+ * @param animalId - Optional animal ID for snooze checking
+ * @param testCode - Optional test code for snooze checking (e.g., "HYPP", "OLWS")
+ * @returns Object with inApp and email booleans
+ */
+export async function shouldShowGeneticNotification(
+  userId: string,
+  tenantId: number,
+  notificationType: string,
+  animalId?: number,
+  testCode?: string
+): Promise<{ inApp: boolean; email: boolean }> {
+  // Get the preference field names for this notification type
+  const prefFields = GENETIC_PREF_MAP[notificationType];
+  if (!prefFields) {
+    // Unknown notification type - default to showing
+    return { inApp: true, email: false };
+  }
+
+  // Check for active snoozes
+  const snoozeConditions: any[] = [];
+
+  if (animalId) {
+    snoozeConditions.push({ snoozeType: "ANIMAL", animalId });
+  }
+  if (testCode) {
+    snoozeConditions.push({ snoozeType: "TEST", testCode });
+  }
+  if (animalId && testCode) {
+    snoozeConditions.push({ snoozeType: "ANIMAL_TEST", animalId, testCode });
+  }
+
+  if (snoozeConditions.length > 0) {
+    const activeSnoozes = await prisma.geneticNotificationSnooze.findMany({
+      where: {
+        userId,
+        tenantId,
+        OR: snoozeConditions,
+        // Only check active snoozes (permanent or not yet expired)
+        AND: {
+          OR: [{ snoozedUntil: null }, { snoozedUntil: { gt: new Date() } }],
+        },
+      },
+    });
+
+    if (activeSnoozes.length > 0) {
+      // User has snoozed this notification
+      return { inApp: false, email: false };
+    }
+  }
+
+  // Get user preferences (or use defaults)
+  const prefs = await prisma.geneticNotificationPreference.findUnique({
+    where: { userId_tenantId: { userId, tenantId } },
+  });
+
+  // CRITICAL: Carrier warnings cannot be disabled for in-app
+  if (notificationType === "genetic_test_carrier_warning") {
+    return {
+      inApp: true, // Always show carrier warnings in-app
+      email: prefs?.emailCarrier ?? DEFAULT_GENETIC_PREFS.emailCarrier,
+    };
+  }
+
+  return {
+    inApp: prefs?.[prefFields.inApp] ?? DEFAULT_GENETIC_PREFS[prefFields.inApp],
+    email: prefs?.[prefFields.email] ?? DEFAULT_GENETIC_PREFS[prefFields.email],
+  };
+}
+
+/**
+ * Check if a genetic notification should be created at the tenant level
+ * This is a simplified check that only looks at tenant-wide defaults.
+ * User-specific filtering happens at query/delivery time.
+ *
+ * Note: This function returns true for most notification types to ensure
+ * notifications are created. Individual users can then filter based on
+ * their preferences when viewing notifications.
+ */
+export function shouldCreateGeneticNotificationForTenant(
+  alertType: GeneticTestAlert["alertType"]
+): boolean {
+  // Always create notifications at the tenant level
+  // User preferences are checked at display/delivery time
+  return true;
+}
+
 /**
  * Scans for genetic test-related notifications
  * - Missing tests (animals > 30 days without genetic data)
