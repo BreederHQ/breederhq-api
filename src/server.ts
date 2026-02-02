@@ -541,6 +541,7 @@ import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inboun
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
+import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import studVisibilityRoutes from "./routes/stud-visibility.js"; // Stud Listing Visibility Rules (P11)
@@ -995,6 +996,7 @@ app.register(
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
+    api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
     // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs

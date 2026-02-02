@@ -718,6 +718,14 @@ enum SemenUsageType {
   @@schema("public")
 }
 
+enum GeneticSnoozeType {
+  ANIMAL // Don't remind me about this animal
+  TEST // Don't remind me about this test type
+  ANIMAL_TEST // Don't remind me about this test for this animal
+
+  @@schema("public")
+}
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -1109,6 +1117,10 @@ model User {
   notifications           Notification[]
   notificationPreferences UserNotificationPreferences?
 
+  // Genetic notification preferences (granular in-app/email control)
+  geneticNotificationPreferences GeneticNotificationPreference[]
+  geneticNotificationSnoozes     GeneticNotificationSnooze[]
+
   // Contract templates created by this user
   contractTemplatesCreated ContractTemplate[] @relation("ContractTemplateCreatedBy")
 
@@ -1459,6 +1471,10 @@ model Tenant {
   notifications           Notification[]
   notificationPreferences UserNotificationPreferences[]
 
+  // Genetic notification preferences (granular in-app/email control)
+  geneticNotificationPreferences GeneticNotificationPreference[]
+  geneticNotificationSnoozes     GeneticNotificationSnooze[]
+
   // Microchip registrations
   microchipRegistrations AnimalMicrochipRegistration[]
 
@@ -1583,6 +1599,14 @@ model UserNotificationPreferences {
   // ─── Microchip Alerts ──────────────────────────────────────────
   microchipRenewal Boolean @default(true) // Microchip renewal reminders (30d, 14d, 7d, 3d)
 
+  // ─── Genetic Test Alerts ─────────────────────────────────────────
+  geneticCarrierWarning Boolean @default(true) // URGENT: Carrier × Carrier lethal pairing
+  geneticPrebreeding    Boolean @default(true) // HIGH: Pre-breeding test reminders
+  geneticRegistration   Boolean @default(true) // MEDIUM: Registry requirement reminders
+  geneticMissing        Boolean @default(false) // LOW: Missing genetic panel (off by default)
+  geneticIncomplete     Boolean @default(false) // LOW: Incomplete testing (off by default)
+  geneticRecommended    Boolean @default(false) // LOW: Recommended tests (off by default, no email)
+
   // ─── Channel Preferences (Phase 2) ─────────────────────────────
   emailEnabled Boolean @default(true) // Email delivery
   smsEnabled   Boolean @default(false) // SMS delivery (Phase 2)
@@ -1598,6 +1622,69 @@ model UserNotificationPreferences {
 
   @@index([tenantId])
   @@index([userId])
+  @@schema("public")
+}
+
+/**
+ * GeneticNotificationPreference - Granular user preferences for genetic test notifications
+ * Provides separate in-app and email toggles for each notification type.
+ * IMPORTANT: Carrier warnings (inAppCarrier) cannot be disabled for lethal genes.
+ */
+model GeneticNotificationPreference {
+  id       Int    @id @default(autoincrement())
+  userId   String
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // In-app notifications
+  inAppMissing     Boolean @default(true)
+  inAppIncomplete  Boolean @default(true)
+  inAppCarrier     Boolean @default(true) // Cannot disable lethal warnings - enforced at API level
+  inAppPrebreeding Boolean @default(true)
+  inAppRegistry    Boolean @default(true)
+  inAppRecommended Boolean @default(false) // Off by default
+
+  // Email notifications
+  emailMissing     Boolean @default(false) // Off by default
+  emailIncomplete  Boolean @default(false)
+  emailCarrier     Boolean @default(true) // ON by default for lethal warnings
+  emailPrebreeding Boolean @default(true)
+  emailRegistry    Boolean @default(true)
+  emailRecommended Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@schema("public")
+}
+
+/**
+ * GeneticNotificationSnooze - "Don't remind me" functionality for genetic notifications
+ * Users can snooze notifications for specific animals, tests, or animal+test combinations.
+ */
+model GeneticNotificationSnooze {
+  id       Int    @id @default(autoincrement())
+  userId   String
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // What is snoozed
+  snoozeType GeneticSnoozeType // ANIMAL, TEST, ANIMAL_TEST
+  animalId   Int? // Snooze all notifications for this animal
+  testCode   String? // Snooze notifications for this test (e.g., "HYPP", "OLWS")
+
+  // Duration
+  snoozedUntil DateTime? // null = permanent snooze
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, tenantId, snoozeType, animalId, testCode])
+  @@index([tenantId, userId])
+  @@index([animalId])
   @@schema("public")
 }
 
