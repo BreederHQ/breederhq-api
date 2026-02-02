@@ -726,6 +726,55 @@ enum GeneticSnoozeType {
   @@schema("public")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Supplement Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SupplementTriggerType {
+  BREEDING_CYCLE_RELATIVE // Relative to breeding plan event
+  AGE_BASED // Relative to animal's birth date
+  MANUAL // User sets start date manually
+
+  @@schema("public")
+}
+
+enum BreedingCycleAnchorEvent {
+  CYCLE_START
+  BREED_DATE
+  BIRTH_DATE
+  WEANED_DATE
+
+  @@schema("public")
+}
+
+enum SupplementFrequency {
+  ONCE
+  DAILY
+  EVERY_OTHER_DAY
+  EVERY_3_DAYS
+  WEEKLY
+  ONGOING // No end date
+
+  @@schema("public")
+}
+
+enum SupplementScheduleMode {
+  BREEDING_LINKED // Dates calculated from breeding plan
+  STANDALONE // Manual start date
+
+  @@schema("public")
+}
+
+enum SupplementScheduleStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  CANCELLED
+
+  @@schema("public")
+}
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -979,6 +1028,14 @@ enum NotificationType {
   genetic_test_carrier_warning // Carrier × Carrier pairing detected (URGENT)
   genetic_test_registration // Registry requires tests before deadline
   genetic_test_recommended // Recommended tests for breed/discipline
+
+  // Supplement tracking notifications
+  supplement_starting_7d
+  supplement_starting_3d
+  supplement_starting_1d
+  supplement_due_today
+  supplement_overdue
+  supplement_schedule_complete
 
   @@schema("public")
 }
@@ -1492,6 +1549,11 @@ model Tenant {
 
   // Stallion Booking Pipeline (P8)
   stallionBookings StallionBooking[]
+
+  // Supplement Tracking
+  supplementProtocols       SupplementProtocol[]
+  supplementSchedules       SupplementSchedule[]
+  supplementAdministrations SupplementAdministration[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -2860,6 +2922,10 @@ model Animal {
   // Registry pedigree links (P6)
   registryPedigrees RegistryPedigree[] @relation("RegistryPedigreeLinkedAnimal")
 
+  // Supplement Tracking
+  supplementSchedules       SupplementSchedule[]
+  supplementAdministrations SupplementAdministration[]
+
   @@unique([tenantId, microchip])
   @@index([organizationId])
   @@index([tenantId])
@@ -3865,6 +3931,9 @@ model BreedingPlan {
 
   // Stallion booking that originated this plan (P8)
   stallionBooking StallionBooking?
+
+  // Supplement Tracking
+  supplementSchedules SupplementSchedule[]
 
   archived      Boolean   @default(false)
   archiveReason String? /// Optional reason/note provided when archiving the plan
@@ -9402,5 +9471,147 @@ model AnimalMicrochipRegistration {
   @@unique([tenantId, offspringId, registryId], name: "unique_offspring_registry")
   @@index([tenantId, expirationDate])
   @@index([registeredToContactId])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Supplement Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * SupplementProtocol - Stores supplement protocol templates
+ * Can be system benchmark protocols (tenantId = null) or tenant custom protocols
+ */
+model SupplementProtocol {
+  id       Int     @id @default(autoincrement())
+  tenantId Int? // null = system benchmark protocol
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Basic Info
+  name        String
+  description String? @db.Text
+  species     Species[]
+
+  // Benchmark Metadata (for system protocols)
+  isBenchmark     Boolean @default(false)
+  benchmarkSource String? // e.g., "AAEP Guidelines", "Canine Reproduction Standards"
+  benchmarkNotes  String? @db.Text
+
+  // Dosage Information (informational only - requires disclaimer)
+  dosageAmount        String? // e.g., "0.044 mg/kg"
+  dosageUnit          String? // e.g., "ml", "mg/kg", "tablets"
+  administrationRoute String? // e.g., "oral", "injection", "topical"
+
+  // Trigger Configuration
+  triggerType SupplementTriggerType
+
+  // For BREEDING_CYCLE_RELATIVE triggers
+  anchorEvent BreedingCycleAnchorEvent?
+  offsetDays  Int? // Negative = before, Positive = after (e.g., -63 = 63 days before)
+
+  // For AGE_BASED triggers
+  ageTriggerWeeks Int?
+
+  // Duration & Frequency
+  durationDays Int? // null = single dose or ONGOING
+  frequency    SupplementFrequency @default(DAILY)
+
+  // Notification Settings
+  reminderDaysBefore Int[] @default([7, 3, 1])
+
+  // Status
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  schedules SupplementSchedule[]
+
+  @@index([tenantId])
+  @@index([tenantId, active])
+  @@index([isBenchmark])
+  @@schema("public")
+}
+
+/**
+ * SupplementSchedule - Links a protocol to an animal, optionally tied to a breeding plan
+ */
+model SupplementSchedule {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links
+  protocolId     Int
+  protocol       SupplementProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+  breedingPlanId Int? // null = standalone
+  breedingPlan   BreedingPlan?      @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+  animalId       Int
+  animal         Animal             @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Mode
+  mode SupplementScheduleMode
+
+  // Dates
+  calculatedStartDate DateTime
+  calculatedEndDate   DateTime?
+  startDateOverride   DateTime? // User override
+  nextDueDate         DateTime? // Calculated from frequency
+
+  // Tracking
+  status             SupplementScheduleStatus @default(NOT_STARTED)
+  completedDoses     Int                      @default(0)
+  totalDoses         Int? // null for ONGOING
+  lastAdministeredAt DateTime?
+
+  // Disclaimer Acknowledgment (CRITICAL for liability protection)
+  disclaimerAcknowledgedAt DateTime?
+  disclaimerAcknowledgedBy String? // userId
+
+  // Metadata
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  administrations SupplementAdministration[]
+
+  @@index([tenantId])
+  @@index([breedingPlanId])
+  @@index([animalId])
+  @@index([status, calculatedStartDate])
+  @@index([status, nextDueDate])
+  @@schema("public")
+}
+
+/**
+ * SupplementAdministration - Records individual supplement doses administered
+ */
+model SupplementAdministration {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links
+  scheduleId Int
+  schedule   SupplementSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  animalId   Int
+  animal     Animal             @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Administration Details
+  administeredAt DateTime
+  actualDosage   String? // Override if different from protocol
+  givenBy        String?
+  doseNumber     Int? // e.g., "dose 3 of 7"
+
+  // Metadata
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@index([animalId])
+  @@index([administeredAt])
   @@schema("public")
 }
