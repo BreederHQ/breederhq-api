@@ -365,6 +365,67 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // === Fetch Breeding Inquiries ===
+    if (status !== "draft" && status !== "sent") {
+      const inquiryWhere: any = { tenantId };
+
+      // Status filter for breeding inquiries
+      if (status === "unread") {
+        inquiryWhere.status = "NEW";
+      } else if (status === "archived") {
+        inquiryWhere.status = "CLOSED";
+      } else if (status !== "all") {
+        inquiryWhere.status = { not: "CLOSED" };
+      }
+
+      // Search filter
+      if (search) {
+        inquiryWhere.OR = [
+          { inquirerName: { contains: search, mode: "insensitive" } },
+          { inquirerEmail: { contains: search, mode: "insensitive" } },
+          { message: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      const breedingInquiries = await prisma.breedingInquiry.findMany({
+        where: inquiryWhere,
+        include: {
+          listing: {
+            select: {
+              id: true,
+              listingNumber: true,
+              headline: true,
+            },
+          },
+        },
+        orderBy: sort === "oldest" ? { createdAt: "asc" } : { createdAt: "desc" },
+      });
+
+      for (const inquiry of breedingInquiries) {
+        const isRead = inquiry.status !== "NEW";
+
+        // For unread filter, skip if already read
+        if (status === "unread" && isRead) continue;
+
+        items.push({
+          id: `breeding_inquiry:${inquiry.id}`,
+          type: "dm", // Using 'dm' as the base type, could add 'breeding_inquiry' as new type
+          partyId: null, // Breeding inquiries may not be linked to a party yet
+          partyName: inquiry.inquirerName,
+          toEmail: inquiry.inquirerEmail,
+          subject: `Breeding Inquiry: ${inquiry.listing?.headline || "Unknown Listing"}`,
+          preview: inquiry.message.substring(0, 100),
+          isRead,
+          flagged: false,
+          archived: inquiry.status === "CLOSED",
+          channel: "dm",
+          direction: "inbound" as any,
+          createdAt: inquiry.createdAt.toISOString(),
+          updatedAt: inquiry.updatedAt.toISOString(),
+        });
+      }
+    }
+
     // Sort combined results
     if (sort === "newest") {
       items.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -531,6 +592,36 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             // Other actions don't apply to drafts
             results.failed++;
           }
+        } else if (parsed.type === "breeding_inquiry") {
+          // Handle BreedingInquiry actions
+          const updateData: any = {};
+
+          switch (action) {
+            case "markRead":
+              updateData.status = "READ";
+              updateData.readAt = now;
+              break;
+            case "markUnread":
+              updateData.status = "NEW";
+              updateData.readAt = null;
+              break;
+            case "archive":
+            case "delete":
+              updateData.status = "CLOSED";
+              break;
+            default:
+              // Other actions don't apply to breeding inquiries
+              results.failed++;
+              continue;
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            await prisma.breedingInquiry.updateMany({
+              where: { id: parsed.id, tenantId },
+              data: updateData,
+            });
+          }
+          results.success++;
         }
       } catch (err) {
         console.error(`Failed to process ${compositeId}:`, err);
@@ -591,16 +682,24 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // Count flagged items and sent emails
-    const [flaggedThreads, flaggedEmails, draftCount, sentPartyEmails, sentUnlinkedEmails] = await Promise.all([
+    const [
+      flaggedThreads,
+      flaggedEmails,
+      draftCount,
+      sentPartyEmails,
+      sentUnlinkedEmails,
+      unreadInquiries,
+    ] = await Promise.all([
       prisma.messageThread.count({ where: { tenantId, flagged: true, archived: false } }),
       prisma.emailSendLog.count({ where: { tenantId, flagged: true, archived: false } }),
       prisma.draft.count({ where: { tenantId } }),
       prisma.partyEmail.count({ where: { tenantId, status: "sent" } }),
       prisma.unlinkedEmail.count({ where: { tenantId, direction: "outbound" } }),
+      prisma.breedingInquiry.count({ where: { tenantId, status: "NEW" } }),
     ]);
 
     return reply.send({
-      unreadCount: unreadThreads,
+      unreadCount: unreadThreads + unreadInquiries,
       flaggedCount: flaggedThreads + flaggedEmails,
       draftCount,
       sentCount: sentPartyEmails + sentUnlinkedEmails,
@@ -702,6 +801,231 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     } catch (err) {
       console.error("Failed to get email:", err);
       return reply.code(500).send({ error: "get_email_failed" });
+    }
+  });
+
+  // GET /communications/breeding-inquiry/:id - Get breeding inquiry details
+  app.get("/communications/breeding-inquiry/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const inquiryId = Number((req.params as any).id);
+
+    try {
+      const inquiry = await prisma.breedingInquiry.findFirst({
+        where: { id: inquiryId, tenantId },
+        include: {
+          listing: {
+            select: {
+              id: true,
+              listingNumber: true,
+              headline: true,
+              animalId: true,
+              animal: {
+                select: {
+                  id: true,
+                  name: true,
+                  species: true,
+                  breed: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!inquiry) {
+        return reply.code(404).send({ error: "inquiry_not_found" });
+      }
+
+      // Mark as read if not already
+      if (inquiry.status === "NEW") {
+        await prisma.breedingInquiry.update({
+          where: { id: inquiryId },
+          data: {
+            status: "READ",
+            readAt: new Date(),
+          },
+        });
+      }
+
+      return reply.send({
+        inquiry: {
+          id: inquiry.id,
+          listingId: inquiry.listingId,
+          listingNumber: inquiry.listing?.listingNumber,
+          listingHeadline: inquiry.listing?.headline,
+          animal: inquiry.listing?.animal,
+          inquirerName: inquiry.inquirerName,
+          inquirerEmail: inquiry.inquirerEmail,
+          inquirerPhone: inquiry.inquirerPhone,
+          inquirerType: inquiry.inquirerType,
+          isBreeder: inquiry.isBreeder,
+          message: inquiry.message,
+          interestedInMethod: inquiry.interestedInMethod,
+          status: inquiry.status,
+          readAt: inquiry.readAt?.toISOString(),
+          repliedAt: inquiry.repliedAt?.toISOString(),
+          convertedToBookingId: inquiry.convertedToBookingId,
+          convertedAt: inquiry.convertedAt?.toISOString(),
+          referrerUrl: inquiry.referrerUrl,
+          utmSource: inquiry.utmSource,
+          utmMedium: inquiry.utmMedium,
+          utmCampaign: inquiry.utmCampaign,
+          createdAt: inquiry.createdAt.toISOString(),
+        },
+      });
+    } catch (err) {
+      console.error("Failed to get breeding inquiry:", err);
+      return reply.code(500).send({ error: "get_inquiry_failed" });
+    }
+  });
+
+  // POST /communications/breeding-inquiry/:id/reply - Reply to breeding inquiry
+  app.post("/communications/breeding-inquiry/:id/reply", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const inquiryId = Number((req.params as any).id);
+    const { body: replyBody } = req.body as { body: string };
+
+    if (!replyBody || !replyBody.trim()) {
+      return reply.code(400).send({ error: "reply_body_required" });
+    }
+
+    try {
+      const inquiry = await prisma.breedingInquiry.findFirst({
+        where: { id: inquiryId, tenantId },
+        select: { id: true, inquirerEmail: true },
+      });
+
+      if (!inquiry) {
+        return reply.code(404).send({ error: "inquiry_not_found" });
+      }
+
+      // Update inquiry status to REPLIED
+      await prisma.breedingInquiry.update({
+        where: { id: inquiryId },
+        data: {
+          status: "REPLIED",
+          repliedAt: new Date(),
+        },
+      });
+
+      // TODO: Send actual email to inquirer
+      // For now, just return success
+      // In production, integrate with email service (SendGrid, SES, etc.)
+
+      return reply.send({
+        ok: true,
+        message: "Reply sent successfully",
+      });
+    } catch (err) {
+      console.error("Failed to reply to breeding inquiry:", err);
+      return reply.code(500).send({ error: "reply_failed" });
+    }
+  });
+
+  // POST /communications/breeding-inquiry/:id/convert - Convert inquiry to booking
+  app.post("/communications/breeding-inquiry/:id/convert", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const inquiryId = Number((req.params as any).id);
+
+    try {
+      const inquiry = await prisma.breedingInquiry.findFirst({
+        where: { id: inquiryId, tenantId },
+        include: {
+          listing: {
+            select: {
+              id: true,
+              animalId: true,
+              species: true,
+              breed: true,
+              feeCents: true,
+              breedingMethods: true,
+            },
+          },
+        },
+      });
+
+      if (!inquiry) {
+        return reply.code(404).send({ error: "inquiry_not_found" });
+      }
+
+      if (inquiry.convertedToBookingId) {
+        return reply.code(400).send({ error: "already_converted" });
+      }
+
+      // Generate booking number
+      const bookingCount = await prisma.breedingBooking.count({ where: { tenantId } });
+      const bookingNumber = `BK-${String(bookingCount + 1).padStart(6, "0")}`;
+
+      // Create booking
+      const booking = await prisma.breedingBooking.create({
+        data: {
+          tenantId,
+          bookingNumber,
+
+          // Lineage
+          sourceListingId: inquiry.listingId,
+          sourceInquiryId: inquiry.id,
+
+          // Offering side (from listing)
+          offeringTenantId: tenantId,
+          offeringAnimalId: inquiry.listing!.animalId!,
+
+          // Seeking side (from inquiry - external for now)
+          seekingPartyId: null, // Could be linked to a party later
+          seekingTenantId: null,
+          seekingAnimalId: null,
+
+          // External party info
+          externalPartyName: inquiry.inquirerName,
+          externalPartyEmail: inquiry.inquirerEmail,
+          externalPartyPhone: inquiry.inquirerPhone,
+
+          // Details
+          species: inquiry.listing!.species,
+          bookingType: "STUD_SERVICE",
+          preferredMethod: inquiry.interestedInMethod || inquiry.listing!.breedingMethods[0],
+
+          // Financials
+          agreedFeeCents: inquiry.listing!.feeCents,
+          feeDirection: "OFFERING_RECEIVES",
+
+          // Status
+          status: "INQUIRY",
+          statusChangedAt: new Date(),
+
+          // Requirements
+          requirements: {},
+          requirementsConfig: inquiry.listing!.species === "HORSE" ? "HORSE_DEFAULT" : null,
+
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+      // Mark inquiry as converted
+      await prisma.breedingInquiry.update({
+        where: { id: inquiryId },
+        data: {
+          status: "CONVERTED",
+          convertedToBookingId: booking.id,
+          convertedAt: new Date(),
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        bookingId: booking.id,
+        bookingNumber: booking.bookingNumber,
+      });
+    } catch (err) {
+      console.error("Failed to convert inquiry to booking:", err);
+      return reply.code(500).send({ error: "conversion_failed" });
     }
   });
 };
