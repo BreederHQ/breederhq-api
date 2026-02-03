@@ -565,6 +565,7 @@ import breederProfileRoutes from "./routes/breeder-profile.js"; // Breeding Disc
 import breedingDiscoveryProgramsRoutes from "./routes/breeding-discovery-programs.js"; // Breeding Discovery: Programs (Phase 2)
 import breedingDiscoveryListingsRoutes from "./routes/breeding-discovery-listings.js"; // Breeding Discovery: Listings (Phase 2)
 import breedingBookingsRoutes from "./routes/breeding-bookings.js"; // Breeding Discovery: Bookings (Phase 2)
+import breedingAnalyticsRoutes from "./routes/breeding-analytics.js"; // Breeding Discovery: Analytics (Phase 3)
 import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discovery: Compatibility Checking (Phase 2)
 import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
 
@@ -989,6 +990,7 @@ app.register(
     api.register(breedingDiscoveryProgramsRoutes); // /api/v1/breeding-discovery/programs/* (Breeding Discovery - Phase 2)
     api.register(breedingDiscoveryListingsRoutes); // /api/v1/breeding-discovery/listings/* (Breeding Discovery - Phase 2)
     api.register(breedingBookingsRoutes); // /api/v1/breeding-bookings/* (Breeding Discovery - Phase 2)
+    api.register(breedingAnalyticsRoutes); // /api/v1/breeding-analytics/* (Breeding Discovery - Phase 3)
     api.register(compatibilityRoutes); // /api/v1/compatibility/* (Breeding Discovery - Phase 2)
     api.register(publicBreedingDiscoveryRoutes); // /api/v1/public/breeding-* (Breeding Discovery - Phase 2)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
