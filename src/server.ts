@@ -561,6 +561,12 @@ import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P
 import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
 import semenInventoryRoutes from "./routes/semen-inventory.js"; // Semen Inventory (P7)
 import stallionBookingsRoutes from "./routes/stallion-bookings.js"; // Stallion Bookings (P8)
+import breederProfileRoutes from "./routes/breeder-profile.js"; // Breeding Discovery: Breeder Profile (Phase 2)
+import breedingDiscoveryProgramsRoutes from "./routes/breeding-discovery-programs.js"; // Breeding Discovery: Programs (Phase 2)
+import breedingDiscoveryListingsRoutes from "./routes/breeding-discovery-listings.js"; // Breeding Discovery: Listings (Phase 2)
+import breedingBookingsRoutes from "./routes/breeding-bookings.js"; // Breeding Discovery: Bookings (Phase 2)
+import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discovery: Compatibility Checking (Phase 2)
+import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -979,6 +985,12 @@ app.register(
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
     api.register(stallionBookingsRoutes); // /api/v1/stallion-bookings/* (Stallion Bookings - P8)
+    api.register(breederProfileRoutes); // /api/v1/breeder-profile/* (Breeding Discovery - Phase 2)
+    api.register(breedingDiscoveryProgramsRoutes); // /api/v1/breeding-discovery/programs/* (Breeding Discovery - Phase 2)
+    api.register(breedingDiscoveryListingsRoutes); // /api/v1/breeding-discovery/listings/* (Breeding Discovery - Phase 2)
+    api.register(breedingBookingsRoutes); // /api/v1/breeding-bookings/* (Breeding Discovery - Phase 2)
+    api.register(compatibilityRoutes); // /api/v1/compatibility/* (Breeding Discovery - Phase 2)
+    api.register(publicBreedingDiscoveryRoutes); // /api/v1/public/breeding-* (Breeding Discovery - Phase 2)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*

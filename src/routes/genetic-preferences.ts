@@ -265,7 +265,7 @@ const geneticPreferencesRoutes: FastifyPluginAsync = async (app: FastifyInstance
           snoozeType: body.snoozeType,
           animalId: body.animalId ?? null,
           testCode: body.testCode ?? null,
-        },
+        } as any,
       },
       create: {
         userId,
@@ -322,7 +322,7 @@ const geneticPreferencesRoutes: FastifyPluginAsync = async (app: FastifyInstance
             snoozeType: body.snoozeType,
             animalId: body.animalId ?? null,
             testCode: body.testCode ?? null,
-          },
+          } as any,
         },
       });
 
