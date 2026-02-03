@@ -417,11 +417,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           preview: inquiry.message.substring(0, 100),
           isRead,
           flagged: false,
-          archived: inquiry.status === "CLOSED",
+          archived: inquiry.status === "ARCHIVED",
           channel: "dm",
           direction: "inbound" as any,
           createdAt: inquiry.createdAt.toISOString(),
-          updatedAt: inquiry.updatedAt.toISOString(),
+          updatedAt: inquiry.createdAt.toISOString(),
         });
       }
     }
@@ -959,13 +959,23 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Generate booking number
-      const bookingCount = await prisma.breedingBooking.count({ where: { tenantId } });
+      const bookingCount = await prisma.breedingBooking.count({ where: { offeringTenantId: tenantId } });
       const bookingNumber = `BK-${String(bookingCount + 1).padStart(6, "0")}`;
+
+      // Create a Party record for the external inquirer
+      const seekingParty = await prisma.party.create({
+        data: {
+          tenantId,
+          type: "CONTACT",
+          name: inquiry.inquirerName,
+          email: inquiry.inquirerEmail,
+          phoneE164: inquiry.inquirerPhone,
+        },
+      });
 
       // Create booking
       const booking = await prisma.breedingBooking.create({
         data: {
-          tenantId,
           bookingNumber,
 
           // Lineage
@@ -976,15 +986,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offeringTenantId: tenantId,
           offeringAnimalId: inquiry.listing!.animalId!,
 
-          // Seeking side (from inquiry - external for now)
-          seekingPartyId: null, // Could be linked to a party later
+          // Seeking side (from inquiry - external party)
+          seekingPartyId: seekingParty.id,
           seekingTenantId: null,
           seekingAnimalId: null,
-
-          // External party info
-          externalPartyName: inquiry.inquirerName,
-          externalPartyEmail: inquiry.inquirerEmail,
-          externalPartyPhone: inquiry.inquirerPhone,
 
           // Details
           species: inquiry.listing!.species,
@@ -992,8 +997,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           preferredMethod: inquiry.interestedInMethod || inquiry.listing!.breedingMethods[0],
 
           // Financials
-          agreedFeeCents: inquiry.listing!.feeCents,
-          feeDirection: "OFFERING_RECEIVES",
+          agreedFeeCents: inquiry.listing!.feeCents || 0,
+          feeDirection: "I_RECEIVE",
 
           // Status
           status: "INQUIRY",
