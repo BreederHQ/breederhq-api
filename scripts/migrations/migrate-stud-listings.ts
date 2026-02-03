@@ -4,19 +4,26 @@
  * Migrates legacy stud service listings to the new BreedingListing model.
  * Run this BEFORE migrating stallion bookings.
  *
- * Usage: npx tsx scripts/migrations/migrate-stud-listings.ts
+ * Usage:
+ *   npx tsx scripts/migrations/migrate-stud-listings.ts           # Run migration
+ *   npx tsx scripts/migrations/migrate-stud-listings.ts --dry-run # Preview without writing
  */
 
 import prisma from '../../src/prisma.js';
 
-async function generateListingNumber(tenantId: number): Promise<string> {
-  const count = await prisma.breedingListing.count({ where: { tenantId } });
+// Parse command line arguments
+const isDryRun = process.argv.includes('--dry-run');
+
+async function generateListingNumber(): Promise<string> {
+  // Generate globally unique listing number (not per-tenant)
+  const count = await prisma.breedingListing.count();
   return `BL-${String(count + 1).padStart(6, '0')}`;
 }
 
 function mapListingStatus(status: string): string {
   const mapping: Record<string, string> = {
     'PUBLISHED': 'PUBLISHED',
+    'LIVE': 'PUBLISHED',
     'DRAFT': 'DRAFT',
     'SOLD': 'ARCHIVED',
     'ARCHIVED': 'ARCHIVED',
@@ -27,21 +34,19 @@ function mapListingStatus(status: string): string {
 
 async function migrateStudListings() {
   console.log('Starting migration: MktListingBreederService → BreedingListing...');
+  if (isDryRun) {
+    console.log('🔍 DRY RUN MODE - No changes will be written to the database\n');
+  }
 
   try {
     // Find all stud service listings
     const studListings = await prisma.mktListingBreederService.findMany({
       where: {
-        // If there's a type field, filter by STUD_SERVICES
-        // Otherwise, migrate all breeder service listings
+        listingType: 'STUD_SERVICE',
       },
       include: {
         tenant: true,
-        participants: {
-          include: {
-            animal: true,
-          },
-        },
+        stallion: true,
       },
     });
 
@@ -57,8 +62,7 @@ async function migrateStudListings() {
         const existing = await prisma.breedingListing.findFirst({
           where: {
             tenantId: listing.tenantId,
-            // Check if animal matches (if listing has participants)
-            animalId: listing.participants[0]?.animalId,
+            animalId: listing.stallionId || undefined,
           },
         });
 
@@ -68,96 +72,104 @@ async function migrateStudListings() {
           continue;
         }
 
-        // Get the primary animal from participants
-        const primaryAnimal = listing.participants[0]?.animal;
+        // Get the stallion
+        const primaryAnimal = listing.stallion;
 
         if (!primaryAnimal) {
-          console.warn(`Listing ${listing.id} has no animals, skipping`);
+          console.warn(`Listing ${listing.id} has no stallion, skipping`);
           skipped++;
           continue;
         }
 
         // Generate new listing number
-        const listingNumber = await generateListingNumber(listing.tenantId);
+        const listingNumber = await generateListingNumber();
 
-        // Create BreedingListing
-        await prisma.breedingListing.create({
-          data: {
-            tenantId: listing.tenantId,
-            listingNumber,
+        if (isDryRun) {
+          // Dry run: just report what would be done
+          console.log(`[DRY RUN] Would migrate listing ${listing.id} → ${listingNumber}`);
+          console.log(`  Animal: ${primaryAnimal.name} (${primaryAnimal.species})`);
+          console.log(`  Status: ${(listing as any).status || 'DRAFT'} → ${mapListingStatus((listing as any).status || 'DRAFT')}`);
+          migrated++;
+        } else {
+          // Create BreedingListing
+          await prisma.breedingListing.create({
+            data: {
+              tenantId: listing.tenantId,
+              listingNumber,
 
-            // Animal
-            animalId: primaryAnimal.id,
-            species: primaryAnimal.species,
-            breed: primaryAnimal.breed || null,
-            sex: primaryAnimal.sex,
+              // Animal
+              animalId: primaryAnimal.id,
+              species: primaryAnimal.species,
+              breed: primaryAnimal.breed || null,
+              sex: primaryAnimal.sex,
 
-            // Intent
-            intent: 'offering',
+              // Intent
+              intent: 'OFFERING',
 
-            // Content
-            headline: (listing as any).title || `${primaryAnimal.name} - Stud Services`,
-            description: (listing as any).description || null,
-            media: (listing as any).photos || [],
+              // Content
+              headline: listing.title || `${primaryAnimal.name} - Stud Services`,
+              description: listing.description || null,
+              media: listing.images || [],
 
-            // Pricing
-            feeCents: (listing as any).bookingFeeCents || 0,
-            feeDirection: 'i_receive',
-            feeNotes: null,
+              // Pricing
+              feeCents: listing.priceCents || 0,
+              feeDirection: 'I_RECEIVE',
+              feeNotes: null,
 
-            // Availability
-            availableFrom: (listing as any).seasonStart || null,
-            availableTo: (listing as any).seasonEnd || null,
-            seasonName: (listing as any).seasonName || null,
-            breedingMethods: (listing as any).breedingMethods || [],
-            maxBookings: (listing as any).maxBookings || null,
-            currentBookings: (listing as any).bookingsReceived || 0,
+              // Availability - legacy model doesn't have these fields
+              availableFrom: null,
+              availableTo: null,
+              seasonName: null,
+              breedingMethods: [],
+              maxBookings: null,
+              currentBookings: 0,
 
-            // Guarantee
-            guaranteeType: (listing as any).defaultGuaranteeType || null,
-            guaranteeTerms: (listing as any).guaranteeTerms || null,
+              // Guarantee - legacy model doesn't have these
+              guaranteeType: null,
+              guaranteeTerms: null,
 
-            // Requirements
-            requiresHealthTesting: (listing as any).healthCertRequired || false,
-            requiredTests: (listing as any).requiredTests || [],
-            requiresContract: true,
-            additionalRequirements: null,
+              // Requirements - legacy model doesn't have these
+              requiresHealthTesting: false,
+              requiredTests: [],
+              requiresContract: true,
+              additionalRequirements: null,
 
-            // Status
-            status: mapListingStatus((listing as any).status || 'DRAFT'),
-            publishedAt: (listing as any).publishedAt || null,
+              // Status
+              status: mapListingStatus(listing.status),
+              publishedAt: listing.publishedAt || null,
 
-            // Public marketplace
-            publicEnabled: false, // Must be opted in manually
-            publicSlug: null,
+              // Public marketplace
+              publicEnabled: false, // Must be opted in manually
+              publicSlug: listing.slug || null,
 
-            // Inquiry settings
-            acceptInquiries: true,
+              // Inquiry settings
+              acceptInquiries: true,
 
-            // Metrics (will be recalculated)
-            viewCount: 0,
-            inquiryCount: 0,
-            bookingCount: (listing as any).bookingsReceived || 0,
+              // Metrics
+              viewCount: listing.viewCount || 0,
+              inquiryCount: listing.inquiryCount || 0,
+              bookingCount: 0,
 
-            // Location
-            locationCity: (listing as any).locationCity || null,
-            locationState: (listing as any).locationState || null,
-            locationCountry: (listing as any).locationCountry || null,
+              // Location
+              locationCity: listing.city || null,
+              locationState: listing.state || null,
+              locationCountry: listing.country || null,
 
-            // Timestamps
-            createdAt: listing.createdAt,
-            updatedAt: listing.updatedAt,
-          },
-        });
+              // Timestamps
+              createdAt: listing.createdAt,
+              updatedAt: listing.updatedAt,
+            },
+          });
 
-        // Mark original listing as migrated (if migratedAt field exists)
-        // await prisma.mktListingBreederService.update({
-        //   where: { id: listing.id },
-        //   data: { migratedAt: new Date() },
-        // });
+          // Mark original listing as migrated (if migratedAt field exists)
+          // await prisma.mktListingBreederService.update({
+          //   where: { id: listing.id },
+          //   data: { migratedAt: new Date() },
+          // });
 
-        migrated++;
-        console.log(`✓ Migrated listing ${listing.id} → ${listingNumber}`);
+          migrated++;
+          console.log(`✓ Migrated listing ${listing.id} → ${listingNumber}`);
+        }
       } catch (err) {
         console.error(`✗ Failed to migrate listing ${listing.id}:`, err);
         errors++;
