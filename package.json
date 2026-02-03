@@ -88,6 +88,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.971.0",
+    "@aws-sdk/client-secrets-manager": "^3.981.0",
     "@aws-sdk/s3-request-presigner": "^3.971.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.1.0",
