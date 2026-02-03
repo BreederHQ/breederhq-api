@@ -527,6 +527,8 @@ import communicationsRoutes from "./routes/communications.js"; // Communications
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 import documentBundlesRoutes from "./routes/document-bundles.js"; // Document Bundles for email attachments
 import documentsRoutes from "./routes/documents.js"; // General documents listing
+import watermarkSettingsRoutes from "./routes/watermark-settings.js"; // Watermark settings
+import documentWatermarkRoutes from "./routes/document-watermark.js"; // Document download with watermarking
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
@@ -537,6 +539,7 @@ import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breed
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
+import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
@@ -971,6 +974,7 @@ app.register(
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
+    api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
     api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
@@ -990,6 +994,8 @@ app.register(
     api.register(draftsRoutes);         // /api/v1/drafts/* Draft messages/emails
     api.register(documentBundlesRoutes); // /api/v1/document-bundles/* Document bundles for email attachments
     api.register(documentsRoutes);      // /api/v1/documents/* General documents listing
+    api.register(watermarkSettingsRoutes); // /api/v1/settings/watermark Watermark settings
+    api.register(documentWatermarkRoutes); // /api/v1/documents/:id/download, /watermark, /access-log Document watermarking
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management

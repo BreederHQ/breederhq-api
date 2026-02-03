@@ -13,6 +13,12 @@ function parseIntOrNull(v: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function parseFloatOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function parsePaging(q: any) {
   const page = Math.max(1, Number(q?.page ?? 1) || 1);
   const limit = Math.min(200, Math.max(1, Number(q?.limit ?? 50) || 50));
@@ -45,6 +51,9 @@ function expenseDTO(e: any) {
     breedingPlanId: e.breedingPlanId,
     offspringGroupId: e.offspringGroupId,
     animalId: e.animalId,
+    foodProductId: e.foodProductId,
+    quantityValue: e.quantityValue,
+    quantityUnit: e.quantityUnit,
     notes: e.notes,
     data: e.data,
     createdAt: e.createdAt,
@@ -82,6 +91,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const incurredAt = body.incurredAt ? new Date(body.incurredAt) : new Date();
 
+      // Validate quantityUnit if provided
+      const validUnits = ["OZ", "LB", "G", "KG"];
+      const quantityUnit = body.quantityUnit && validUnits.includes(body.quantityUnit.toUpperCase())
+        ? body.quantityUnit.toUpperCase()
+        : null;
+
       const expense = await prisma.expense.create({
         data: {
           tenantId,
@@ -94,6 +109,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           breedingPlanId: anchors.breedingPlanId,
           offspringGroupId: anchors.offspringGroupId,
           animalId: anchors.animalId,
+          foodProductId: parseIntOrNull(body.foodProductId),
+          quantityValue: parseFloatOrNull(body.quantityValue),
+          quantityUnit,
           notes: body.notes || null,
           data: body.data || null,
         },
@@ -213,6 +231,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (body.category !== undefined) updates.category = body.category;
       if (body.description !== undefined) updates.description = body.description;
       if (body.notes !== undefined) updates.notes = body.notes;
+      if (body.foodProductId !== undefined) updates.foodProductId = parseIntOrNull(body.foodProductId);
+      if (body.quantityValue !== undefined) updates.quantityValue = parseFloatOrNull(body.quantityValue);
+      if (body.quantityUnit !== undefined) {
+        const validUnits = ["OZ", "LB", "G", "KG"];
+        updates.quantityUnit = body.quantityUnit && validUnits.includes(body.quantityUnit.toUpperCase())
+          ? body.quantityUnit.toUpperCase()
+          : null;
+      }
 
       const expense = await prisma.expense.updateMany({
         where: { id, tenantId },

@@ -663,5 +663,576 @@ export default async function marketplaceProvidersRoutes(
     }
   });
 
-  // Stripe Connect endpoints will be added in Phase 2
+  /* ───────────────────────── Provider Transactions ───────────────────────── */
+
+  app.get("/transactions", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { status, page = "1", limit = "20" } = req.query as {
+      status?: string;
+      page?: string;
+      limit?: string;
+    };
+
+    try {
+      const where: any = {
+        providerId: provider.id,
+      };
+
+      if (status) {
+        where.status = status;
+      }
+
+      const [transactions, total] = await Promise.all([
+        prisma.marketplaceTransaction.findMany({
+          where,
+          include: {
+            client: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+            listing: {
+              select: {
+                id: true,
+                title: true,
+                slug: true,
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
+          take: parseInt(limit, 10),
+        }),
+        prisma.marketplaceTransaction.count({ where }),
+      ]);
+
+      return reply.send({
+        transactions: transactions.map((t) => ({
+          id: t.id,
+          clientId: t.clientId,
+          providerId: t.providerId,
+          listingId: t.listingId,
+          serviceDescription: t.serviceDescription,
+          notes: t.serviceNotes,
+          servicePriceCents: t.servicePriceCents,
+          platformFeeCents: t.platformFeeCents,
+          totalCents: t.totalCents,
+          providerPayoutCents: t.providerPayoutCents,
+          invoiceId: t.invoiceId,
+          status: t.status,
+          createdAt: t.createdAt,
+          paidAt: t.paidAt,
+          startedAt: t.startedAt,
+          completedAt: t.completedAt,
+          cancelledAt: t.cancelledAt,
+          listing: t.listing,
+          client: t.client,
+        })),
+        total,
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10),
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Provider transactions query failed");
+      return reply.code(500).send({
+        error: "query_failed",
+        message: "Failed to load transactions.",
+      });
+    }
+  });
+
+  /* ───────────────────────── Provider Messaging ───────────────────────── */
+
+  /**
+   * GET /messages/threads - List all message threads for the provider
+   */
+  app.get("/messages/threads", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { status, type, page = "1", limit = "20" } = req.query as {
+      status?: string;
+      type?: "inquiry" | "transaction";
+      page?: string;
+      limit?: string;
+    };
+
+    try {
+      const where: any = {
+        providerId: provider.id,
+      };
+
+      if (status) {
+        where.status = status;
+      }
+
+      if (type === "inquiry") {
+        where.transactionId = null;
+      } else if (type === "transaction") {
+        where.transactionId = { not: null };
+      }
+
+      const [threads, total] = await Promise.all([
+        prisma.marketplaceMessageThread.findMany({
+          where,
+          include: {
+            client: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+            listing: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+            transaction: {
+              select: {
+                id: true,
+                status: true,
+              },
+            },
+            messages: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+          },
+          orderBy: { lastMessageAt: "desc" },
+          skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
+          take: parseInt(limit, 10),
+        }),
+        prisma.marketplaceMessageThread.count({ where }),
+      ]);
+
+      // Calculate unread count per thread
+      const threadsWithUnread = await Promise.all(
+        threads.map(async (thread) => {
+          const unreadCount = await prisma.marketplaceMessage.count({
+            where: {
+              threadId: thread.id,
+              senderType: "client",
+              readAt: null,
+            },
+          });
+          return {
+            id: thread.id,
+            clientId: thread.clientId,
+            providerId: thread.providerId,
+            listingId: thread.listingId,
+            transactionId: thread.transactionId,
+            subject: thread.subject,
+            status: thread.status,
+            lastMessageAt: thread.lastMessageAt,
+            unreadCount,
+            threadType: thread.transactionId ? "transaction" : "inquiry",
+            lastMessage: thread.messages[0] || null,
+            client: thread.client,
+            listing: thread.listing,
+            transaction: thread.transaction,
+          };
+        })
+      );
+
+      return reply.send({
+        threads: threadsWithUnread,
+        total,
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10),
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Provider threads query failed");
+      return reply.code(500).send({
+        error: "query_failed",
+        message: "Failed to load message threads.",
+      });
+    }
+  });
+
+  /**
+   * GET /messages/threads/:id - Get thread with all messages
+   */
+  app.get("/messages/threads/:id", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { id } = req.params as { id: string };
+    const threadId = parseInt(id, 10);
+
+    if (isNaN(threadId)) {
+      return reply.code(400).send({ error: "Invalid thread ID" });
+    }
+
+    try {
+      const thread = await prisma.marketplaceMessageThread.findFirst({
+        where: { id: threadId, providerId: provider.id },
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          listing: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+            },
+          },
+          transaction: {
+            select: {
+              id: true,
+              status: true,
+              servicePriceCents: true,
+            },
+          },
+        },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "Thread not found" });
+      }
+
+      const messages = await prisma.marketplaceMessage.findMany({
+        where: { threadId },
+        orderBy: { createdAt: "asc" },
+      });
+
+      return reply.send({
+        thread: {
+          id: thread.id,
+          clientId: thread.clientId,
+          providerId: thread.providerId,
+          listingId: thread.listingId,
+          transactionId: thread.transactionId,
+          subject: thread.subject,
+          status: thread.status,
+          lastMessageAt: thread.lastMessageAt,
+          threadType: thread.transactionId ? "transaction" : "inquiry",
+          client: thread.client,
+          listing: thread.listing,
+          transaction: thread.transaction,
+        },
+        messages: messages.map((m) => ({
+          id: m.id,
+          threadId: m.threadId,
+          senderId: m.senderId,
+          senderType: m.senderType,
+          messageText: m.messageText,
+          createdAt: m.createdAt,
+          readAt: m.readAt,
+        })),
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id, threadId }, "Thread detail query failed");
+      return reply.code(500).send({
+        error: "query_failed",
+        message: "Failed to load thread.",
+      });
+    }
+  });
+
+  /**
+   * POST /messages/threads/:id/messages - Send message as provider
+   */
+  app.post("/messages/threads/:id/messages", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { id } = req.params as { id: string };
+    const threadId = parseInt(id, 10);
+    const { messageText } = (req.body || {}) as { messageText?: string };
+
+    if (isNaN(threadId)) {
+      return reply.code(400).send({ error: "Invalid thread ID" });
+    }
+
+    if (!messageText?.trim()) {
+      return reply.code(400).send({ error: "Message text is required" });
+    }
+
+    try {
+      // Verify thread belongs to provider
+      const thread = await prisma.marketplaceMessageThread.findFirst({
+        where: { id: threadId, providerId: provider.id },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "Thread not found" });
+      }
+
+      const message = await prisma.marketplaceMessage.create({
+        data: {
+          threadId,
+          senderId: provider.id,
+          senderType: "provider",
+          messageText: messageText.trim(),
+        },
+      });
+
+      // Update thread lastMessageAt
+      await prisma.marketplaceMessageThread.update({
+        where: { id: threadId },
+        data: { lastMessageAt: new Date() },
+      });
+
+      // TODO: Send email notification to client
+
+      return reply.send({
+        message: {
+          id: message.id,
+          threadId: message.threadId,
+          senderId: message.senderId,
+          senderType: message.senderType,
+          messageText: message.messageText,
+          createdAt: message.createdAt,
+          readAt: message.readAt,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id, threadId }, "Send message failed");
+      return reply.code(500).send({
+        error: "send_failed",
+        message: "Failed to send message.",
+      });
+    }
+  });
+
+  /**
+   * POST /messages/threads/:id/mark-read - Mark all client messages as read
+   */
+  app.post("/messages/threads/:id/mark-read", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { id } = req.params as { id: string };
+    const threadId = parseInt(id, 10);
+
+    if (isNaN(threadId)) {
+      return reply.code(400).send({ error: "Invalid thread ID" });
+    }
+
+    try {
+      // Verify thread belongs to provider
+      const thread = await prisma.marketplaceMessageThread.findFirst({
+        where: { id: threadId, providerId: provider.id },
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ error: "Thread not found" });
+      }
+
+      await prisma.marketplaceMessage.updateMany({
+        where: {
+          threadId,
+          senderType: "client",
+          readAt: null,
+        },
+        data: { readAt: new Date() },
+      });
+
+      return reply.send({ success: true });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id, threadId }, "Mark read failed");
+      return reply.code(500).send({
+        error: "mark_read_failed",
+        message: "Failed to mark messages as read.",
+      });
+    }
+  });
+
+  /* ───────────────────────── Stripe Connect ───────────────────────── */
+
+  /**
+   * POST /stripe-connect/onboarding - Start Stripe Connect onboarding
+   */
+  app.post("/stripe-connect/onboarding", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { returnUrl, refreshUrl } = (req.body || {}) as {
+      returnUrl?: string;
+      refreshUrl?: string;
+    };
+
+    if (!returnUrl || !refreshUrl) {
+      return reply.code(400).send({
+        error: "missing_urls",
+        message: "returnUrl and refreshUrl are required",
+      });
+    }
+
+    try {
+      // Dynamic import to avoid issues if Stripe is not configured
+      const stripeConnect = await import("../services/stripe-connect-service.js");
+
+      let accountId = provider.stripeConnectAccountId;
+
+      // Create Connect account if not exists
+      if (!accountId) {
+        accountId = await stripeConnect.createConnectAccount(provider.id);
+      }
+
+      // Create account link for onboarding
+      const accountLinkUrl = await stripeConnect.createAccountLink(
+        accountId,
+        returnUrl,
+        refreshUrl
+      );
+
+      return reply.send({ accountLinkUrl, accountId });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Stripe Connect onboarding failed");
+      return reply.code(500).send({
+        error: "onboarding_failed",
+        message: "Failed to start Stripe Connect onboarding. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * GET /stripe-connect/status - Get Stripe Connect account status
+   */
+  app.get("/stripe-connect/status", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+
+    // Not connected
+    if (!provider.stripeConnectAccountId) {
+      return reply.send({
+        connected: false,
+        accountId: null,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        chargesEnabled: false,
+      });
+    }
+
+    try {
+      const stripeConnect = await import("../services/stripe-connect-service.js");
+      const status = await stripeConnect.getAccountStatus(provider.stripeConnectAccountId);
+
+      return reply.send({
+        ...status,
+        accountId: provider.stripeConnectAccountId,
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Stripe Connect status check failed");
+      return reply.code(500).send({
+        error: "status_check_failed",
+        message: "Failed to check Stripe Connect status.",
+      });
+    }
+  });
+
+  /**
+   * POST /stripe-connect/dashboard-link - Get link to Stripe Express Dashboard
+   */
+  app.post("/stripe-connect/dashboard-link", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+
+    if (!provider.stripeConnectAccountId) {
+      return reply.code(400).send({
+        error: "not_connected",
+        message: "Stripe Connect is not set up for this account.",
+      });
+    }
+
+    try {
+      const stripeConnect = await import("../services/stripe-connect-service.js");
+      const dashboardUrl = await stripeConnect.createDashboardLink(
+        provider.stripeConnectAccountId
+      );
+
+      return reply.send({ dashboardUrl });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Stripe Connect dashboard link failed");
+      return reply.code(500).send({
+        error: "dashboard_link_failed",
+        message: "Failed to create Stripe dashboard link.",
+      });
+    }
+  });
+
+  /**
+   * POST /stripe-connect/refresh - Refresh onboarding link (if incomplete)
+   */
+  app.post("/stripe-connect/refresh", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+    const { returnUrl, refreshUrl } = (req.body || {}) as {
+      returnUrl?: string;
+      refreshUrl?: string;
+    };
+
+    if (!returnUrl || !refreshUrl) {
+      return reply.code(400).send({
+        error: "missing_urls",
+        message: "returnUrl and refreshUrl are required",
+      });
+    }
+
+    if (!provider.stripeConnectAccountId) {
+      return reply.code(400).send({
+        error: "not_connected",
+        message: "Stripe Connect is not set up for this account.",
+      });
+    }
+
+    try {
+      const stripeConnect = await import("../services/stripe-connect-service.js");
+      const accountLinkUrl = await stripeConnect.createAccountLink(
+        provider.stripeConnectAccountId,
+        returnUrl,
+        refreshUrl
+      );
+
+      return reply.send({ accountLinkUrl });
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Stripe Connect refresh failed");
+      return reply.code(500).send({
+        error: "refresh_failed",
+        message: "Failed to refresh Stripe Connect onboarding link.",
+      });
+    }
+  });
+
+  /* ───────────────────────── Financials ───────────────────────── */
+
+  /**
+   * GET /financials - Get provider's financial summary
+   */
+  app.get("/financials", {
+    preHandler: requireProvider,
+  }, async (req, reply) => {
+    const provider = req.marketplaceProvider!;
+
+    try {
+      const financialsService = await import("../services/marketplace-financials-service.js");
+      const financials = await financialsService.getProviderFinancials(provider.id);
+
+      return reply.send(financials);
+    } catch (err: any) {
+      req.log?.error?.({ err, providerId: provider.id }, "Financials query failed");
+      return reply.code(500).send({
+        error: "financials_error",
+        message: "Failed to load financial data. Please try again.",
+      });
+    }
+  });
 }

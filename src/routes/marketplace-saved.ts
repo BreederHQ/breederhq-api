@@ -145,7 +145,7 @@ export default async function marketplaceSavedRoutes(
           let listing: any = null;
 
           if (item.listingType === "service" && item.listingId) {
-            const serviceListing = await prisma.marketplaceServiceListing.findUnique({
+            const serviceListing = await prisma.mktListingProviderService.findUnique({
               where: { id: item.listingId },
               include: {
                 provider: true,
@@ -339,7 +339,7 @@ export default async function marketplaceSavedRoutes(
       let listingExists = false;
 
       if (listingType === "service") {
-        const listing = await prisma.marketplaceServiceListing.findUnique({
+        const listing = await prisma.mktListingProviderService.findUnique({
           where: { id: listingId },
           select: { id: true, deletedAt: true },
         });

@@ -19,7 +19,6 @@ import {
   completeService,
   cancelTransaction,
   refundTransaction,
-  listProviderTransactions,
   type TransactionWithDetails,
 } from "../services/marketplace-transaction-service.js";
 import {
@@ -151,7 +150,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
       try {
         // Fetch listing to verify buyer is not the provider
-        const listing = await prisma.marketplaceServiceListing.findUnique({
+        const listing = await prisma.mktListingProviderService.findUnique({
           where: { id: body.serviceListingId },
           include: {
             provider: true,
@@ -1030,57 +1029,148 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
     }
   );
 
+  /* ───────────────────────── Service Inquiries ───────────────────────── */
+
   /**
-   * GET /api/v1/marketplace/providers/transactions
-   * List provider's transactions
+   * POST /api/v1/marketplace/service-inquiries
+   * Create a new inquiry thread for a service provider (pre-booking question)
    */
-  app.get(
-    "/providers/transactions",
+  app.post(
+    "/service-inquiries",
     {
-      preHandler: requireProvider,
+      preHandler: requireMarketplaceAuth,
       config: {
         rateLimit: {
-          max: 100,
-          timeWindow: "1 minute",
+          max: 20,
+          timeWindow: "1 hour",
         },
       },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
-      const userId = req.marketplaceUserId!;
-      const query = req.query as { page?: string; limit?: string };
+      const clientId = req.marketplaceUserId!;
+      const body = req.body as {
+        listingId?: number;
+        providerId?: number;
+        subject?: string;
+        message: string;
+      };
 
-      // Load provider
-      const provider = await prisma.marketplaceProvider.findUnique({
-        where: { userId },
-      });
-
-      if (!provider) {
-        return reply.code(404).send({
-          error: "provider_not_found",
-          message: "Provider account not found.",
+      if (!body.message?.trim()) {
+        return reply.code(400).send({
+          error: "message_required",
+          message: "Message text is required.",
         });
       }
 
-      const { page, limit } = parsePaging(query);
+      if (body.message.length > 2000) {
+        return reply.code(400).send({
+          error: "message_too_long",
+          message: "Message must be 2000 characters or less.",
+        });
+      }
 
       try {
-        const result = await listProviderTransactions(provider.id, page, limit);
+        let listing = null;
+        let targetProviderId = body.providerId;
 
-        return reply.send({
+        // If listingId provided, get provider from listing
+        if (body.listingId) {
+          listing = await prisma.mktListingProviderService.findUnique({
+            where: { id: body.listingId },
+            select: { id: true, title: true, providerId: true },
+          });
+
+          if (!listing) {
+            return reply.code(404).send({
+              error: "listing_not_found",
+              message: "Service listing not found.",
+            });
+          }
+
+          targetProviderId = listing.providerId;
+        }
+
+        if (!targetProviderId) {
+          return reply.code(400).send({
+            error: "provider_required",
+            message: "Either listingId or providerId is required.",
+          });
+        }
+
+        // Check for existing open inquiry thread for same listing/provider
+        const existingThread = await prisma.marketplaceMessageThread.findFirst({
+          where: {
+            clientId,
+            providerId: targetProviderId,
+            listingId: body.listingId || null,
+            transactionId: null, // inquiry = no transaction
+            status: "active",
+          },
+        });
+
+        let thread = existingThread;
+
+        if (!existingThread) {
+          // Create new inquiry thread
+          thread = await prisma.marketplaceMessageThread.create({
+            data: {
+              clientId,
+              providerId: targetProviderId,
+              listingId: body.listingId || null,
+              transactionId: null,
+              subject: body.subject || (listing ? `Question about: ${listing.title}` : "General Inquiry"),
+              status: "active",
+            },
+          });
+
+          // Increment listing inquiry count
+          if (body.listingId) {
+            await prisma.mktListingProviderService.update({
+              where: { id: body.listingId },
+              data: { inquiryCount: { increment: 1 } },
+            });
+          }
+        }
+
+        // Create the message
+        const message = await prisma.marketplaceMessage.create({
+          data: {
+            threadId: thread!.id,
+            senderId: clientId,
+            senderType: "client",
+            messageText: body.message.trim(),
+          },
+        });
+
+        // Update thread lastMessageAt
+        await prisma.marketplaceMessageThread.update({
+          where: { id: thread!.id },
+          data: { lastMessageAt: new Date() },
+        });
+
+        // TODO: Send notification email to provider
+
+        return reply.code(201).send({
           ok: true,
-          transactions: result.transactions.map(toTransactionDTO),
-          pagination: {
-            total: result.total,
-            page: result.page,
-            limit: result.limit,
-            pages: Math.ceil(result.total / result.limit),
+          thread: {
+            id: thread!.id,
+            subject: thread!.subject,
+            status: thread!.status,
+          },
+          message: {
+            id: Number(message.id),
+            threadId: message.threadId,
+            senderId: message.senderId,
+            senderType: message.senderType,
+            messageText: message.messageText,
+            createdAt: message.createdAt.toISOString(),
           },
         });
       } catch (error: any) {
-        console.error("Error listing provider transactions:", error);
+        console.error("Error creating inquiry:", error);
         return reply.code(500).send({
-          error: "list_failed",
-          message: "Failed to list transactions. Please try again.",
+          error: "inquiry_failed",
+          message: "Failed to send inquiry. Please try again.",
         });
       }
     }

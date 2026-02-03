@@ -104,6 +104,7 @@ function toListingDTO(listing: any): any {
     city: listing.city,
     state: listing.state,
     zip: listing.zip,
+    country: listing.country,
     duration: listing.duration,
     availability: listing.availability,
     metaDescription: listing.metaDescription,
@@ -155,6 +156,7 @@ export default async function marketplaceListingsRoutes(
     const city = body.city !== undefined ? String(body.city).trim() : null;
     const state = body.state !== undefined ? String(body.state).trim() : null;
     const zip = body.zip !== undefined ? String(body.zip).trim() : null;
+    const country = body.country !== undefined ? String(body.country).trim() : null;
     const duration = body.duration !== undefined ? String(body.duration).trim() : null;
     const availability = body.availability !== undefined ? String(body.availability).trim() : null;
     const metaDescription = body.metaDescription !== undefined ? String(body.metaDescription).trim() : null;
@@ -248,7 +250,7 @@ export default async function marketplaceListingsRoutes(
       // Use transaction to create listing and assign tags atomically
       const result = await prisma.$transaction(async (tx) => {
         // 1. Create listing with draft status
-        const listing = await tx.marketplaceServiceListing.create({
+        const listing = await tx.mktListingProviderService.create({
           data: {
             providerId: provider.id,
             slug: "",  // Will be generated after creation
@@ -265,6 +267,7 @@ export default async function marketplaceListingsRoutes(
             city,
             state,
             zip,
+            country,
             duration,
             availability,
             metaDescription,
@@ -277,7 +280,7 @@ export default async function marketplaceListingsRoutes(
         const slug = generateSlug(title, listing.id);
 
         // 3. Update with generated slug
-        const updated = await tx.marketplaceServiceListing.update({
+        const updated = await tx.mktListingProviderService.update({
           where: { id: listing.id },
           data: { slug },
         });
@@ -310,7 +313,7 @@ export default async function marketplaceListingsRoutes(
         }
 
         // 5. Fetch final listing with tags
-        const finalListing = await tx.marketplaceServiceListing.findUnique({
+        const finalListing = await tx.mktListingProviderService.findUnique({
           where: { id: listing.id },
           include: {
             assignments: {
@@ -368,7 +371,7 @@ export default async function marketplaceListingsRoutes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.marketplaceServiceListing.findMany({
+        prisma.mktListingProviderService.findMany({
           where,
           orderBy,
           skip,
@@ -381,7 +384,7 @@ export default async function marketplaceListingsRoutes(
             },
           },
         }),
-        prisma.marketplaceServiceListing.count({ where }),
+        prisma.mktListingProviderService.count({ where }),
       ]);
 
       return reply.send({
@@ -419,7 +422,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const listing = await prisma.marketplaceServiceListing.findFirst({
+      const listing = await prisma.mktListingProviderService.findFirst({
         where: {
           id: listingId,
           providerId: provider.id,
@@ -471,7 +474,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const existing = await prisma.marketplaceServiceListing.findFirst({
+    const existing = await prisma.mktListingProviderService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -584,6 +587,10 @@ export default async function marketplaceListingsRoutes(
       updateData.zip = body.zip ? String(body.zip).trim() : null;
     }
 
+    if (body.country !== undefined) {
+      updateData.country = body.country ? String(body.country).trim() : null;
+    }
+
     if (body.duration !== undefined) {
       updateData.duration = body.duration ? String(body.duration).trim() : null;
     }
@@ -654,7 +661,7 @@ export default async function marketplaceListingsRoutes(
       if (tagIds !== null) {
         const result = await prisma.$transaction(async (tx) => {
           // 1. Update listing fields
-          const updated = await tx.marketplaceServiceListing.update({
+          const updated = await tx.mktListingProviderService.update({
             where: { id: listingId },
             data: updateData,
           });
@@ -713,7 +720,7 @@ export default async function marketplaceListingsRoutes(
           }
 
           // 6. Fetch final listing with tags
-          const finalListing = await tx.marketplaceServiceListing.findUnique({
+          const finalListing = await tx.mktListingProviderService.findUnique({
             where: { id: listingId },
             include: {
               assignments: {
@@ -730,7 +737,7 @@ export default async function marketplaceListingsRoutes(
         return reply.send(toListingDTO(result));
       } else {
         // No tag updates, just update listing fields
-        const updated = await prisma.marketplaceServiceListing.update({
+        const updated = await prisma.mktListingProviderService.update({
           where: { id: listingId },
           data: updateData,
           include: {
@@ -780,7 +787,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.marketplaceServiceListing.findFirst({
+    const listing = await prisma.mktListingProviderService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -819,7 +826,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const updated = await prisma.marketplaceServiceListing.update({
+      const updated = await prisma.mktListingProviderService.update({
         where: { id: listingId },
         data: {
           status: "LIVE",
@@ -863,7 +870,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.marketplaceServiceListing.findFirst({
+    const listing = await prisma.mktListingProviderService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -879,7 +886,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const updated = await prisma.marketplaceServiceListing.update({
+      const updated = await prisma.mktListingProviderService.update({
         where: { id: listingId },
         data: {
           status: "DRAFT",
@@ -921,7 +928,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.marketplaceServiceListing.findFirst({
+    const listing = await prisma.mktListingProviderService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -937,7 +944,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      await prisma.marketplaceServiceListing.update({
+      await prisma.mktListingProviderService.update({
         where: { id: listingId },
         data: {
           deletedAt: new Date(),
@@ -961,6 +968,9 @@ export default async function marketplaceListingsRoutes(
 
   /**
    * Browse/search published listings (public)
+   *
+   * UNIFIED VIEW: Queries the unified mktListingService table containing
+   * both provider and breeder listings.
    */
   app.get("/public/listings", {
     config: { rateLimit: { max: 100, timeWindow: "1 minute" } },
@@ -972,134 +982,65 @@ export default async function marketplaceListingsRoutes(
 
     // Parse filters
     const search = query.search ? String(query.search).trim() : undefined;
-    const category = query.category ? String(query.category).trim() : undefined;
+    const category = query.category ? String(query.category).trim().toUpperCase() : undefined;
     const subcategory = query.subcategory ? String(query.subcategory).trim() : undefined;
     const city = query.city ? String(query.city).trim() : undefined;
     const state = query.state ? String(query.state).trim() : undefined;
     const zip = query.zip ? String(query.zip).trim() : undefined;
-    let lat = query.lat ? parseFloat(query.lat) : undefined;
-    let lng = query.lng ? parseFloat(query.lng) : undefined;
-    const radiusMiles = query.radius ? parseFloat(query.radius) : undefined;
-    const nearZip = query.nearZip ? String(query.nearZip).trim() : undefined;
-    const nearAddress = query.nearAddress ? String(query.nearAddress).trim() : undefined;
-
-    // If nearZip or nearAddress provided with radius, geocode to get lat/lng
-    if (radiusMiles && !lat && !lng) {
-      if (nearZip) {
-        const geocoded = await geocodeZipCode(nearZip);
-        if (geocoded) {
-          lat = geocoded.latitude;
-          lng = geocoded.longitude;
-        }
-      } else if (nearAddress) {
-        const geocoded = await geocodeAddress(nearAddress);
-        if (geocoded) {
-          lat = geocoded.latitude;
-          lng = geocoded.longitude;
-        }
-      }
-    }
     const priceMin = query.priceMin ? parseInt(query.priceMin, 10) : undefined;
     const priceMax = query.priceMax ? parseInt(query.priceMax, 10) : undefined;
-    const minRating = query.minRating ? parseFloat(query.minRating) : undefined;
-    const providerType = query.providerType ? String(query.providerType).trim() : undefined;
-    const hasReviews = query.hasReviews === "true";
-
-    // Build where clause
-    const where: any = {
-      status: "published",
-      deletedAt: null,
-    };
-
-    // Full-text search (includes provider business name)
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-        { provider: { businessName: { contains: search, mode: "insensitive" } } },
-      ];
-    }
-
-    // Category filters
-    if (category) {
-      where.category = category;
-    }
-    if (subcategory) {
-      where.subcategory = subcategory;
-    }
-
-    // Location filters (check both listing and provider location)
-    if (city) {
-      where.city = { contains: city, mode: "insensitive" };
-    }
-    if (state) {
-      where.state = { contains: state, mode: "insensitive" };
-    }
-    if (zip) {
-      // Zip code search - exact match or starts with (for partial zip)
-      where.zip = { startsWith: zip };
-    }
-
-    // Price range filters
-    if (priceMin !== undefined && !isNaN(priceMin)) {
-      where.priceCents = { ...where.priceCents, gte: BigInt(priceMin) };
-    }
-    if (priceMax !== undefined && !isNaN(priceMax)) {
-      where.priceCents = { ...where.priceCents, lte: BigInt(priceMax) };
-    }
-
-    // Provider filters
-    if (minRating !== undefined && !isNaN(minRating) && minRating >= 1 && minRating <= 5) {
-      where.provider = { ...where.provider, averageRating: { gte: minRating } };
-    }
-    if (providerType) {
-      where.provider = { ...where.provider, providerType };
-    }
-    if (hasReviews) {
-      where.provider = { ...where.provider, totalReviews: { gt: 0 } };
-    }
 
     // Parse sort
     const sortParam = query.sort || "-publishedAt";
-    let orderBy: any[] = [];
-    if (sortParam === "-publishedAt" || sortParam === "recent") {
-      orderBy = [{ publishedAt: "desc" }, { createdAt: "desc" }];
-    } else if (sortParam === "title") {
-      orderBy = [{ title: "asc" }];
-    } else if (sortParam === "priceCents" || sortParam === "price_low") {
-      orderBy = [{ priceCents: "asc" }];
-    } else if (sortParam === "-priceCents" || sortParam === "price_high") {
-      orderBy = [{ priceCents: "desc" }];
-    } else if (sortParam === "rating") {
-      orderBy = [{ provider: { averageRating: "desc" } }, { publishedAt: "desc" }];
-    } else if (sortParam === "reviews") {
-      orderBy = [{ provider: { totalReviews: "desc" } }, { publishedAt: "desc" }];
-    } else {
-      orderBy = [{ publishedAt: "desc" }];
-    }
-
-    // Helper function to calculate distance in miles using Haversine formula
-    const calculateDistanceMiles = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-      const R = 3959; // Earth's radius in miles
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLng = (lng2 - lng1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLng / 2) * Math.sin(dLng / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
 
     try {
-      // For radius search, we need to include lat/lng and filter post-query
-      const includeLatLng = lat !== undefined && lng !== undefined && radiusMiles !== undefined;
+      // Build where clause for unified table
+      const where: any = {
+        status: "LIVE",
+        deletedAt: null,
+      };
 
+      if (search) {
+        where.OR = [
+          { title: { contains: search, mode: "insensitive" } },
+          { description: { contains: search, mode: "insensitive" } },
+          { provider: { businessName: { contains: search, mode: "insensitive" } } },
+          { tenant: { name: { contains: search, mode: "insensitive" } } },
+        ];
+      }
+      if (category) where.category = category.toLowerCase();
+      if (subcategory) where.subcategory = subcategory;
+      if (city) where.city = { contains: city, mode: "insensitive" };
+      if (state) where.state = { contains: state, mode: "insensitive" };
+      if (zip) where.zip = { startsWith: zip };
+      if (priceMin !== undefined && !isNaN(priceMin)) {
+        where.priceCents = { ...where.priceCents, gte: BigInt(priceMin) };
+      }
+      if (priceMax !== undefined && !isNaN(priceMax)) {
+        where.priceCents = { ...where.priceCents, lte: BigInt(priceMax) };
+      }
+
+      // Build orderBy for database sorting
+      let orderBy: any[] = [];
+      if (sortParam === "-publishedAt" || sortParam === "recent") {
+        orderBy = [{ publishedAt: "desc" }];
+      } else if (sortParam === "title") {
+        orderBy = [{ title: "asc" }];
+      } else if (sortParam === "price_low" || sortParam === "priceCents") {
+        orderBy = [{ priceCents: "asc" }];
+      } else if (sortParam === "price_high" || sortParam === "-priceCents") {
+        orderBy = [{ priceCents: "desc" }];
+      } else {
+        orderBy = [{ publishedAt: "desc" }]; // Default
+      }
+
+      // Query unified table with pagination
       const [listings, total] = await Promise.all([
-        prisma.marketplaceServiceListing.findMany({
+        prisma.mktListingService.findMany({
           where,
           orderBy,
-          skip: includeLatLng ? 0 : skip, // Get all for radius filtering
-          take: includeLatLng ? 500 : limit, // Limit for radius search
+          skip,
+          take: limit,
           include: {
             provider: {
               select: {
@@ -1110,90 +1051,83 @@ export default async function marketplaceListingsRoutes(
                 totalReviews: true,
                 city: true,
                 state: true,
-                latitude: includeLatLng,
-                longitude: includeLatLng,
               },
             },
-            assignments: {
-              include: {
-                tag: true,
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
               },
             },
           },
         }),
-        prisma.marketplaceServiceListing.count({ where }),
+        prisma.mktListingService.count({ where }),
       ]);
 
-      // Apply radius filter if specified
-      let filteredListings = listings;
-      if (includeLatLng && lat && lng && radiusMiles) {
-        filteredListings = listings.filter((listing: any) => {
-          // Check listing's own coordinates first
-          if (listing.latitude && listing.longitude) {
-            const distance = calculateDistanceMiles(
-              lat, lng,
-              Number(listing.latitude), Number(listing.longitude)
-            );
-            return distance <= radiusMiles;
-          }
-          // Fall back to provider's coordinates
-          if (listing.provider.latitude && listing.provider.longitude) {
-            const distance = calculateDistanceMiles(
-              lat, lng,
-              Number(listing.provider.latitude), Number(listing.provider.longitude)
-            );
-            return distance <= radiusMiles;
-          }
-          // No coordinates - exclude from radius search
-          return false;
-        });
-
-        // Apply pagination after filtering
-        filteredListings = filteredListings.slice(skip, skip + limit);
-      }
-
       // Transform to public DTO
-      const items = filteredListings.map((listing: any) => {
-        const dto: any = {
-          ...toListingDTO(listing),
-          provider: {
-            id: listing.provider.id,
-            businessName: listing.provider.businessName,
-            logoUrl: listing.provider.logoUrl,
-            averageRating: listing.provider.averageRating.toString(),
-            totalReviews: listing.provider.totalReviews,
-            city: listing.provider.city,
-            state: listing.provider.state,
-          },
+      const items = listings.map((listing) => {
+        const isProvider = listing.sourceType === "PROVIDER";
+        const providerInfo = isProvider && listing.provider
+          ? {
+              id: listing.provider.id,
+              name: listing.provider.businessName,
+              businessName: listing.provider.businessName,
+              logoUrl: listing.provider.logoUrl,
+              averageRating: listing.provider.averageRating ? String(listing.provider.averageRating) : "0",
+              totalReviews: listing.provider.totalReviews || 0,
+              city: listing.provider.city,
+              state: listing.provider.state,
+              type: "provider" as const,
+              slug: undefined,
+            }
+          : {
+              id: `breeder-${listing.tenantId}`,
+              name: listing.tenant?.name || "Unknown Breeder",
+              businessName: listing.tenant?.name || "Unknown Breeder",
+              logoUrl: null,
+              averageRating: "0",
+              totalReviews: 0,
+              city: listing.city,
+              state: listing.state,
+              type: "breeder" as const,
+              slug: listing.tenant?.slug,
+            };
+
+        return {
+          id: listing.id,
+          slug: listing.slug,
+          title: listing.title,
+          description: listing.description,
+          summary: listing.description ? listing.description.substring(0, 150) : null,
+          category: listing.category,
+          subcategory: listing.subcategory,
+          customServiceType: listing.customServiceType,
+          listingType: listing.category, // For backward compatibility
+          priceCents: listing.priceCents ? Number(listing.priceCents) : null,
+          priceType: listing.priceType,
+          priceDisplay: listing.priceCents
+            ? `${listing.priceType === "starting_at" ? "Starting at " : ""}$${(Number(listing.priceCents) / 100).toFixed(2)}`
+            : "Contact for pricing",
+          images: listing.images || [],
+          coverImageUrl: listing.coverImageUrl,
+          city: listing.city,
+          state: listing.state,
+          country: listing.country || "US",
+          publishedAt: listing.publishedAt,
+          viewCount: listing.viewCount || 0,
+          inquiryCount: listing.inquiryCount || 0,
+          provider: providerInfo,
+          tags: [], // Tags not yet migrated to unified table
         };
-
-        // Add distance if radius search
-        if (includeLatLng && lat && lng) {
-          const listingLat = listing.latitude ? Number(listing.latitude) :
-                            (listing.provider.latitude ? Number(listing.provider.latitude) : null);
-          const listingLng = listing.longitude ? Number(listing.longitude) :
-                            (listing.provider.longitude ? Number(listing.provider.longitude) : null);
-          if (listingLat && listingLng) {
-            dto.distanceMiles = Math.round(calculateDistanceMiles(lat, lng, listingLat, listingLng) * 10) / 10;
-          }
-        }
-
-        return dto;
       });
-
-      // Sort by distance if radius search and no other sort specified
-      if (includeLatLng && (sortParam === "-publishedAt" || sortParam === "recent" || sortParam === "distance")) {
-        items.sort((a: any, b: any) => (a.distanceMiles || 999) - (b.distanceMiles || 999));
-      }
-
-      const filteredTotal = includeLatLng ? filteredListings.length : total;
 
       return reply.send({
         items,
-        total: filteredTotal,
+        total,
         page,
         limit,
-        hasMore: skip + items.length < filteredTotal,
+        hasMore: skip + items.length < total,
       });
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to browse listings");
@@ -1205,20 +1139,34 @@ export default async function marketplaceListingsRoutes(
   });
 
   /**
-   * View single public listing by slug
+   * View single public listing by slug or ID
+   * Accepts either a numeric ID or a slug string
+   * UNIFIED: Queries the unified mktListingService table
    */
-  app.get("/public/listings/:slug", {
+  app.get("/public/listings/:slugOrId", {
     config: { rateLimit: { max: 100, timeWindow: "1 minute" } },
   }, async (req, reply) => {
-    const { slug } = req.params as { slug: string };
+    const { slugOrId } = req.params as { slugOrId: string };
 
     try {
-      const listing = await prisma.marketplaceServiceListing.findFirst({
-        where: {
-          slug,
-          status: "LIVE",
-          deletedAt: null,
-        },
+      // Determine if parameter is a numeric ID or a slug
+      const isNumeric = /^\d+$/.test(slugOrId);
+      const listingId = isNumeric ? parseInt(slugOrId, 10) : undefined;
+
+      // Build where clause
+      const where: any = {
+        status: "LIVE",
+        deletedAt: null,
+      };
+      if (isNumeric && listingId) {
+        where.id = listingId;
+      } else {
+        where.slug = slugOrId;
+      }
+
+      // Query unified table
+      const listing = await prisma.mktListingService.findFirst({
+        where,
         include: {
           provider: {
             select: {
@@ -1239,9 +1187,11 @@ export default async function marketplaceListingsRoutes(
               premiumProvider: true,
             },
           },
-          assignments: {
-            include: {
-              tag: true,
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
             },
           },
         },
@@ -1255,38 +1205,87 @@ export default async function marketplaceListingsRoutes(
       }
 
       // Increment view count (fire-and-forget)
-      prisma.marketplaceServiceListing.update({
+      prisma.mktListingService.update({
         where: { id: listing.id },
         data: { viewCount: { increment: 1 } },
       }).catch((err) => {
         req.log?.error?.({ err, listingId: listing.id }, "Failed to increment view count");
       });
 
-      // Transform to public DTO
+      // Transform to public DTO based on sourceType
+      const isProvider = listing.sourceType === "PROVIDER";
+      const providerInfo = isProvider && listing.provider
+        ? {
+            id: listing.provider.id,
+            name: listing.provider.businessName,
+            businessName: listing.provider.businessName,
+            businessDescription: listing.provider.businessDescription,
+            logoUrl: listing.provider.logoUrl,
+            coverImageUrl: listing.provider.coverImageUrl,
+            publicEmail: listing.provider.publicEmail,
+            phone: listing.provider.publicPhone,
+            website: listing.provider.website,
+            city: listing.provider.city,
+            state: listing.provider.state,
+            country: listing.provider.country,
+            averageRating: listing.provider.averageRating ? String(listing.provider.averageRating) : "0",
+            totalReviews: listing.provider.totalReviews || 0,
+            verifiedProvider: listing.provider.verifiedProvider || false,
+            premiumProvider: listing.provider.premiumProvider || false,
+            type: "provider" as const,
+            slug: undefined,
+          }
+        : {
+            id: `breeder-${listing.tenantId}`,
+            name: listing.tenant?.name || "Unknown Breeder",
+            businessName: listing.tenant?.name || "Unknown Breeder",
+            businessDescription: null,
+            logoUrl: null,
+            coverImageUrl: null,
+            publicEmail: null,
+            phone: null,
+            website: null,
+            city: listing.city,
+            state: listing.state,
+            country: listing.country,
+            averageRating: "0",
+            totalReviews: 0,
+            verifiedProvider: false,
+            premiumProvider: false,
+            type: "breeder" as const,
+            slug: listing.tenant?.slug,
+          };
+
       const publicListing = {
-        ...toListingDTO(listing),
-        provider: {
-          id: listing.provider.id,
-          businessName: listing.provider.businessName,
-          businessDescription: listing.provider.businessDescription,
-          logoUrl: listing.provider.logoUrl,
-          coverImageUrl: listing.provider.coverImageUrl,
-          publicEmail: listing.provider.publicEmail,
-          publicPhone: listing.provider.publicPhone,
-          website: listing.provider.website,
-          city: listing.provider.city,
-          state: listing.provider.state,
-          country: listing.provider.country,
-          averageRating: listing.provider.averageRating.toString(),
-          totalReviews: listing.provider.totalReviews,
-          verifiedProvider: listing.provider.verifiedProvider,
-          premiumProvider: listing.provider.premiumProvider,
-        },
+        id: listing.id,
+        slug: listing.slug,
+        title: listing.title,
+        description: listing.description,
+        summary: listing.description ? listing.description.substring(0, 150) : null,
+        category: listing.category,
+        subcategory: listing.subcategory,
+        customServiceType: listing.customServiceType,
+        listingType: listing.category,
+        priceCents: listing.priceCents ? Number(listing.priceCents) : null,
+        priceType: listing.priceType,
+        priceDisplay: listing.priceCents
+          ? `${listing.priceType === "starting_at" ? "Starting at " : ""}$${(Number(listing.priceCents) / 100).toFixed(2)}`
+          : "Contact for pricing",
+        images: listing.images || [],
+        coverImageUrl: listing.coverImageUrl,
+        city: listing.city,
+        state: listing.state,
+        country: listing.country || "US",
+        publishedAt: listing.publishedAt,
+        viewCount: listing.viewCount || 0,
+        inquiryCount: listing.inquiryCount || 0,
+        provider: providerInfo,
+        tags: [], // Tags not yet migrated to unified table
       };
 
       return reply.send(publicListing);
     } catch (err: any) {
-      req.log?.error?.({ err, slug }, "Failed to get public listing");
+      req.log?.error?.({ err, slugOrId }, "Failed to get public listing");
       return reply.code(500).send({
         error: "get_failed",
         message: "Failed to get listing. Please try again.",

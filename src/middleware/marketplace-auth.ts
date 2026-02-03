@@ -42,9 +42,22 @@ export async function requireMarketplaceAuth(
     });
   }
 
+  // Parse userId as integer - marketplace users have integer IDs
+  const userId = parseInt(session.userId, 10);
+
+  // Validate that userId is a valid integer (not NaN from parsing a UUID or invalid string)
+  if (!Number.isFinite(userId) || userId <= 0) {
+    // This can happen if a platform session (UUID userId) was stored in marketplace cookie
+    // Clear the invalid session and require re-authentication
+    return reply.code(401).send({
+      error: "invalid_session",
+      message: "Invalid session. Please log in again.",
+    });
+  }
+
   // Attach session to request
   req.marketplaceSession = session;
-  req.marketplaceUserId = parseInt(session.userId, 10);
+  req.marketplaceUserId = userId;
 }
 
 /**
@@ -64,13 +77,20 @@ export async function requireMarketplaceAuth(
  */
 export async function optionalMarketplaceAuth(
   req: FastifyRequest,
-  reply: FastifyReply
+  _reply: FastifyReply
 ): Promise<void> {
   const session = parseVerifiedSession(req, "MARKETPLACE");
 
   if (session) {
-    req.marketplaceSession = session;
-    req.marketplaceUserId = parseInt(session.userId, 10);
+    // Parse userId as integer - marketplace users have integer IDs
+    const userId = parseInt(session.userId, 10);
+
+    // Only attach if valid (not NaN from parsing a UUID or invalid string)
+    if (Number.isFinite(userId) && userId > 0) {
+      req.marketplaceSession = session;
+      req.marketplaceUserId = userId;
+    }
+    // If invalid, silently ignore (treat as no session for optional auth)
   }
 }
 

@@ -106,8 +106,8 @@ export default async function marketplaceAdminRoutes(
         prisma.marketplaceProvider.count({ where: { status: "pending" } }),
         prisma.marketplaceProvider.count({ where: { status: "active" } }),
         prisma.marketplaceProvider.count({ where: { status: "suspended" } }),
-        prisma.marketplaceServiceListing.count({ where: { deletedAt: null } }),
-        prisma.marketplaceServiceListing.count({ where: { status: "LIVE", deletedAt: null } }),
+        prisma.mktListingProviderService.count({ where: { deletedAt: null } }),
+        prisma.mktListingProviderService.count({ where: { status: "LIVE", deletedAt: null } }),
         prisma.marketplaceTransaction.count(),
         prisma.marketplaceTransaction.count({ where: { status: "completed" } }),
         prisma.marketplaceReview.count(),
@@ -350,14 +350,14 @@ export default async function marketplaceAdminRoutes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.marketplaceServiceListing.findMany({
+        prisma.mktListingProviderService.findMany({
           where,
           skip,
           take: limit,
           orderBy: { createdAt: "desc" },
           include: { provider: { select: { id: true, businessName: true, status: true } } },
         }),
-        prisma.marketplaceServiceListing.count({ where }),
+        prisma.mktListingProviderService.count({ where }),
       ]);
 
       return reply.send({
@@ -390,7 +390,7 @@ export default async function marketplaceAdminRoutes(
     if (isNaN(listingId)) return reply.code(400).send({ error: "invalid_listing_id" });
 
     try {
-      const listing = await prisma.marketplaceServiceListing.findUnique({
+      const listing = await prisma.mktListingProviderService.findUnique({
         where: { id: listingId },
         include: { provider: { select: { id: true, businessName: true, status: true, user: { select: { id: true, email: true } } } } },
       });
@@ -435,7 +435,7 @@ export default async function marketplaceAdminRoutes(
     if (isNaN(listingId)) return reply.code(400).send({ error: "invalid_listing_id" });
 
     try {
-      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "DRAFT", publishedAt: null } });
+      await prisma.mktListingProviderService.update({ where: { id: listingId }, data: { status: "DRAFT", publishedAt: null } });
       return reply.send({ ok: true, message: "Listing unpublished successfully." });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to unpublish listing");
@@ -448,7 +448,7 @@ export default async function marketplaceAdminRoutes(
     if (isNaN(listingId)) return reply.code(400).send({ error: "invalid_listing_id" });
 
     try {
-      await prisma.marketplaceServiceListing.update({ where: { id: listingId }, data: { status: "DRAFT", deletedAt: new Date() } });
+      await prisma.mktListingProviderService.update({ where: { id: listingId }, data: { status: "DRAFT", deletedAt: new Date() } });
       return reply.send({ ok: true, message: "Listing removed successfully." });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to remove listing");
