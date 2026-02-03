@@ -788,6 +788,493 @@ export async function createGuaranteeNotifications(alerts: GuaranteeAlert[]): Pr
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Genetic Test Readiness Scanning
+// ────────────────────────────────────────────────────────────────────────────
+
+interface GeneticTestAlert {
+  animalId: number;
+  animalName: string;
+  tenantId: number;
+  alertType:
+    | "missing"
+    | "incomplete"
+    | "prebreeding"
+    | "carrier_warning"
+    | "registration"
+    | "recommended";
+  // For carrier warnings
+  breedingPlanId?: number;
+  damId?: number;
+  sireId?: number;
+  damName?: string;
+  sireName?: string;
+  gene?: string;
+  riskPercentage?: number;
+  // For missing/incomplete tests
+  missingTests?: string[];
+  breed?: string;
+}
+
+/**
+ * Scans for animals > 30 days old without genetic data
+ * Creates genetic_test_missing notifications (LOW priority)
+ */
+async function scanMissingTests(tenantId?: number): Promise<GeneticTestAlert[]> {
+  const alerts: GeneticTestAlert[] = [];
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  // Build where clause
+  const whereClause: Record<string, unknown> = {
+    createdAt: { lt: thirtyDaysAgo },
+    status: { notIn: ["SOLD", "DECEASED", "ARCHIVED"] },
+    genetics: null, // No AnimalGenetics record at all
+  };
+
+  if (tenantId) {
+    whereClause.tenantId = tenantId;
+  }
+
+  const animalsWithoutGenetics = await prisma.animal.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      name: true,
+      species: true,
+      breed: true,
+      tenantId: true,
+    },
+  });
+
+  for (const animal of animalsWithoutGenetics) {
+    alerts.push({
+      animalId: animal.id,
+      animalName: animal.name || `Animal #${animal.id}`,
+      tenantId: animal.tenantId,
+      alertType: "missing",
+      breed: animal.breed || undefined,
+    });
+  }
+
+  // Also check for animals with AnimalGenetics record but empty healthGeneticsData
+  const whereClauseIncomplete: Record<string, unknown> = {
+    createdAt: { lt: thirtyDaysAgo },
+    status: { notIn: ["SOLD", "DECEASED", "ARCHIVED"] },
+    genetics: {
+      isNot: null,
+      healthGeneticsData: { equals: null },
+    },
+  };
+
+  if (tenantId) {
+    whereClauseIncomplete.tenantId = tenantId;
+  }
+
+  const animalsWithEmptyGenetics = await prisma.animal.findMany({
+    where: whereClauseIncomplete,
+    select: {
+      id: true,
+      name: true,
+      species: true,
+      breed: true,
+      tenantId: true,
+    },
+  });
+
+  for (const animal of animalsWithEmptyGenetics) {
+    // Avoid duplicates if already in alerts
+    if (!alerts.some((a) => a.animalId === animal.id)) {
+      alerts.push({
+        animalId: animal.id,
+        animalName: animal.name || `Animal #${animal.id}`,
+        tenantId: animal.tenantId,
+        alertType: "missing",
+        breed: animal.breed || undefined,
+      });
+    }
+  }
+
+  return alerts;
+}
+
+/**
+ * Scans for breeding plans with breed date within 7 days
+ * where dam or sire has no genetic testing
+ * Creates genetic_test_prebreeding notifications (HIGH priority)
+ */
+async function scanPrebreedingTests(tenantId?: number): Promise<GeneticTestAlert[]> {
+  const alerts: GeneticTestAlert[] = [];
+
+  const now = new Date();
+  const sevenDaysFromNow = new Date();
+  sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+
+  // Build where clause for breeding plans with upcoming breed dates
+  const whereClause: Record<string, unknown> = {
+    status: { in: ["PLANNING", "ACTIVE"] },
+    expectedBreedDate: {
+      gte: now,
+      lte: sevenDaysFromNow,
+    },
+  };
+
+  if (tenantId) {
+    whereClause.tenantId = tenantId;
+  }
+
+  const upcomingBreedingPlans = await prisma.breedingPlan.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      name: true,
+      tenantId: true,
+      damId: true,
+      sireId: true,
+      dam: {
+        select: {
+          id: true,
+          name: true,
+          genetics: {
+            select: {
+              healthGeneticsData: true,
+            },
+          },
+        },
+      },
+      sire: {
+        select: {
+          id: true,
+          name: true,
+          genetics: {
+            select: {
+              healthGeneticsData: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  for (const plan of upcomingBreedingPlans) {
+    const damHasGenetics = plan.dam?.genetics?.healthGeneticsData != null;
+    const sireHasGenetics = plan.sire?.genetics?.healthGeneticsData != null;
+
+    // Alert if either dam or sire is missing genetic tests
+    if (plan.dam && !damHasGenetics) {
+      alerts.push({
+        animalId: plan.dam.id,
+        animalName: plan.dam.name || `Dam #${plan.dam.id}`,
+        tenantId: plan.tenantId,
+        alertType: "prebreeding",
+        breedingPlanId: plan.id,
+        damId: plan.dam.id,
+        damName: plan.dam.name,
+        sireId: plan.sire?.id,
+        sireName: plan.sire?.name,
+      });
+    }
+
+    if (plan.sire && !sireHasGenetics) {
+      // Avoid duplicate if we already added dam alert for same plan
+      const existingAlert = alerts.find(
+        (a) => a.breedingPlanId === plan.id && a.alertType === "prebreeding"
+      );
+      if (!existingAlert) {
+        alerts.push({
+          animalId: plan.sire.id,
+          animalName: plan.sire.name || `Sire #${plan.sire.id}`,
+          tenantId: plan.tenantId,
+          alertType: "prebreeding",
+          breedingPlanId: plan.id,
+          damId: plan.dam?.id,
+          damName: plan.dam?.name,
+          sireId: plan.sire.id,
+          sireName: plan.sire.name,
+        });
+      }
+    }
+  }
+
+  return alerts;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Genetic Notification Preference Checking
+// ────────────────────────────────────────────────────────────────────────────
+
+// Default preferences (used when no record exists)
+const DEFAULT_GENETIC_PREFS = {
+  inAppMissing: true,
+  inAppIncomplete: true,
+  inAppCarrier: true, // Cannot be disabled
+  inAppPrebreeding: true,
+  inAppRegistry: true,
+  inAppRecommended: false,
+  emailMissing: false,
+  emailIncomplete: false,
+  emailCarrier: true,
+  emailPrebreeding: true,
+  emailRegistry: true,
+  emailRecommended: false,
+};
+
+// Map notification types to preference fields
+const GENETIC_PREF_MAP: Record<string, { inApp: keyof typeof DEFAULT_GENETIC_PREFS; email: keyof typeof DEFAULT_GENETIC_PREFS }> = {
+  genetic_test_missing: { inApp: "inAppMissing", email: "emailMissing" },
+  genetic_test_incomplete: { inApp: "inAppIncomplete", email: "emailIncomplete" },
+  genetic_test_carrier_warning: { inApp: "inAppCarrier", email: "emailCarrier" },
+  genetic_test_prebreeding: { inApp: "inAppPrebreeding", email: "emailPrebreeding" },
+  genetic_test_registration: { inApp: "inAppRegistry", email: "emailRegistry" },
+  genetic_test_recommended: { inApp: "inAppRecommended", email: "emailRecommended" },
+};
+
+/**
+ * Check if a genetic notification should be shown/sent to a specific user
+ * Takes into account user preferences and active snoozes.
+ *
+ * @param userId - User ID to check preferences for
+ * @param tenantId - Tenant ID
+ * @param notificationType - The genetic notification type (e.g., "genetic_test_missing")
+ * @param animalId - Optional animal ID for snooze checking
+ * @param testCode - Optional test code for snooze checking (e.g., "HYPP", "OLWS")
+ * @returns Object with inApp and email booleans
+ */
+export async function shouldShowGeneticNotification(
+  userId: string,
+  tenantId: number,
+  notificationType: string,
+  animalId?: number,
+  testCode?: string
+): Promise<{ inApp: boolean; email: boolean }> {
+  // Get the preference field names for this notification type
+  const prefFields = GENETIC_PREF_MAP[notificationType];
+  if (!prefFields) {
+    // Unknown notification type - default to showing
+    return { inApp: true, email: false };
+  }
+
+  // Check for active snoozes
+  const snoozeConditions: any[] = [];
+
+  if (animalId) {
+    snoozeConditions.push({ snoozeType: "ANIMAL", animalId });
+  }
+  if (testCode) {
+    snoozeConditions.push({ snoozeType: "TEST", testCode });
+  }
+  if (animalId && testCode) {
+    snoozeConditions.push({ snoozeType: "ANIMAL_TEST", animalId, testCode });
+  }
+
+  if (snoozeConditions.length > 0) {
+    const activeSnoozes = await prisma.geneticNotificationSnooze.findMany({
+      where: {
+        userId,
+        tenantId,
+        OR: snoozeConditions,
+        // Only check active snoozes (permanent or not yet expired)
+        AND: {
+          OR: [{ snoozedUntil: null }, { snoozedUntil: { gt: new Date() } }],
+        },
+      },
+    });
+
+    if (activeSnoozes.length > 0) {
+      // User has snoozed this notification
+      return { inApp: false, email: false };
+    }
+  }
+
+  // Get user preferences (or use defaults)
+  const prefs = await prisma.geneticNotificationPreference.findUnique({
+    where: { userId_tenantId: { userId, tenantId } },
+  });
+
+  // CRITICAL: Carrier warnings cannot be disabled for in-app
+  if (notificationType === "genetic_test_carrier_warning") {
+    return {
+      inApp: true, // Always show carrier warnings in-app
+      email: prefs?.emailCarrier ?? DEFAULT_GENETIC_PREFS.emailCarrier,
+    };
+  }
+
+  return {
+    inApp: prefs?.[prefFields.inApp] ?? DEFAULT_GENETIC_PREFS[prefFields.inApp],
+    email: prefs?.[prefFields.email] ?? DEFAULT_GENETIC_PREFS[prefFields.email],
+  };
+}
+
+/**
+ * Check if a genetic notification should be created at the tenant level
+ * This is a simplified check that only looks at tenant-wide defaults.
+ * User-specific filtering happens at query/delivery time.
+ *
+ * Note: This function returns true for most notification types to ensure
+ * notifications are created. Individual users can then filter based on
+ * their preferences when viewing notifications.
+ */
+export function shouldCreateGeneticNotificationForTenant(
+  alertType: GeneticTestAlert["alertType"]
+): boolean {
+  // Always create notifications at the tenant level
+  // User preferences are checked at display/delivery time
+  return true;
+}
+
+/**
+ * Scans for genetic test-related notifications
+ * - Missing tests (animals > 30 days without genetic data)
+ * - Pre-breeding reminders (7 days before planned breeding)
+ *
+ * Note: Carrier × Carrier detection is handled in breeding plan routes
+ * (see carrier-detection.ts) for immediate feedback on plan creation/update.
+ */
+export async function scanGeneticTestReadiness(tenantId?: number): Promise<GeneticTestAlert[]> {
+  const alerts: GeneticTestAlert[] = [];
+
+  // Scan for missing tests (Phase 3)
+  const missingTestAlerts = await scanMissingTests(tenantId);
+  alerts.push(...missingTestAlerts);
+
+  // Scan for pre-breeding tests (Phase 3)
+  const prebreedingAlerts = await scanPrebreedingTests(tenantId);
+  alerts.push(...prebreedingAlerts);
+
+  const logSuffix = tenantId ? ` for tenant ${tenantId}` : "";
+  console.log(
+    `[Notification Scanner] Genetic test scan complete${logSuffix}: ${missingTestAlerts.length} missing, ${prebreedingAlerts.length} prebreeding`
+  );
+
+  return alerts;
+}
+
+/**
+ * Create notification records for genetic test alerts
+ * Uses idempotency keys to prevent duplicate notifications
+ */
+export async function createGeneticTestNotifications(alerts: GeneticTestAlert[]): Promise<number> {
+  let created = 0;
+
+  for (const alert of alerts) {
+    let notificationType: NotificationType;
+    let priority: NotificationPriority;
+    let title: string;
+    let message: string;
+    let linkUrl: string;
+    let idempotencyKey: string;
+
+    switch (alert.alertType) {
+      case "missing":
+        notificationType = "genetic_test_missing";
+        priority = "LOW";
+        title = "No Genetic Panel on File";
+        message = `${alert.animalName} has no genetic test results. Genetic testing helps make informed breeding decisions and meets registry requirements.`;
+        linkUrl = `/animals/${alert.animalId}/genetics`;
+        idempotencyKey = `genetic_test_missing:Animal:${alert.animalId}`;
+        break;
+
+      case "incomplete":
+        notificationType = "genetic_test_incomplete";
+        priority = "LOW";
+        title = "Incomplete Genetic Testing";
+        message = `${alert.animalName} has partial genetic testing. Consider completing the panel for comprehensive breeding decisions.`;
+        linkUrl = `/animals/${alert.animalId}/genetics`;
+        idempotencyKey = `genetic_test_incomplete:Animal:${alert.animalId}`;
+        break;
+
+      case "prebreeding":
+        notificationType = "genetic_test_prebreeding";
+        priority = "HIGH";
+        title = "Genetic Testing Recommended Before Breeding";
+        message = alert.damName && alert.sireName
+          ? `Breeding plan for ${alert.damName} × ${alert.sireName} is scheduled within 7 days. ${alert.animalName} has no genetic test results on file.`
+          : `${alert.animalName} is scheduled for breeding within 7 days but has no genetic test results on file.`;
+        linkUrl = alert.breedingPlanId
+          ? `/breeding/plans/${alert.breedingPlanId}`
+          : `/animals/${alert.animalId}/genetics`;
+        idempotencyKey = `genetic_test_prebreeding:BreedingPlan:${alert.breedingPlanId}:Animal:${alert.animalId}`;
+        break;
+
+      case "carrier_warning":
+        // Carrier warnings are handled in carrier-detection.ts during plan creation/update
+        // This is just a fallback if scanner finds one
+        notificationType = "genetic_test_carrier_warning";
+        priority = "URGENT";
+        title = "Lethal Pairing Risk Detected";
+        message = alert.gene
+          ? `Both ${alert.damName} and ${alert.sireName} are carriers of ${alert.gene}. Breeding has a ${alert.riskPercentage}% chance of producing affected offspring.`
+          : `Carrier × carrier pairing detected for ${alert.damName} × ${alert.sireName}.`;
+        linkUrl = `/breeding/plans/${alert.breedingPlanId}`;
+        idempotencyKey = `genetic_test_carrier_warning:BreedingPlan:${alert.breedingPlanId}:${alert.gene}`;
+        break;
+
+      case "registration":
+        notificationType = "genetic_test_registration";
+        priority = "MEDIUM";
+        title = "Registry Requires Genetic Testing";
+        message = `${alert.animalName} needs genetic testing for registry requirements.`;
+        linkUrl = `/animals/${alert.animalId}/genetics`;
+        idempotencyKey = `genetic_test_registration:Animal:${alert.animalId}`;
+        break;
+
+      case "recommended":
+        notificationType = "genetic_test_recommended";
+        priority = "LOW";
+        title = "Genetic Tests Recommended";
+        message = `Based on breed and discipline, genetic testing is recommended for ${alert.animalName}.`;
+        linkUrl = `/animals/${alert.animalId}/genetics`;
+        idempotencyKey = `genetic_test_recommended:Animal:${alert.animalId}`;
+        break;
+
+      default:
+        continue;
+    }
+
+    // Check if notification already exists (idempotency)
+    const existing = await prisma.notification.findUnique({
+      where: { idempotencyKey },
+    });
+
+    if (existing) {
+      continue;
+    }
+
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        tenantId: alert.tenantId,
+        type: notificationType,
+        priority,
+        title,
+        message,
+        linkUrl,
+        status: "UNREAD",
+        idempotencyKey,
+        metadata: {
+          animalId: alert.animalId,
+          animalName: alert.animalName,
+          alertType: alert.alertType,
+          breed: alert.breed,
+          breedingPlanId: alert.breedingPlanId,
+          damId: alert.damId,
+          damName: alert.damName,
+          sireId: alert.sireId,
+          sireName: alert.sireName,
+          gene: alert.gene,
+          riskPercentage: alert.riskPercentage,
+          missingTests: alert.missingTests,
+        },
+      },
+    });
+
+    created++;
+  }
+
+  return created;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main Scanner Function
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -795,7 +1282,13 @@ export async function createGuaranteeNotifications(alerts: GuaranteeAlert[]): Pr
  * Run all notification scans
  * Returns total number of notifications created
  */
-export async function runNotificationScan(): Promise<{ vaccinations: number; breeding: number; guarantees: number; total: number }> {
+export async function runNotificationScan(): Promise<{
+  vaccinations: number;
+  breeding: number;
+  guarantees: number;
+  geneticTests: number;
+  total: number;
+}> {
   console.log("[notification-scanner] Starting notification scan...");
 
   // Scan vaccinations
@@ -819,13 +1312,21 @@ export async function runNotificationScan(): Promise<{ vaccinations: number; bre
   const guaranteesCreated = await createGuaranteeNotifications(guaranteeAlerts);
   console.log(`[notification-scanner] Created ${guaranteesCreated} guarantee notifications`);
 
-  const total = vaccinationsCreated + breedingCreated + guaranteesCreated;
+  // Scan genetic test readiness (Phase 1 - skeleton only)
+  const geneticTestAlerts = await scanGeneticTestReadiness();
+  console.log(`[notification-scanner] Found ${geneticTestAlerts.length} genetic test alerts`);
+
+  const geneticTestsCreated = await createGeneticTestNotifications(geneticTestAlerts);
+  console.log(`[notification-scanner] Created ${geneticTestsCreated} genetic test notifications`);
+
+  const total = vaccinationsCreated + breedingCreated + guaranteesCreated + geneticTestsCreated;
   console.log(`[notification-scanner] Scan complete. Created ${total} total notifications`);
 
   return {
     vaccinations: vaccinationsCreated,
     breeding: breedingCreated,
     guarantees: guaranteesCreated,
+    geneticTests: geneticTestsCreated,
     total,
   };
 }

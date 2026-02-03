@@ -130,6 +130,317 @@ Manage notification preferences: ${appUrl}/settings/notifications
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Genetic Notification Email Templates
+// ────────────────────────────────────────────────────────────────────────────
+
+interface GeneticNotificationMetadata {
+  breedingPlanId?: number;
+  planName?: string;
+  damId?: number;
+  damName?: string;
+  sireId?: number;
+  sireName?: string;
+  damStatus?: string;
+  sireStatus?: string;
+  gene?: string;
+  geneName?: string;
+  riskPercentage?: number;
+  isLethal?: boolean;
+  animalId?: number;
+  animalName?: string;
+  breed?: string;
+  missingTests?: string[];
+}
+
+/**
+ * Generate specialized email for carrier warning (URGENT)
+ */
+function generateCarrierWarningEmail(
+  notification: Notification,
+  metadata: GeneticNotificationMetadata,
+  tenantName: string,
+  appUrl: string
+): string {
+  const deepLinkUrl = notification.linkUrl ? `${appUrl}${notification.linkUrl}` : appUrl;
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚠️ Lethal Pairing Risk Detected</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9fafb; margin: 0; padding: 0;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <!-- Header -->
+    <div style="background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <!-- Priority Badge -->
+      <div style="display: inline-block; padding: 6px 12px; background-color: #dc2626; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">
+        🚨 URGENT - LETHAL PAIRING RISK
+      </div>
+
+      <!-- Title -->
+      <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #111;">
+        ⚠️ Lethal Pairing Risk Detected
+      </h1>
+
+      <!-- Warning Message -->
+      <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+        <p style="margin: 0; color: #991b1b; font-weight: 500;">
+          A potential lethal pairing has been detected in your breeding plan.
+        </p>
+      </div>
+
+      <!-- Details Table -->
+      <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151; width: 40%;">Breeding Plan:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.planName || "Unnamed Plan"}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Dam:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.damName || "Unknown"} <span style="color: #f97316;">(${metadata.damStatus || "Carrier"})</span></td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Sire:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.sireName || "Unknown"} <span style="color: #f97316;">(${metadata.sireStatus || "Carrier"})</span></td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Gene:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.geneName || metadata.gene || "Unknown"}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; font-weight: 600; color: #374151;">Risk:</td>
+          <td style="padding: 10px; color: #dc2626; font-weight: 600;">${metadata.riskPercentage || 25}% chance of affected offspring</td>
+        </tr>
+      </table>
+
+      <!-- Explanation -->
+      <p style="margin: 0 0 24px 0; font-size: 14px; color: #6b7280; line-height: 1.6;">
+        Both parents are carriers of this gene. When two carriers are bred together, there is a ${metadata.riskPercentage || 25}% chance of producing offspring that ${metadata.isLethal ? "will not survive" : "may have health issues"}.
+      </p>
+
+      <!-- Action Button -->
+      <a href="${deepLinkUrl}" style="display: inline-block; padding: 14px 28px; background-color: #dc2626; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+        Review Breeding Plan
+      </a>
+    </div>
+
+    <!-- Footer -->
+    <div style="text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0;">
+      <p style="margin: 0 0 8px 0;">
+        This urgent notification was sent from <strong>${tenantName}</strong> via BreederHQ
+      </p>
+      <p style="margin: 0;">
+        <a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">
+          Manage notification preferences
+        </a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+}
+
+/**
+ * Generate specialized email for pre-breeding test reminder (HIGH)
+ */
+function generatePrebreedingEmail(
+  notification: Notification,
+  metadata: GeneticNotificationMetadata,
+  tenantName: string,
+  appUrl: string
+): string {
+  const deepLinkUrl = notification.linkUrl ? `${appUrl}${notification.linkUrl}` : appUrl;
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Genetic Testing Reminder</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9fafb; margin: 0; padding: 0;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <!-- Priority Badge -->
+      <div style="display: inline-block; padding: 6px 12px; background-color: #f97316; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">
+        ⚠️ HIGH PRIORITY
+      </div>
+
+      <!-- Title -->
+      <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #111;">
+        🧬 Genetic Testing Reminder
+      </h1>
+
+      <!-- Message -->
+      <p style="margin: 0 0 16px 0; font-size: 16px; color: #4b5563;">
+        Your breeding plan ${metadata.planName ? `"${metadata.planName}"` : ""} is scheduled within 7 days.
+      </p>
+
+      <div style="background-color: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+        <p style="margin: 0; color: #92400e; font-weight: 500;">
+          <strong>${metadata.animalName || "This animal"}</strong> has not been genetically tested yet.
+        </p>
+      </div>
+
+      <p style="margin: 0 0 16px 0; font-size: 14px; color: #6b7280;">
+        Consider testing before breeding to:
+      </p>
+      <ul style="margin: 0 0 24px 0; padding-left: 20px; color: #4b5563;">
+        <li style="margin-bottom: 8px;">Identify carrier status for lethal genes</li>
+        <li style="margin-bottom: 8px;">Meet registry requirements</li>
+        <li style="margin-bottom: 8px;">Make informed breeding decisions</li>
+      </ul>
+
+      <!-- Action Button -->
+      <a href="${deepLinkUrl}" style="display: inline-block; padding: 12px 24px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+        View Genetics
+      </a>
+    </div>
+
+    <!-- Footer -->
+    <div style="text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0;">
+      <p style="margin: 0 0 8px 0;">
+        This notification was sent from <strong>${tenantName}</strong> via BreederHQ
+      </p>
+      <p style="margin: 0;">
+        <a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">
+          Manage notification preferences
+        </a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+}
+
+/**
+ * Get specialized email template for genetic notifications
+ * Falls back to generic template for other notification types
+ */
+function getGeneticEmailHtml(
+  notification: Notification,
+  tenantName: string,
+  appUrl: string
+): string {
+  const metadata = (notification.metadata as GeneticNotificationMetadata) || {};
+
+  switch (notification.type) {
+    case "genetic_test_carrier_warning":
+      return generateCarrierWarningEmail(notification, metadata, tenantName, appUrl);
+
+    case "genetic_test_prebreeding":
+      return generatePrebreedingEmail(notification, metadata, tenantName, appUrl);
+
+    // Other genetic types use the standard template
+    default:
+      return generateNotificationEmail(notification, tenantName, appUrl);
+  }
+}
+
+/**
+ * Get specialized email subject for genetic notifications
+ */
+function getGeneticEmailSubject(notification: Notification): string {
+  const metadata = (notification.metadata as GeneticNotificationMetadata) || {};
+
+  switch (notification.type) {
+    case "genetic_test_carrier_warning":
+      return `⚠️ URGENT: Lethal Pairing Risk - ${metadata.planName || "Breeding Plan"}`;
+
+    case "genetic_test_prebreeding":
+      return `🧬 Genetic Testing Reminder - ${metadata.animalName || "Breeding"} scheduled`;
+
+    case "genetic_test_registration":
+      return `🧬 Registry Genetic Testing Required - ${metadata.animalName || "Animal"}`;
+
+    case "genetic_test_missing":
+      return `🧬 Genetic Panel Missing - ${metadata.animalName || "Animal"}`;
+
+    case "genetic_test_incomplete":
+      return `🧬 Incomplete Genetic Testing - ${metadata.animalName || "Animal"}`;
+
+    default:
+      return `[${notification.priority}] ${notification.title}`;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Email Frequency Limits
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Email frequency limits per notification type
+ * - 'always': Always send email (for URGENT)
+ * - 'once_then_silence_days': Send once, then silence for N days
+ * - number[]: Send at these day intervals before event
+ */
+const EMAIL_FREQUENCY_LIMITS: Record<string, "always" | { silenceDays: number } | number[]> = {
+  genetic_test_carrier_warning: "always", // Always send for lethal warnings
+  genetic_test_prebreeding: [7, 3, 1], // 7d, 3d, 1d before breeding
+  genetic_test_registration: [90, 60, 30], // 90d, 60d, 30d before deadline
+  genetic_test_missing: { silenceDays: 90 }, // Once, then silence 90 days
+  genetic_test_incomplete: { silenceDays: 90 }, // Once, then silence 90 days
+  genetic_test_recommended: { silenceDays: -1 }, // Never send email (-1 = disabled)
+};
+
+/**
+ * Check if we should send email for this notification based on frequency limits
+ * Uses the notification's idempotency key pattern to check last sent time
+ */
+export async function shouldSendEmailForNotification(
+  notificationType: string,
+  entityType: "Animal" | "BreedingPlan",
+  entityId: number
+): Promise<boolean> {
+  const limit = EMAIL_FREQUENCY_LIMITS[notificationType];
+
+  // No limit defined = allow
+  if (!limit) return true;
+
+  // Always send
+  if (limit === "always") return true;
+
+  // Check silence period
+  if (typeof limit === "object" && "silenceDays" in limit) {
+    // -1 = never send email
+    if (limit.silenceDays < 0) return false;
+
+    // Check if we've sent an email for this entity within the silence period
+    const silenceDate = new Date();
+    silenceDate.setDate(silenceDate.getDate() - limit.silenceDays);
+
+    // Check last email sent for this type + entity
+    const lastSent = await prisma.notification.findFirst({
+      where: {
+        type: notificationType as any,
+        idempotencyKey: {
+          contains: `${entityType}:${entityId}`,
+        },
+        createdAt: {
+          gt: silenceDate,
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    // If found within silence period, don't send
+    return !lastSent;
+  }
+
+  // Array = send at specific intervals (handled by notification creation, not email)
+  // The notification scanner creates notifications at these intervals
+  return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Delivery Functions
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -143,14 +454,21 @@ export async function sendNotificationEmail(
 ): Promise<boolean> {
   const appUrl = process.env.APP_URL || "https://app.breederhq.com";
 
-  const html = generateNotificationEmail(notification, tenantName, appUrl);
+  // Use specialized templates for genetic notifications
+  const isGeneticNotification = notification.type.startsWith("genetic_test_");
+  const html = isGeneticNotification
+    ? getGeneticEmailHtml(notification, tenantName, appUrl)
+    : generateNotificationEmail(notification, tenantName, appUrl);
+  const subject = isGeneticNotification
+    ? getGeneticEmailSubject(notification)
+    : `[${notification.priority}] ${notification.title}`;
   const text = generateNotificationText(notification, tenantName, appUrl);
 
   try {
     const result = await sendEmail({
       tenantId: notification.tenantId,
       to: userEmail,
-      subject: `[${notification.priority}] ${notification.title}`,
+      subject,
       html,
       text,
       category: "transactional", // Health/breeding alerts are transactional
@@ -278,13 +596,28 @@ export async function deliverNotification(notificationId: number): Promise<{ sen
   return { sent, failed };
 }
 
+/** User notification preferences type */
+interface NotificationPrefs {
+  vaccinationExpiring: boolean;
+  vaccinationOverdue: boolean;
+  breedingTimeline: boolean;
+  pregnancyCheck: boolean;
+  foalingApproaching: boolean;
+  heatCycleExpected: boolean;
+  microchipRenewal: boolean;
+  // Genetic test preferences
+  geneticCarrierWarning?: boolean;
+  geneticPrebreeding?: boolean;
+  geneticRegistration?: boolean;
+  geneticMissing?: boolean;
+  geneticIncomplete?: boolean;
+  geneticRecommended?: boolean;
+}
+
 /**
  * Check if user wants to receive this notification type
  */
-function shouldSendNotificationType(
-  type: string,
-  prefs: { vaccinationExpiring: boolean; vaccinationOverdue: boolean; breedingTimeline: boolean; pregnancyCheck: boolean; foalingApproaching: boolean; heatCycleExpected: boolean } | null
-): boolean {
+function shouldSendNotificationType(type: string, prefs: NotificationPrefs | null): boolean {
   // If no preferences, default to enabled
   if (!prefs) return true;
 
@@ -303,6 +636,36 @@ function shouldSendNotificationType(
   }
   if (type === "breeding_heat_cycle_expected") {
     return prefs.heatCycleExpected;
+  }
+  // Microchip renewal notifications
+  if (type.startsWith("microchip_renewal_") || type === "microchip_expired") {
+    return prefs.microchipRenewal;
+  }
+
+  // ─── Genetic Test Notifications ─────────────────────────────────
+  if (type === "genetic_test_carrier_warning") {
+    // URGENT: Always send carrier warnings by default (lethal risk)
+    return prefs.geneticCarrierWarning ?? true;
+  }
+  if (type === "genetic_test_prebreeding") {
+    // HIGH: Pre-breeding test reminders
+    return prefs.geneticPrebreeding ?? true;
+  }
+  if (type === "genetic_test_registration") {
+    // MEDIUM: Registry requirement reminders
+    return prefs.geneticRegistration ?? true;
+  }
+  if (type === "genetic_test_missing") {
+    // LOW: Missing genetic panel (default OFF)
+    return prefs.geneticMissing ?? false;
+  }
+  if (type === "genetic_test_incomplete") {
+    // LOW: Incomplete testing (default OFF)
+    return prefs.geneticIncomplete ?? false;
+  }
+  if (type === "genetic_test_recommended") {
+    // LOW: Recommended tests (NEVER send email - too noisy)
+    return false;
   }
 
   // Default to enabled for unknown types

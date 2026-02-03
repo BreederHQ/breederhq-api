@@ -1,5 +1,6 @@
 // src/prisma.ts
 import dotenv from "dotenv";
+import { getDatabaseSecrets } from "./config/secrets.js";
 
 // Honor ENV_FILE if present; otherwise default to .env.dev in dev, .env in prod.
 const ENV_FILE =
@@ -8,6 +9,13 @@ const ENV_FILE =
 
 // Load envs once, before Prisma client is constructed.
 dotenv.config({ path: ENV_FILE });
+
+// Fetch database secrets from AWS Secrets Manager (production only)
+if (process.env.NODE_ENV === "production") {
+  const dbSecrets = await getDatabaseSecrets();
+  // Merge database secrets into process.env
+  Object.assign(process.env, dbSecrets);
+}
 
 import { PrismaClient } from "@prisma/client";
 

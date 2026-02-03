@@ -235,7 +235,7 @@ async function updateReportStatus(
 
       // Unflag listing if requested
       if (unflagListing && updated.listing.flaggedAt) {
-        await tx.marketplaceServiceListing.update({
+        await tx.mktListingProviderService.update({
           where: { id: updated.listingId },
           data: { flaggedAt: null },
         });
@@ -277,7 +277,7 @@ async function getModerationStats(
       prisma.marketplaceAbuseReport.count({
         where: { status: "under_review" },
       }),
-      prisma.marketplaceServiceListing.count({
+      prisma.mktListingProviderService.count({
         where: {
           flaggedAt: { not: null },
           deletedAt: null,

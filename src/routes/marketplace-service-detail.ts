@@ -126,7 +126,7 @@ async function getServiceDetail(
     }
 
     // Fetch listing with full provider details and tags
-    const listing = await prisma.marketplaceServiceListing.findFirst({
+    const listing = await prisma.mktListingProviderService.findFirst({
       where: providerWhere,
       include: {
         provider: {
@@ -172,7 +172,7 @@ async function getServiceDetail(
     }
 
     // Increment view count asynchronously (fire-and-forget)
-    prisma.marketplaceServiceListing
+    prisma.mktListingProviderService
       .update({
         where: { id: listing.id },
         data: { viewCount: { increment: 1 } },

@@ -452,30 +452,10 @@ export async function resolveActorContext(
     }
 
     case "MARKETPLACE": {
-      // MARKETPLACE requires valid session AND one of:
-      // 1. MARKETPLACE_ACCESS entitlement (standalone marketplace users)
-      // 2. Any STAFF membership (platform subscribers get marketplace by policy)
+      // MARKETPLACE: Any authenticated user can access (guests, buyers, providers)
+      // Provider-specific routes use requireProvider middleware for additional checks
       // No tenant context required
-
-      // SuperAdmin bypasses entitlement check
-      if (isSuperAdmin) {
-        return { context: "PUBLIC", tenantId: null };
-      }
-
-      // Check for MARKETPLACE_ACCESS entitlement (explicit grant)
-      const hasMarketplaceAccess = await hasActiveEntitlement(userId, "MARKETPLACE_ACCESS");
-      if (hasMarketplaceAccess) {
-        return { context: "PUBLIC", tenantId: null };
-      }
-
-      // Platform subscribers (users with any STAFF membership) get marketplace access by policy
-      const staffMemberships = await getStaffMemberships(userId);
-      if (staffMemberships.length > 0) {
-        return { context: "PUBLIC", tenantId: null };
-      }
-
-      // No entitlement and no staff membership → deny access to marketplace surface
-      return null;
+      return { context: "PUBLIC", tenantId: null };
     }
 
     default:
