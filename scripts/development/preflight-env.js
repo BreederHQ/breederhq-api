@@ -21,7 +21,9 @@ const REQUIRED_VARS = [
     name: 'DATABASE_URL',
     minLength: 1,
     description: 'PostgreSQL connection string',
-    hint: 'Set to your Neon pooler connection URL'
+    hint: 'Set to your Neon pooler connection URL',
+    // Skip check if using AWS Secrets Manager
+    skipIf: () => process.env.AWS_SECRET_NAME && process.env.AWS_ACCESS_KEY_ID
   }
 ];
 
@@ -30,6 +32,12 @@ function checkEnv() {
   const warnings = [];
 
   for (const spec of REQUIRED_VARS) {
+    // Skip check if skipIf condition is met
+    if (spec.skipIf && spec.skipIf()) {
+      console.log(`ℹ️  Skipping ${spec.name} check (will be fetched from AWS Secrets Manager)`);
+      continue;
+    }
+
     const value = process.env[spec.name];
 
     if (!value) {
