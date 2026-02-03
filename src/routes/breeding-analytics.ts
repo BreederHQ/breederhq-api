@@ -133,8 +133,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           breedingPlanId: true,
           createdAt: true,
           seekingPartyId: true,
-          externalPartyName: true,
-          externalPartyEmail: true,
+          seekingParty: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -203,7 +207,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             status: b.status,
             sourceInquiryId: b.sourceInquiryId,
             breedingPlanId: b.breedingPlanId,
-            party: b.externalPartyName || b.externalPartyEmail,
+            party: b.seekingParty?.name || b.seekingParty?.email || 'Unknown',
             createdAt: b.createdAt.toISOString(),
           })),
         },
@@ -331,8 +335,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           OR: [
-            { offspringAsDam: { some: {} } },
-            { offspringAsSire: { some: {} } },
+            { childrenAsDam: { some: {} } },
+            { childrenAsSire: { some: {} } },
           ],
         },
         select: {
@@ -341,7 +345,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           species: true,
           breed: true,
           sex: true,
-          offspringAsDam: {
+          childrenAsDam: {
             select: {
               id: true,
               name: true,
@@ -350,7 +354,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               createdAt: true,
             },
           },
-          offspringAsSire: {
+          childrenAsSire: {
             select: {
               id: true,
               name: true,
@@ -359,7 +363,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               createdAt: true,
             },
           },
-          offeringBookings: {
+          breedingBookingsOffering: {
             where: { sourceListingId: { not: null } },
             select: {
               id: true,
@@ -378,8 +382,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       const results = animalsWithOffspring.map((animal) => {
-        const totalOffspring = animal.offspringAsDam.length + animal.offspringAsSire.length;
-        const marketplaceBookings = animal.offeringBookings.length;
+        const totalOffspring = animal.childrenAsDam.length + animal.childrenAsSire.length;
+        const marketplaceBookings = animal.breedingBookingsOffering.length;
 
         return {
           animalId: animal.id,
@@ -389,7 +393,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           sex: animal.sex,
           totalOffspring,
           fromMarketplace: marketplaceBookings,
-          marketplaceListings: animal.offeringBookings.map((b) => ({
+          marketplaceListings: animal.breedingBookingsOffering.map((b) => ({
             bookingId: b.id,
             bookingNumber: b.bookingNumber,
             listingNumber: b.sourceListing?.listingNumber,
@@ -397,8 +401,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             breedingPlanId: b.breedingPlanId,
           })),
           offspring: [
-            ...animal.offspringAsDam.map((o) => ({ ...o, role: "dam" })),
-            ...animal.offspringAsSire.map((o) => ({ ...o, role: "sire" })),
+            ...animal.childrenAsDam.map((o) => ({ ...o, role: "dam" })),
+            ...animal.childrenAsSire.map((o) => ({ ...o, role: "sire" })),
           ],
         };
       });
