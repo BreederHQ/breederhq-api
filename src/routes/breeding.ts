@@ -3964,6 +3964,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           semenBatchId: b.semenBatchId ?? null,
           success: b.success ?? null,
           notes: b.notes ?? null,
+          location: b.location ?? null,
           data: b.data ?? null,
         },
       });
@@ -4066,6 +4067,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.method !== undefined) data.method = b.method;
       if (b.attemptAt !== undefined) data.attemptAt = b.attemptAt ? new Date(b.attemptAt) : null;
       if (b.notes !== undefined) data.notes = b.notes || null;
+      if (b.location !== undefined) data.location = b.location || null;
       if (b.data !== undefined) data.data = b.data || null;
       if (b.success !== undefined) data.success = b.success;
 
@@ -4107,6 +4109,32 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       reply.code(200).send({ success: true, deletedAttemptId: attemptId });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /**
+   * GET /breeding/locations
+   * Returns distinct locations used by this tenant for autocomplete
+   */
+  app.get("/breeding/locations", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+
+      const locations = await prisma.breedingAttempt.findMany({
+        where: {
+          tenantId,
+          location: { not: null },
+        },
+        select: { location: true },
+        distinct: ["location"],
+        orderBy: { location: "asc" },
+        take: 50,
+      });
+
+      reply.send(locations.map((l) => l.location).filter(Boolean));
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

@@ -873,6 +873,21 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             break;
           }
 
+          // Stripe Connect account updates
+          case "account.updated": {
+            try {
+              const stripeConnect = await import("../services/stripe-connect-service.js");
+              await stripeConnect.handleAccountUpdated(event);
+              req.log.info(
+                { accountId: (event.data.object as any).id },
+                "Stripe Connect account updated"
+              );
+            } catch (err: any) {
+              req.log.error({ err }, "Failed to handle account.updated webhook");
+            }
+            break;
+          }
+
           default:
             req.log.info({ type: event.type }, "Unhandled webhook event type");
         }

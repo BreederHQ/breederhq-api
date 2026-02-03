@@ -113,7 +113,7 @@ export async function createTransaction(params: {
   const { clientId, serviceListingId, buyerNotes } = params;
 
   // Fetch listing with provider details
-  const listing = await prisma.marketplaceServiceListing.findUnique({
+  const listing = await prisma.mktListingProviderService.findUnique({
     where: { id: serviceListingId },
     include: {
       provider: {

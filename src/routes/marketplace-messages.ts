@@ -21,10 +21,18 @@ import { isUserSuspended } from "../services/marketplace-flag.js";
 
 /**
  * Get user info for messaging context.
+ * For marketplace users, userId is a string integer (e.g. "160") from MarketplaceUser table.
  */
 async function getUserInfo(userId: string): Promise<{ id: string; email: string; name: string }> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
+  // Parse marketplace user ID (string integer)
+  const marketplaceUserId = parseInt(userId, 10);
+
+  if (!Number.isFinite(marketplaceUserId) || marketplaceUserId <= 0) {
+    throw { statusCode: 401, error: "unauthorized", detail: "invalid_user_id" };
+  }
+
+  const user = await prisma.marketplaceUser.findUnique({
+    where: { id: marketplaceUserId },
     select: { id: true, email: true, firstName: true, lastName: true },
   });
 
@@ -33,7 +41,7 @@ async function getUserInfo(userId: string): Promise<{ id: string; email: string;
   }
 
   return {
-    id: user.id,
+    id: String(user.id), // Convert back to string for consistency
     email: user.email,
     name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email,
   };

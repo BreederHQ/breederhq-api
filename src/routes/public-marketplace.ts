@@ -2041,6 +2041,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           images: true,
           publishedAt: true,
           // Include provider info if service provider listing
+          serviceProviderId: true,
           serviceProvider: {
             select: {
               id: true,
@@ -2048,6 +2049,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             },
           },
           // Include tenant/breeder info if breeder listing
+          tenantId: true,
           tenant: {
             select: {
               organizations: {
@@ -2082,13 +2084,18 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           images: listing.images,
           publishedAt: listing.publishedAt,
           provider: listing.serviceProvider ? {
-            type: "service_provider",
+            type: "service_provider" as const,
             id: listing.serviceProvider.id,
             name: listing.serviceProvider.businessName,
+            // Rating data not available on ServiceProviderProfile - would need to join with MarketplaceProvider
+            averageRating: 0,
+            totalReviews: 0,
           } : breederOrg ? {
-            type: "breeder",
+            type: "breeder" as const,
             slug: breederOrg.programSlug,
             name: breederOrg.name,
+            averageRating: 0,
+            totalReviews: 0,
           } : null,
         };
       }),

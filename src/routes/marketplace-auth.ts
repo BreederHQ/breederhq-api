@@ -43,6 +43,7 @@ import {
   type SessionPayload,
 } from "../utils/session.js";
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
+import { randomBytes } from "node:crypto";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -173,15 +174,92 @@ export default async function marketplaceAuthRoutes(
       password?: string;
     };
 
-    const e = String(email).trim();
+    const e = String(email).trim().toLowerCase();
     const p = String(password);
 
     if (!e || !p) {
       return reply.code(400).send({ error: "email_and_password_required" });
     }
 
-    // Verify credentials
-    const user = await verifyMarketplacePassword(e, p);
+    // First, try to verify as marketplace user
+    let user = await verifyMarketplacePassword(e, p);
+
+    // If not found in marketplace, check platform user table and create/fetch marketplace user
+    if (!user) {
+      // Check if this is a platform user trying to login
+      const platformUser = await prisma.user.findUnique({
+        where: { email: e },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          passwordHash: true,
+        },
+      });
+
+      if (platformUser && platformUser.passwordHash) {
+        // Verify platform password
+        const validPassword = await bcrypt.compare(p, platformUser.passwordHash);
+
+        if (validPassword) {
+          // Check if MarketplaceUser already exists (from previous SSO or login)
+          user = await findMarketplaceUserByEmail(e);
+
+          if (!user) {
+            // Create new marketplace user from platform user (SSO-style)
+            const randomPassword = randomBytes(32).toString("base64");
+            const passwordHash = await bcrypt.hash(randomPassword, 12);
+
+            // Check if they're a breeder
+            const tenantMembership = await prisma.tenantMembership.findFirst({
+              where: { userId: platformUser.id },
+              include: {
+                tenant: {
+                  include: {
+                    subscriptions: {
+                      where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                      take: 1,
+                    },
+                  },
+                },
+              },
+            });
+
+            const isBreeder = !!(
+              tenantMembership?.tenant?.subscriptions &&
+              tenantMembership.tenant.subscriptions.length > 0
+            );
+
+            user = await prisma.marketplaceUser.create({
+              data: {
+                email: e,
+                passwordHash, // Random password - they'll use platform password or SSO
+                firstName: platformUser.firstName,
+                lastName: platformUser.lastName,
+                userType: "buyer",
+                status: "active",
+                emailVerified: true, // Platform users already verified
+                tenantId: isBreeder && tenantMembership ? tenantMembership.tenant.id : null,
+              },
+            });
+
+            req.log?.info?.({
+              platformUserId: platformUser.id,
+              marketplaceUserId: user.id,
+              email: e,
+              isBreeder,
+            }, "Created MarketplaceUser via platform login fallback");
+          } else {
+            req.log?.info?.({
+              platformUserId: platformUser.id,
+              marketplaceUserId: user.id,
+              email: e,
+            }, "Found existing MarketplaceUser via platform login fallback");
+          }
+        }
+      }
+    }
 
     if (!user) {
       return reply.code(401).send({ error: "invalid_credentials" });
@@ -584,5 +662,279 @@ export default async function marketplaceAuthRoutes(
       req.log?.error?.({ err, userId }, "Failed to change password");
       return reply.code(500).send({ error: "change_failed", message: "Unable to change password" });
     }
+  });
+
+  /* ───────────────────────── SSO from Platform ───────────────────────── */
+
+  /**
+   * SSO endpoint for platform users to auto-login to marketplace.
+   *
+   * If user has a valid PLATFORM session (bhq_s_app cookie), this endpoint:
+   * 1. Validates the platform session
+   * 2. Finds the platform User record
+   * 3. Finds or creates a matching MarketplaceUser (by email)
+   * 4. Sets the MARKETPLACE session cookie (bhq_s_mkt)
+   *
+   * This enables seamless SSO: platform users visiting marketplace.breederhq.com
+   * are automatically logged in without re-entering credentials.
+   */
+  app.post("/sso", async (req, reply) => {
+    // Check for valid PLATFORM session
+    const platformSession = parseVerifiedSession(req, "PLATFORM");
+
+    if (!platformSession) {
+      return reply.code(401).send({
+        error: "no_platform_session",
+        message: "No valid platform session found.",
+      });
+    }
+
+    const platformUserId = platformSession.userId;
+
+    // Fetch platform user to get email
+    const platformUser = await prisma.user.findUnique({
+      where: { id: platformUserId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+      },
+    });
+
+    if (!platformUser) {
+      return reply.code(401).send({
+        error: "platform_user_not_found",
+        message: "Platform user not found.",
+      });
+    }
+
+    // Find existing MarketplaceUser by email (case-insensitive)
+    const email = platformUser.email.toLowerCase();
+    let marketplaceUser = await prisma.marketplaceUser.findUnique({
+      where: { email },
+    });
+
+    if (!marketplaceUser) {
+      // Create new MarketplaceUser linked to platform user
+      // Generate a random password hash (user will use SSO, not password login)
+      const randomPassword = randomBytes(32).toString("base64");
+      const passwordHash = await bcrypt.hash(randomPassword, 12);
+
+      marketplaceUser = await prisma.marketplaceUser.create({
+        data: {
+          email,
+          passwordHash,
+          firstName: platformUser.firstName,
+          lastName: platformUser.lastName,
+          userType: "buyer", // Default to buyer, can be upgraded later
+          status: "active",
+          emailVerified: true, // Platform users already verified their email
+          // tenantId can be set later if they have a breeder account
+        },
+      });
+
+      req.log?.info?.({
+        platformUserId,
+        marketplaceUserId: marketplaceUser.id,
+        email,
+      }, "Created MarketplaceUser via SSO from platform");
+    }
+
+    // Check if marketplace user is suspended
+    if (marketplaceUser.suspendedAt) {
+      return reply.code(403).send({
+        error: "account_suspended",
+        message: marketplaceUser.suspendedReason || "Your marketplace account has been suspended.",
+      });
+    }
+
+    // Check if marketplace user is inactive
+    if (marketplaceUser.status !== "active") {
+      return reply.code(403).send({
+        error: "account_inactive",
+        message: "Your marketplace account is not active.",
+      });
+    }
+
+    // Update last login
+    updateLastLogin(marketplaceUser.id).catch((err) => {
+      req.log?.error?.({ err, userId: marketplaceUser!.id }, "Failed to update last login via SSO");
+    });
+
+    // Check if platform user is a breeder (has tenant membership with active subscription)
+    const tenantMembership = await prisma.tenantMembership.findFirst({
+      where: { userId: platformUserId },
+      include: {
+        tenant: {
+          include: {
+            subscriptions: {
+              where: { status: { in: ["ACTIVE", "TRIAL"] } },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+    const isBreeder = !!(
+      tenantMembership?.tenant?.subscriptions &&
+      tenantMembership.tenant.subscriptions.length > 0
+    );
+
+    // Update marketplace user's tenantId if they're a breeder and not already linked
+    if (isBreeder && tenantMembership && !marketplaceUser.tenantId) {
+      await prisma.marketplaceUser.update({
+        where: { id: marketplaceUser.id },
+        data: { tenantId: tenantMembership.tenant.id },
+      });
+      marketplaceUser.tenantId = tenantMembership.tenant.id;
+    }
+
+    // Set MARKETPLACE session cookie
+    setSessionCookies(
+      reply,
+      {
+        userId: String(marketplaceUser.id),
+        tenantId: marketplaceUser.tenantId ?? undefined,
+      },
+      "MARKETPLACE"
+    );
+
+    return reply.send({
+      ok: true,
+      sso: true,
+      isBreeder,
+      breederTenant: isBreeder && tenantMembership ? {
+        id: tenantMembership.tenant.id,
+        name: tenantMembership.tenant.name,
+      } : null,
+      user: {
+        id: marketplaceUser.id,
+        email: marketplaceUser.email,
+        firstName: marketplaceUser.firstName,
+        lastName: marketplaceUser.lastName,
+        userType: marketplaceUser.userType,
+        emailVerified: marketplaceUser.emailVerified,
+      },
+    });
+  });
+
+  /* ───────────────────────── SSO Check ───────────────────────── */
+
+  /**
+   * Check if SSO is available (has valid platform session).
+   * Used by frontend to decide whether to show SSO button or redirect automatically.
+   */
+  app.get("/sso/check", async (req, reply) => {
+    // Check for existing MARKETPLACE session first
+    const marketplaceSession = parseVerifiedSession(req, "MARKETPLACE");
+
+    if (marketplaceSession) {
+      const userId = parseInt(marketplaceSession.userId, 10);
+      if (Number.isFinite(userId) && userId > 0) {
+        const user = await findMarketplaceUserById(userId);
+        if (user) {
+          // Check if this marketplace user is linked to a breeder account
+          let isBreeder = false;
+          let breederTenant = null;
+
+          if (user.tenantId) {
+            const tenant = await prisma.tenant.findUnique({
+              where: { id: user.tenantId },
+              include: {
+                subscriptions: {
+                  where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                  take: 1,
+                },
+              },
+            });
+
+            isBreeder = !!(
+              tenant?.subscriptions &&
+              tenant.subscriptions.length > 0
+            );
+
+            if (isBreeder && tenant) {
+              breederTenant = { id: tenant.id, name: tenant.name };
+            }
+          }
+
+          return reply.send({
+            hasMarketplaceSession: true,
+            hasPlatformSession: false, // Don't check if already logged in
+            isBreeder,
+            breederTenant,
+            user: {
+              id: user.id,
+              email: user.email,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              userType: user.userType,
+              emailVerified: user.emailVerified,
+            },
+          });
+        }
+      }
+    }
+
+    // Check for PLATFORM session
+    const platformSession = parseVerifiedSession(req, "PLATFORM");
+
+    if (platformSession) {
+      const platformUser = await prisma.user.findUnique({
+        where: { id: platformSession.userId },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
+      });
+
+      if (platformUser) {
+        // Check if platform user is a breeder
+        const tenantMembership = await prisma.tenantMembership.findFirst({
+          where: { userId: platformSession.userId },
+          include: {
+            tenant: {
+              include: {
+                subscriptions: {
+                  where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                  take: 1,
+                },
+              },
+            },
+          },
+        });
+
+        const isBreeder = !!(
+          tenantMembership?.tenant?.subscriptions &&
+          tenantMembership.tenant.subscriptions.length > 0
+        );
+
+        return reply.send({
+          hasMarketplaceSession: false,
+          hasPlatformSession: true,
+          isBreeder,
+          breederTenant: isBreeder && tenantMembership ? {
+            id: tenantMembership.tenant.id,
+            name: tenantMembership.tenant.name,
+          } : null,
+          platformUser: {
+            email: platformUser.email,
+            firstName: platformUser.firstName,
+            lastName: platformUser.lastName,
+          },
+        });
+      }
+    }
+
+    return reply.send({
+      hasMarketplaceSession: false,
+      hasPlatformSession: false,
+      isBreeder: false,
+      breederTenant: null,
+    });
   });
 }
