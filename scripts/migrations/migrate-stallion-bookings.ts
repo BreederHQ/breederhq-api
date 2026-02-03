@@ -14,8 +14,9 @@ import prisma from '../../src/prisma.js';
 // Parse command line arguments
 const isDryRun = process.argv.includes('--dry-run');
 
-async function generateBookingNumber(tenantId: number): Promise<string> {
-  const count = await prisma.breedingBooking.count({ where: { offeringTenantId: tenantId } });
+async function generateBookingNumber(): Promise<string> {
+  // Generate globally unique booking number (not per-tenant)
+  const count = await prisma.breedingBooking.count();
   return `BK-${String(count + 1).padStart(6, '0')}`;
 }
 
@@ -23,15 +24,13 @@ function mapStallionBookingStatus(status: string): string {
   const mapping: Record<string, string> = {
     'INQUIRY': 'INQUIRY',
     'PENDING_MARE_INFO': 'PENDING_REQUIREMENTS',
-    'MARE_INFO_RECEIVED': 'REQUIREMENTS_RECEIVED',
-    'PENDING_CONTRACT': 'PENDING_CONTRACT',
-    'CONTRACT_SENT': 'PENDING_CONTRACT',
-    'CONTRACT_SIGNED': 'CONTRACT_SIGNED',
-    'PENDING_PAYMENT': 'PENDING_PAYMENT',
-    'DEPOSIT_PAID': 'PAID',
-    'FULLY_PAID': 'PAID',
+    'PENDING_REQUIREMENTS': 'PENDING_REQUIREMENTS',
+    'APPROVED': 'APPROVED',
+    'DEPOSIT_PAID': 'DEPOSIT_PAID',
+    'CONFIRMED': 'CONFIRMED',
     'SCHEDULED': 'SCHEDULED',
     'BREEDING_IN_PROGRESS': 'IN_PROGRESS',
+    'IN_PROGRESS': 'IN_PROGRESS',
     'COMPLETED': 'COMPLETED',
     'CANCELLED': 'CANCELLED',
   };
@@ -48,11 +47,9 @@ async function migrateStallionBookings() {
     // Find all stallion bookings
     const stallionBookings = await prisma.stallionBooking.findMany({
       include: {
+        tenant: true,
         stallion: true,
         mare: true,
-        stallionOwnerTenant: true,
-        mareOwnerTenant: true,
-        stallionOwnerParty: true,
         mareOwnerParty: true,
         breedingPlan: true,
       },
@@ -69,7 +66,7 @@ async function migrateStallionBookings() {
         // Check if already migrated
         const existing = await prisma.breedingBooking.findFirst({
           where: {
-            offeringTenantId: booking.stallionOwnerTenantId,
+            offeringTenantId: booking.tenantId,
             offeringAnimalId: booking.stallionId,
             seekingPartyId: booking.mareOwnerPartyId,
             createdAt: booking.createdAt,
@@ -83,14 +80,14 @@ async function migrateStallionBookings() {
         }
 
         // Generate new booking number
-        const bookingNumber = await generateBookingNumber(booking.stallionOwnerTenantId);
+        const bookingNumber = await generateBookingNumber();
 
         if (isDryRun) {
           // Dry run: just report what would be done
           console.log(`[DRY RUN] Would migrate booking ${booking.id} → ${bookingNumber}`);
-          console.log(`  Stallion: ${booking.stallion.name || booking.stallionId} (Owner: ${booking.stallionOwnerTenantId})`);
+          console.log(`  Stallion: ${booking.stallion?.name || booking.stallionId} (Owner Tenant: ${booking.tenantId})`);
           console.log(`  Mare Owner: ${booking.mareOwnerParty?.name || booking.mareOwnerPartyId}`);
-          console.log(`  Status: ${(booking as any).status || 'INQUIRY'} → ${mapStallionBookingStatus((booking as any).status || 'INQUIRY')}`);
+          console.log(`  Status: ${booking.status || 'INQUIRY'} → ${mapStallionBookingStatus(booking.status || 'INQUIRY')}`);
           migrated++;
         } else {
           // Create BreedingBooking
@@ -103,79 +100,63 @@ async function migrateStallionBookings() {
               sourceInquiryId: null,
 
               // Offering side (stallion owner)
-              offeringTenantId: booking.stallionOwnerTenantId,
+              offeringTenantId: booking.tenantId,
               offeringAnimalId: booking.stallionId,
 
               // Seeking side (mare owner)
               seekingPartyId: booking.mareOwnerPartyId,
-              seekingTenantId: booking.mareOwnerTenantId || null,
+              seekingTenantId: null, // Mare owner is external (Party), not a tenant
               seekingAnimalId: booking.mareId || null,
 
               // External mare info (if mare not in system)
-              externalPartyName: booking.mareOwnerParty?.name || null,
-              externalPartyEmail: booking.mareOwnerParty?.email || null,
-              externalPartyPhone: booking.mareOwnerParty?.phone || null,
-              externalAnimalName: (booking as any).externalMareName || null,
-              externalAnimalReg: (booking as any).externalMareReg || null,
-              externalAnimalBreed: (booking as any).externalMareBreed || null,
+              externalAnimalName: booking.externalMareName || null,
+              externalAnimalReg: booking.externalMareReg || null,
+              externalAnimalBreed: booking.externalMareBreed || null,
               externalAnimalSex: 'F',
 
               // Details
-              species: booking.stallion.species,
+              species: booking.stallion?.species || 'HORSE',
               bookingType: 'STUD_SERVICE',
-              preferredMethod: (booking as any).breedingMethod || null,
+              preferredMethod: booking.preferredMethod || null,
 
               // Scheduling
-              preferredDateStart: (booking as any).preferredDateStart || null,
-              preferredDateEnd: (booking as any).preferredDateEnd || null,
-              scheduledDate: (booking as any).scheduledDate || null,
+              preferredDateStart: booking.preferredDateStart || null,
+              preferredDateEnd: booking.preferredDateEnd || null,
+              scheduledDate: booking.scheduledDate || null,
 
               // Shipping
-              shippingRequired: (booking as any).shippingRequired || false,
-              shippingAddress: (booking as any).shippingAddress || null,
+              shippingRequired: booking.shippingRequired || false,
+              shippingAddress: booking.shippingAddress || null,
 
               // Financials
-              agreedFeeCents: (booking as any).agreedFeeCents || 0,
-              depositCents: (booking as any).depositCents || 0,
-              totalPaidCents: (booking as any).totalPaidCents || 0,
-              feeDirection: 'OFFERING_RECEIVES',
+              agreedFeeCents: booking.agreedFeeCents || 0,
+              depositCents: booking.bookingFeeCents || 0,
+              totalPaidCents: booking.totalPaidCents || 0,
+              feeDirection: 'I_RECEIVE', // Offering breeder receives the fee
 
               // Status
-              status: mapStallionBookingStatus((booking as any).status || 'INQUIRY'),
-              statusChangedAt: (booking as any).statusChangedAt || booking.createdAt,
+              status: mapStallionBookingStatus(booking.status || 'INQUIRY'),
+              statusChangedAt: booking.statusChangedAt || booking.createdAt,
 
-              // Requirements
-              requirements: {
-                coggins: {
-                  received: (booking as any).cogginsReceived || false,
-                  date: (booking as any).cogginsDate || null,
-                },
-                culture: {
-                  received: (booking as any).cultureReceived || false,
-                  date: (booking as any).cultureDate || null,
-                },
-                uterineExam: {
-                  received: (booking as any).uterineExamReceived || false,
-                  date: (booking as any).uterineExamDate || null,
-                },
-              },
+              // Requirements - parse from requirementsJson
+              requirements: (booking.requirementsJson as any) || {},
               requirementsConfig: 'HORSE_DEFAULT',
 
               // Guarantee
-              guaranteeType: (booking as any).guaranteeType || null,
+              guaranteeType: booking.guaranteeType || null,
 
               // Link to BreedingPlan
               breedingPlanId: booking.breedingPlanId || null,
 
               // Notes
-              notes: (booking as any).notes || null,
-              internalNotes: (booking as any).internalNotes || null,
+              notes: booking.notes || null,
+              internalNotes: booking.internalNotes || null,
 
               // Audit
               createdAt: booking.createdAt,
               updatedAt: booking.updatedAt,
-              cancelledAt: (booking as any).cancelledAt || null,
-              cancellationReason: (booking as any).cancellationReason || null,
+              cancelledAt: booking.cancelledAt || null,
+              cancellationReason: booking.cancellationReason || null,
             },
           });
 
