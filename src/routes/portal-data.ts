@@ -1082,6 +1082,303 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "failed_to_load" });
     }
   });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Microchip Registration Endpoints (Buyer Portal)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/portal/offspring/:id/microchip
+   * Returns microchip registration info for an offspring owned by the portal user
+   */
+  app.get<{ Params: { id: string } }>("/portal/offspring/:id/microchip", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const offspringId = parseInt(req.params.id, 10);
+
+      if (isNaN(offspringId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Verify the offspring belongs to this buyer
+      const offspring = await prisma.offspring.findFirst({
+        where: {
+          id: offspringId,
+          tenantId,
+          buyerPartyId: partyId,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Get microchip registrations for this offspring
+      const registrations = await prisma.animalMicrochipRegistration.findMany({
+        where: {
+          tenantId,
+          offspringId,
+        },
+        include: {
+          registry: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              website: true,
+              renewalType: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      // Compute status for each registration
+      const now = new Date();
+      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      const mappedRegistrations = registrations.map((reg) => {
+        let status: "ACTIVE" | "EXPIRING_SOON" | "EXPIRED" | "LIFETIME" = "ACTIVE";
+        let daysUntilExpiration: number | null = null;
+
+        if (reg.registry.renewalType === "LIFETIME") {
+          status = "LIFETIME";
+        } else if (reg.expirationDate) {
+          const expDate = new Date(reg.expirationDate);
+          daysUntilExpiration = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+          if (expDate < now) {
+            status = "EXPIRED";
+          } else if (expDate <= thirtyDaysFromNow) {
+            status = "EXPIRING_SOON";
+          }
+        }
+
+        return {
+          id: reg.id,
+          microchipNumber: reg.microchipNumber,
+          registry: {
+            id: reg.registry.id,
+            name: reg.registry.name,
+            slug: reg.registry.slug,
+            website: reg.registry.website,
+            renewalType: reg.registry.renewalType,
+          },
+          registrationDate: reg.registrationDate?.toISOString() || null,
+          expirationDate: reg.expirationDate?.toISOString() || null,
+          accountNumber: reg.accountNumber,
+          status,
+          daysUntilExpiration,
+        };
+      });
+
+      // Derive the microchip number from the first registration
+      const primaryMicrochipNumber = registrations.length > 0 ? registrations[0].microchipNumber : null;
+
+      return reply.send({
+        microchip: {
+          number: primaryMicrochipNumber,
+          registrations: mappedRegistrations,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal offspring microchip");
+      return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
+
+  /**
+   * PATCH /api/v1/portal/microchip-registrations/:id
+   * Allows buyer to update their microchip registration (registration date, expiration, account #)
+   */
+  app.patch<{
+    Params: { id: string };
+    Body: {
+      registrationDate?: string | null;
+      expirationDate?: string | null;
+      accountNumber?: string | null;
+    };
+  }>("/portal/microchip-registrations/:id", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const registrationId = parseInt(req.params.id, 10);
+
+      if (isNaN(registrationId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Find the registration and verify buyer owns the offspring
+      const registration = await prisma.animalMicrochipRegistration.findFirst({
+        where: {
+          id: registrationId,
+          tenantId,
+        },
+        include: {
+          offspring: {
+            select: {
+              buyerPartyId: true,
+            },
+          },
+        },
+      });
+
+      if (!registration) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Verify ownership - must be the buyer of the offspring
+      if (registration.offspring?.buyerPartyId !== partyId) {
+        return reply.code(403).send({ error: "access_denied" });
+      }
+
+      // Update only allowed fields
+      const { registrationDate, expirationDate, accountNumber } = req.body;
+
+      const updateData: any = {};
+      if (registrationDate !== undefined) {
+        updateData.registrationDate = registrationDate ? new Date(registrationDate) : null;
+      }
+      if (expirationDate !== undefined) {
+        updateData.expirationDate = expirationDate ? new Date(expirationDate) : null;
+      }
+      if (accountNumber !== undefined) {
+        updateData.accountNumber = accountNumber || null;
+      }
+
+      const updated = await prisma.animalMicrochipRegistration.update({
+        where: { id: registrationId },
+        data: updateData,
+        include: {
+          registry: {
+            select: {
+              name: true,
+              renewalType: true,
+            },
+          },
+        },
+      });
+
+      req.log?.info?.(
+        { registrationId, partyId },
+        "Portal user updated microchip registration"
+      );
+
+      return reply.send({
+        registration: {
+          id: updated.id,
+          registrationDate: updated.registrationDate?.toISOString() || null,
+          expirationDate: updated.expirationDate?.toISOString() || null,
+          accountNumber: updated.accountNumber,
+        },
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to update portal microchip registration");
+      return reply.code(500).send({ error: "update_failed" });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Portal Notifications Endpoint
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/portal/notifications
+   * Returns notifications related to animals owned by the portal user
+   * Filters by animalId in notification metadata
+   */
+  app.get<{
+    Querystring: {
+      status?: "UNREAD" | "READ" | "DISMISSED";
+      limit?: string;
+    };
+  }>("/portal/notifications", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const { status, limit: limitStr } = req.query;
+
+      const limit = Math.min(parseInt(limitStr || "50", 10), 100);
+
+      // Get all animal IDs owned by this party (via AnimalOwner or Offspring.buyerPartyId)
+      const [ownedAnimals, ownedOffspring] = await Promise.all([
+        prisma.animalOwner.findMany({
+          where: {
+            partyId,
+            animal: { tenantId },
+          },
+          select: { animalId: true },
+        }),
+        prisma.offspring.findMany({
+          where: {
+            tenantId,
+            buyerPartyId: partyId,
+          },
+          select: { damId: true, sireId: true, promotedAnimalId: true },
+        }),
+      ]);
+
+      // Combine all animal IDs (including dam, sire, and promoted animal from offspring)
+      const animalIds = new Set<number>();
+      ownedAnimals.forEach((o) => animalIds.add(o.animalId));
+      ownedOffspring.forEach((o) => {
+        if (o.damId) animalIds.add(o.damId);
+        if (o.sireId) animalIds.add(o.sireId);
+        if (o.promotedAnimalId) animalIds.add(o.promotedAnimalId);
+      });
+
+      if (animalIds.size === 0) {
+        return reply.send({ notifications: [] });
+      }
+
+      // Fetch notifications that have any of these animal IDs in their metadata
+      // We need to filter in memory since Prisma JSON filtering is limited
+      const allNotifications = await prisma.notification.findMany({
+        where: {
+          tenantId,
+          ...(status ? { status } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit * 10, // Fetch more to filter in memory
+      });
+
+      // Filter notifications where metadata.animalId matches one of our animals
+      const filteredNotifications = allNotifications.filter((notif) => {
+        const metadata = notif.metadata as Record<string, unknown> | null;
+        if (!metadata) return false;
+
+        const notifAnimalId = metadata.animalId as number | undefined;
+        const notifDamId = metadata.damId as number | undefined;
+        const notifSireId = metadata.sireId as number | undefined;
+
+        return (
+          (notifAnimalId !== undefined && animalIds.has(notifAnimalId)) ||
+          (notifDamId !== undefined && animalIds.has(notifDamId)) ||
+          (notifSireId !== undefined && animalIds.has(notifSireId))
+        );
+      }).slice(0, limit);
+
+      const notifications = filteredNotifications.map((notif) => ({
+        id: notif.id,
+        type: notif.type,
+        title: notif.title,
+        message: notif.message,
+        priority: notif.priority,
+        status: notif.status,
+        linkUrl: notif.linkUrl,
+        createdAt: notif.createdAt.toISOString(),
+      }));
+
+      return reply.send({ notifications });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal notifications");
+      return reply.code(500).send({ error: "failed_to_load" });
+    }
+  });
 };
 
 export default portalDataRoutes;

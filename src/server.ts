@@ -527,6 +527,8 @@ import communicationsRoutes from "./routes/communications.js"; // Communications
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 import documentBundlesRoutes from "./routes/document-bundles.js"; // Document Bundles for email attachments
 import documentsRoutes from "./routes/documents.js"; // General documents listing
+import watermarkSettingsRoutes from "./routes/watermark-settings.js"; // Watermark settings
+import documentWatermarkRoutes from "./routes/document-watermark.js"; // Document download with watermarking
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
@@ -536,10 +538,14 @@ import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Ser
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
+import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
+import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
+import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
+import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
 import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notification-scan.js"; // Daily notification cron job
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import studVisibilityRoutes from "./routes/stud-visibility.js"; // Stud Listing Visibility Rules (P11)
@@ -555,6 +561,12 @@ import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P
 import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
 import semenInventoryRoutes from "./routes/semen-inventory.js"; // Semen Inventory (P7)
 import stallionBookingsRoutes from "./routes/stallion-bookings.js"; // Stallion Bookings (P8)
+import breederProfileRoutes from "./routes/breeder-profile.js"; // Breeding Discovery: Breeder Profile (Phase 2)
+import breedingDiscoveryProgramsRoutes from "./routes/breeding-discovery-programs.js"; // Breeding Discovery: Programs (Phase 2)
+import breedingDiscoveryListingsRoutes from "./routes/breeding-discovery-listings.js"; // Breeding Discovery: Listings (Phase 2)
+import breedingBookingsRoutes from "./routes/breeding-bookings.js"; // Breeding Discovery: Bookings (Phase 2)
+import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discovery: Compatibility Checking (Phase 2)
+import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -967,9 +979,18 @@ app.register(
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
+    api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
+    api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
+    api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
     api.register(stallionBookingsRoutes); // /api/v1/stallion-bookings/* (Stallion Bookings - P8)
+    api.register(breederProfileRoutes); // /api/v1/breeder-profile/* (Breeding Discovery - Phase 2)
+    api.register(breedingDiscoveryProgramsRoutes); // /api/v1/breeding-discovery/programs/* (Breeding Discovery - Phase 2)
+    api.register(breedingDiscoveryListingsRoutes); // /api/v1/breeding-discovery/listings/* (Breeding Discovery - Phase 2)
+    api.register(breedingBookingsRoutes); // /api/v1/breeding-bookings/* (Breeding Discovery - Phase 2)
+    api.register(compatibilityRoutes); // /api/v1/compatibility/* (Breeding Discovery - Phase 2)
+    api.register(publicBreedingDiscoveryRoutes); // /api/v1/public/breeding-* (Breeding Discovery - Phase 2)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
@@ -985,6 +1006,8 @@ app.register(
     api.register(draftsRoutes);         // /api/v1/drafts/* Draft messages/emails
     api.register(documentBundlesRoutes); // /api/v1/document-bundles/* Document bundles for email attachments
     api.register(documentsRoutes);      // /api/v1/documents/* General documents listing
+    api.register(watermarkSettingsRoutes); // /api/v1/settings/watermark Watermark settings
+    api.register(documentWatermarkRoutes); // /api/v1/documents/:id/download, /watermark, /access-log Document watermarking
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
@@ -993,6 +1016,7 @@ app.register(
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
+    api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
     // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs

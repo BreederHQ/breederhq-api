@@ -548,6 +548,27 @@ enum DocStatus {
   @@schema("public")
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Document Watermarking Enums
+// ────────────────────────────────────────────────────────────────────────────
+
+enum MediaAccessType {
+  VIEW
+  DOWNLOAD
+  SHARE
+
+  @@schema("public")
+}
+
+enum MediaAccessActor {
+  OWNER
+  BUYER
+  PUBLIC
+  PORTAL
+
+  @@schema("public")
+}
+
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
@@ -718,6 +739,63 @@ enum SemenUsageType {
   @@schema("public")
 }
 
+enum GeneticSnoozeType {
+  ANIMAL // Don't remind me about this animal
+  TEST // Don't remind me about this test type
+  ANIMAL_TEST // Don't remind me about this test for this animal
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Supplement Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SupplementTriggerType {
+  BREEDING_CYCLE_RELATIVE // Relative to breeding plan event
+  AGE_BASED // Relative to animal's birth date
+  MANUAL // User sets start date manually
+
+  @@schema("public")
+}
+
+enum BreedingCycleAnchorEvent {
+  CYCLE_START
+  BREED_DATE
+  BIRTH_DATE
+  WEANED_DATE
+
+  @@schema("public")
+}
+
+enum SupplementFrequency {
+  ONCE
+  DAILY
+  EVERY_OTHER_DAY
+  EVERY_3_DAYS
+  WEEKLY
+  ONGOING // No end date
+
+  @@schema("public")
+}
+
+enum SupplementScheduleMode {
+  BREEDING_LINKED // Dates calculated from breeding plan
+  STANDALONE // Manual start date
+
+  @@schema("public")
+}
+
+enum SupplementScheduleStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  CANCELLED
+
+  @@schema("public")
+}
+
 enum WaitlistStatus {
   INQUIRY
   APPROVED
@@ -751,6 +829,80 @@ enum BreedingPlanBuyerStage {
   INQUIRY
   ASSIGNED
   MATCHED_TO_OFFSPRING
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Breeding Discovery (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BreedingListingIntent {
+  OFFERING // Offering an animal for breeding (stud/dam services)
+  SEEKING // Looking for a breeding partner
+  LEASE // Offering/seeking a breeding lease
+  ARRANGEMENT // Open to negotiated arrangements
+
+  @@schema("public")
+}
+
+enum BreedingListingStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  CLOSED
+
+  @@schema("public")
+}
+
+enum BreedingListingFeeDirection {
+  I_RECEIVE // Listing owner receives the fee
+  I_PAY // Listing owner pays the fee
+  SPLIT // Fee split between parties
+  NEGOTIABLE // Fee is negotiable
+
+  @@schema("public")
+}
+
+enum BreedingInquiryStatus {
+  NEW
+  READ
+  REPLIED
+  CONVERTED
+  ARCHIVED
+  SPAM
+
+  @@schema("public")
+}
+
+enum BreedingBookingStatus {
+  INQUIRY
+  PENDING_REQUIREMENTS
+  APPROVED
+  DEPOSIT_PAID
+  CONFIRMED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+
+  @@schema("public")
+}
+
+enum BreedingBookingType {
+  STUD_SERVICE // Traditional stud service
+  LEASE_BREEDING // Leased breeding arrangement
+  CO_OWN // Co-ownership breeding
+  AI_SHIPPED // Shipped semen AI
+  NATURAL_COVER // Natural mating on-site
+
+  @@schema("public")
+}
+
+enum BreedingProgramStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
 
   @@schema("public")
 }
@@ -957,6 +1109,29 @@ enum NotificationType {
   guarantee_expiring_7d // 7 days before guarantee expires
   guarantee_expired // Guarantee has expired, no resolution recorded
 
+  // Microchip renewal notifications
+  microchip_renewal_30d // 30 days before registration expires
+  microchip_renewal_14d // 14 days before registration expires
+  microchip_renewal_7d // 7 days before registration expires
+  microchip_renewal_3d // 3 days before registration expires
+  microchip_expired // Registration has expired
+
+  // Genetic Test Notifications
+  genetic_test_missing // Animal has no genetic panel on file
+  genetic_test_incomplete // Animal has partial testing (missing key markers)
+  genetic_test_prebreeding // About to breed without required tests
+  genetic_test_carrier_warning // Carrier × Carrier pairing detected (URGENT)
+  genetic_test_registration // Registry requires tests before deadline
+  genetic_test_recommended // Recommended tests for breed/discipline
+
+  // Supplement tracking notifications
+  supplement_starting_7d
+  supplement_starting_3d
+  supplement_starting_1d
+  supplement_due_today
+  supplement_overdue
+  supplement_schedule_complete
+
   @@schema("public")
 }
 
@@ -1093,6 +1268,10 @@ model User {
   // Notifications
   notifications           Notification[]
   notificationPreferences UserNotificationPreferences?
+
+  // Genetic notification preferences (granular in-app/email control)
+  geneticNotificationPreferences GeneticNotificationPreference[]
+  geneticNotificationSnoozes     GeneticNotificationSnooze[]
 
   // Contract templates created by this user
   contractTemplatesCreated ContractTemplate[] @relation("ContractTemplateCreatedBy")
@@ -1395,7 +1574,8 @@ model Tenant {
   referralCodesOwned  ReferralCode[]             @relation("ReferralCodeOwner")
   referralsMade       Referral[]                 @relation("ReferralsMade")
   referralsReceived   Referral[]                 @relation("ReferralsReceived")
-  marketplaceListings MktListingBreederService[]
+  marketplaceListings MktListingBreederService[] // Legacy table (deprecated)
+  unifiedListings     MktListingService[]        // New unified listings table
   featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
@@ -1444,6 +1624,13 @@ model Tenant {
   notifications           Notification[]
   notificationPreferences UserNotificationPreferences[]
 
+  // Genetic notification preferences (granular in-app/email control)
+  geneticNotificationPreferences GeneticNotificationPreference[]
+  geneticNotificationSnoozes     GeneticNotificationSnooze[]
+
+  // Microchip registrations
+  microchipRegistrations AnimalMicrochipRegistration[]
+
   // Inbound email address slug (e.g., "sunny-acres" for sunny-acres@mail.breederhq.com)
   inboundEmailSlug String? @unique
 
@@ -1458,6 +1645,30 @@ model Tenant {
 
   // Stallion Booking Pipeline (P8)
   stallionBookings StallionBooking[]
+
+  // Supplement Tracking
+  supplementProtocols       SupplementProtocol[]
+  supplementSchedules       SupplementSchedule[]
+  supplementAdministrations SupplementAdministration[]
+
+  // Nutrition & Food Tracking
+  foodProducts   FoodProduct[]
+  feedingPlans   FeedingPlan[]
+  feedingRecords FeedingRecord[]
+  foodChanges    FoodChange[]
+
+  // Document Watermarking & Access Tracking
+  watermarkSettings Json? // WatermarkSettings type
+  mediaAccessEvents MediaAccessEvent[]
+  watermarkedAssets WatermarkedAsset[]
+
+  // Breeding Discovery (Phase 2)
+  breederProfile            BreederProfile?
+  breedingDiscoveryPrograms BreedingDiscoveryProgram[]
+  breedingListings          BreedingListing[]
+  breedingInquiries         BreedingInquiry[]
+  breedingBookingsOffering  BreedingBooking[]             @relation("OfferingBookings")
+  breedingBookingsSeeking   BreedingBooking[]             @relation("SeekingBookings")
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -1562,6 +1773,17 @@ model UserNotificationPreferences {
   marketplaceInquiry Boolean @default(true) // New inquiries
   waitlistSignup     Boolean @default(true) // Waitlist signups
 
+  // ─── Microchip Alerts ──────────────────────────────────────────
+  microchipRenewal Boolean @default(true) // Microchip renewal reminders (30d, 14d, 7d, 3d)
+
+  // ─── Genetic Test Alerts ─────────────────────────────────────────
+  geneticCarrierWarning Boolean @default(true) // URGENT: Carrier × Carrier lethal pairing
+  geneticPrebreeding    Boolean @default(true) // HIGH: Pre-breeding test reminders
+  geneticRegistration   Boolean @default(true) // MEDIUM: Registry requirement reminders
+  geneticMissing        Boolean @default(false) // LOW: Missing genetic panel (off by default)
+  geneticIncomplete     Boolean @default(false) // LOW: Incomplete testing (off by default)
+  geneticRecommended    Boolean @default(false) // LOW: Recommended tests (off by default, no email)
+
   // ─── Channel Preferences (Phase 2) ─────────────────────────────
   emailEnabled Boolean @default(true) // Email delivery
   smsEnabled   Boolean @default(false) // SMS delivery (Phase 2)
@@ -1577,6 +1799,69 @@ model UserNotificationPreferences {
 
   @@index([tenantId])
   @@index([userId])
+  @@schema("public")
+}
+
+/**
+ * GeneticNotificationPreference - Granular user preferences for genetic test notifications
+ * Provides separate in-app and email toggles for each notification type.
+ * IMPORTANT: Carrier warnings (inAppCarrier) cannot be disabled for lethal genes.
+ */
+model GeneticNotificationPreference {
+  id       Int    @id @default(autoincrement())
+  userId   String
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // In-app notifications
+  inAppMissing     Boolean @default(true)
+  inAppIncomplete  Boolean @default(true)
+  inAppCarrier     Boolean @default(true) // Cannot disable lethal warnings - enforced at API level
+  inAppPrebreeding Boolean @default(true)
+  inAppRegistry    Boolean @default(true)
+  inAppRecommended Boolean @default(false) // Off by default
+
+  // Email notifications
+  emailMissing     Boolean @default(false) // Off by default
+  emailIncomplete  Boolean @default(false)
+  emailCarrier     Boolean @default(true) // ON by default for lethal warnings
+  emailPrebreeding Boolean @default(true)
+  emailRegistry    Boolean @default(true)
+  emailRecommended Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@schema("public")
+}
+
+/**
+ * GeneticNotificationSnooze - "Don't remind me" functionality for genetic notifications
+ * Users can snooze notifications for specific animals, tests, or animal+test combinations.
+ */
+model GeneticNotificationSnooze {
+  id       Int    @id @default(autoincrement())
+  userId   String
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // What is snoozed
+  snoozeType GeneticSnoozeType // ANIMAL, TEST, ANIMAL_TEST
+  animalId   Int? // Snooze all notifications for this animal
+  testCode   String? // Snooze notifications for this test (e.g., "HYPP", "OLWS")
+
+  // Duration
+  snoozedUntil DateTime? // null = permanent snooze
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, tenantId, snoozeType, animalId, testCode])
+  @@index([tenantId, userId])
+  @@index([animalId])
   @@schema("public")
 }
 
@@ -2238,6 +2523,9 @@ model Party {
   // Stallion bookings (P8) - mare owner
   stallionBookings StallionBooking[]
 
+  // Breeding Discovery (Phase 2) - seeking party on bookings
+  breedingBookings BreedingBooking[]
+
   @@index([tenantId, type])
   @@index([tenantId, name])
   @@index([tenantId, email])
@@ -2331,6 +2619,9 @@ model Contact {
   // Profile change requests from client portal
   changeRequests      ContactChangeRequest[]
   emailChangeRequests EmailChangeRequest[]
+
+  // Microchip registrations where this contact is the registered owner
+  microchipRegistrations AnimalMicrochipRegistration[] @relation("MicrochipRegisteredTo")
 
   @@unique([tenantId, email])
   @@unique([marketplaceUserId, tenantId])
@@ -2620,6 +2911,14 @@ model Animal {
   // Applies to all species, for females indicates reproductive readiness
   breedingAvailability String?
 
+  // Breeding Discovery: Line type classification
+  lineTypes       String[] // e.g., ["show", "working", "field", "pet"]
+  primaryLineType String? // Primary classification for filtering
+  lineDescription String? @db.Text // Free-text description of breeding lines
+
+  // Breeding Discovery: Relations
+  breedingListings BreedingListing[]
+
   // legacy links
   litterId         Int?
   litter           Litter?         @relation(fields: [litterId], references: [id], onDelete: SetNull)
@@ -2689,12 +2988,13 @@ model Animal {
   tagAssignments           TagAssignment[]
   owners                   AnimalOwner[]
   registryIds              AnimalRegistryIdentifier[]
-  shares                   AnimalShare[]                @relation("ShareAnimal")
-  individualAnimalListings MktListingIndividualAnimal[] @relation("AnimalIndividualAnimalListings")
-  programParticipants      AnimalProgramParticipant[]   @relation("AnimalProgramParticipants")
-  createdAt                DateTime                     @default(now())
-  updatedAt                DateTime                     @updatedAt
-  archived                 Boolean                      @default(false)
+  microchipRegistrations   AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
+  shares                   AnimalShare[]                 @relation("ShareAnimal")
+  individualAnimalListings MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
+  programParticipants      AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
+  createdAt                DateTime                      @default(now())
+  updatedAt                DateTime                      @updatedAt
+  archived                 Boolean                       @default(false)
 
   // Soft delete
   deletedAt         DateTime?
@@ -2737,6 +3037,10 @@ model Animal {
   stallionBookings StallionBooking[] @relation("StallionBookings")
   mareBookings     StallionBooking[] @relation("MareBookings")
 
+  // Breeding Discovery bookings (Phase 2)
+  breedingBookingsOffering BreedingBooking[] @relation("OfferingAnimal")
+  breedingBookingsSeeking  BreedingBooking[] @relation("SeekingAnimal")
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
   // ─────────────────────────────────────────────────────────────────────────────
@@ -2747,6 +3051,15 @@ model Animal {
 
   // Registry pedigree links (P6)
   registryPedigrees RegistryPedigree[] @relation("RegistryPedigreeLinkedAnimal")
+
+  // Supplement Tracking
+  supplementSchedules       SupplementSchedule[]
+  supplementAdministrations SupplementAdministration[]
+
+  // Nutrition & Food Tracking
+  feedingPlans   FeedingPlan[]
+  feedingRecords FeedingRecord[]
+  foodChanges    FoodChange[]
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -2763,6 +3076,7 @@ model Animal {
   @@index([tenantId, buyerPartyId])
   @@index([damId])
   @@index([sireId])
+  @@index([tenantId, species, primaryLineType])
   @@schema("public")
 }
 
@@ -3754,6 +4068,12 @@ model BreedingPlan {
   // Stallion booking that originated this plan (P8)
   stallionBooking StallionBooking?
 
+  // Breeding Discovery booking that originated this plan
+  breedingBooking BreedingBooking?
+
+  // Supplement Tracking
+  supplementSchedules SupplementSchedule[]
+
   archived      Boolean   @default(false)
   archiveReason String? /// Optional reason/note provided when archiving the plan
   deletedAt     DateTime?
@@ -3984,9 +4304,10 @@ model BreedingAttempt {
 
   semenBatchId Int?
 
-  success Boolean?
-  notes   String?
-  data    Json?
+  success  Boolean?
+  notes    String?
+  location String?  @db.VarChar(255) // Where the breeding occurred (e.g., "ABC Vet Clinic")
+  data     Json?
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Guarantee Tracking (P1 Sprint - P1.3)
@@ -4496,6 +4817,11 @@ model OffspringGroup {
   groupBuyerLinks  OffspringGroupBuyer[]         @relation("GroupBuyerGroup")
   schedulingBlocks SchedulingAvailabilityBlock[] @relation("GroupSchedulingBlocks")
 
+  // Nutrition tracking
+  FeedingPlan   FeedingPlan[]
+  FeedingRecord FeedingRecord[]
+  FoodChange    FoodChange[]
+
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   archivedAt DateTime?
@@ -4633,10 +4959,11 @@ model Offspring {
   archivedAt    DateTime?
   archiveReason String?   @db.Text
 
-  Tags                TagAssignment[]
-  Attachments         Attachment[]
-  Events              OffspringEvent[]
-  WaitlistAllocations WaitlistEntry[]  @relation("WaitlistAllocationOffspring")
+  Tags                   TagAssignment[]
+  Attachments            Attachment[]
+  Events                 OffspringEvent[]
+  WaitlistAllocations    WaitlistEntry[]               @relation("WaitlistAllocationOffspring")
+  microchipRegistrations AnimalMicrochipRegistration[] @relation("OffspringMicrochipRegistrations")
 
   // finance, tasks, health, documents, contracts
   Invoices   Invoice[]
@@ -5459,6 +5786,12 @@ model Expense {
   animalId         Int?
   animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: SetNull)
 
+  // Optional link to food product (for FOOD category expenses)
+  foodProductId Int?
+  foodProduct   FoodProduct? @relation(fields: [foodProductId], references: [id], onDelete: SetNull)
+  quantityValue Float?  // Quantity purchased (for FOOD category)
+  quantityUnit  String? // Unit: OZ, LB, G, KG (for FOOD category)
+
   notes String?
   data  Json?
 
@@ -5474,6 +5807,7 @@ model Expense {
   @@index([tenantId, animalId])
   @@index([tenantId, vendorPartyId])
   @@index([tenantId, category])
+  @@index([tenantId, foodProductId])
   @@schema("public")
 }
 
@@ -6122,6 +6456,9 @@ model Document {
   objectKey        String?
   url              String?
 
+  // Watermarking
+  watermarkEnabled Boolean @default(false)
+
   // Relation to trait values
   traitValueLinks AnimalTraitValueDocument[]
 
@@ -6194,6 +6531,61 @@ model DocumentBundleItem {
   @@unique([bundleId, documentId]) // Prevent duplicate documents in same bundle
   @@index([bundleId])
   @@index([documentId])
+  @@schema("public")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Document Watermarking & Access Tracking
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Track all document/media access events for audit trail
+model MediaAccessEvent {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  documentId Int? // Optional link to Document (may track raw storage keys too)
+  storageKey String // S3 key of accessed file
+
+  actorType         MediaAccessActor
+  userId            String?          @db.VarChar(36) // Internal user (UUID)
+  marketplaceUserId Int? // Marketplace buyer/visitor
+  partyId           Int? // Portal party
+
+  accessType MediaAccessType
+
+  ip        String? @db.VarChar(45) // IPv4 or IPv6
+  userAgent String? @db.Text
+
+  watermarked   Boolean @default(false)
+  watermarkHash String? @db.VarChar(32) // MD5 hash of watermark settings used
+
+  @@index([tenantId, createdAt])
+  @@index([documentId])
+  @@index([storageKey])
+  @@schema("public")
+}
+
+/// Cache watermarked asset references to avoid re-processing
+model WatermarkedAsset {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  originalKey    String // Original S3 key
+  watermarkedKey String // Watermarked version S3 key
+  settingsHash   String @db.VarChar(32) // MD5 hash of watermark settings
+
+  mimeType  String
+  sizeBytes Int
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime // Cache expiration (7 days default)
+
+  @@unique([tenantId, originalKey, settingsHash])
+  @@index([expiresAt])
   @@schema("public")
 }
 
@@ -7104,6 +7496,18 @@ enum TwoFactorMethod {
   PASSKEY // WebAuthn/Passkey (recommended)
   TOTP // Authenticator app
   SMS // SMS OTP (fallback)
+
+  @@schema("marketplace")
+}
+
+/**
+ * ServiceSourceType - Discriminator for unified service listings
+ * PROVIDER: Service listing from marketplace provider
+ * BREEDER: Service listing from breeder/tenant
+ */
+enum ServiceSourceType {
+  PROVIDER
+  BREEDER
 
   @@schema("marketplace")
 }
@@ -8096,7 +8500,8 @@ model MarketplaceProvider {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  listings             MarketplaceServiceListing[]
+  listings             MktListingProviderService[] // Legacy table (deprecated)
+  unifiedListings      MktListingService[]         // New unified listings table
   providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
   providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
   providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
@@ -8168,7 +8573,89 @@ model VerificationRequest {
   @@schema("marketplace")
 }
 
-model MarketplaceServiceListing {
+/**
+ * MktListingService - Unified service listings table
+ * Consolidates provider and breeder service listings into single table
+ * Uses source_type discriminator to distinguish between sources
+ */
+model MktListingService {
+  id         Int               @id @default(autoincrement())
+  sourceType ServiceSourceType @map("source_type")
+
+  // Source references (one will be NULL based on source_type)
+  providerId Int?                 @map("provider_id")
+  provider   MarketplaceProvider? @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  tenantId Int?    @map("tenant_id")
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Listing details
+  slug        String  @unique
+  title       String  @db.VarChar(255)
+  description String? @db.Text
+
+  // Service categorization
+  category          String  @db.VarChar(100)
+  subcategory       String? @db.VarChar(100)
+  customServiceType String? @map("custom_service_type") @db.VarChar(50)
+
+  // Pricing
+  priceCents BigInt? @map("price_cents")
+  priceType  String? @map("price_type") @db.VarChar(50)
+  priceText  String? @map("price_text") @db.VarChar(100)
+
+  // Media
+  images        Json?
+  coverImageUrl String? @map("cover_image_url") @db.VarChar(500)
+
+  // Location
+  city      String?  @db.VarChar(100)
+  state     String?  @db.VarChar(50)
+  zip       String?  @db.VarChar(20)
+  country   String?  @db.VarChar(2)
+  latitude  Decimal? @db.Decimal(10, 8)
+  longitude Decimal? @db.Decimal(11, 8)
+
+  // Service details
+  duration     String? @db.VarChar(100)
+  availability String? @db.Text
+
+  // SEO
+  metaDescription String? @map("meta_description") @db.Text
+  keywords        String? @db.Text
+
+  // Stats
+  viewCount    Int @default(0) @map("view_count")
+  inquiryCount Int @default(0) @map("inquiry_count")
+  bookingCount Int @default(0) @map("booking_count")
+
+  // Status
+  status      MarketplaceListingStatus @default(DRAFT)
+  publishedAt DateTime?                @map("published_at")
+  pausedAt    DateTime?                @map("paused_at")
+
+  // Moderation
+  flagged   Boolean   @default(false)
+  flaggedAt DateTime? @map("flagged_at")
+
+  // Timestamps
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([providerId])
+  @@index([tenantId])
+  @@index([slug])
+  @@index([status])
+  @@index([category])
+  @@index([city, state])
+  @@index([sourceType])
+  @@index([deletedAt])
+  @@map("MktListingService")
+  @@schema("marketplace")
+}
+
+model MktListingProviderService {
   id         Int                 @id @default(autoincrement())
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
@@ -8245,7 +8732,7 @@ model MarketplaceServiceListing {
 model MarketplaceAbuseReport {
   id        Int                       @id @default(autoincrement())
   listingId Int                       @map("listing_id")
-  listing   MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   reason        String
   details       String?   @db.Text
@@ -8275,7 +8762,7 @@ model MarketplaceTransaction {
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
   listingId Int?                       @map("listing_id")
-  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Transaction details
   serviceDescription String  @map("service_description")
@@ -8411,7 +8898,7 @@ model MarketplaceMessageThread {
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
   listingId Int?                       @map("listing_id")
-  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
   transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -8437,8 +8924,9 @@ model MarketplaceMessage {
   threadId Int                      @map("thread_id")
   thread   MarketplaceMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
-  senderId Int             @map("sender_id")
-  sender   MarketplaceUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderId   Int             @map("sender_id")
+  sender     MarketplaceUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderType String          @default("client") @map("sender_type") // "client" | "provider"
 
   messageText String    @map("message_text")
   readAt      DateTime? @map("read_at")
@@ -8463,7 +8951,7 @@ model MarketplaceReview {
   client   MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
 
   listingId Int?                       @map("listing_id")
-  listing   MarketplaceServiceListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Rating & review
   rating     Int // 1-5 stars
@@ -8538,7 +9026,7 @@ model MarketplaceServiceTag {
 
 model MarketplaceServiceTagAssignment {
   listingId Int                       @map("listing_id")
-  listing   MarketplaceServiceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
   tagId     Int                       @map("tag_id")
   tag       MarketplaceServiceTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
@@ -9222,5 +9710,782 @@ model RegistrySyncLog {
   @@index([tenantId, registryId])
   @@index([createdAt])
   @@index([action])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Microchip Registry Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MicrochipRenewalType {
+  LIFETIME // No renewal needed (FreePetChipRegistry, AKC Reunite)
+  ANNUAL // Yearly renewal (HomeAgain, 24PetWatch)
+  UNKNOWN // User-entered registry, renewal unknown
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Nutrition & Food Tracking Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum FoodType {
+  DRY
+  WET
+  RAW
+  FRESH
+  FREEZE_DRIED
+  SUPPLEMENT
+  TREAT
+  OTHER
+
+  @@schema("public")
+}
+
+enum LifeStage {
+  PUPPY // Young dogs, kittens, foals
+  JUNIOR // Transitional stage
+  ADULT
+  SENIOR
+  ALL_STAGES // Suitable for all life stages
+  BREEDING // Breeding/gestation formula
+  PERFORMANCE // High activity/working animals
+
+  @@schema("public")
+}
+
+enum FoodChangeReason {
+  LIFE_STAGE // Age-based transition
+  HEALTH_ISSUE // Allergies, digestive issues, medical condition
+  VET_RECOMMENDATION // Veterinary advice
+  AVAILABILITY // Product discontinued or unavailable
+  COST_OPTIMIZATION // Budget considerations
+  PERFORMANCE // Athletic/working animal needs
+  PREFERENCE // Animal preference or palatability
+  OTHER
+
+  @@schema("public")
+}
+
+enum SuccessRating {
+  EXCELLENT // Perfect transition, no issues
+  GOOD // Minor issues, overall success
+  FAIR // Some problems but manageable
+  POOR // Significant issues, may need to reconsider
+
+  @@schema("public")
+}
+
+// Lookup table of known microchip registries (seeded data)
+model MicrochipRegistry {
+  id          Int                  @id @default(autoincrement())
+  name        String // Display name: "HomeAgain", "AKC Reunite"
+  slug        String               @unique // URL-safe: "homeagain", "akc-reunite"
+  website     String? // "https://www.homeagain.com"
+  renewalType MicrochipRenewalType @default(UNKNOWN)
+  species     String[] // ["DOG", "CAT", "HORSE", "ALL"]
+  isActive    Boolean              @default(true)
+  sortOrder   Int                  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  registrations AnimalMicrochipRegistration[]
+
+  @@index([isActive, sortOrder])
+  @@schema("public")
+}
+
+// Tracks an animal's microchip registration with a specific registry
+model AnimalMicrochipRegistration {
+  id       Int @id @default(autoincrement())
+  tenantId Int
+
+  // Polymorphic link - one of these will be set
+  animalId    Int? // FK to Animal (adult animals)
+  offspringId Int? // FK to Offspring (litter offspring)
+
+  microchipNumber String // The actual chip number (denormalized for display)
+  registryId      Int // FK to MicrochipRegistry
+
+  registrationDate      DateTime? // When registered with this registry
+  expirationDate        DateTime? // Null for lifetime registrations
+  accountNumber         String? // Registry's confirmation/account number
+  registeredToContactId Int? // FK to Contact (current owner/buyer)
+  notes                 String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animal       Animal?           @relation("AnimalMicrochipRegistrations", fields: [animalId], references: [id], onDelete: Cascade)
+  offspring    Offspring?        @relation("OffspringMicrochipRegistrations", fields: [offspringId], references: [id], onDelete: Cascade)
+  registry     MicrochipRegistry @relation(fields: [registryId], references: [id])
+  registeredTo Contact?          @relation("MicrochipRegisteredTo", fields: [registeredToContactId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, animalId, registryId], name: "unique_animal_registry")
+  @@unique([tenantId, offspringId, registryId], name: "unique_offspring_registry")
+  @@index([tenantId, expirationDate])
+  @@index([registeredToContactId])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Supplement Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * SupplementProtocol - Stores supplement protocol templates
+ * Can be system benchmark protocols (tenantId = null) or tenant custom protocols
+ */
+model SupplementProtocol {
+  id       Int     @id @default(autoincrement())
+  tenantId Int? // null = system benchmark protocol
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Basic Info
+  name        String
+  description String?   @db.Text
+  species     Species[]
+
+  // Benchmark Metadata (for system protocols)
+  isBenchmark     Boolean @default(false)
+  benchmarkSource String? // e.g., "AAEP Guidelines", "Canine Reproduction Standards"
+  benchmarkNotes  String? @db.Text
+
+  // Dosage Information (informational only - requires disclaimer)
+  dosageAmount        String? // e.g., "0.044 mg/kg"
+  dosageUnit          String? // e.g., "ml", "mg/kg", "tablets"
+  administrationRoute String? // e.g., "oral", "injection", "topical"
+
+  // Trigger Configuration
+  triggerType SupplementTriggerType
+
+  // For BREEDING_CYCLE_RELATIVE triggers
+  anchorEvent BreedingCycleAnchorEvent?
+  offsetDays  Int? // Negative = before, Positive = after (e.g., -63 = 63 days before)
+
+  // For AGE_BASED triggers
+  ageTriggerWeeks Int?
+
+  // Duration & Frequency
+  durationDays Int? // null = single dose or ONGOING
+  frequency    SupplementFrequency @default(DAILY)
+
+  // Notification Settings
+  reminderDaysBefore Int[] @default([7, 3, 1])
+
+  // Status
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  schedules SupplementSchedule[]
+
+  @@index([tenantId])
+  @@index([tenantId, active])
+  @@index([isBenchmark])
+  @@schema("public")
+}
+
+/**
+ * SupplementSchedule - Links a protocol to an animal, optionally tied to a breeding plan
+ */
+model SupplementSchedule {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links
+  protocolId     Int
+  protocol       SupplementProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+  breedingPlanId Int? // null = standalone
+  breedingPlan   BreedingPlan?      @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+  animalId       Int
+  animal         Animal             @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Mode
+  mode SupplementScheduleMode
+
+  // Dates
+  calculatedStartDate DateTime
+  calculatedEndDate   DateTime?
+  startDateOverride   DateTime? // User override
+  nextDueDate         DateTime? // Calculated from frequency
+
+  // Tracking
+  status             SupplementScheduleStatus @default(NOT_STARTED)
+  completedDoses     Int                      @default(0)
+  totalDoses         Int? // null for ONGOING
+  lastAdministeredAt DateTime?
+
+  // Disclaimer Acknowledgment (CRITICAL for liability protection)
+  disclaimerAcknowledgedAt DateTime?
+  disclaimerAcknowledgedBy String? // userId
+
+  // Metadata
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  administrations SupplementAdministration[]
+
+  @@index([tenantId])
+  @@index([breedingPlanId])
+  @@index([animalId])
+  @@index([status, calculatedStartDate])
+  @@index([status, nextDueDate])
+  @@schema("public")
+}
+
+/**
+ * SupplementAdministration - Records individual supplement doses administered
+ */
+model SupplementAdministration {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links
+  scheduleId Int
+  schedule   SupplementSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  animalId   Int
+  animal     Animal             @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Administration Details
+  administeredAt DateTime
+  actualDosage   String? // Override if different from protocol
+  givenBy        String?
+  doseNumber     Int? // e.g., "dose 3 of 7"
+
+  // Metadata
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@index([animalId])
+  @@index([administeredAt])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Nutrition & Food Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * FoodProduct - Food products available for feeding animals
+ * Stores nutritional info, cost data, and species compatibility
+ */
+model FoodProduct {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Basic Info
+  name      String
+  brand     String?
+  sku       String? // Product SKU or barcode
+  foodType  FoodType
+  species   Species[] // Compatible species
+  lifeStage LifeStage? // Target life stage (null = all stages)
+  photoUrl  String?    @db.Text
+
+  // Packaging & Cost (stored in cents for precision)
+  bagSizeOz      Int? // Bag/package size in ounces
+  costCents      Int? // Cost per bag in cents
+  costPerOzCents Int? // Calculated: costCents / bagSizeOz
+  servingSizeOz  Float? // Recommended serving size in ounces
+
+  // Nutritional Information
+  proteinPct     Float? // Protein percentage
+  fatPct         Float? // Fat percentage
+  fiberPct       Float? // Fiber percentage
+  caloriesPerCup Int? // Calories per cup (for kibble)
+
+  // Status
+  isActive   Boolean @default(true) // Available for new plans
+  isArchived Boolean @default(false) // Soft deleted
+
+  // Notes
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  feedingPlans   FeedingPlan[]
+  feedingRecords FeedingRecord[]
+  expenses       Expense[] // Purchases linked to this product
+
+  @@index([tenantId])
+  @@index([tenantId, foodType])
+  @@index([tenantId, isActive])
+  @@index([tenantId, species])
+  @@schema("public")
+}
+
+/**
+ * FeedingPlan - Links a food product to an animal with feeding schedule
+ * Tracks portion sizes, feeding times, and auto-expense settings
+ */
+model FeedingPlan {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links - either animalId OR offspringGroupId (one required, not both)
+  animalId         Int?
+  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  offspringGroupId Int?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  foodProductId    Int
+  foodProduct      FoodProduct     @relation(fields: [foodProductId], references: [id], onDelete: Restrict)
+
+  // Feeding Configuration
+  portionOz      Float // Portion size per feeding in ounces
+  feedingsPerDay Int      @default(2) // Number of feedings per day
+  feedingTimes   String[] // e.g., ["07:00", "18:00"]
+
+  // Date Range
+  startDate DateTime
+  endDate   DateTime? // Null = ongoing/active
+
+  // Settings
+  autoCreateExpense Boolean @default(false) // Auto-create expense on feeding log
+  isActive          Boolean @default(true) // Current active plan
+
+  // Notes
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  feedingRecords  FeedingRecord[]
+  foodChangesTo   FoodChange[]    @relation("FoodChangeNewPlan")
+  foodChangesFrom FoodChange[]    @relation("FoodChangePrevPlan")
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, animalId, isActive])
+  @@index([tenantId, offspringGroupId])
+  @@index([tenantId, offspringGroupId, isActive])
+  @@index([animalId, startDate])
+  @@index([offspringGroupId, startDate])
+  @@schema("public")
+}
+
+/**
+ * FeedingRecord - Individual feeding log entries
+ * Tracks actual feedings, skipped meals, appetite scores
+ */
+model FeedingRecord {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links - either animalId OR offspringGroupId (one required, not both)
+  animalId         Int?
+  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  offspringGroupId Int?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  feedingPlanId    Int? // May be null for ad-hoc feedings
+  feedingPlan      FeedingPlan?    @relation(fields: [feedingPlanId], references: [id], onDelete: SetNull)
+  foodProductId    Int? // Preserved if plan deleted
+  foodProduct      FoodProduct?    @relation(fields: [foodProductId], references: [id], onDelete: SetNull)
+
+  // Feeding Details
+  fedAt     DateTime // When the feeding occurred
+  portionOz Float? // Actual portion (may differ from plan)
+  costCents Int? // Calculated cost for this feeding
+
+  // Tracking
+  skipped       Boolean @default(false) // Was the feeding skipped?
+  skipReason    String? // Reason if skipped
+  appetiteScore Int? // 1-5 scale (1=poor, 5=excellent)
+
+  // Expense Integration
+  expenseId Int? @unique // FK to Expense if auto-created
+
+  // Notes
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, animalId, fedAt])
+  @@index([tenantId, offspringGroupId])
+  @@index([tenantId, offspringGroupId, fedAt])
+  @@index([fedAt])
+  @@schema("public")
+}
+
+/**
+ * FoodChange - Records food transitions with outcomes
+ * Tracks why food changed, transition protocol, and success rating
+ */
+model FoodChange {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Links - either animalId OR offspringGroupId (one required, not both)
+  animalId         Int?
+  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  offspringGroupId Int?
+  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  previousPlanId   Int? // Previous feeding plan (null if first food)
+  previousPlan     FeedingPlan?    @relation("FoodChangePrevPlan", fields: [previousPlanId], references: [id], onDelete: SetNull)
+  newPlanId        Int
+  newPlan          FeedingPlan     @relation("FoodChangeNewPlan", fields: [newPlanId], references: [id], onDelete: Cascade)
+
+  // Change Details
+  changeDate    DateTime // When the change was made
+  changeReason  FoodChangeReason
+  reasonDetails String?          @db.Text // Additional details about reason
+
+  // Transition Protocol
+  transitionDays  Int? // Days for gradual transition
+  transitionNotes String? @db.Text // How to transition (e.g., "25% new food days 1-3")
+
+  // Outcomes (filled in after transition)
+  reactions      String?        @db.Text // Any adverse reactions observed
+  digestiveNotes String?        @db.Text // Stool quality, digestive issues
+  overallSuccess SuccessRating? // Overall transition success
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([tenantId, offspringGroupId])
+  @@index([animalId, changeDate])
+  @@index([offspringGroupId, changeDate])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Breeding Discovery (Phase 2): New Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BreederProfile {
+  id       Int    @id @default(autoincrement())
+  tenantId Int    @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Attributes
+  registryAffiliations String[]
+  primaryRegistry      String?
+  breedingLineTypes    String[]
+  breedingPhilosophy   String?   @db.Text
+  requiresHealthTesting Boolean  @default(false)
+  requiresContract     Boolean   @default(false)
+  requiredTests        String[]
+
+  // Exclusions
+  excludedRegistries String[]
+  excludedLineTypes  String[]
+  excludedAttributes String[]
+  exclusionNotes     String? @db.Text
+
+  // Visibility toggles
+  showRegistryAffiliations Boolean @default(true)
+  showBreedingLineTypes    Boolean @default(true)
+  showRequirements         Boolean @default(true)
+
+  // Public info
+  publicBio  String? @db.Text
+  websiteUrl String?
+  socialLinks Json?  @db.JsonB
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model BreedingDiscoveryProgram {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  programNumber String @unique
+  name          String
+  description   String? @db.Text
+
+  species     Species
+  programType String // e.g., "stud_service", "breeding_program", "co_own"
+
+  // Defaults inherited by listings
+  defaultBreedingMethods       String[]
+  defaultGuaranteeType         String?
+  defaultGuaranteeTerms        String? @db.Text
+  defaultRequiresHealthTesting Boolean  @default(false)
+  defaultRequiredTests         String[]
+  defaultRequiresContract      Boolean  @default(false)
+
+  // Public marketplace settings
+  publicEnabled     Boolean   @default(false)
+  publicSlug        String?   @unique
+  publicEnabledAt   DateTime?
+  publicHeadline    String?
+  publicDescription String?   @db.Text
+  media             String[]
+
+  // Location
+  locationCity    String?
+  locationState   String?
+  locationCountry String?
+
+  status BreedingProgramStatus @default(ACTIVE)
+
+  // Relations
+  listings BreedingListing[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([publicEnabled, status])
+  @@index([publicSlug])
+  @@schema("public")
+}
+
+model BreedingListing {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  listingNumber String @unique
+
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id])
+
+  programId Int?
+  program   BreedingDiscoveryProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+
+  species Species
+  breed   String?
+  sex     Sex
+
+  intent BreedingListingIntent
+
+  headline    String
+  description String? @db.Text
+  media       String[]
+
+  // Pricing
+  feeCents     Int?
+  feeDirection BreedingListingFeeDirection?
+  feeNotes     String? @db.Text
+
+  // Availability
+  availableFrom   DateTime?
+  availableTo     DateTime?
+  seasonName      String?
+  breedingMethods String[]
+  maxBookings     Int?
+  currentBookings Int @default(0)
+
+  // Guarantee
+  guaranteeType  String?
+  guaranteeTerms String? @db.Text
+
+  // Requirements
+  requiresHealthTesting  Boolean  @default(false)
+  requiredTests          String[]
+  requiresContract       Boolean  @default(false)
+  additionalRequirements String?  @db.Text
+
+  // Lifecycle
+  status      BreedingListingStatus @default(DRAFT)
+  publishedAt DateTime?
+  pausedAt    DateTime?
+  closedAt    DateTime?
+  closedReason String?
+
+  // Public marketplace settings
+  publicEnabled             Boolean   @default(false)
+  publicSlug                String?   @unique
+  publicEnabledAt           DateTime?
+  publicShowPedigree        Boolean   @default(true)
+  publicPedigreeDepth       Int       @default(2)
+  publicShowTitles          Boolean   @default(true)
+  publicShowHealthTesting   Boolean   @default(true)
+  publicShowLineType        Boolean   @default(true)
+  publicShowProducingStats  Boolean   @default(false)
+  publicShowBreederName     Boolean   @default(true)
+  publicShowBreederLocation Boolean   @default(true)
+  publicShowFee             Boolean   @default(true)
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  // Inquiry settings
+  acceptInquiries    Boolean @default(true)
+  inquiryEmail       String?
+  inquiryPhone       String?
+  inquiryInstructions String? @db.Text
+
+  // Counters
+  viewCount    Int @default(0)
+  inquiryCount Int @default(0)
+  bookingCount Int @default(0)
+
+  // Location
+  locationCity    String?
+  locationState   String?
+  locationCountry String?
+  locationLat     Float?
+  locationLng     Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  // Relations
+  inquiries BreedingInquiry[]
+  bookings  BreedingBooking[]
+
+  @@index([tenantId, status])
+  @@index([species, breed, status])
+  @@index([species, intent, status])
+  @@index([publicEnabled, status])
+  @@index([publicSlug])
+  @@index([locationState, species])
+  @@index([animalId])
+  @@index([programId])
+  @@schema("public")
+}
+
+model BreedingInquiry {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  listingId Int
+  listing   BreedingListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  // Inquirer info
+  inquirerName  String
+  inquirerEmail String
+  inquirerPhone String?
+  inquirerType  String // e.g., "breeder", "owner", "agent"
+  isBreeder     Boolean @default(false)
+
+  // Content
+  message            String @db.Text
+  interestedInMethod String?
+
+  // Status
+  status    BreedingInquiryStatus @default(NEW)
+  readAt    DateTime?
+  repliedAt DateTime?
+
+  // Conversion tracking
+  convertedToUserId    Int?
+  convertedToBookingId Int?
+  convertedAt          DateTime?
+
+  // Attribution
+  referrerUrl String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@index([listingId])
+  @@index([inquirerEmail])
+  @@schema("public")
+}
+
+model BreedingBooking {
+  id            Int    @id @default(autoincrement())
+  bookingNumber String @unique
+
+  // Source
+  sourceListingId Int?
+  sourceListing   BreedingListing? @relation(fields: [sourceListingId], references: [id], onDelete: SetNull)
+  sourceInquiryId Int?
+
+  // Offering side (the breeder offering the animal)
+  offeringTenantId Int
+  offeringTenant   Tenant @relation("OfferingBookings", fields: [offeringTenantId], references: [id])
+  offeringAnimalId Int
+  offeringAnimal   Animal @relation("OfferingAnimal", fields: [offeringAnimalId], references: [id])
+
+  // Seeking side (the party requesting breeding)
+  seekingPartyId  Int
+  seekingParty    Party  @relation(fields: [seekingPartyId], references: [id])
+  seekingTenantId Int?
+  seekingTenant   Tenant? @relation("SeekingBookings", fields: [seekingTenantId], references: [id])
+  seekingAnimalId Int?
+  seekingAnimal   Animal? @relation("SeekingAnimal", fields: [seekingAnimalId], references: [id])
+
+  // External animal info (when seeking animal not in system)
+  externalAnimalName  String?
+  externalAnimalReg   String?
+  externalAnimalBreed String?
+  externalAnimalSex   String?
+
+  species     Species
+  bookingType BreedingBookingType
+
+  // Scheduling
+  preferredMethod    String?
+  preferredDateStart DateTime?
+  preferredDateEnd   DateTime?
+  scheduledDate      DateTime?
+
+  // Shipping
+  shippingRequired Boolean @default(false)
+  shippingAddress  String? @db.Text
+
+  // Pricing
+  agreedFeeCents Int
+  depositCents   Int @default(0)
+  totalPaidCents Int @default(0)
+  feeDirection   BreedingListingFeeDirection
+
+  // Status
+  status          BreedingBookingStatus @default(INQUIRY)
+  statusChangedAt DateTime              @default(now())
+
+  // Requirements
+  requirements       Json? @db.JsonB
+  requirementsConfig String?
+
+  // Guarantee
+  guaranteeType String?
+
+  // Link to BreedingPlan
+  breedingPlanId Int?          @unique
+  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Notes
+  notes         String? @db.Text
+  internalNotes String? @db.Text
+
+  // Audit
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  cancelledAt        DateTime?
+  cancellationReason String?
+
+  @@index([offeringTenantId, status])
+  @@index([seekingTenantId, status])
+  @@index([sourceListingId])
+  @@index([seekingPartyId])
+  @@index([offeringAnimalId])
   @@schema("public")
 }
