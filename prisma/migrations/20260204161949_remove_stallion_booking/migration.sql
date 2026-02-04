@@ -22,8 +22,8 @@ ALTER TABLE "StallionBooking" DROP CONSTRAINT "StallionBooking_mareId_fkey";
 -- DropForeignKey
 ALTER TABLE "StallionBooking" DROP CONSTRAINT "StallionBooking_mareOwnerPartyId_fkey";
 
--- DropForeignKey
-ALTER TABLE "StallionBooking" DROP CONSTRAINT "StallionBooking_serviceListingId_fkey";
+-- DropForeignKey (IF EXISTS: constraint may already be gone via CASCADE from remove_deprecated_marketplace_listing_tables)
+ALTER TABLE "StallionBooking" DROP CONSTRAINT IF EXISTS "StallionBooking_serviceListingId_fkey";
 
 -- DropForeignKey
 ALTER TABLE "StallionBooking" DROP CONSTRAINT "StallionBooking_stallionId_fkey";

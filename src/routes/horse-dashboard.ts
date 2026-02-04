@@ -933,7 +933,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       const currentYear = new Date().getFullYear();
       const yearStart = new Date(currentYear, 0, 1);
 
-      // Get stallions with breeding attempts, plans, and stud service listings
+      // Get stallions with breeding attempts and plans
       const stallions = await prisma.animal.findMany({
         where: {
           tenantId,
@@ -955,17 +955,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
               createdAt: { gte: yearStart },
             },
           },
-          studServiceListings: {
-            where: {
-              status: "LIVE",
-            },
-            select: {
-              id: true,
-              priceCents: true,
-              maxBookings: true,
-              bookingsReceived: true,
-            },
-          },
+          // studServiceListings removed - old marketplace listing system deprecated
         },
       });
 
@@ -979,7 +969,6 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
 
       const byStallion = stallions.map((stallion: StallionWithRelations) => {
         const attempts = stallion.breedingAttemptsAsSire;
-        const listing = stallion.studServiceListings?.[0]; // Primary active listing
 
         // Count breedings
         const breedingCount = attempts.length;
@@ -993,17 +982,9 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         const successRate =
           breedingCount > 0 ? Math.round((successfulBreedings / breedingCount) * 100) : 0;
 
-        // Calculate revenue from completed breedings * stud fee
-        // This is an estimate; actual revenue tracking will come from transactions
-        const studFeeCents = listing?.priceCents || 0;
-        const revenueCents = successfulBreedings * studFeeCents;
-        totalRevenueCents += revenueCents;
-
-        // Available slots from listing
-        let availableSlots: number | undefined;
-        if (listing && listing.maxBookings !== null) {
-          availableSlots = Math.max(0, listing.maxBookings - (listing.bookingsReceived || 0));
-        }
+        // Revenue calculation removed (old marketplace listing system deprecated)
+        // Revenue should be tracked through breeding attempts or booking transactions
+        const revenueCents = 0;
 
         return {
           stallionId: stallion.id,
@@ -1012,8 +993,8 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           totalRevenueCents: revenueCents,
           breedingCount,
           successRate,
-          activeListingId: listing?.id,
-          availableSlots,
+          activeListingId: undefined,
+          availableSlots: undefined,
         };
       });
 
@@ -1025,19 +1006,8 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         return b.breedingCount - a.breedingCount;
       });
 
-      // Calculate average fee from stallions with active listings
-      const stallionsWithFees = stallions.filter(
-        (s: StallionWithRelations) => s.studServiceListings?.[0]?.priceCents
-      );
-      const avgFeeCents =
-        stallionsWithFees.length > 0
-          ? Math.round(
-              stallionsWithFees.reduce(
-                (sum: number, s: StallionWithRelations) => sum + (s.studServiceListings?.[0]?.priceCents || 0),
-                0
-              ) / stallionsWithFees.length
-            )
-          : 0;
+      // Average fee calculation removed (old marketplace listing system deprecated)
+      const avgFeeCents = 0;
 
       return reply.send({
         summary: {
@@ -1104,42 +1074,11 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         return reply.code(400).send({ error: "missing_tenant" });
       }
 
-      // Get all active stud service listings for this tenant's stallions
-      const studListings = await prisma.mktListingBreederService.findMany({
-        where: {
-          status: "LIVE",
-          listingType: "STUD_SERVICE",
-          stallion: {
-            tenantId,
-            species: "HORSE",
-            sex: "MALE",
-            archived: false,
-          },
-        },
-        select: {
-          maxBookings: true,
-          bookingsReceived: true,
-        },
-      });
-
-      // Aggregate across all stallions
-      let totalBookingsReceived = 0;
-      let totalMaxBookings: number | null = 0; // null means unlimited
-
-      for (const listing of studListings) {
-        totalBookingsReceived += listing.bookingsReceived || 0;
-
-        if (listing.maxBookings === null) {
-          // If any stallion has unlimited, the total is unlimited
-          totalMaxBookings = null;
-        } else if (totalMaxBookings !== null) {
-          totalMaxBookings += listing.maxBookings;
-        }
-      }
-
+      // Stud service listings removed (old marketplace listing system deprecated)
+      // Booking data should now come from BreedingBooking table
       return reply.send({
-        bookingsReceived: totalBookingsReceived,
-        maxBookings: totalMaxBookings,
+        bookingsReceived: 0,
+        maxBookings: null,
       });
     } catch (err) {
       console.error("Error fetching season bookings:", err);
