@@ -1047,7 +1047,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           avgFeeCents,
         },
         byStallion,
-        recentPayments: [], // TODO: Populate from future StallionBooking/Payment model
+        recentPayments: [], // TODO: Populate from BreedingBooking payment records
       });
     } catch (err) {
       console.error("Error fetching stallion revenue:", err);

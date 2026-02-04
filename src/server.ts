@@ -560,7 +560,6 @@ import buyerAnalyticsRoutes from "./routes/buyer-analytics.js"; // Buyer CRM Ana
 import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P5)
 import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
 import semenInventoryRoutes from "./routes/semen-inventory.js"; // Semen Inventory (P7)
-import stallionBookingsRoutes from "./routes/stallion-bookings.js"; // Stallion Bookings (P8)
 import breederProfileRoutes from "./routes/breeder-profile.js"; // Breeding Discovery: Breeder Profile (Phase 2)
 import breedingDiscoveryProgramsRoutes from "./routes/breeding-discovery-programs.js"; // Breeding Discovery: Programs (Phase 2)
 import breedingDiscoveryListingsRoutes from "./routes/breeding-discovery-listings.js"; // Breeding Discovery: Listings (Phase 2)
@@ -985,7 +984,6 @@ app.register(
     api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
-    api.register(stallionBookingsRoutes); // /api/v1/stallion-bookings/* (Stallion Bookings - P8)
     api.register(breederProfileRoutes); // /api/v1/breeder-profile/* (Breeding Discovery - Phase 2)
     api.register(breedingDiscoveryProgramsRoutes); // /api/v1/breeding-discovery/programs/* (Breeding Discovery - Phase 2)
     api.register(breedingDiscoveryListingsRoutes); // /api/v1/breeding-discovery/listings/* (Breeding Discovery - Phase 2)

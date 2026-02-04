@@ -2439,21 +2439,21 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       orderBy: { attemptAt: "desc" },
     });
 
-    // Get stallion bookings for this stallion
-    const bookings = await prisma.stallionBooking.findMany({
+    // Get breeding bookings for this animal
+    const bookings = await prisma.breedingBooking.findMany({
       where: {
-        tenantId,
-        stallionId: animalId,
+        offeringTenantId: tenantId,
+        offeringAnimalId: animalId,
       },
       include: {
-        mare: {
+        seekingAnimal: {
           select: { id: true, name: true },
         },
-        mareOwnerParty: {
+        seekingParty: {
           select: { id: true, name: true },
         },
-        serviceListing: {
-          select: { id: true, seasonName: true, priceCents: true, maxBookings: true },
+        sourceListing: {
+          select: { id: true, listingNumber: true },
         },
       },
       orderBy: { createdAt: "desc" },
