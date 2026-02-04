@@ -8414,6 +8414,10 @@ model MktListingService {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  // Relations
+  assignments  MarketplaceServiceTagAssignment[]
+  transactions MarketplaceTransaction[]
+
   @@index([providerId])
   @@index([tenantId])
   @@index([slug])
@@ -8457,7 +8461,8 @@ model MarketplaceTransaction {
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
-  listingId Int?                       @map("listing_id")
+  listingId Int?               @map("listing_id")
+  listing   MktListingService? @relation(fields: [listingId], references: [id])
 
   // Transaction details
   serviceDescription String  @map("service_description")
@@ -8718,9 +8723,10 @@ model MarketplaceServiceTag {
 }
 
 model MarketplaceServiceTagAssignment {
-  listingId Int                       @map("listing_id")
-  tagId     Int                       @map("tag_id")
-  tag       MarketplaceServiceTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  listingId Int               @map("listing_id")
+  listing   MktListingService @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  tagId     Int               @map("tag_id")
+  tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([listingId, tagId])
   @@index([listingId])

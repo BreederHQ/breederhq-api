@@ -542,6 +542,7 @@ import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food trackin
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
+import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
@@ -1041,6 +1042,7 @@ app.register(
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
     api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
+    api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
   },
   { prefix: "/api/v1" }
 );
