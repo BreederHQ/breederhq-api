@@ -2194,12 +2194,12 @@ export default async function marketplaceV2Routes(
         where: {
           sourceType: "BREEDER",
           tenantId,
-          listingType: { in: SERVICE_LISTING_TYPES as any[] },
+          category: { in: SERVICE_LISTING_TYPES as any[] },
         },
         select: {
           id: true,
           title: true,
-          listingType: true,
+          category: true,
           status: true,
           viewCount: true,
           inquiryCount: true,
@@ -2290,7 +2290,7 @@ export default async function marketplaceV2Routes(
         return {
           serviceId: service.id,
           serviceName: service.title,
-          serviceType: service.listingType,
+          serviceType: service.category,
           status: service.status,
           viewsThisMonth,
           viewsLastMonth,
