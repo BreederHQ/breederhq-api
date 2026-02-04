@@ -534,7 +534,6 @@ import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - se
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
-import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Services (marketplace)
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
@@ -971,7 +970,6 @@ app.register(
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(studVisibilityRoutes); // /api/v1/stud-visibility/* (stud listing visibility rules - P11)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
-    api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(breederMarketplaceRoutes, { prefix: "/marketplace/breeder" }); // /api/v1/marketplace/breeder/* (dashboard stats)
     api.register(animalsRoutes);       // /api/v1/animals/*

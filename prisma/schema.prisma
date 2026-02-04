@@ -1561,8 +1561,7 @@ model Tenant {
   referralCodesOwned  ReferralCode[]             @relation("ReferralCodeOwner")
   referralsMade       Referral[]                 @relation("ReferralsMade")
   referralsReceived   Referral[]                 @relation("ReferralsReceived")
-  marketplaceListings MktListingBreederService[] // Legacy table (deprecated)
-  unifiedListings     MktListingService[]        // New unified listings table
+  unifiedListings     MktListingService[]        // Unified marketplace listings
   featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
@@ -2230,97 +2229,6 @@ model Referral {
   @@schema("public")
 }
 
-model MktListingBreederService {
-  id Int @id @default(autoincrement())
-
-  // Owner
-  tenantId Int?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  serviceProviderId Int?
-  serviceProvider   ServiceProviderProfile? @relation(fields: [serviceProviderId], references: [id], onDelete: Cascade)
-
-  // Listing details
-  listingType ListingType
-  category    AnimalCategory?
-  title       String
-  description String?         @db.Text
-
-  // Contact
-  contactName  String?
-  contactEmail String?
-  contactPhone String?
-
-  // Location
-  city    String?
-  state   String?
-  zip     String?
-  country String? @db.VarChar(2)
-
-  // Media
-  images   Json?
-  videoUrl String?
-
-  // Pricing
-  priceCents Int?
-  priceType  String? // "fixed", "starting_at", "contact"
-
-  // Monetization
-  tier            ListingTier @default(FREE)
-  monthlyFeeCents Int?
-  commissionRate  Float?
-
-  // Status
-  status      MarketplaceListingStatus @default(DRAFT)
-  publishedAt DateTime?
-  expiresAt   DateTime?
-
-  // SEO
-  slug String? @unique
-
-  // Analytics
-  viewCount    Int @default(0)
-  inquiryCount Int @default(0)
-
-  // Metadata
-  metadata Json?
-
-  // ─── Stud Service Fields (P1 Sprint) ────────────────────────────────
-  // Applied when listingType = "STUD_SERVICE"
-
-  // Stallion relation (for stud service listings)
-  stallionId Int?
-  stallion   Animal? @relation("AnimalStudServiceListings", fields: [stallionId], references: [id], onDelete: SetNull)
-
-  // Season Management
-  seasonName  String?   @db.VarChar(100)
-  seasonStart DateTime?
-  seasonEnd   DateTime?
-
-  // Breeding Details
-  breedingMethods  String[]               @default([])
-  defaultGuarantee BreedingGuaranteeType?
-  horseServiceData Json?                  @db.JsonB
-
-  // Booking Management
-  maxBookings      Int?
-  bookingsReceived Int     @default(0)
-  bookingsClosed   Boolean @default(false)
-
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tenantId])
-  @@index([serviceProviderId])
-  @@index([status, publishedAt])
-  @@index([listingType, category])
-  @@index([tier])
-  @@index([stallionId])
-  @@map("mkt_listing_breeder_service")
-  @@schema("public")
-}
-
 model ServiceProviderProfile {
   id Int @id @default(autoincrement())
 
@@ -2346,7 +2254,6 @@ model ServiceProviderProfile {
   stripeSubscriptionId String? @unique
 
   // Relations
-  listings MktListingBreederService[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2879,9 +2786,6 @@ model Animal {
   // Breeding attempts: stored with animal for historical persistence
   breedingAttemptsAsDam  BreedingAttempt[] @relation("BreedingAttemptDam")
   breedingAttemptsAsSire BreedingAttempt[] @relation("BreedingAttemptSire")
-
-  // Stud service listings (for stallions)
-  studServiceListings MktListingBreederService[] @relation("AnimalStudServiceListings")
 
   // Cycle Length Override v1: Animal-level override for female cycle length calculation
   // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
@@ -8368,8 +8272,7 @@ model MarketplaceProvider {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  listings             MktListingProviderService[] // Legacy table (deprecated)
-  unifiedListings      MktListingService[]         // New unified listings table
+  unifiedListings      MktListingService[]         // Unified marketplace listings
   providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
   providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
   providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
@@ -8523,84 +8426,9 @@ model MktListingService {
   @@schema("marketplace")
 }
 
-model MktListingProviderService {
-  id         Int                 @id @default(autoincrement())
-  providerId Int                 @map("provider_id")
-  provider   MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-
-  slug        String  @unique
-  title       String
-  description String?
-
-  category          String
-  subcategory       String?
-  customServiceType String? @map("custom_service_type") @db.VarChar(50)
-
-  // Pricing
-  priceCents BigInt? @map("price_cents")
-  priceType  String? @map("price_type")
-  priceText  String? @map("price_text")
-
-  // Images
-  images        Json?
-  coverImageUrl String? @map("cover_image_url")
-
-  // Location
-  city      String?
-  state     String?
-  zip       String?
-  country   String?  @db.VarChar(2)
-  latitude  Decimal? @map("latitude") @db.Decimal(10, 8)
-  longitude Decimal? @map("longitude") @db.Decimal(11, 8)
-
-  // Service details
-  duration     String?
-  availability String?
-
-  // SEO
-  metaDescription String? @map("meta_description")
-  keywords        String?
-
-  // Stats
-  viewCount    Int @default(0) @map("view_count")
-  inquiryCount Int @default(0) @map("inquiry_count")
-  bookingCount Int @default(0) @map("booking_count")
-
-  // Status
-  status      MarketplaceListingStatus @default(DRAFT)
-  publishedAt DateTime?                @map("published_at")
-  pausedAt    DateTime?                @map("paused_at")
-
-  // Moderation
-  flagged   Boolean   @default(false)
-  flaggedAt DateTime? @map("flagged_at")
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  // Soft delete
-  deletedAt DateTime? @map("deleted_at")
-
-  // Relations
-  transactions MarketplaceTransaction[]
-  threads      MarketplaceMessageThread[]
-  reviews      MarketplaceReview[]
-  abuseReports MarketplaceAbuseReport[]
-  assignments  MarketplaceServiceTagAssignment[]
-
-  @@index([providerId, status])
-  @@index([category, status, publishedAt(sort: Desc)])
-  @@index([state, city, category, status])
-  @@index([deletedAt])
-  @@index([slug])
-  @@map("service_listings")
-  @@schema("marketplace")
-}
-
 model MarketplaceAbuseReport {
   id        Int                       @id @default(autoincrement())
   listingId Int                       @map("listing_id")
-  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   reason        String
   details       String?   @db.Text
@@ -8630,7 +8458,6 @@ model MarketplaceTransaction {
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
   listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Transaction details
   serviceDescription String  @map("service_description")
@@ -8766,7 +8593,6 @@ model MarketplaceMessageThread {
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
   listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
   transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -8819,7 +8645,6 @@ model MarketplaceReview {
   client   MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
 
   listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Rating & review
   rating     Int // 1-5 stars
@@ -8894,7 +8719,6 @@ model MarketplaceServiceTag {
 
 model MarketplaceServiceTagAssignment {
   listingId Int                       @map("listing_id")
-  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
   tagId     Int                       @map("tag_id")
   tag       MarketplaceServiceTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
 

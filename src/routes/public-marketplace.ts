@@ -1982,7 +1982,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     // Build where clause - only LIVE service listings
     const where: any = {
       status: "LIVE",
-      listingType: { in: serviceTypes },
+      category: { in: serviceTypes },
     };
 
     // Filter by tenant/breeder if provided (tenantId param is the tenant slug)
@@ -2022,7 +2022,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [items, total] = await prisma.$transaction([
-      prisma.mktListingBreederService.findMany({
+      prisma.mktListingService.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip,
@@ -2030,7 +2030,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         select: {
           id: true,
           slug: true,
-          listingType: true,
+          category: true,
           title: true,
           description: true,
           city: true,
@@ -2040,40 +2040,27 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           priceType: true,
           images: true,
           publishedAt: true,
-          // Include provider info if service provider listing
-          serviceProviderId: true,
-          serviceProvider: {
+          // Include provider info
+          providerId: true,
+          provider: {
             select: {
               id: true,
               businessName: true,
-            },
-          },
-          // Include tenant/breeder info if breeder listing
-          tenantId: true,
-          tenant: {
-            select: {
-              organizations: {
-                where: { isPublicProgram: true },
-                take: 1,
-                select: {
-                  programSlug: true,
-                  name: true,
-                },
-              },
+              averageRating: true,
+              totalReviews: true,
             },
           },
         },
       }),
-      prisma.mktListingBreederService.count({ where }),
+      prisma.mktListingService.count({ where }),
     ]);
 
     return reply.send({
       items: items.map((listing) => {
-        const breederOrg = listing.tenant?.organizations?.[0];
         return {
           id: listing.id,
           slug: listing.slug,
-          listingType: listing.listingType,
+          category: listing.category,
           title: listing.title,
           description: listing.description,
           city: listing.city,
@@ -2083,19 +2070,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           priceType: listing.priceType,
           images: listing.images,
           publishedAt: listing.publishedAt,
-          provider: listing.serviceProvider ? {
-            type: "service_provider" as const,
-            id: listing.serviceProvider.id,
-            name: listing.serviceProvider.businessName,
-            // Rating data not available on ServiceProviderProfile - would need to join with MarketplaceProvider
-            averageRating: 0,
-            totalReviews: 0,
-          } : breederOrg ? {
-            type: "breeder" as const,
-            slug: breederOrg.programSlug,
-            name: breederOrg.name,
-            averageRating: 0,
-            totalReviews: 0,
+          provider: listing.provider ? {
+            type: "marketplace_provider" as const,
+            id: listing.provider.id,
+            name: listing.provider.businessName,
+            averageRating: listing.provider.averageRating || 0,
+            totalReviews: listing.provider.totalReviews || 0,
           } : null,
         };
       }),
