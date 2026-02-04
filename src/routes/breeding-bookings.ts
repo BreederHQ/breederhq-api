@@ -39,6 +39,9 @@ const bookingInclude = {
   breedingPlan: {
     select: { id: true, code: true, status: true },
   },
+  semenUsage: {
+    select: { id: true, dosesUsed: true, usageDate: true, trackingNumber: true },
+  },
 };
 
 const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
@@ -433,6 +436,440 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       });
 
       reply.send(updated);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // GET /breeding-bookings/summary - Dashboard summary
+  app.get("/breeding-bookings/summary", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      // Count by status (bookings where this tenant is offering)
+      const statusCounts = await prisma.breedingBooking.groupBy({
+        by: ["status"],
+        where: { offeringTenantId: tenantId },
+        _count: { id: true },
+      });
+
+      const byStatus: Record<string, number> = {
+        INQUIRY: 0,
+        PENDING_REQUIREMENTS: 0,
+        APPROVED: 0,
+        DEPOSIT_PAID: 0,
+        CONFIRMED: 0,
+        SCHEDULED: 0,
+        IN_PROGRESS: 0,
+        COMPLETED: 0,
+        CANCELLED: 0,
+      };
+      for (const row of statusCounts) {
+        byStatus[row.status] = row._count.id;
+      }
+
+      // Revenue totals (excluding cancelled)
+      const revenueAgg = await prisma.breedingBooking.aggregate({
+        where: { offeringTenantId: tenantId, status: { not: "CANCELLED" } },
+        _sum: { agreedFeeCents: true, totalPaidCents: true },
+      });
+
+      const totalBookedCents = revenueAgg._sum.agreedFeeCents ?? 0;
+      const totalPaidCents = revenueAgg._sum.totalPaidCents ?? 0;
+
+      // Upcoming scheduled (next 7 days)
+      const now = new Date();
+      const sevenDaysFromNow = new Date();
+      sevenDaysFromNow.setDate(now.getDate() + 7);
+
+      const upcoming = await prisma.breedingBooking.findMany({
+        where: {
+          offeringTenantId: tenantId,
+          status: "SCHEDULED",
+          scheduledDate: { gte: now, lte: sevenDaysFromNow },
+        },
+        orderBy: { scheduledDate: "asc" },
+        take: 10,
+        include: {
+          offeringAnimal: { select: { name: true } },
+          seekingAnimal: { select: { name: true } },
+        },
+      });
+
+      // Stale bookings (no update for 5+ days)
+      const fiveDaysAgo = new Date();
+      fiveDaysAgo.setDate(now.getDate() - 5);
+
+      const staleBookings = await prisma.breedingBooking.findMany({
+        where: {
+          offeringTenantId: tenantId,
+          status: { in: ["INQUIRY", "PENDING_REQUIREMENTS", "APPROVED"] },
+          updatedAt: { lt: fiveDaysAgo },
+        },
+        orderBy: { updatedAt: "asc" },
+        take: 10,
+        select: { id: true, bookingNumber: true, status: true, updatedAt: true },
+      });
+
+      reply.send({
+        byStatus,
+        revenue: {
+          totalBookedCents,
+          totalPaidCents,
+          outstandingCents: totalBookedCents - totalPaidCents,
+        },
+        upcoming: upcoming.map((b) => ({
+          bookingId: b.id,
+          bookingNumber: b.bookingNumber,
+          offeringAnimalName: b.offeringAnimal?.name ?? "Unknown",
+          seekingAnimalName: b.seekingAnimal?.name ?? b.externalAnimalName ?? "Unknown",
+          scheduledDate: b.scheduledDate?.toISOString() ?? null,
+        })),
+        requiresAttention: staleBookings.map((b) => ({
+          bookingId: b.id,
+          bookingNumber: b.bookingNumber,
+          reason:
+            b.status === "INQUIRY"
+              ? "Inquiry stale"
+              : b.status === "PENDING_REQUIREMENTS"
+              ? "Requirements pending"
+              : "Awaiting deposit",
+          daysSinceUpdate: Math.floor(
+            (now.getTime() - b.updatedAt.getTime()) / (1000 * 60 * 60 * 24)
+          ),
+        })),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // GET /breeding-bookings/calendar - Calendar view
+  app.get("/breeding-bookings/calendar", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const q = (req.query || {}) as Record<string, unknown>;
+      const startDate = String(q.startDate || "");
+      const endDate = String(q.endDate || "");
+      if (!startDate || !endDate) {
+        return reply.code(400).send({ error: "missing_date_range" });
+      }
+
+      const where: any = {
+        offeringTenantId: tenantId,
+        scheduledDate: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+        status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+      };
+
+      const animalId = q.offeringAnimalId ? parseIntStrict(q.offeringAnimalId) : null;
+      if (animalId) where.offeringAnimalId = animalId;
+
+      const bookings = await prisma.breedingBooking.findMany({
+        where,
+        orderBy: { scheduledDate: "asc" },
+        include: {
+          offeringAnimal: { select: { name: true } },
+          seekingAnimal: { select: { name: true } },
+          seekingParty: { select: { name: true } },
+        },
+      });
+
+      // Group by date
+      const byDate: Record<string, any[]> = {};
+      for (const b of bookings) {
+        const date = b.scheduledDate?.toISOString().split("T")[0] ?? "";
+        if (!byDate[date]) byDate[date] = [];
+        byDate[date].push({
+          bookingId: b.id,
+          bookingNumber: b.bookingNumber,
+          offeringAnimalName: b.offeringAnimal?.name ?? "Unknown",
+          seekingAnimalName: b.seekingAnimal?.name ?? b.externalAnimalName ?? "Unknown",
+          seekingPartyName: b.seekingParty?.name ?? "Unknown",
+          status: b.status,
+          method: b.preferredMethod,
+        });
+      }
+
+      reply.send(
+        Object.entries(byDate).map(([date, bookings]) => ({ date, bookings }))
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // POST /breeding-bookings/:id/payment - Record a payment
+  app.post("/breeding-bookings/:id/payment", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const id = parseIntStrict((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as any;
+      const amountCents = Number(body.amountCents);
+      if (!amountCents || amountCents <= 0) {
+        return reply.code(400).send({ error: "invalid_amount" });
+      }
+
+      const existing = await prisma.breedingBooking.findFirst({
+        where: { id, offeringTenantId: tenantId },
+        select: { id: true, status: true, agreedFeeCents: true, depositCents: true, totalPaidCents: true },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      const newTotalPaid = existing.totalPaidCents + amountCents;
+      const updateData: any = { totalPaidCents: newTotalPaid };
+
+      // Auto-transitions based on payment thresholds
+      if (
+        existing.status === "APPROVED" &&
+        newTotalPaid >= existing.depositCents &&
+        existing.depositCents > 0
+      ) {
+        updateData.status = "DEPOSIT_PAID";
+        updateData.statusChangedAt = new Date();
+      }
+
+      if (
+        (existing.status === "DEPOSIT_PAID" || updateData.status === "DEPOSIT_PAID") &&
+        newTotalPaid >= existing.agreedFeeCents
+      ) {
+        updateData.status = "CONFIRMED";
+        updateData.statusChangedAt = new Date();
+      }
+
+      const updated = await prisma.breedingBooking.update({
+        where: { id },
+        data: updateData,
+        include: bookingInclude,
+      });
+
+      reply.send({
+        success: true,
+        booking: updated,
+        totalPaidCents: newTotalPaid,
+        balanceDueCents: Math.max(0, existing.agreedFeeCents - newTotalPaid),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // POST /breeding-bookings/:id/start-breeding - Create BreedingPlan and transition
+  app.post("/breeding-bookings/:id/start-breeding", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const id = parseIntStrict((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const existing = await prisma.breedingBooking.findFirst({
+        where: { id, offeringTenantId: tenantId },
+        include: {
+          offeringAnimal: { select: { id: true, name: true, species: true } },
+          seekingAnimal: { select: { id: true, name: true } },
+        },
+      });
+
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+      if (existing.status !== "SCHEDULED") {
+        return reply.code(400).send({
+          error: "invalid_status",
+          message: "Can only start breeding from SCHEDULED status",
+        });
+      }
+
+      const body = (req.body || {}) as any;
+      const breedingDate = body.breedingDate
+        ? new Date(body.breedingDate)
+        : existing.scheduledDate ?? new Date();
+
+      const [plan, updated] = await prisma.$transaction(async (tx) => {
+        const org = await tx.organization.findFirst({
+          where: { tenantId },
+          select: { id: true },
+        });
+        if (!org) throw new Error("No organization found for tenant");
+
+        const offeringName = existing.offeringAnimal?.name ?? "Unknown";
+        const seekingName = existing.seekingAnimal?.name ?? existing.externalAnimalName ?? "Unknown";
+
+        const plan = await tx.breedingPlan.create({
+          data: {
+            tenantId,
+            organizationId: org.id,
+            code: `BP-${existing.bookingNumber}`,
+            name: `${seekingName} x ${offeringName}`,
+            species: existing.offeringAnimal?.species ?? existing.species,
+            status: "BRED",
+            damId: existing.seekingAnimalId ?? null,
+            sireId: existing.offeringAnimalId,
+            notes: body.notes ?? `From booking ${existing.bookingNumber}`,
+          },
+        });
+
+        const u = await tx.breedingBooking.update({
+          where: { id },
+          data: {
+            status: "IN_PROGRESS",
+            statusChangedAt: new Date(),
+            breedingPlanId: plan.id,
+          },
+          include: bookingInclude,
+        });
+
+        return [plan, u];
+      });
+
+      reply.send({
+        success: true,
+        booking: updated,
+        breedingPlan: { id: plan.id, status: plan.status },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // POST /breeding-bookings/:id/ship-semen - Ship semen for booking
+  app.post("/breeding-bookings/:id/ship-semen", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const id = parseIntStrict((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as any;
+      const inventoryId = parseIntStrict(body.inventoryId);
+      if (!inventoryId) return reply.code(400).send({ error: "missing_inventory_id" });
+      const dosesUsed = Number(body.dosesUsed) || 1;
+
+      const existing = await prisma.breedingBooking.findFirst({
+        where: { id, offeringTenantId: tenantId },
+        select: {
+          id: true,
+          bookingNumber: true,
+          shippingRequired: true,
+          shippingAddress: true,
+          externalAnimalName: true,
+          seekingPartyId: true,
+        },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+      if (!existing.shippingRequired) {
+        return reply.code(400).send({ error: "shipping_not_required" });
+      }
+
+      const inventory = await prisma.semenInventory.findFirst({
+        where: { id: inventoryId, tenantId },
+      });
+      if (!inventory) return reply.code(404).send({ error: "inventory_not_found" });
+      if (inventory.availableDoses < dosesUsed) {
+        return reply.code(400).send({
+          error: "insufficient_doses",
+          available: inventory.availableDoses,
+          requested: dosesUsed,
+        });
+      }
+
+      const [usage, updated] = await prisma.$transaction(async (tx) => {
+        await tx.semenInventory.update({
+          where: { id: inventoryId },
+          data: {
+            availableDoses: { decrement: dosesUsed },
+            status: inventory.availableDoses - dosesUsed === 0 ? "DEPLETED" : inventory.status,
+          },
+        });
+
+        const usage = await tx.semenUsage.create({
+          data: {
+            tenantId,
+            inventoryId,
+            usageType: "BREEDING_SHIPPED",
+            usageDate: new Date(),
+            dosesUsed,
+            shippedToAddress: existing.shippingAddress,
+            shippingCarrier: body.shippingCarrier ?? null,
+            trackingNumber: body.trackingNumber ?? null,
+            notes: `Shipped for booking ${existing.bookingNumber}`,
+          },
+        });
+
+        const u = await tx.breedingBooking.update({
+          where: { id },
+          data: { semenUsageId: usage.id },
+          include: bookingInclude,
+        });
+
+        return [usage, u];
+      });
+
+      reply.send({
+        success: true,
+        booking: updated,
+        semenUsage: {
+          id: usage.id,
+          dosesUsed: usage.dosesUsed,
+          trackingNumber: usage.trackingNumber,
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[breeding-bookings]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // DELETE /breeding-bookings/:id - Delete booking (only INQUIRY or CANCELLED)
+  app.delete("/breeding-bookings/:id", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const id = parseIntStrict((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const existing = await prisma.breedingBooking.findFirst({
+        where: {
+          id,
+          OR: [
+            { offeringTenantId: tenantId },
+            { seekingTenantId: tenantId },
+          ],
+        },
+        select: { id: true, status: true },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      if (!["INQUIRY", "CANCELLED"].includes(existing.status)) {
+        return reply.code(400).send({
+          error: "cannot_delete",
+          message: "Can only delete bookings in INQUIRY or CANCELLED status",
+        });
+      }
+
+      await prisma.breedingBooking.delete({ where: { id } });
+      reply.code(204).send();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[breeding-bookings]", msg);

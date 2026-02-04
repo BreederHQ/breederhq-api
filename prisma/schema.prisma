@@ -810,19 +810,6 @@ enum WaitlistStatus {
   @@schema("public")
 }
 
-enum BookingStatus {
-  INQUIRY // Initial inquiry received
-  PENDING_REQUIREMENTS // Waiting for mare health docs
-  APPROVED // Approved, awaiting payment
-  DEPOSIT_PAID // Booking fee received
-  CONFIRMED // Full payment or balance confirmed
-  SCHEDULED // Breeding date set
-  IN_PROGRESS // Breeding underway (linked to BreedingPlan)
-  COMPLETED // Successfully completed
-  CANCELLED // Cancelled by either party
-
-  @@schema("public")
-}
 
 enum BreedingPlanBuyerStage {
   POSSIBLE_MATCH
@@ -1643,8 +1630,6 @@ model Tenant {
   registryConnections RegistryConnection[]
   registrySyncLogs    RegistrySyncLog[]
 
-  // Stallion Booking Pipeline (P8)
-  stallionBookings StallionBooking[]
 
   // Supplement Tracking
   supplementProtocols       SupplementProtocol[]
@@ -2322,8 +2307,6 @@ model MktListingBreederService {
   bookingsReceived Int     @default(0)
   bookingsClosed   Boolean @default(false)
 
-  // Bookings for this listing (P8)
-  bookings StallionBooking[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2520,8 +2503,6 @@ model Party {
   // MessagingHub - unlinked emails that were later linked to this party
   unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
 
-  // Stallion bookings (P8) - mare owner
-  stallionBookings StallionBooking[]
 
   // Breeding Discovery (Phase 2) - seeking party on bookings
   breedingBookings BreedingBooking[]
@@ -3033,9 +3014,6 @@ model Animal {
   // Semen inventory (stallions only) - P7
   semenInventory SemenInventory[] @relation("StallionSemenInventory")
 
-  // Stallion bookings (P8)
-  stallionBookings StallionBooking[] @relation("StallionBookings")
-  mareBookings     StallionBooking[] @relation("MareBookings")
 
   // Breeding Discovery bookings (Phase 2)
   breedingBookingsOffering BreedingBooking[] @relation("OfferingAnimal")
@@ -4065,10 +4043,7 @@ model BreedingPlan {
   foalingOutcome     FoalingOutcome?
   breedingMilestones BreedingMilestone[]
 
-  // Stallion booking that originated this plan (P8)
-  stallionBooking StallionBooking?
-
-  // Breeding Discovery booking that originated this plan
+  // Breeding booking that originated this plan
   breedingBooking BreedingBooking?
 
   // Supplement Tracking
@@ -4435,123 +4410,16 @@ model SemenUsage {
   recordedBy Int?
   createdAt  DateTime @default(now())
 
-  // Link to booking (for shipped semen)
-  bookingId Int?             @unique
-  booking   StallionBooking? @relation(fields: [bookingId], references: [id])
+  // Link to breeding booking
+  breedingBooking BreedingBooking?
 
   @@index([tenantId, inventoryId])
   @@index([tenantId, usageDate])
   @@schema("public")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stallion Booking Pipeline (P8)
-// ─────────────────────────────────────────────────────────────────────────────
 
-model StallionBooking {
-  id       Int    @id @default(autoincrement())
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  // Booking identification
-  bookingNumber String @unique // "SB-2026-001"
-
-  // Service listing (links to stud service)
-  serviceListingId Int
-  serviceListing   MktListingBreederService @relation(fields: [serviceListingId], references: [id])
-
-  // Stallion (denormalized for easy access)
-  stallionId Int
-  stallion   Animal @relation("StallionBookings", fields: [stallionId], references: [id])
-
-  // Mare information
-  mareId            Int? // If mare is in our system
-  mare              Animal? @relation("MareBookings", fields: [mareId], references: [id])
-  externalMareName  String? // If mare not in system
-  externalMareReg   String? // External registration number
-  externalMareBreed String? // Breed if external
-
-  // Mare owner (contact)
-  mareOwnerPartyId Int
-  mareOwnerParty   Party @relation(fields: [mareOwnerPartyId], references: [id])
-
-  // Status
-  status          BookingStatus @default(INQUIRY)
-  statusChangedAt DateTime      @default(now())
-
-  // Scheduling
-  preferredMethod    BreedingMethod?
-  preferredDateStart DateTime? // Earliest acceptable date
-  preferredDateEnd   DateTime? // Latest acceptable date
-  scheduledDate      DateTime? // Confirmed breeding date
-
-  // For shipped semen
-  shippingRequired Boolean @default(false)
-  shippingAddress  String? @db.Text
-
-  // Pricing
-  agreedFeeCents  Int // Agreed stud fee
-  bookingFeeCents Int @default(0) // Non-refundable deposit
-  totalPaidCents  Int @default(0) // Amount received so far
-
-  // Guarantee
-  guaranteeType BreedingGuaranteeType?
-
-  // Mare requirements checklist
-  requirementsJson Json? @db.JsonB
-  // Schema: {
-  //   healthCertReceived?: boolean,
-  //   healthCertDate?: string,
-  //   cogginsReceived?: boolean,
-  //   cogginsDate?: string,
-  //   cultureReceived?: boolean,
-  //   cultureDate?: string,
-  //   uterineExamReceived?: boolean,
-  //   notes?: string,
-  // }
-
-  // Link to BreedingPlan (created when breeding begins)
-  breedingPlanId Int?          @unique
-  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id])
-
-  // Link to SemenUsage (for shipped semen bookings)
-  semenUsage SemenUsage?
-
-  // Communication
-  notes         String? @db.Text
-  internalNotes String? @db.Text // Not visible to mare owner
-
-  // Audit
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  createdBy          Int?
-  cancelledAt        DateTime?
-  cancellationReason String?
-
-  // Status history
-  statusHistory BookingStatusHistory[]
-
-  @@index([tenantId, status])
-  @@index([tenantId, stallionId])
-  @@index([tenantId, mareOwnerPartyId])
-  @@index([serviceListingId])
-  @@schema("public")
-}
-
-model BookingStatusHistory {
-  id        Int             @id @default(autoincrement())
-  bookingId Int
-  booking   StallionBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-
-  fromStatus BookingStatus?
-  toStatus   BookingStatus
-  changedAt  DateTime       @default(now())
-  changedBy  Int?
-  notes      String?
-
-  @@index([bookingId])
-  @@schema("public")
-}
 
 model PregnancyCheck {
   id       Int    @id @default(autoincrement())
@@ -10471,6 +10339,14 @@ model BreedingBooking {
   // Link to BreedingPlan
   breedingPlanId Int?          @unique
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Semen inventory linkage (for shipped semen bookings)
+  semenUsageId Int?         @unique
+  semenUsage   SemenUsage?  @relation(fields: [semenUsageId], references: [id], onDelete: SetNull)
+
+  // Outcome tracking
+  outcomeRecordedAt DateTime?
+  outcomeType       String?   @db.VarChar(50)
 
   // Notes
   notes         String? @db.Text
