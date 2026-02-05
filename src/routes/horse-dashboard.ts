@@ -919,11 +919,12 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   });
 
   /**
-   * GET /api/v1/dashboard/horse/stallion-revenue
+   * GET /api/v1/dashboard/breeding-revenue (preferred, species-neutral)
+   * GET /api/v1/dashboard/horse/stallion-revenue (legacy alias)
    * Revenue tracking by stallion with booking status
    * Per spec: 08-STALLION-REVENUE-MANAGEMENT-SPEC.md
    */
-  app.get("/dashboard/horse/stallion-revenue", async (req, reply) => {
+  async function handleBreedingRevenue(req: any, reply: any) {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) {
@@ -1020,10 +1021,13 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         recentPayments: [], // TODO: Populate from BreedingBooking payment records
       });
     } catch (err) {
-      console.error("Error fetching stallion revenue:", err);
+      console.error("Error fetching breeding revenue:", err);
       return reply.code(500).send({ error: "internal_error" });
     }
-  });
+  }
+
+  app.get("/dashboard/breeding-revenue", handleBreedingRevenue);
+  app.get("/dashboard/horse/stallion-revenue", handleBreedingRevenue); // legacy alias
 
   /**
    * GET /api/v1/dashboard/horse/foals-ytd
