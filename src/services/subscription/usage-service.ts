@@ -151,13 +151,24 @@ export async function calculateActualUsage(
         where: { tenantId, archived: false },
       });
 
-    case "MARKETPLACE_LISTING_COUNT":
-      return await prisma.mktListingBreederService.count({
-        where: {
-          tenantId,
-          status: { in: ["DRAFT", "LIVE", "PAUSED"] },
-        },
-      });
+    case "MARKETPLACE_LISTING_COUNT": {
+      // Count all marketplace listing types (unified system)
+      const [individualAnimals, animalPrograms, breedingPrograms, services] = await Promise.all([
+        prisma.mktListingIndividualAnimal.count({
+          where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
+        }),
+        prisma.mktListingAnimalProgram.count({
+          where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
+        }),
+        prisma.mktListingBreedingProgram.count({
+          where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
+        }),
+        prisma.mktListingService.count({
+          where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
+        }),
+      ]);
+      return individualAnimals + animalPrograms + breedingPrograms + services;
+    }
 
     case "STORAGE_BYTES":
       // TODO: Implement storage calculation (sum of all uploaded files)

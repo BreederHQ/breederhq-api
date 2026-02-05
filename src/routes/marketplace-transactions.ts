@@ -47,8 +47,8 @@ function parsePaging(q: any) {
  * Converts BigInt fields to strings
  */
 function toTransactionDTO(transaction: TransactionWithDetails) {
-  // Extract service title from listing or description
-  const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+  // Extract service title from description
+  const serviceTitle = transaction.serviceDescription.split(':')[0];
 
   return {
     id: Number(transaction.id),
@@ -97,13 +97,8 @@ function toTransactionDTO(transaction: TransactionWithDetails) {
         ? transaction.provider.paymentInstructions
         : null,
     },
-    listing: transaction.listing ? {
-      id: transaction.listing.id,
-      slug: transaction.listing.slug,
-      title: transaction.listing.title,
-      coverImageUrl: transaction.listing.coverImageUrl,
-      category: transaction.listing.category,
-    } : null,
+    // Listing relation removed (use listingId instead)
+    listing: null,
   };
 }
 
@@ -150,7 +145,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
       try {
         // Fetch listing to verify buyer is not the provider
-        const listing = await prisma.mktListingProviderService.findUnique({
+        const listing = await prisma.mktListingService.findUnique({
           where: { id: body.serviceListingId },
           include: {
             provider: true,
@@ -165,7 +160,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         }
 
         // Check if buyer is trying to book their own listing
-        if (listing.provider.userId === userId) {
+        if (listing.provider && listing.provider.userId === userId) {
           return reply.code(400).send({
             error: "cannot_book_own_service",
             message: "You cannot book your own service.",
@@ -181,7 +176,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
         // Send confirmation emails to buyer and provider
         const totalAmount = `$${(Number(transaction.totalCents) / 100).toFixed(2)}`;
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
 
         // Send buyer email (fire and forget)
         sendTransactionCreatedEmailToBuyer({
@@ -316,7 +311,6 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
                 user: true,
               },
             },
-            listing: true,
           },
           orderBy,
           skip: offset,
@@ -562,7 +556,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
         // Send payment confirmation emails (fire and forget)
         const totalAmount = `$${(Number(transaction.totalCents) / 100).toFixed(2)}`;
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
 
         // Send buyer email
         sendPaymentReceivedEmailToBuyer({
@@ -674,7 +668,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         const transaction = await startService(transactionId, provider.id);
 
         // Send service started email to buyer
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
         sendServiceStartedEmailToBuyer({
           buyerEmail: transaction.client.email,
           buyerFirstName: transaction.client.firstName || "",
@@ -756,7 +750,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         const transaction = await completeService(transactionId, provider.id);
 
         // Send service completed email to buyer (with review prompt)
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
         sendServiceCompletedEmailToBuyer({
           buyerEmail: transaction.client.email,
           buyerFirstName: transaction.client.firstName || "",
@@ -828,7 +822,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         const transaction = await cancelTransaction(transactionId, userId, body.reason);
 
         // Send cancellation email to both parties
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
 
         // Email to buyer
         sendCancellationEmail({
@@ -950,7 +944,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         );
 
         // Send refund email to both parties
-        const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+        const serviceTitle = transaction.serviceDescription.split(':')[0];
 
         // Email to buyer
         sendCancellationEmail({
@@ -1075,7 +1069,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
         // If listingId provided, get provider from listing
         if (body.listingId) {
-          listing = await prisma.mktListingProviderService.findUnique({
+          listing = await prisma.mktListingService.findUnique({
             where: { id: body.listingId },
             select: { id: true, title: true, providerId: true },
           });
@@ -1087,7 +1081,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
             });
           }
 
-          targetProviderId = listing.providerId;
+          targetProviderId = listing.providerId ?? undefined;
         }
 
         if (!targetProviderId) {
@@ -1125,7 +1119,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
           // Increment listing inquiry count
           if (body.listingId) {
-            await prisma.mktListingProviderService.update({
+            await prisma.mktListingService.update({
               where: { id: body.listingId },
               data: { inquiryCount: { increment: 1 } },
             });

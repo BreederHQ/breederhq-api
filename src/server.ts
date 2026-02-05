@@ -534,7 +534,6 @@ import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - se
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
-import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Services (marketplace)
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
@@ -543,6 +542,7 @@ import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food trackin
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
+import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
@@ -560,7 +560,6 @@ import buyerAnalyticsRoutes from "./routes/buyer-analytics.js"; // Buyer CRM Ana
 import buyerEmailsRoutes from "./routes/buyer-emails.js"; // Buyer CRM Emails (P5)
 import registryIntegrationRoutes from "./routes/registry-integration.js"; // Registry Integration (P6)
 import semenInventoryRoutes from "./routes/semen-inventory.js"; // Semen Inventory (P7)
-import stallionBookingsRoutes from "./routes/stallion-bookings.js"; // Stallion Bookings (P8)
 import breederProfileRoutes from "./routes/breeder-profile.js"; // Breeding Discovery: Breeder Profile (Phase 2)
 import breedingDiscoveryProgramsRoutes from "./routes/breeding-discovery-programs.js"; // Breeding Discovery: Programs (Phase 2)
 import breedingDiscoveryListingsRoutes from "./routes/breeding-discovery-listings.js"; // Breeding Discovery: Listings (Phase 2)
@@ -972,7 +971,6 @@ app.register(
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(studVisibilityRoutes); // /api/v1/stud-visibility/* (stud listing visibility rules - P11)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
-    api.register(breederServicesRoutes); // /api/v1/services/* (breeder service listings)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(breederMarketplaceRoutes, { prefix: "/marketplace/breeder" }); // /api/v1/marketplace/breeder/* (dashboard stats)
     api.register(animalsRoutes);       // /api/v1/animals/*
@@ -985,7 +983,6 @@ app.register(
     api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
-    api.register(stallionBookingsRoutes); // /api/v1/stallion-bookings/* (Stallion Bookings - P8)
     api.register(breederProfileRoutes); // /api/v1/breeder-profile/* (Breeding Discovery - Phase 2)
     api.register(breedingDiscoveryProgramsRoutes); // /api/v1/breeding-discovery/programs/* (Breeding Discovery - Phase 2)
     api.register(breedingDiscoveryListingsRoutes); // /api/v1/breeding-discovery/listings/* (Breeding Discovery - Phase 2)
@@ -1045,6 +1042,7 @@ app.register(
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
     api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
+    api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
   },
   { prefix: "/api/v1" }
 );
