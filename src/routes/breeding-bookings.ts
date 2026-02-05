@@ -73,7 +73,10 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         ],
       };
 
-      if (q.status) where.status = String(q.status).toUpperCase();
+      if (q.status) {
+        const statuses = String(q.status).toUpperCase().split(",").map((s) => s.trim()).filter(Boolean);
+        where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
+      }
       if (q.species) where.species = String(q.species).toUpperCase();
 
       const search = String(q.q || "").trim();
@@ -115,7 +118,10 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const { page, limit, skip } = parsePaging(q);
 
       const where: any = { offeringTenantId: tenantId };
-      if (q.status) where.status = String(q.status).toUpperCase();
+      if (q.status) {
+        const statuses = String(q.status).toUpperCase().split(",").map((s) => s.trim()).filter(Boolean);
+        where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
+      }
 
       const [items, total] = await prisma.$transaction([
         prisma.breedingBooking.findMany({
@@ -146,7 +152,10 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const { page, limit, skip } = parsePaging(q);
 
       const where: any = { seekingTenantId: tenantId };
-      if (q.status) where.status = String(q.status).toUpperCase();
+      if (q.status) {
+        const statuses = String(q.status).toUpperCase().split(",").map((s) => s.trim()).filter(Boolean);
+        where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
+      }
 
       const [items, total] = await prisma.$transaction([
         prisma.breedingBooking.findMany({
