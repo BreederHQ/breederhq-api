@@ -476,7 +476,7 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                         user: true,
                       },
                     },
-                    listing: true,
+                    // listing relation removed (not available on MarketplaceTransaction)
                   },
                 });
 
@@ -495,7 +495,8 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   await import("../services/marketplace-email-service.js");
 
                 const totalAmount = `$${(Number(transaction.totalCents) / 100).toFixed(2)}`;
-                const serviceTitle = transaction.listing?.title || transaction.serviceDescription.split(':')[0];
+                // Use serviceDescription since listing relation is not available
+                const serviceTitle = transaction.serviceDescription.split(':')[0];
 
                 sendPaymentReceivedEmailToBuyer({
                   buyerEmail: transaction.client.email,

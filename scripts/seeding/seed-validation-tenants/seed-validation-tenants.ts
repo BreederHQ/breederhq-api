@@ -136,8 +136,6 @@ import {
   EnhancedInvoiceDefinition,
   getPartyActivities,
   PartyActivityDefinition,
-  getStallionBookings,
-  StallionBookingDefinition,
   DEFAULT_STUD_VISIBILITY_CONFIG,
 } from './seed-data-config';
 
@@ -2191,154 +2189,6 @@ async function seedStudServiceListings(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STALLION BOOKINGS (P9 - Stallion Revenue Testing)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-async function seedStallionBookings(
-  tenantSlug: string,
-  tenantId: number,
-  env: Environment,
-  bookings: Record<string, StallionBookingDefinition[]>,
-  tenantContacts: { emailBase: string }[]
-): Promise<number> {
-  const tenantBookings = bookings[tenantSlug];
-  if (!tenantBookings || tenantBookings.length === 0) {
-    console.log(`  - No stallion bookings for tenant: ${tenantSlug}`);
-    return 0;
-  }
-
-  let created = 0;
-
-  for (const booking of tenantBookings) {
-    // Check if booking already exists
-    const existing = await prisma.stallionBooking.findUnique({
-      where: { bookingNumber: booking.bookingNumber },
-    });
-
-    if (existing) {
-      console.log(`  = Stallion booking exists: ${booking.bookingNumber}`);
-      continue;
-    }
-
-    // Find the stallion
-    const stallion = await prisma.animal.findFirst({
-      where: {
-        tenantId,
-        name: booking.stallionRef,
-        sex: 'MALE',
-        species: 'HORSE',
-      },
-    });
-
-    if (!stallion) {
-      console.log(`  ! Stallion not found: ${booking.stallionRef}`);
-      continue;
-    }
-
-    // Find the stud service listing
-    const serviceListing = await prisma.mktListingBreederService.findUnique({
-      where: { slug: booking.serviceListingSlug },
-    });
-
-    if (!serviceListing) {
-      console.log(`  ! Stud service listing not found: ${booking.serviceListingSlug}`);
-      continue;
-    }
-
-    // Find mare if internal
-    let mareId: number | null = null;
-    if (booking.mareRef) {
-      const mare = await prisma.animal.findFirst({
-        where: {
-          tenantId,
-          name: booking.mareRef,
-          sex: 'FEMALE',
-          species: 'HORSE',
-        },
-      });
-      if (mare) {
-        mareId = mare.id;
-      }
-    }
-
-    // Find mare owner party (contact)
-    const contactDef = tenantContacts[booking.mareOwnerContactIndex];
-    if (!contactDef) {
-      console.log(`  ! Mare owner contact not found at index: ${booking.mareOwnerContactIndex}`);
-      continue;
-    }
-
-    const envEmail = getEnvEmail(contactDef.emailBase, env);
-    const contact = await prisma.contact.findFirst({
-      where: { tenantId, email: envEmail },
-      include: { party: true },
-    });
-
-    if (!contact || !contact.partyId) {
-      console.log(`  ! Mare owner contact/party not found: ${envEmail}`);
-      continue;
-    }
-
-    // Map booking status
-    const statusMap: Record<string, BookingStatus> = {
-      INQUIRY: BookingStatus.INQUIRY,
-      PENDING_REQUIREMENTS: BookingStatus.PENDING_REQUIREMENTS,
-      APPROVED: BookingStatus.APPROVED,
-      DEPOSIT_PAID: BookingStatus.DEPOSIT_PAID,
-      CONFIRMED: BookingStatus.CONFIRMED,
-      SCHEDULED: BookingStatus.SCHEDULED,
-      IN_PROGRESS: BookingStatus.IN_PROGRESS,
-      COMPLETED: BookingStatus.COMPLETED,
-      CANCELLED: BookingStatus.CANCELLED,
-    };
-
-    // Map breeding method
-    const methodMap: Record<string, BreedingMethod | undefined> = {
-      NATURAL: BreedingMethod.NATURAL,
-      AI_TCI: BreedingMethod.AI_TCI,
-      AI_SI: BreedingMethod.AI_SI,
-      AI_FROZEN: BreedingMethod.AI_FROZEN,
-    };
-
-    // Map guarantee type
-    const guaranteeMap: Record<string, BreedingGuaranteeType | undefined> = {
-      NO_GUARANTEE: BreedingGuaranteeType.NO_GUARANTEE,
-      LIVE_FOAL: BreedingGuaranteeType.LIVE_FOAL,
-      STANDS_AND_NURSES: BreedingGuaranteeType.STANDS_AND_NURSES,
-      SIXTY_DAY_PREGNANCY: BreedingGuaranteeType.SIXTY_DAY_PREGNANCY,
-      CERTIFIED_PREGNANT: BreedingGuaranteeType.CERTIFIED_PREGNANT,
-    };
-
-    await prisma.stallionBooking.create({
-      data: {
-        tenantId,
-        bookingNumber: booking.bookingNumber,
-        serviceListingId: serviceListing.id,
-        stallionId: stallion.id,
-        mareId,
-        externalMareName: booking.externalMareName,
-        externalMareReg: booking.externalMareReg,
-        externalMareBreed: booking.externalMareBreed,
-        mareOwnerPartyId: contact.partyId,
-        status: statusMap[booking.status] || BookingStatus.INQUIRY,
-        preferredMethod: booking.preferredMethod ? methodMap[booking.preferredMethod] : undefined,
-        scheduledDate: booking.scheduledDate,
-        agreedFeeCents: booking.agreedFeeCents,
-        bookingFeeCents: booking.bookingFeeCents,
-        totalPaidCents: booking.totalPaidCents,
-        guaranteeType: booking.guaranteeType ? guaranteeMap[booking.guaranteeType] : undefined,
-        notes: booking.notes,
-        cancellationReason: booking.cancellationReason,
-      },
-    });
-    created++;
-    console.log(`  + Created stallion booking: ${booking.bookingNumber} (${booking.status})`);
-  }
-
-  return created;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // STUD VISIBILITY RULES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -4336,7 +4186,6 @@ async function main() {
     breedingProgramListings: 0,
     breedingProgramMedia: 0,
     studServiceListings: 0,
-    stallionBookings: 0,
     individualAnimalListings: 0,
     crossTenantLinks: 0,
     contractTemplates: 0,
@@ -4560,20 +4409,7 @@ async function main() {
     );
     stats.studServiceListings += studServicesCreated;
 
-    // 7d-2. Create stallion bookings (P9 - Stallion Revenue Testing)
-    console.log('\n  [Stallion Bookings]');
-    const stallionBookingDefs = getStallionBookings(env);
-    const tenantContactDefs = tenantContacts[tenantDef.slug] || [];
-    const stallionBookingsCreated = await seedStallionBookings(
-      tenantDef.slug,
-      tenantId,
-      env,
-      stallionBookingDefs,
-      tenantContactDefs
-    );
-    stats.stallionBookings += stallionBookingsCreated;
-
-    // 7d-3. Create stud visibility rules (default tenant-level settings)
+    // 7d-2. Create stud visibility rules (default tenant-level settings)
     console.log('\n  [Stud Visibility Rules]');
     const visibilityRulesCreated = await seedStudVisibilityRules(tenantId);
     stats.studVisibilityRules += visibilityRulesCreated;
@@ -4796,7 +4632,6 @@ async function main() {
   console.log(`  Breeding Programs:    ${stats.breedingProgramListings}`);
   console.log(`  Program Media:        ${stats.breedingProgramMedia}`);
   console.log(`  Stud Services:        ${stats.studServiceListings}`);
-  console.log(`  Stallion Bookings:    ${stats.stallionBookings}`);
   console.log(`  Stud Visibility:      ${stats.studVisibilityRules}`);
   console.log(`  Individual Listings:  ${stats.individualAnimalListings}`);
   console.log(`  Cross-Tenant Links:   ${stats.crossTenantLinks}`);

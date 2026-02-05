@@ -2439,41 +2439,28 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       orderBy: { attemptAt: "desc" },
     });
 
-    // Get stallion bookings for this stallion
-    const bookings = await prisma.stallionBooking.findMany({
+    // Get breeding bookings for this animal
+    const bookings = await prisma.breedingBooking.findMany({
       where: {
-        tenantId,
-        stallionId: animalId,
+        offeringTenantId: tenantId,
+        offeringAnimalId: animalId,
       },
       include: {
-        mare: {
+        seekingAnimal: {
           select: { id: true, name: true },
         },
-        mareOwnerParty: {
+        seekingParty: {
           select: { id: true, name: true },
         },
-        serviceListing: {
-          select: { id: true, seasonName: true, priceCents: true, maxBookings: true },
+        sourceListing: {
+          select: { id: true, listingNumber: true },
         },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // Get active listing for this stallion
-    const activeListing = await prisma.mktListingBreederService.findFirst({
-      where: {
-        tenantId,
-        stallionId: animalId,
-        status: "LIVE",
-      },
-      select: {
-        id: true,
-        seasonName: true,
-        priceCents: true,
-        maxBookings: true,
-        bookingsReceived: true,
-      },
-    });
+    // Active listing feature removed (old marketplace listing system deprecated)
+    const activeListing = null;
 
     // Calculate summary stats
     let totalRevenueCents = 0;
@@ -2555,7 +2542,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id: b.id,
         breedingPlanId: 0, // Bookings don't directly link to plans
         mareOwnerName: (b as any).mareOwnerParty?.name || "Unknown",
-        mareName: (b as any).mare?.name || b.externalMareName || undefined,
+        mareName: (b as any).mare?.name || b.externalAnimalName || undefined,
         amountCents: b.totalPaidCents || 0,
         paidAt: b.statusChangedAt?.toISOString() || b.createdAt.toISOString(),
         status: "PAID" as const,
@@ -2576,7 +2563,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id: b.id,
         breedingPlanId: 0,
         mareOwnerName: (b as any).mareOwnerParty?.name || "Unknown",
-        mareName: (b as any).mare?.name || b.externalMareName || undefined,
+        mareName: (b as any).mare?.name || b.externalAnimalName || undefined,
         amountCents: amountDue,
         dueDate: dueDate?.toISOString(),
         daysOverdue: daysOverdue && daysOverdue > 0 ? daysOverdue : undefined,
@@ -2603,19 +2590,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         count: outstandingItems.length,
         items: outstandingItems,
       },
-      activeListing: activeListing
-        ? {
-            id: activeListing.id,
-            seasonName: activeListing.seasonName || `${year} Season`,
-            feeCents: activeListing.priceCents || 0,
-            maxBookings: activeListing.maxBookings || undefined,
-            currentBookings: activeListing.bookingsReceived || 0,
-            availableSlots:
-              activeListing.maxBookings !== null
-                ? Math.max(0, activeListing.maxBookings - (activeListing.bookingsReceived || 0))
-                : undefined,
-          }
-        : undefined,
+      activeListing: undefined, // Feature removed (old marketplace listing system deprecated)
     };
 
     reply.send(response);

@@ -810,19 +810,6 @@ enum WaitlistStatus {
   @@schema("public")
 }
 
-enum BookingStatus {
-  INQUIRY // Initial inquiry received
-  PENDING_REQUIREMENTS // Waiting for mare health docs
-  APPROVED // Approved, awaiting payment
-  DEPOSIT_PAID // Booking fee received
-  CONFIRMED // Full payment or balance confirmed
-  SCHEDULED // Breeding date set
-  IN_PROGRESS // Breeding underway (linked to BreedingPlan)
-  COMPLETED // Successfully completed
-  CANCELLED // Cancelled by either party
-
-  @@schema("public")
-}
 
 enum BreedingPlanBuyerStage {
   POSSIBLE_MATCH
@@ -1574,8 +1561,7 @@ model Tenant {
   referralCodesOwned  ReferralCode[]             @relation("ReferralCodeOwner")
   referralsMade       Referral[]                 @relation("ReferralsMade")
   referralsReceived   Referral[]                 @relation("ReferralsReceived")
-  marketplaceListings MktListingBreederService[] // Legacy table (deprecated)
-  unifiedListings     MktListingService[]        // New unified listings table
+  unifiedListings     MktListingService[]        // Unified marketplace listings
   featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
@@ -1643,8 +1629,6 @@ model Tenant {
   registryConnections RegistryConnection[]
   registrySyncLogs    RegistrySyncLog[]
 
-  // Stallion Booking Pipeline (P8)
-  stallionBookings StallionBooking[]
 
   // Supplement Tracking
   supplementProtocols       SupplementProtocol[]
@@ -2245,99 +2229,6 @@ model Referral {
   @@schema("public")
 }
 
-model MktListingBreederService {
-  id Int @id @default(autoincrement())
-
-  // Owner
-  tenantId Int?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  serviceProviderId Int?
-  serviceProvider   ServiceProviderProfile? @relation(fields: [serviceProviderId], references: [id], onDelete: Cascade)
-
-  // Listing details
-  listingType ListingType
-  category    AnimalCategory?
-  title       String
-  description String?         @db.Text
-
-  // Contact
-  contactName  String?
-  contactEmail String?
-  contactPhone String?
-
-  // Location
-  city    String?
-  state   String?
-  zip     String?
-  country String? @db.VarChar(2)
-
-  // Media
-  images   Json?
-  videoUrl String?
-
-  // Pricing
-  priceCents Int?
-  priceType  String? // "fixed", "starting_at", "contact"
-
-  // Monetization
-  tier            ListingTier @default(FREE)
-  monthlyFeeCents Int?
-  commissionRate  Float?
-
-  // Status
-  status      MarketplaceListingStatus @default(DRAFT)
-  publishedAt DateTime?
-  expiresAt   DateTime?
-
-  // SEO
-  slug String? @unique
-
-  // Analytics
-  viewCount    Int @default(0)
-  inquiryCount Int @default(0)
-
-  // Metadata
-  metadata Json?
-
-  // ─── Stud Service Fields (P1 Sprint) ────────────────────────────────
-  // Applied when listingType = "STUD_SERVICE"
-
-  // Stallion relation (for stud service listings)
-  stallionId Int?
-  stallion   Animal? @relation("AnimalStudServiceListings", fields: [stallionId], references: [id], onDelete: SetNull)
-
-  // Season Management
-  seasonName  String?   @db.VarChar(100)
-  seasonStart DateTime?
-  seasonEnd   DateTime?
-
-  // Breeding Details
-  breedingMethods  String[]               @default([])
-  defaultGuarantee BreedingGuaranteeType?
-  horseServiceData Json?                  @db.JsonB
-
-  // Booking Management
-  maxBookings      Int?
-  bookingsReceived Int     @default(0)
-  bookingsClosed   Boolean @default(false)
-
-  // Bookings for this listing (P8)
-  bookings StallionBooking[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tenantId])
-  @@index([serviceProviderId])
-  @@index([status, publishedAt])
-  @@index([listingType, category])
-  @@index([tier])
-  @@index([stallionId])
-  @@map("mkt_listing_breeder_service")
-  @@schema("public")
-}
-
 model ServiceProviderProfile {
   id Int @id @default(autoincrement())
 
@@ -2363,7 +2254,6 @@ model ServiceProviderProfile {
   stripeSubscriptionId String? @unique
 
   // Relations
-  listings MktListingBreederService[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2520,8 +2410,6 @@ model Party {
   // MessagingHub - unlinked emails that were later linked to this party
   unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
 
-  // Stallion bookings (P8) - mare owner
-  stallionBookings StallionBooking[]
 
   // Breeding Discovery (Phase 2) - seeking party on bookings
   breedingBookings BreedingBooking[]
@@ -2899,9 +2787,6 @@ model Animal {
   breedingAttemptsAsDam  BreedingAttempt[] @relation("BreedingAttemptDam")
   breedingAttemptsAsSire BreedingAttempt[] @relation("BreedingAttemptSire")
 
-  // Stud service listings (for stallions)
-  studServiceListings MktListingBreederService[] @relation("AnimalStudServiceListings")
-
   // Cycle Length Override v1: Animal-level override for female cycle length calculation
   // Valid range: 30-730 days. NULL means use automatic calculation from history/biology.
   femaleCycleLenOverrideDays Int?
@@ -3033,9 +2918,6 @@ model Animal {
   // Semen inventory (stallions only) - P7
   semenInventory SemenInventory[] @relation("StallionSemenInventory")
 
-  // Stallion bookings (P8)
-  stallionBookings StallionBooking[] @relation("StallionBookings")
-  mareBookings     StallionBooking[] @relation("MareBookings")
 
   // Breeding Discovery bookings (Phase 2)
   breedingBookingsOffering BreedingBooking[] @relation("OfferingAnimal")
@@ -4065,10 +3947,7 @@ model BreedingPlan {
   foalingOutcome     FoalingOutcome?
   breedingMilestones BreedingMilestone[]
 
-  // Stallion booking that originated this plan (P8)
-  stallionBooking StallionBooking?
-
-  // Breeding Discovery booking that originated this plan
+  // Breeding booking that originated this plan
   breedingBooking BreedingBooking?
 
   // Supplement Tracking
@@ -4435,123 +4314,16 @@ model SemenUsage {
   recordedBy Int?
   createdAt  DateTime @default(now())
 
-  // Link to booking (for shipped semen)
-  bookingId Int?             @unique
-  booking   StallionBooking? @relation(fields: [bookingId], references: [id])
+  // Link to breeding booking
+  breedingBooking BreedingBooking?
 
   @@index([tenantId, inventoryId])
   @@index([tenantId, usageDate])
   @@schema("public")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stallion Booking Pipeline (P8)
-// ─────────────────────────────────────────────────────────────────────────────
 
-model StallionBooking {
-  id       Int    @id @default(autoincrement())
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  // Booking identification
-  bookingNumber String @unique // "SB-2026-001"
-
-  // Service listing (links to stud service)
-  serviceListingId Int
-  serviceListing   MktListingBreederService @relation(fields: [serviceListingId], references: [id])
-
-  // Stallion (denormalized for easy access)
-  stallionId Int
-  stallion   Animal @relation("StallionBookings", fields: [stallionId], references: [id])
-
-  // Mare information
-  mareId            Int? // If mare is in our system
-  mare              Animal? @relation("MareBookings", fields: [mareId], references: [id])
-  externalMareName  String? // If mare not in system
-  externalMareReg   String? // External registration number
-  externalMareBreed String? // Breed if external
-
-  // Mare owner (contact)
-  mareOwnerPartyId Int
-  mareOwnerParty   Party @relation(fields: [mareOwnerPartyId], references: [id])
-
-  // Status
-  status          BookingStatus @default(INQUIRY)
-  statusChangedAt DateTime      @default(now())
-
-  // Scheduling
-  preferredMethod    BreedingMethod?
-  preferredDateStart DateTime? // Earliest acceptable date
-  preferredDateEnd   DateTime? // Latest acceptable date
-  scheduledDate      DateTime? // Confirmed breeding date
-
-  // For shipped semen
-  shippingRequired Boolean @default(false)
-  shippingAddress  String? @db.Text
-
-  // Pricing
-  agreedFeeCents  Int // Agreed stud fee
-  bookingFeeCents Int @default(0) // Non-refundable deposit
-  totalPaidCents  Int @default(0) // Amount received so far
-
-  // Guarantee
-  guaranteeType BreedingGuaranteeType?
-
-  // Mare requirements checklist
-  requirementsJson Json? @db.JsonB
-  // Schema: {
-  //   healthCertReceived?: boolean,
-  //   healthCertDate?: string,
-  //   cogginsReceived?: boolean,
-  //   cogginsDate?: string,
-  //   cultureReceived?: boolean,
-  //   cultureDate?: string,
-  //   uterineExamReceived?: boolean,
-  //   notes?: string,
-  // }
-
-  // Link to BreedingPlan (created when breeding begins)
-  breedingPlanId Int?          @unique
-  breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id])
-
-  // Link to SemenUsage (for shipped semen bookings)
-  semenUsage SemenUsage?
-
-  // Communication
-  notes         String? @db.Text
-  internalNotes String? @db.Text // Not visible to mare owner
-
-  // Audit
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  createdBy          Int?
-  cancelledAt        DateTime?
-  cancellationReason String?
-
-  // Status history
-  statusHistory BookingStatusHistory[]
-
-  @@index([tenantId, status])
-  @@index([tenantId, stallionId])
-  @@index([tenantId, mareOwnerPartyId])
-  @@index([serviceListingId])
-  @@schema("public")
-}
-
-model BookingStatusHistory {
-  id        Int             @id @default(autoincrement())
-  bookingId Int
-  booking   StallionBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-
-  fromStatus BookingStatus?
-  toStatus   BookingStatus
-  changedAt  DateTime       @default(now())
-  changedBy  Int?
-  notes      String?
-
-  @@index([bookingId])
-  @@schema("public")
-}
 
 model PregnancyCheck {
   id       Int    @id @default(autoincrement())
@@ -8500,8 +8272,7 @@ model MarketplaceProvider {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  listings             MktListingProviderService[] // Legacy table (deprecated)
-  unifiedListings      MktListingService[]         // New unified listings table
+  unifiedListings      MktListingService[]         // Unified marketplace listings
   providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
   providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
   providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
@@ -8643,6 +8414,10 @@ model MktListingService {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  // Relations
+  assignments  MarketplaceServiceTagAssignment[]
+  transactions MarketplaceTransaction[]
+
   @@index([providerId])
   @@index([tenantId])
   @@index([slug])
@@ -8655,84 +8430,9 @@ model MktListingService {
   @@schema("marketplace")
 }
 
-model MktListingProviderService {
-  id         Int                 @id @default(autoincrement())
-  providerId Int                 @map("provider_id")
-  provider   MarketplaceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-
-  slug        String  @unique
-  title       String
-  description String?
-
-  category          String
-  subcategory       String?
-  customServiceType String? @map("custom_service_type") @db.VarChar(50)
-
-  // Pricing
-  priceCents BigInt? @map("price_cents")
-  priceType  String? @map("price_type")
-  priceText  String? @map("price_text")
-
-  // Images
-  images        Json?
-  coverImageUrl String? @map("cover_image_url")
-
-  // Location
-  city      String?
-  state     String?
-  zip       String?
-  country   String?  @db.VarChar(2)
-  latitude  Decimal? @map("latitude") @db.Decimal(10, 8)
-  longitude Decimal? @map("longitude") @db.Decimal(11, 8)
-
-  // Service details
-  duration     String?
-  availability String?
-
-  // SEO
-  metaDescription String? @map("meta_description")
-  keywords        String?
-
-  // Stats
-  viewCount    Int @default(0) @map("view_count")
-  inquiryCount Int @default(0) @map("inquiry_count")
-  bookingCount Int @default(0) @map("booking_count")
-
-  // Status
-  status      MarketplaceListingStatus @default(DRAFT)
-  publishedAt DateTime?                @map("published_at")
-  pausedAt    DateTime?                @map("paused_at")
-
-  // Moderation
-  flagged   Boolean   @default(false)
-  flaggedAt DateTime? @map("flagged_at")
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  // Soft delete
-  deletedAt DateTime? @map("deleted_at")
-
-  // Relations
-  transactions MarketplaceTransaction[]
-  threads      MarketplaceMessageThread[]
-  reviews      MarketplaceReview[]
-  abuseReports MarketplaceAbuseReport[]
-  assignments  MarketplaceServiceTagAssignment[]
-
-  @@index([providerId, status])
-  @@index([category, status, publishedAt(sort: Desc)])
-  @@index([state, city, category, status])
-  @@index([deletedAt])
-  @@index([slug])
-  @@map("service_listings")
-  @@schema("marketplace")
-}
-
 model MarketplaceAbuseReport {
   id        Int                       @id @default(autoincrement())
   listingId Int                       @map("listing_id")
-  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   reason        String
   details       String?   @db.Text
@@ -8761,8 +8461,8 @@ model MarketplaceTransaction {
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
-  listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listingId Int?               @map("listing_id")
+  listing   MktListingService? @relation(fields: [listingId], references: [id])
 
   // Transaction details
   serviceDescription String  @map("service_description")
@@ -8898,7 +8598,6 @@ model MarketplaceMessageThread {
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
   listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
   transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -8951,7 +8650,6 @@ model MarketplaceReview {
   client   MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
 
   listingId Int?                       @map("listing_id")
-  listing   MktListingProviderService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   // Rating & review
   rating     Int // 1-5 stars
@@ -9025,10 +8723,10 @@ model MarketplaceServiceTag {
 }
 
 model MarketplaceServiceTagAssignment {
-  listingId Int                       @map("listing_id")
-  listing   MktListingProviderService @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  tagId     Int                       @map("tag_id")
-  tag       MarketplaceServiceTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  listingId Int               @map("listing_id")
+  listing   MktListingService @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  tagId     Int               @map("tag_id")
+  tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([listingId, tagId])
   @@index([listingId])
@@ -10471,6 +10169,14 @@ model BreedingBooking {
   // Link to BreedingPlan
   breedingPlanId Int?          @unique
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Semen inventory linkage (for shipped semen bookings)
+  semenUsageId Int?         @unique
+  semenUsage   SemenUsage?  @relation(fields: [semenUsageId], references: [id], onDelete: SetNull)
+
+  // Outcome tracking
+  outcomeRecordedAt DateTime?
+  outcomeType       String?   @db.VarChar(50)
 
   // Notes
   notes         String? @db.Text

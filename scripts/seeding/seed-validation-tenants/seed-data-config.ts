@@ -8014,42 +8014,9 @@ export function getPartyActivities(env: Environment): Record<string, PartyActivi
   return env === 'prod' ? PROD_PARTY_ACTIVITIES : DEV_PARTY_ACTIVITIES;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// STALLION BOOKINGS (P9 - Stallion Breeding Revenue Testing)
-// For tracking stud service bookings, payments, and booking status
-// ═══════════════════════════════════════════════════════════════════════════════
+// Stallion booking seed data removed (migrated to BreedingBooking)
 
-export type BookingStatusDef = 'INQUIRY' | 'PENDING_REQUIREMENTS' | 'APPROVED' | 'DEPOSIT_PAID' | 'CONFIRMED' | 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-
-export interface StallionBookingDefinition {
-  bookingNumber: string;
-  stallionRef: string;  // Reference to stallion animal by name
-  serviceListingSlug: string;  // Reference to stud service listing by slug
-  // Mare information
-  mareRef?: string;  // Reference to mare animal by name (if in system)
-  externalMareName?: string;  // If mare not in system
-  externalMareReg?: string;  // External registration number
-  externalMareBreed?: string;  // External mare breed
-  // Mare owner - reference to contact by index in tenant contacts
-  mareOwnerContactIndex: number;  // Index into tenant contacts array
-  // Status
-  status: BookingStatusDef;
-  // Scheduling
-  preferredMethod?: 'NATURAL' | 'AI_TCI' | 'AI_SI' | 'AI_FROZEN';
-  scheduledDate?: Date;
-  // Pricing
-  agreedFeeCents: number;
-  bookingFeeCents: number;
-  totalPaidCents: number;
-  // Guarantee
-  guaranteeType?: 'NO_GUARANTEE' | 'LIVE_FOAL' | 'STANDS_AND_NURSES' | 'SIXTY_DAY_PREGNANCY' | 'CERTIFIED_PREGNANT';
-  // Notes
-  notes?: string;
-  cancellationReason?: string;
-}
-
-// DEV Stallion Bookings
-export const DEV_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]> = {
+const _REMOVED__REMOVED_DEV_BOOKINGS = {
   rivendell: [
     // P9: Stallion Bookings for Thunder Storm
     // Booking 1 - Deposit Paid
@@ -8125,7 +8092,7 @@ export const DEV_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]> 
 };
 
 // PROD Stallion Bookings - P9 Test Data
-export const PROD_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]> = {
+export const _REMOVED_PROD_BOOKINGS: Record<string, _RemovedBookingDef[]> = {
   arrakis: [],
   starfleet: [],
   richmond: [
@@ -8199,8 +8166,8 @@ export const PROD_STALLION_BOOKINGS: Record<string, StallionBookingDefinition[]>
   zion: [],
 };
 
-export function getStallionBookings(env: Environment): Record<string, StallionBookingDefinition[]> {
-  return env === 'prod' ? PROD_STALLION_BOOKINGS : DEV_STALLION_BOOKINGS;
+export function _removedGetBookings(env: Environment): Record<string, _RemovedBookingDef[]> {
+  return env === 'prod' ? _REMOVED_PROD_BOOKINGS : _REMOVED_DEV_BOOKINGS;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

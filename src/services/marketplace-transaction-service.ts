@@ -10,7 +10,7 @@
  */
 
 import prisma from "../prisma.js";
-import type { MarketplaceTransaction, MktListingProviderService, MarketplaceProvider, MarketplaceUser } from "@prisma/client";
+import type { MarketplaceTransaction, MktListingService, MarketplaceProvider, MarketplaceUser } from "@prisma/client";
 import { stripe } from "./stripe-service.js";
 
 /**
@@ -31,7 +31,7 @@ export type TransactionWithDetails = MarketplaceTransaction & {
   provider: MarketplaceProvider & {
     user: MarketplaceUser;
   };
-  listing: MktListingProviderService | null;
+  // listing relation removed (not fetched in queries, use listingId instead)
 };
 
 /**
@@ -78,7 +78,7 @@ export function calculateTransactionFees(
  * @param listing - Service listing to validate
  * @throws Error if listing is not available
  */
-function validateListingAvailability(listing: MktListingProviderService | null): void {
+function validateListingAvailability(listing: MktListingService | null): void {
   if (!listing) {
     throw new Error("listing_not_found");
   }
@@ -113,7 +113,7 @@ export async function createTransaction(params: {
   const { clientId, serviceListingId, buyerNotes } = params;
 
   // Fetch listing with provider details
-  const listing = await prisma.mktListingProviderService.findUnique({
+  const listing = await prisma.mktListingService.findUnique({
     where: { id: serviceListingId },
     include: {
       provider: {
@@ -127,8 +127,13 @@ export async function createTransaction(params: {
   // Validate listing availability
   validateListingAvailability(listing);
 
+  // Additional validation: provider must exist
+  if (!listing!.providerId || !listing!.provider) {
+    throw new Error("listing_missing_provider");
+  }
+
   // Get provider payment mode
-  const paymentMode = listing!.provider.paymentMode as "manual" | "stripe";
+  const paymentMode = listing!.provider!.paymentMode as "manual" | "stripe";
 
   // Calculate fees
   const fees = calculateTransactionFees(
@@ -142,7 +147,7 @@ export async function createTransaction(params: {
     const newTransaction = await tx.marketplaceTransaction.create({
       data: {
         clientId,
-        providerId: listing!.providerId,
+        providerId: listing!.providerId!,
         listingId: serviceListingId,
 
         // Snapshot service details at booking time
@@ -165,7 +170,7 @@ export async function createTransaction(params: {
             user: true,
           },
         },
-        listing: true,
+        // listing relation removed (was MktListingProviderService, now independent)
       },
     });
 
@@ -174,7 +179,7 @@ export async function createTransaction(params: {
       data: {
         transactionId: BigInt(newTransaction.id),
         clientId: clientId,
-        providerId: listing!.providerId,
+        providerId: listing!.providerId!,
 
         // Invoice number (auto-generated or manual)
         invoiceNumber: `MP-${Date.now()}-${newTransaction.id}`,
@@ -198,7 +203,7 @@ export async function createTransaction(params: {
     await tx.marketplaceMessageThread.create({
       data: {
         clientId,
-        providerId: listing!.providerId,
+        providerId: listing!.providerId!,
         listingId: serviceListingId,
         transactionId: BigInt(newTransaction.id),
         subject: `Booking: ${listing!.title}`,
@@ -230,7 +235,6 @@ export async function findTransactionById(
           user: true,
         },
       },
-      listing: true,
     },
   });
 
@@ -260,7 +264,6 @@ export async function findBuyerTransaction(
           user: true,
         },
       },
-      listing: true,
     },
   });
 
@@ -290,7 +293,6 @@ export async function findProviderTransaction(
           user: true,
         },
       },
-      listing: true,
     },
   });
 
@@ -323,7 +325,6 @@ export async function findAccessibleTransaction(
           user: true,
         },
       },
-      listing: true,
     },
   });
 
@@ -491,7 +492,7 @@ export async function createTransactionCheckout(
         price_data: {
           currency: "usd",
           product_data: {
-            name: transaction.listing?.title || transaction.serviceDescription.split(':')[0],
+            name: transaction.serviceDescription.split(':')[0],
             description: transaction.serviceDescription,
           },
           unit_amount: Number(transaction.totalCents),
@@ -763,7 +764,7 @@ export async function listProviderTransactions(
             user: true,
           },
         },
-        listing: true,
+        // listing relation removed (was MktListingProviderService, now independent)
       },
       orderBy: {
         createdAt: "desc",
