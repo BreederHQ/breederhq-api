@@ -3,7 +3,7 @@
 // Authenticated routes for breeders to manage their service listings
 
 import type { FastifyInstance } from "fastify";
-import prisma from "../prisma";
+import prisma from "../prisma.js";
 
 async function assertTenant(req: any, reply: any): Promise<number | null> {
   const tenantId = Number(req.tenantId);
