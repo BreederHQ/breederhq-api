@@ -817,34 +817,33 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
   });
 
   // --------------------------------------------------------------------------
-  // GET /semen/stallion/:stallionId/inventory - Per-stallion inventory view
+  // GET /semen/animal/:animalId/inventory - Per-animal inventory view (species-neutral)
+  // GET /semen/stallion/:stallionId/inventory - Legacy alias
   // --------------------------------------------------------------------------
-  app.get<{
-    Params: { stallionId: string };
-  }>("/semen/stallion/:stallionId/inventory", async (req, reply) => {
+  async function handleAnimalInventory(req: any, reply: any) {
     const tenantId = (req as any).tenantId;
     if (!tenantId) {
       return reply.code(401).send({ error: "unauthorized" });
     }
 
-    const stallionId = parseIntStrict(req.params.stallionId);
-    if (!stallionId) {
-      return reply.code(400).send({ error: "invalid_stallion_id" });
+    const animalId = parseIntStrict(req.params.animalId || req.params.stallionId);
+    if (!animalId) {
+      return reply.code(400).send({ error: "invalid_animal_id" });
     }
 
-    // Verify stallion exists and belongs to tenant
-    const stallion = await prisma.animal.findFirst({
-      where: { id: stallionId, tenantId },
+    // Verify animal exists and belongs to tenant
+    const animal = await prisma.animal.findFirst({
+      where: { id: animalId, tenantId },
       select: { id: true, name: true, photoUrl: true },
     });
 
-    if (!stallion) {
-      return reply.code(404).send({ error: "stallion_not_found" });
+    if (!animal) {
+      return reply.code(404).send({ error: "animal_not_found" });
     }
 
     const [batches, usageHistory, totalAvailable] = await Promise.all([
       prisma.semenInventory.findMany({
-        where: { stallionId, tenantId, archivedAt: null },
+        where: { stallionId: animalId, tenantId, archivedAt: null },
         orderBy: { collectionDate: "desc" },
         include: {
           stallion: { select: { id: true, name: true, photoUrl: true } },
@@ -853,7 +852,7 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
       prisma.semenUsage.findMany({
         where: {
           tenantId,
-          inventory: { stallionId },
+          inventory: { stallionId: animalId },
         },
         orderBy: { usageDate: "desc" },
         take: 50,
@@ -862,20 +861,23 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
         },
       }),
       prisma.semenInventory.aggregate({
-        where: { stallionId, tenantId, status: "AVAILABLE", archivedAt: null },
+        where: { stallionId: animalId, tenantId, status: "AVAILABLE", archivedAt: null },
         _sum: { availableDoses: true },
       }),
     ]);
 
     return reply.send({
       stallion: {
-        id: stallion.id,
-        name: stallion.name,
-        photoUrl: stallion.photoUrl,
+        id: animal.id,
+        name: animal.name,
+        photoUrl: animal.photoUrl,
       },
       totalAvailable: totalAvailable._sum.availableDoses || 0,
       batches: batches.map(toInventoryResponse),
       usageHistory: usageHistory.map(toUsageResponse),
     });
-  });
+  }
+
+  app.get("/semen/animal/:animalId/inventory", handleAnimalInventory);
+  app.get("/semen/stallion/:stallionId/inventory", handleAnimalInventory); // legacy alias
 }
