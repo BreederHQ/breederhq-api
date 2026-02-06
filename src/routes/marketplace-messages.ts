@@ -18,6 +18,8 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
+import { requireMarketplaceAuth as authMiddleware } from "../middleware/marketplace-auth.js";
+import { broadcastNewMessage } from "../services/websocket-service.js";
 
 /**
  * Get user info for messaging context.
@@ -87,14 +89,15 @@ async function getOrCreateUserPartyInTenant(
 
 /**
  * Require marketplace authentication.
- * Returns userId if authenticated, throws 401 otherwise.
+ * Returns userId as string if authenticated, throws 401 otherwise.
+ * NOTE: Routes should also use authMiddleware as preHandler!
  */
 function requireMarketplaceAuth(req: any): string {
-  const userId = req.userId;
+  const userId = req.marketplaceUserId;
   if (!userId) {
     throw { statusCode: 401, error: "unauthorized", detail: "no_session" };
   }
-  return userId;
+  return String(userId);
 }
 
 /**
@@ -133,6 +136,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get(
     "/counts",
     {
+      preHandler: authMiddleware,
       config: {
         rateLimit: { max: 100, timeWindow: "1 minute" },
       },
@@ -179,7 +183,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           const lastReadAt = participant.lastReadAt;
           const userPartyId = participant.partyId;
 
-          const unreadCount = lastReadAt
+          const unreadCount = Number(lastReadAt
             ? await prisma.message.count({
                 where: {
                   threadId: participant.threadId,
@@ -192,7 +196,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   threadId: participant.threadId,
                   senderPartyId: { not: userPartyId },
                 },
-              });
+              }));
 
           if (unreadCount > 0) {
             unreadThreadsCount++;
@@ -217,7 +221,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
   // GET /messages/threads - List threads for current marketplace user
   // --------------------------------------------------------------------------
-  app.get("/threads", async (req, reply) => {
+  app.get("/threads", { preHandler: authMiddleware }, async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
 
     try {
@@ -261,7 +265,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           const lastReadAt = participant?.lastReadAt;
           const userPartyId = participant?.partyId;
 
-          const unreadCount = lastReadAt
+          const unreadCount = Number(lastReadAt
             ? await prisma.message.count({
                 where: {
                   threadId: t.id,
@@ -274,7 +278,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   threadId: t.id,
                   senderPartyId: { not: userPartyId },
                 },
-              });
+              }));
 
           return { ...t, unreadCount };
         })
@@ -290,7 +294,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
   // GET /messages/threads/:id - Get thread details with messages
   // --------------------------------------------------------------------------
-  app.get("/threads/:id", async (req, reply) => {
+  app.get("/threads/:id", { preHandler: authMiddleware }, async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
     const threadId = Number((req.params as any).id);
 
@@ -347,6 +351,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post(
     "/threads/:id/mark-read",
     {
+      preHandler: authMiddleware,
       config: {
         rateLimit: { max: 60, timeWindow: "1 minute" },
       },
@@ -395,13 +400,13 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
   // POST /messages/threads - Create new thread with a breeder
   // --------------------------------------------------------------------------
-  app.post("/threads", async (req, reply) => {
+  app.post("/threads", { preHandler: authMiddleware }, async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
 
     // Check if email is verified before allowing messages
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { emailVerifiedAt: true },
+    const user = await prisma.marketplaceUser.findUnique({
+      where: { id: parseInt(userId, 10) },
+      select: { emailVerified: true },
     });
 
     if (!user) {
@@ -411,7 +416,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
     }
 
-    if (!user.emailVerifiedAt) {
+    if (!user.emailVerified) {
       return reply.code(403).send({
         error: "email_verification_required",
         message: "Please verify your email address before sending messages.",
@@ -477,34 +482,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
-      // If thread exists with both participants, add message to it
+      // If thread exists with both participants, just return it (don't add another message)
+      // User can compose their own message in the chat view
       if (existingThread) {
         const hasUser = existingThread.participants.some((p) => p.partyId === userParty.id);
         const hasRecipient = existingThread.participants.some((p) => p.partyId === Number(recipientPartyId));
 
         if (hasUser && hasRecipient) {
-          // Add new message to existing thread
-          await prisma.message.create({
-            data: {
-              threadId: existingThread.id,
-              senderPartyId: userParty.id,
-              body: initialMessage,
-            },
-          });
-
-          // Update thread timestamps
-          await prisma.messageThread.update({
-            where: { id: existingThread.id },
-            data: { lastMessageAt: now, updatedAt: now },
-          });
-
-          // Update sender's lastReadAt
-          await prisma.messageParticipant.updateMany({
-            where: { threadId: existingThread.id, partyId: userParty.id },
-            data: { lastReadAt: now },
-          });
-
-          // Return the updated thread
+          // Return the existing thread without adding a duplicate message
           const thread = await prisma.messageThread.findUnique({
             where: { id: existingThread.id },
             include: {
@@ -566,13 +551,13 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
   // POST /messages/threads/:id/messages - Send message in existing thread
   // --------------------------------------------------------------------------
-  app.post("/threads/:id/messages", async (req, reply) => {
+  app.post("/threads/:id/messages", { preHandler: authMiddleware }, async (req, reply) => {
     const userId = requireMarketplaceAuth(req);
 
     // Check if email is verified before allowing messages
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { emailVerifiedAt: true },
+    const user = await prisma.marketplaceUser.findUnique({
+      where: { id: parseInt(userId, 10) },
+      select: { emailVerified: true },
     });
 
     if (!user) {
@@ -582,7 +567,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
     }
 
-    if (!user.emailVerifiedAt) {
+    if (!user.emailVerified) {
       return reply.code(403).send({
         error: "email_verification_required",
         message: "Please verify your email address before sending messages.",
@@ -662,6 +647,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { threadId, partyId: userPartyId },
         data: { lastReadAt: now },
       });
+
+      // Broadcast new message via WebSocket to breeder and all participants
+      const participantPartyIds = thread.participants.map((p) => p.partyId);
+      broadcastNewMessage(
+        thread.tenantId,
+        threadId,
+        {
+          id: message.id,
+          body: message.body,
+          senderPartyId: message.senderPartyId,
+          createdAt: message.createdAt.toISOString(),
+        },
+        participantPartyIds
+      );
 
       return reply.send({ ok: true, message });
     } catch (err: any) {

@@ -483,6 +483,7 @@ import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // M
 import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
 import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
 import marketplaceTransactionMessagesRoutes from "./routes/marketplace-transaction-messages.js"; // Marketplace transaction messaging
+import marketplaceInvoicesRoutes from "./routes/marketplace-invoices.js"; // Marketplace provider invoices (Stripe)
 import marketplaceWebsocketRoutes from "./routes/marketplace-websocket.js"; // Marketplace WebSocket for real-time messaging
 import marketplaceReviewsRoutes from "./routes/marketplace-reviews.js"; // Marketplace reviews & ratings
 import marketplaceAdminRoutes from "./routes/marketplace-admin.js"; // Marketplace admin dashboard
@@ -567,6 +568,8 @@ import breedingBookingsRoutes from "./routes/breeding-bookings.js"; // Breeding 
 import breedingAnalyticsRoutes from "./routes/breeding-analytics.js"; // Breeding Discovery: Analytics (Phase 3)
 import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discovery: Compatibility Checking (Phase 2)
 import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
+import tenantStripeConnectRoutes from "./routes/tenant-stripe-connect.js"; // Tenant Stripe Connect (breeder payments)
+import animalBreedingProfileRoutes from "./routes/animal-breeding-profile.js"; // Animal Breeding Profile (user-entered preferences)
 
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
@@ -599,6 +602,7 @@ app.register(
     api.register(marketplaceProvidersRoutes, { prefix: "/marketplace/providers" }); // /api/v1/marketplace/providers/* (Provider registration & management)
     api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
     api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
+    api.register(marketplaceInvoicesRoutes, { prefix: "/marketplace/invoices" }); // /api/v1/marketplace/invoices/* (Provider invoices)
     api.register(marketplaceTransactionMessagesRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transaction messaging)
     api.register(marketplaceWebsocketRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/ws (WebSocket for real-time messaging)
     api.register(marketplaceReviewsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Reviews & ratings)
@@ -980,6 +984,7 @@ app.register(
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
     api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
+    api.register(animalBreedingProfileRoutes); // /api/v1/animals/:id/breeding-profile, /api/v1/animals/:id/breeding-events, /api/v1/animals/:id/breeding-stats
     api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
     api.register(semenInventoryRoutes); // /api/v1/semen/* (Semen Inventory - P7)
@@ -999,6 +1004,7 @@ app.register(
     api.register(invoicesRoutes);      // /api/v1/invoices/* Finance MVP
     api.register(paymentsRoutes);      // /api/v1/payments/* Finance MVP
     api.register(expensesRoutes);      // /api/v1/expenses/* Finance MVP
+    api.register(tenantStripeConnectRoutes, { prefix: "/tenant/stripe-connect" }); // /api/v1/tenant/stripe-connect/* Tenant Stripe Connect
     api.register(attachmentsRoutes);   // /api/v1/attachments/* Finance Track C
     api.register(messagesRoutes);      // /api/v1/messages/* Direct Messages
     api.register(communicationsRoutes); // /api/v1/communications/* Communications Hub

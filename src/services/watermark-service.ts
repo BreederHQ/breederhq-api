@@ -16,6 +16,7 @@ import type {
   WatermarkOptions,
   WatermarkPosition,
   WatermarkSize,
+  WatermarkPattern,
 } from "../types/watermark.js";
 
 // ─────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ export function calculateSettingsHash(options: WatermarkOptions): string {
     position: options.position,
     opacity: options.opacity,
     size: options.size,
+    pattern: options.pattern || "single",
   });
   return crypto.createHash("md5").update(input).digest("hex");
 }
@@ -146,31 +148,64 @@ export async function applyImageWatermark(
 
   // 5. Create watermark overlay(s)
   const overlays: sharp.OverlayOptions[] = [];
+  const pattern = options.pattern || "positions";
 
-  if (options.type === "text" || options.type === "both") {
-    if (options.text) {
-      const textOverlay = await createTextWatermark(
+  if (pattern === "tiled") {
+    // Tiled pattern: diagonal repeating text across entire image
+    if ((options.type === "text" || options.type === "both") && options.text) {
+      const tiledOverlay = await createTiledTextWatermark(
         options.text,
         width,
         height,
-        options.position as WatermarkPosition,
         options.size || "medium",
         options.opacity
       );
-      overlays.push(textOverlay);
+      overlays.push(tiledOverlay);
     }
-  }
+    // Logo: center position for tiled pattern
+    if ((options.type === "logo" || options.type === "both") && options.logoBuffer) {
+      const logoOverlay = await createLogoWatermark(
+        options.logoBuffer,
+        width,
+        height,
+        "center",
+        options.size || "medium",
+        options.opacity
+      );
+      overlays.push(logoOverlay);
+    }
+  } else {
+    // Positions pattern: watermark at each selected position
+    // Fall back to legacy single position if positions array is empty
+    const positionsToUse = options.positions && options.positions.length > 0
+      ? options.positions
+      : [options.position as WatermarkPosition];
 
-  if ((options.type === "logo" || options.type === "both") && options.logoBuffer) {
-    const logoOverlay = await createLogoWatermark(
-      options.logoBuffer,
-      width,
-      height,
-      options.position as WatermarkPosition,
-      options.size || "medium",
-      options.opacity
-    );
-    overlays.push(logoOverlay);
+    for (const pos of positionsToUse) {
+      if ((options.type === "text" || options.type === "both") && options.text) {
+        const textOverlay = await createTextWatermark(
+          options.text,
+          width,
+          height,
+          pos,
+          options.size || "medium",
+          options.opacity
+        );
+        overlays.push(textOverlay);
+      }
+
+      if ((options.type === "logo" || options.type === "both") && options.logoBuffer) {
+        const logoOverlay = await createLogoWatermark(
+          options.logoBuffer,
+          width,
+          height,
+          pos,
+          options.size || "medium",
+          options.opacity
+        );
+        overlays.push(logoOverlay);
+      }
+    }
   }
 
   // 6. Apply overlays to image
@@ -232,25 +267,45 @@ async function createTextWatermark(
     Math.floor(Math.min(imageWidth, imageHeight) * sizeMultiplier[size])
   );
 
-  // Create SVG text element
+  // Create SVG text element with proper namespace
   const svgWidth = Math.ceil(text.length * fontSize * 0.6);
   const svgHeight = Math.ceil(fontSize * 1.5);
 
-  const svg = `
-    <svg width="${svgWidth}" height="${svgHeight}">
-      <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle"
-            font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="bold"
-            fill="rgba(255,255,255,${opacity})" stroke="rgba(0,0,0,${opacity * 0.5})" stroke-width="1">
-        ${escapeXml(text)}
-      </text>
-    </svg>
-  `;
+  // Use solid colors in SVG, apply opacity via Sharp's blend options
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}">
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="bold"
+        fill="white" stroke="black" stroke-width="1">
+    ${escapeXml(text)}
+  </text>
+</svg>`;
 
-  const textBuffer = Buffer.from(svg);
+  // Render SVG to PNG buffer with transparency, then apply opacity
+  const textBuffer = await sharp(Buffer.from(svg))
+    .ensureAlpha()
+    .png()
+    .toBuffer();
+
+  // Apply opacity by modifying alpha channel
+  const { data, info } = await sharp(textBuffer)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixelData = new Uint8Array(data);
+  for (let i = 3; i < pixelData.length; i += 4) {
+    pixelData[i] = Math.floor(pixelData[i] * opacity);
+  }
+
+  const opaqueBuffer = await sharp(pixelData, {
+    raw: { width: info.width, height: info.height, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+
   const pos = calculatePosition(position, imageWidth, imageHeight, svgWidth, svgHeight);
 
   return {
-    input: textBuffer,
+    input: opaqueBuffer,
     top: Math.max(0, pos.top),
     left: Math.max(0, pos.left),
   };
@@ -371,6 +426,88 @@ function calculatePosition(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Tiled Watermark Pattern (Shutterstock-style)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Create a tiled watermark pattern that covers the entire image
+ * with diagonal repeating text (like Shutterstock/Getty)
+ */
+async function createTiledTextWatermark(
+  text: string,
+  imageWidth: number,
+  imageHeight: number,
+  size: WatermarkSize,
+  opacity: number
+): Promise<sharp.OverlayOptions> {
+  // Calculate font size based on image dimensions and size setting
+  const sizeMultiplier: Record<WatermarkSize, number> = {
+    small: 0.03,
+    medium: 0.05,
+    large: 0.07,
+  };
+  const fontSize = Math.max(
+    16,
+    Math.floor(Math.min(imageWidth, imageHeight) * sizeMultiplier[size])
+  );
+
+  // Calculate spacing between watermarks
+  const spacingX = Math.max(150, fontSize * text.length * 0.8);
+  const spacingY = Math.max(80, fontSize * 2);
+
+  // Calculate how many rows and columns we need (with buffer for diagonal)
+  const cols = Math.ceil(imageWidth / spacingX) + 4;
+  const rows = Math.ceil(imageHeight / spacingY) + 4;
+
+  // Create SVG at exact image dimensions with diagonal text pattern
+  // Each text element is rotated individually to avoid transform issues
+  const svgTexts: string[] = [];
+  for (let row = -2; row < rows; row++) {
+    for (let col = -2; col < cols; col++) {
+      // Offset every other row for a more natural pattern
+      const xOffset = (row % 2) * (spacingX / 2);
+      const x = col * spacingX + xOffset;
+      const y = row * spacingY;
+      svgTexts.push(
+        `<text x="${x}" y="${y}" font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="bold" fill="white" stroke="black" stroke-width="0.5" transform="rotate(-30, ${x}, ${y})">${escapeXml(text)}</text>`
+      );
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${imageWidth}" height="${imageHeight}">
+  ${svgTexts.join("\n  ")}
+</svg>`;
+
+  // Render SVG to PNG buffer
+  const textBuffer = await sharp(Buffer.from(svg))
+    .ensureAlpha()
+    .png()
+    .toBuffer();
+
+  // Apply opacity by modifying alpha channel
+  const { data, info } = await sharp(textBuffer)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixelData = new Uint8Array(data);
+  for (let i = 3; i < pixelData.length; i += 4) {
+    pixelData[i] = Math.floor(pixelData[i] * opacity);
+  }
+
+  const opaqueBuffer = await sharp(pixelData, {
+    raw: { width: info.width, height: info.height, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+
+  return {
+    input: opaqueBuffer,
+    top: 0,
+    left: 0,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
@@ -403,4 +540,100 @@ export function resolveTemplateVars(
   return text
     .replace(/\{\{businessName\}\}/g, businessName)
     .replace(/\{\{date\}\}/g, new Date().toLocaleDateString());
+}
+
+// ─────────────────────────────────────────────────────────────
+// PREVIEW WATERMARK (In-Memory Only)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Apply watermark directly to an image buffer (no S3, no caching).
+ * Used for live previews in the settings UI.
+ */
+export async function applyWatermarkToBuffer(
+  imageBuffer: Buffer,
+  options: WatermarkOptions,
+  logoBuffer?: Buffer
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  // Get image dimensions
+  const metadata = await sharp(imageBuffer).metadata();
+  const width = metadata.width || 800;
+  const height = metadata.height || 600;
+  const format = metadata.format || "jpeg";
+
+  // Create watermark overlay(s)
+  const overlays: sharp.OverlayOptions[] = [];
+  const pattern = options.pattern || "single";
+
+  if (pattern === "tiled") {
+    // Tiled pattern: diagonal repeating text across entire image
+    if ((options.type === "text" || options.type === "both") && options.text) {
+      const tiledOverlay = await createTiledTextWatermark(
+        options.text,
+        width,
+        height,
+        options.size || "medium",
+        options.opacity
+      );
+      overlays.push(tiledOverlay);
+    }
+    // Logo: center position for tiled pattern
+    if ((options.type === "logo" || options.type === "both") && logoBuffer) {
+      const logoOverlay = await createLogoWatermark(
+        logoBuffer,
+        width,
+        height,
+        "center",
+        options.size || "medium",
+        options.opacity
+      );
+      overlays.push(logoOverlay);
+    }
+  } else {
+    // Positions pattern: watermark at each selected position
+    // Fall back to legacy single position if positions array is empty
+    const positionsToUse = options.positions && options.positions.length > 0
+      ? options.positions
+      : [options.position as WatermarkPosition];
+
+    for (const pos of positionsToUse) {
+      if ((options.type === "text" || options.type === "both") && options.text) {
+        const textOverlay = await createTextWatermark(
+          options.text,
+          width,
+          height,
+          pos,
+          options.size || "medium",
+          options.opacity
+        );
+        overlays.push(textOverlay);
+      }
+
+      if ((options.type === "logo" || options.type === "both") && logoBuffer) {
+        const logoOverlay = await createLogoWatermark(
+          logoBuffer,
+          width,
+          height,
+          pos,
+          options.size || "medium",
+          options.opacity
+        );
+        overlays.push(logoOverlay);
+      }
+    }
+  }
+
+  // Apply overlays to image
+  let image = sharp(imageBuffer);
+  if (overlays.length > 0) {
+    image = image.composite(overlays);
+  }
+
+  // Output as JPEG for consistent preview quality
+  const watermarkedBuffer = await image.jpeg({ quality: 85 }).toBuffer();
+
+  return {
+    buffer: watermarkedBuffer,
+    mimeType: "image/jpeg",
+  };
 }

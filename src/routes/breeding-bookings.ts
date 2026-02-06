@@ -747,6 +747,67 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         return [plan, u];
       });
 
+      // Auto-create BreedingEvent records for both animals when breeding starts via marketplace
+      try {
+        const userId = (req as any).user?.id ?? "system";
+        const breedingDate = body.breedingDate
+          ? new Date(body.breedingDate)
+          : existing.scheduledDate ?? new Date();
+
+        const eventsToCreate: Array<{
+          tenantId: number;
+          animalId: number;
+          eventType: string;
+          occurredAt: Date;
+          outcome: string;
+          breedingPlanId: number;
+          partnerAnimalId?: number;
+          title: string;
+          description: string;
+          createdBy: string;
+        }> = [];
+
+        // Create event for offering animal (sire)
+        if (existing.offeringAnimalId) {
+          eventsToCreate.push({
+            tenantId,
+            animalId: existing.offeringAnimalId,
+            eventType: "BREEDING_ATTEMPT",
+            occurredAt: breedingDate,
+            outcome: "PENDING",
+            breedingPlanId: plan.id,
+            partnerAnimalId: existing.seekingAnimalId ?? undefined,
+            title: `Marketplace breeding - ${existing.bookingNumber}`,
+            description: `Auto-recorded from marketplace booking start`,
+            createdBy: userId,
+          });
+        }
+
+        // Create event for seeking animal (dam) if it's a platform animal
+        if (existing.seekingAnimalId) {
+          eventsToCreate.push({
+            tenantId: existing.seekingTenantId ?? tenantId,
+            animalId: existing.seekingAnimalId,
+            eventType: "BREEDING_ATTEMPT",
+            occurredAt: breedingDate,
+            outcome: "PENDING",
+            breedingPlanId: plan.id,
+            partnerAnimalId: existing.offeringAnimalId ?? undefined,
+            title: `Marketplace breeding - ${existing.bookingNumber}`,
+            description: `Auto-recorded from marketplace booking start`,
+            createdBy: userId,
+          });
+        }
+
+        if (eventsToCreate.length > 0) {
+          await prisma.breedingEvent.createMany({ data: eventsToCreate });
+          console.log(`[breeding-bookings] Auto-created ${eventsToCreate.length} BreedingEvent records for booking ${existing.bookingNumber}`);
+        }
+      } catch (eventErr) {
+        // Log but don't fail - event creation is secondary
+        console.warn("[breeding-bookings] Failed to auto-create BreedingEvent records:", eventErr);
+      }
+
       reply.send({
         success: true,
         booking: updated,
