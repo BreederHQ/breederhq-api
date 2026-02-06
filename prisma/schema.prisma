@@ -1186,8 +1186,6 @@ model User {
   defaultTenant     Tenant?            @relation(fields: [defaultTenantId], references: [id], onDelete: SetNull)
 
   // auth ancillaries
-  Passkey           Passkey[]
-  RecoveryCode      RecoveryCode[]
   Session           Session[]
   VerificationToken VerificationToken[]
 
@@ -1236,9 +1234,6 @@ model User {
 
   // Service provider profile (for non-breeders listing services)
   serviceProviderProfile ServiceProviderProfile?
-
-  // Cross-tenant lineage
-  lineageRequestsSent LineageInfoRequest[] @relation("LineageRequestFromUser")
 
   // Cross-tenant animal linking
   animalLinkRequestsSent AnimalLinkRequest[] @relation("LinkRequestFromUser")
@@ -1355,47 +1350,6 @@ model VerificationToken {
   @@schema("public")
 }
 
-model Passkey {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  credentialId String   @unique
-  publicKey    String
-  counter      Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-  @@schema("public")
-}
-
-model RecoveryCode {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code      String   @unique
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@schema("public")
-}
-
-model Invitation {
-  id             String         @id @default(cuid())
-  email          String
-  organizationId Int
-  role           MembershipRole @default(MEMBER)
-  token          String         @unique
-  expiresAt      DateTime
-  acceptedAt     DateTime?
-  createdAt      DateTime       @default(now())
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([email])
-  @@index([organizationId])
-  @@schema("public")
-}
 
 model Invite {
   id             Int       @id @default(autoincrement())
@@ -1444,8 +1398,6 @@ model Tenant {
   parties                  Party[]
   animals                  Animal[]
   billing                  BillingAccount?
-  sharesSent               AnimalShare[]                @relation("ShareFromTenant")
-  sharesReceived           AnimalShare[]                @relation("ShareToTenant")
   individualAnimalListings MktListingIndividualAnimal[] @relation("TenantIndividualAnimalListings")
   animalPrograms           MktListingAnimalProgram[]    @relation("TenantAnimalPrograms")
   User                     User[]
@@ -1455,8 +1407,6 @@ model Tenant {
   // breeding additions
   breedingPlans             BreedingPlan[]
   reproductiveCycles        ReproductiveCycle[]
-  planSharesSent            BreedingPlanShare[]       @relation("PlanShareFromTenant")
-  planSharesReceived        BreedingPlanShare[]       @relation("PlanShareToTenant")
   planEvents                BreedingPlanEvent[]
   testResults               TestResult[]
   breedingAttempts          BreedingAttempt[]
@@ -1519,7 +1469,6 @@ model Tenant {
   OffspringDocument      OffspringDocument[]
   OffspringContract      OffspringContract[]
   OffspringInvoiceLink   OffspringInvoiceLink[]
-  accountingIntegrations AccountingIntegration[]
   AnimalOwnershipChange  AnimalOwnershipChange[]
   PaymentIntent          PaymentIntent[]
   AnimalTraitValue       AnimalTraitValue[]
@@ -1562,16 +1511,11 @@ model Tenant {
   usageRecords        UsageRecord[]
   usageSnapshots      UsageSnapshot[]
   paymentMethods      PaymentMethod[]
-  referralCodesOwned  ReferralCode[]             @relation("ReferralCodeOwner")
-  referralsMade       Referral[]                 @relation("ReferralsMade")
-  referralsReceived   Referral[]                 @relation("ReferralsReceived")
   unifiedListings     MktListingService[]        // Unified marketplace listings
   featureChecks       FeatureCheck[]
 
   // Cross-tenant lineage
   contributedIdentifiers  GlobalAnimalIdentifier[]
-  lineageRequestsSent     LineageInfoRequest[]     @relation("LineageRequestFrom")
-  lineageRequestsReceived LineageInfoRequest[]     @relation("LineageRequestTo")
 
   // Cross-tenant animal linking
   linkRequestsFrom         AnimalLinkRequest[]     @relation("LinkRequestFrom")
@@ -2180,67 +2124,6 @@ model PaymentMethod {
   @@schema("public")
 }
 
-model ReferralCode {
-  id Int @id @default(autoincrement())
-
-  code String @unique
-
-  referrerTenantId Int
-  referrer         Tenant @relation("ReferralCodeOwner", fields: [referrerTenantId], references: [id], onDelete: Cascade)
-
-  // Reward structure
-  refereeDiscountStripeCouponId String?
-  referrerCreditCents           Int?
-
-  // Tracking
-  usedCount Int       @default(0)
-  maxUses   Int?
-  expiresAt DateTime?
-  active    Boolean   @default(true)
-
-  // Relations
-  referrals Referral[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([referrerTenantId])
-  @@index([code])
-  @@index([active, expiresAt])
-  @@schema("public")
-}
-
-model Referral {
-  id Int @id @default(autoincrement())
-
-  codeId Int
-  code   ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
-
-  referrerTenantId Int
-  referrer         Tenant @relation("ReferralsMade", fields: [referrerTenantId], references: [id], onDelete: Cascade)
-
-  refereeTenantId Int
-  referee         Tenant @relation("ReferralsReceived", fields: [refereeTenantId], references: [id], onDelete: Cascade)
-
-  // Reward tracking
-  refereeDiscountApplied Boolean @default(false)
-  refereeStripeCouponId  String?
-
-  referrerCreditApplied Boolean   @default(false)
-  referrerCreditCents   Int?
-  referrerCreditedAt    DateTime?
-
-  status String @default("active")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([codeId, refereeTenantId])
-  @@index([referrerTenantId])
-  @@index([refereeTenantId])
-  @@index([codeId])
-  @@schema("public")
-}
 
 model ServiceProviderProfile {
   id Int @id @default(autoincrement())
@@ -2276,17 +2159,6 @@ model ServiceProviderProfile {
   @@schema("public")
 }
 
-model SystemConfig {
-  key         String   @id
-  value       String
-  type        String // "number", "boolean", "string", "json"
-  description String?  @db.Text
-  updatedBy   String?
-  updatedAt   DateTime @updatedAt
-
-  @@index([key])
-  @@schema("public")
-}
 
 model Organization {
   id       Int    @id @default(autoincrement())
@@ -2321,7 +2193,6 @@ model Organization {
   breedingPlans       BreedingPlan[]
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
-  Invitation          Invitation[]
   externalProvider    String?
   externalId          String?
 
@@ -2887,7 +2758,6 @@ model Animal {
   owners                   AnimalOwner[]
   registryIds              AnimalRegistryIdentifier[]
   microchipRegistrations   AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
-  shares                   AnimalShare[]                 @relation("ShareAnimal")
   individualAnimalListings MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
   programParticipants      AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
   createdAt                DateTime                      @default(now())
@@ -3082,26 +2952,6 @@ model AnimalRegistryIdentifier {
   @@schema("public")
 }
 
-model AnimalShare {
-  id           Int         @id @default(autoincrement())
-  animalId     Int
-  animal       Animal      @relation("ShareAnimal", fields: [animalId], references: [id], onDelete: Cascade)
-  fromTenantId Int
-  fromTenant   Tenant      @relation("ShareFromTenant", fields: [fromTenantId], references: [id], onDelete: Cascade)
-  toTenantId   Int
-  toTenant     Tenant      @relation("ShareToTenant", fields: [toTenantId], references: [id], onDelete: Cascade)
-  scope        ShareScope  @default(VIEW)
-  status       ShareStatus @default(PENDING)
-  message      String?
-  expiresAt    DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-
-  @@unique([animalId, toTenantId])
-  @@index([fromTenantId])
-  @@index([toTenantId])
-  @@schema("public")
-}
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -3954,7 +3804,6 @@ model BreedingPlan {
   Events             BreedingPlanEvent[]
   Waitlist           WaitlistEntry[]
   buyers             BreedingPlanBuyer[]
-  Shares             BreedingPlanShare[]
   TestResults        TestResult[]
   BreedingAttempts   BreedingAttempt[]
   PregnancyChecks    PregnancyCheck[]
@@ -4087,26 +3936,6 @@ model ReproductiveCycle {
   @@schema("public")
 }
 
-model BreedingPlanShare {
-  id           Int          @id @default(autoincrement())
-  planId       Int
-  plan         BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  fromTenantId Int
-  fromTenant   Tenant       @relation("PlanShareFromTenant", fields: [fromTenantId], references: [id], onDelete: Cascade)
-  toTenantId   Int
-  toTenant     Tenant       @relation("PlanShareToTenant", fields: [toTenantId], references: [id], onDelete: Cascade)
-  scope        ShareScope   @default(BREED_PLAN)
-  status       ShareStatus  @default(PENDING)
-  message      String?
-  expiresAt    DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  @@unique([planId, toTenantId])
-  @@index([fromTenantId])
-  @@index([toTenantId])
-  @@schema("public")
-}
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -6940,30 +6769,6 @@ model OffspringInvoiceLink {
   @@schema("public")
 }
 
-model AccountingIntegration {
-  id       Int    @id @default(autoincrement())
-  tenantId Int
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  provider String // for example "quickbooks_online"
-  realmId  String // external account or company id
-
-  accessToken          String
-  refreshToken         String
-  accessTokenExpiresAt DateTime
-
-  isActive       Boolean   @default(true)
-  syncDirection  String    @default("outbound") // outbound, inbound, bidirectional
-  lastSyncAt     DateTime?
-  lastSyncStatus String?
-  lastSyncError  String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([tenantId, provider])
-  @@schema("public")
-}
 
 /**
  * Portal Access Management
@@ -7704,9 +7509,6 @@ model GlobalAnimalIdentity {
   childrenAsDam  GlobalAnimalIdentity[] @relation("GlobalDam")
   childrenAsSire GlobalAnimalIdentity[] @relation("GlobalSire")
 
-  // Lineage info requests targeting this identity
-  infoRequests LineageInfoRequest[]
-
   @@index([species])
   @@index([damId])
   @@index([sireId])
@@ -7813,66 +7615,6 @@ model AnimalPrivacySettings {
   @@schema("public")
 }
 
-/**
- * LineageInfoRequest - Request from one breeder to another for animal information
- * When you see a silhouette in your pedigree, you can request details from the owner
- */
-model LineageInfoRequest {
-  id        Int      @id @default(autoincrement())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Who is requesting
-  requestingTenantId Int
-  requestingTenant   Tenant @relation("LineageRequestFrom", fields: [requestingTenantId], references: [id], onDelete: Cascade)
-  requestingUserId   String
-  requestingUser     User   @relation("LineageRequestFromUser", fields: [requestingUserId], references: [id], onDelete: Cascade)
-
-  // What animal they want info about
-  targetIdentityId Int
-  targetIdentity   GlobalAnimalIdentity @relation(fields: [targetIdentityId], references: [id], onDelete: Cascade)
-
-  // Who owns that animal (resolved at request time)
-  targetTenantId Int
-  targetTenant   Tenant @relation("LineageRequestTo", fields: [targetTenantId], references: [id], onDelete: Cascade)
-
-  // Request details
-  message String? @db.Text // Optional message from requester
-  purpose String? // "pedigree_research", "coi_calculation", "breeding_decision", etc.
-
-  // Response
-  status          LineageRequestStatus @default(PENDING)
-  respondedAt     DateTime?
-  responseMessage String?              @db.Text
-  grantedAccess   LineageAccessLevel? // What level of access was granted
-
-  // If granted, when does access expire?
-  accessExpiresAt DateTime?
-
-  @@index([requestingTenantId])
-  @@index([targetTenantId])
-  @@index([targetIdentityId])
-  @@index([status])
-  @@schema("public")
-}
-
-enum LineageRequestStatus {
-  PENDING
-  APPROVED
-  DENIED
-  EXPIRED
-
-  @@schema("public")
-}
-
-enum LineageAccessLevel {
-  LINEAGE_ONLY // Just position in pedigree, no details
-  BASIC // Name, breed, DOB year
-  STANDARD // Name, breed, full DOB, registry (partial)
-  FULL // Everything the owner has made shareable
-
-  @@schema("public")
-}
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -9025,29 +8767,6 @@ model MarketplaceServiceTagAssignment {
   @@schema("marketplace")
 }
 
-model MarketplaceListingReport {
-  id Int @id @default(autoincrement())
-
-  listingId      Int    @map("listing_id")
-  reporterUserId Int?   @map("reporter_user_id")
-  reason         String @db.VarChar(50)
-  description    String @db.Text
-  status         String @default("PENDING") @db.VarChar(50) // PENDING, REVIEWED, ACTIONED, DISMISSED
-
-  // Review tracking
-  reviewedBy  Int?      @map("reviewed_by")
-  reviewedAt  DateTime? @map("reviewed_at")
-  reviewNotes String?   @map("review_notes") @db.Text
-
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([listingId])
-  @@index([reporterUserId])
-  @@index([status])
-  @@index([createdAt(sort: Desc)])
-  @@map("listing_reports")
-  @@schema("marketplace")
-}
 
 model StripeIdentitySession {
   id Int @id @default(autoincrement())
@@ -9068,22 +8787,6 @@ model StripeIdentitySession {
   @@schema("marketplace")
 }
 
-model AdminActionLog {
-  id Int @id @default(autoincrement())
-
-  adminUserId Int?     @map("admin_user_id")
-  action      String   @db.VarChar(100)
-  entityType  String?  @map("entity_type") @db.VarChar(50)
-  entityId    Int?     @map("entity_id")
-  details     Json?
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  @@index([adminUserId])
-  @@index([action])
-  @@index([createdAt(sort: Desc)])
-  @@map("admin_action_logs")
-  @@schema("marketplace")
-}
 
 /**
  * ────────────────────────────────────────────────────────────────────────────

@@ -94,12 +94,6 @@ async function purgeE2EAnimals() {
     });
     console.log(`   - Breed records: ${deletedBreeds.count}`);
 
-    // Animal shares
-    const deletedShares = await prisma.animalShare.deleteMany({
-      where: { animalId: { in: animalIds } },
-    });
-    console.log(`   - Share records: ${deletedShares.count}`);
-
     // Animal trait values
     const deletedTraits = await prisma.animalTraitValue.deleteMany({
       where: { animalId: { in: animalIds } },
