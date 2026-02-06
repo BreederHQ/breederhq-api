@@ -656,7 +656,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         {
           id: message.id,
           body: message.body,
-          senderPartyId: message.senderPartyId,
+          senderPartyId: userPartyId,
           createdAt: message.createdAt.toISOString(),
         },
         participantPartyIds
