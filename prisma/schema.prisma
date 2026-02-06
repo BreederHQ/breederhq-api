@@ -147,13 +147,6 @@ enum TagModule {
   @@schema("public")
 }
 
-enum OwnerPartyType {
-  Organization
-  Contact
-
-  @@schema("public")
-}
-
 enum TenantRole {
   OWNER
   ADMIN
@@ -176,22 +169,6 @@ enum TenantMembershipStatus {
   INVITED // Invite sent, not yet accepted
   ACTIVE // Full access
   SUSPENDED // Access revoked
-
-  @@schema("public")
-}
-
-enum ShareScope {
-  VIEW
-  BREED_PLAN
-
-  @@schema("public")
-}
-
-enum ShareStatus {
-  PENDING
-  ACCEPTED
-  REVOKED
-  EXPIRED
 
   @@schema("public")
 }
@@ -312,21 +289,6 @@ enum UsageMetricKey {
   STORAGE_BYTES
   SMS_SENT
   API_CALLS
-
-  @@schema("public")
-}
-
-enum AnimalCategory {
-  RABBIT
-  SMALL_RODENT // Hamster, guinea pig, etc.
-  BIRD
-  CAT
-  SMALL_DOG // Under 25 lbs
-  LARGE_DOG // Over 25 lbs
-  HORSE
-  LIVESTOCK // Cattle, sheep, goats
-  EXOTIC // Reptiles, etc.
-  OTHER
 
   @@schema("public")
 }
