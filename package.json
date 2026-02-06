@@ -40,7 +40,7 @@
     "db:dev:seed:contracts": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-contract-templates.ts",
     "db:dev:seed:supplements": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-supplement-benchmarks.ts",
     "db:dev:seed:microchips": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-microchip-registries.ts",
-    "db:dev:seed": "npm run db:dev:seed:traits && npm run db:dev:seed:users && npm run db:dev:seed:products",
+    "db:dev:seed": "npm run db:dev:seed:traits && npm run db:dev:seed:users && npm run db:dev:seed:products && npm run db:dev:seed:microchips",
     "db:dev:reset": "npm run db:dev:deploy && npm run db:dev:seed",
     "test:quota": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/api-testing/test-quota-enforcement.ts",
     "test:usage": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/api-testing/test-usage-api.ts",

@@ -132,6 +132,11 @@ export async function createTransaction(params: {
     throw new Error("listing_missing_provider");
   }
 
+  // Prevent self-booking: client cannot book their own service
+  if (listing!.provider!.userId === clientId) {
+    throw new Error("self_booking_not_allowed");
+  }
+
   // Get provider payment mode
   const paymentMode = listing!.provider!.paymentMode as "manual" | "stripe";
 

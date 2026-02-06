@@ -239,6 +239,13 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
           });
         }
 
+        if (error.message === "self_booking_not_allowed") {
+          return reply.code(400).send({
+            error: "cannot_book_own_service",
+            message: "You cannot book your own service.",
+          });
+        }
+
         // Log unexpected errors
         console.error("Error creating transaction:", error);
         return reply.code(500).send({
@@ -1091,6 +1098,180 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
           });
         }
 
+        // Prevent self-messaging: check if provider belongs to the same user
+        const targetProvider = await prisma.marketplaceProvider.findUnique({
+          where: { id: targetProviderId },
+          select: { userId: true },
+        });
+
+        if (!targetProvider) {
+          return reply.code(404).send({
+            error: "provider_not_found",
+            message: "Service provider not found.",
+          });
+        }
+
+        if (targetProvider.userId === clientId) {
+          return reply.code(400).send({
+            error: "self_message_not_allowed",
+            message: "You cannot send an inquiry to your own service listing.",
+          });
+        }
+
+        // Check if client is a breeder (has linked tenantId)
+        // If so, store message in their tenant for Communications Hub visibility
+        const clientUser = await prisma.marketplaceUser.findUnique({
+          where: { id: clientId },
+          select: { tenantId: true, firstName: true, lastName: true, email: true },
+        });
+
+        if (clientUser?.tenantId) {
+          // BREEDER FLOW: Create MessageThread in breeder's tenant
+          // This allows bidirectional visibility:
+          // - Breeder sees it in Communications Hub
+          // - Provider sees it via unified messaging (Contact.marketplaceUserId)
+
+          const breederTenantId = clientUser.tenantId;
+          const providerUserId = targetProvider.userId;
+
+          // Get or create Contact for the provider in breeder's tenant
+          let providerContact = await prisma.contact.findFirst({
+            where: {
+              tenantId: breederTenantId,
+              marketplaceUserId: providerUserId,
+              deletedAt: null,
+            },
+            select: { id: true, partyId: true },
+          });
+
+          if (!providerContact) {
+            // Get provider info for contact/party creation
+            const providerInfo = await prisma.marketplaceProvider.findUnique({
+              where: { id: targetProviderId },
+              select: { businessName: true, publicEmail: true },
+            });
+
+            // Create Party for provider in breeder's tenant
+            const providerParty = await prisma.party.create({
+              data: {
+                tenantId: breederTenantId,
+                type: "CONTACT",
+                name: providerInfo?.businessName || "Service Provider",
+                email: providerInfo?.publicEmail || null,
+              },
+            });
+
+            // Create Contact linking to provider's marketplace user ID
+            providerContact = await prisma.contact.create({
+              data: {
+                tenantId: breederTenantId,
+                partyId: providerParty.id,
+                display_name: providerInfo?.businessName || "Service Provider",
+                email: providerInfo?.publicEmail || null,
+                marketplaceUserId: providerUserId,
+                marketplaceFirstContactedAt: new Date(),
+              },
+              select: { id: true, partyId: true },
+            });
+          }
+
+          // Get breeder's own party in their tenant (for sending messages)
+          const breederParty = await prisma.party.findFirst({
+            where: {
+              tenantId: breederTenantId,
+              type: "ORGANIZATION",
+            },
+            select: { id: true },
+          });
+
+          if (!breederParty || !providerContact.partyId) {
+            // Fallback to marketplace thread if tenant setup is incomplete
+            console.warn(`Breeder tenant ${breederTenantId} missing party, falling back to marketplace thread`);
+          } else {
+            // Check for existing MessageThread between these parties
+            const existingBreederThread = await prisma.messageThread.findFirst({
+              where: {
+                tenantId: breederTenantId,
+                archived: false,
+                participants: {
+                  every: {
+                    partyId: { in: [breederParty.id, providerContact.partyId] },
+                  },
+                },
+              },
+              include: {
+                participants: true,
+              },
+            });
+
+            let breederThread = existingBreederThread;
+
+            if (!existingBreederThread) {
+              // Create new MessageThread in breeder's tenant
+              const threadSubject = body.subject || (listing ? `Question about: ${listing.title}` : "General Inquiry");
+              breederThread = await prisma.messageThread.create({
+                data: {
+                  tenantId: breederTenantId,
+                  subject: threadSubject,
+                  lastMessageAt: new Date(),
+                  firstInboundAt: null, // Outbound from breeder
+                  participants: {
+                    create: [
+                      { partyId: breederParty.id, lastReadAt: new Date() },
+                      { partyId: providerContact.partyId },
+                    ],
+                  },
+                },
+                include: { participants: true },
+              });
+            }
+
+            // Create message in the breeder's MessageThread
+            const breederMessage = await prisma.message.create({
+              data: {
+                threadId: breederThread!.id,
+                senderPartyId: breederParty.id,
+                body: body.message.trim(),
+              },
+            });
+
+            // Update thread lastMessageAt
+            await prisma.messageThread.update({
+              where: { id: breederThread!.id },
+              data: { lastMessageAt: new Date() },
+            });
+
+            // Also increment listing inquiry count
+            if (body.listingId) {
+              await prisma.mktListingService.update({
+                where: { id: body.listingId },
+                data: { inquiryCount: { increment: 1 } },
+              });
+            }
+
+            // Return response with breeder thread format
+            return reply.code(201).send({
+              ok: true,
+              thread: {
+                id: breederThread!.id,
+                prefixedId: `breeder-${breederThread!.id}`,
+                subject: breederThread!.subject,
+                status: "active",
+                source: "breeder",
+              },
+              message: {
+                id: Number(breederMessage.id),
+                threadId: breederThread!.id,
+                senderId: breederParty.id,
+                senderType: "breeder",
+                messageText: breederMessage.body,
+                createdAt: breederMessage.createdAt.toISOString(),
+              },
+            });
+          }
+        }
+
+        // NON-BREEDER FLOW: Use MarketplaceMessageThread (existing behavior)
         // Check for existing open inquiry thread for same listing/provider
         const existingThread = await prisma.marketplaceMessageThread.findFirst({
           where: {
@@ -1105,7 +1286,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
         let thread = existingThread;
 
         if (!existingThread) {
-          // Create new inquiry thread
+          // Create new inquiry thread with first client message timestamp
           thread = await prisma.marketplaceMessageThread.create({
             data: {
               clientId,
@@ -1114,6 +1295,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
               transactionId: null,
               subject: body.subject || (listing ? `Question about: ${listing.title}` : "General Inquiry"),
               status: "active",
+              firstClientMessageAt: new Date(),
             },
           });
 
@@ -1136,10 +1318,14 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
           },
         });
 
-        // Update thread lastMessageAt
+        // Update thread lastMessageAt and track first client message if not set
+        const threadUpdateData: any = { lastMessageAt: new Date() };
+        if (!thread!.firstClientMessageAt) {
+          threadUpdateData.firstClientMessageAt = new Date();
+        }
         await prisma.marketplaceMessageThread.update({
           where: { id: thread!.id },
-          data: { lastMessageAt: new Date() },
+          data: threadUpdateData,
         });
 
         // TODO: Send notification email to provider

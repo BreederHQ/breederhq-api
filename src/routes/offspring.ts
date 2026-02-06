@@ -411,6 +411,11 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
       program: G.plan.program ?? null,
       expectedPlacementStart: G.plan.expectedPlacementStart,
       expectedPlacementCompleted: G.plan.expectedPlacementCompleted,
+      // Breeding plan status for offspring group display
+      status: G.plan.status ?? null,
+      // Actual dates for offspring group UI (determines if offspring can be added)
+      birthDateActual: G.plan.birthDateActual?.toISOString?.()?.slice(0, 10) ?? null,
+      breedDateActual: G.plan.breedDateActual?.toISOString?.()?.slice(0, 10) ?? null,
       // Dates for computing expected timeline in offspring UI
       lockedCycleStart: G.plan.lockedCycleStart?.toISOString?.() ?? G.plan.lockedCycleStart ?? null,
       expectedBirthDate: G.plan.expectedBirthDate?.toISOString?.() ?? G.plan.expectedBirthDate ?? null,

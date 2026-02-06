@@ -693,6 +693,196 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(status).send(payload);
     }
   });
+
+  /* ───────────────────────── Stripe Invoice Endpoints ───────────────────────── */
+
+  // GET /invoices/:id/stripe/status - Get Stripe status for an invoice
+  app.get("/invoices/:id/stripe/status", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const status = await tenantInvoiceStripe.getInvoiceStripeStatus(tenantId, id);
+
+      return reply.send(status);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // POST /invoices/:id/stripe - Create Stripe invoice from existing platform invoice
+  app.post("/invoices/:id/stripe", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const body = req.body as any;
+      const dueInDays = body.dueInDays ? Number(body.dueInDays) : 7;
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+
+      // Check if tenant can create Stripe invoices
+      const canCreate = await tenantInvoiceStripe.canTenantCreateStripeInvoices(tenantId);
+      if (!canCreate) {
+        return reply.code(400).send({
+          error: "stripe_not_configured",
+          message: "Please complete Stripe Connect onboarding to create Stripe invoices.",
+        });
+      }
+
+      const result = await tenantInvoiceStripe.createStripeInvoiceForTenant({
+        tenantId,
+        invoiceId: id,
+        dueInDays,
+      });
+
+      return reply.code(201).send({
+        success: true,
+        invoice: result,
+      });
+    } catch (err: any) {
+      if (err.message === "stripe_invoice_already_exists") {
+        return reply.code(409).send({
+          error: "stripe_invoice_exists",
+          message: "A Stripe invoice already exists for this invoice.",
+        });
+      }
+      if (err.message === "client_email_required") {
+        return reply.code(400).send({
+          error: "client_email_required",
+          message: "The invoice client must have an email address to create a Stripe invoice.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // POST /invoices/:id/stripe/send - Send Stripe invoice to client
+  app.post("/invoices/:id/stripe/send", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const result = await tenantInvoiceStripe.sendTenantStripeInvoice(tenantId, id);
+
+      return reply.send({
+        success: true,
+        message: "Invoice sent successfully.",
+        invoice: result,
+      });
+    } catch (err: any) {
+      if (err.message === "stripe_invoice_not_created") {
+        return reply.code(400).send({
+          error: "stripe_invoice_not_created",
+          message: "Create a Stripe invoice first using POST /invoices/:id/stripe",
+        });
+      }
+      if (err.message === "invoice_already_sent") {
+        return reply.code(400).send({
+          error: "invoice_already_sent",
+          message: "This invoice has already been sent.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // POST /invoices/:id/stripe/void - Void Stripe invoice
+  app.post("/invoices/:id/stripe/void", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const result = await tenantInvoiceStripe.voidTenantStripeInvoice(tenantId, id);
+
+      return reply.send({
+        success: true,
+        message: "Invoice voided successfully.",
+        invoice: result,
+      });
+    } catch (err: any) {
+      if (err.message === "cannot_void_invoice") {
+        return reply.code(400).send({
+          error: "cannot_void_invoice",
+          message: "This invoice cannot be voided. It may already be paid or voided.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /invoices/:id/stripe/pdf - Get PDF URL for Stripe invoice
+  app.get("/invoices/:id/stripe/pdf", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const url = await tenantInvoiceStripe.getTenantInvoicePdfUrl(tenantId, id);
+
+      return reply.send({ url });
+    } catch (err: any) {
+      if (err.message === "pdf_not_available") {
+        return reply.code(400).send({
+          error: "pdf_not_available",
+          message: "PDF is not available. Invoice may need to be sent first.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /invoices/:id/stripe/payment-url - Get payment URL for Stripe invoice
+  app.get("/invoices/:id/stripe/payment-url", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const url = await tenantInvoiceStripe.getTenantInvoicePaymentUrl(tenantId, id);
+
+      return reply.send({ url });
+    } catch (err: any) {
+      if (err.message === "payment_url_not_available") {
+        return reply.code(400).send({
+          error: "payment_url_not_available",
+          message: "Payment URL is not available. Invoice may need to be sent first.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
+  // GET /tenant/stripe-connect/can-invoice - Check if tenant can create Stripe invoices
+  app.get("/tenant/stripe-connect/can-invoice", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+      const canCreate = await tenantInvoiceStripe.canTenantCreateStripeInvoices(tenantId);
+
+      return reply.send({ canCreateStripeInvoices: canCreate });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
 };
 
 export default routes;

@@ -534,3 +534,380 @@ export async function recalculateMilestones(
 
   return updates;
 }
+
+// ==============================================================================
+// SPECIES-GENERIC BIRTH MILESTONE FUNCTIONS
+// ==============================================================================
+
+/**
+ * Gestation periods by species (in days)
+ */
+const SPECIES_GESTATION_DAYS: Record<string, number> = {
+  DOG: 63,
+  CAT: 65,
+  HORSE: 340,
+  RABBIT: 31,
+  GOAT: 150,
+  SHEEP: 147,
+  PIG: 114,
+  CATTLE: 283,
+  CHICKEN: 21,
+  ALPACA: 345,
+  LLAMA: 350,
+};
+
+/**
+ * Pre-birth sign types by species
+ */
+const SPECIES_PRE_BIRTH_SIGNS: Record<string, string[]> = {
+  DOG: ["TEMPERATURE_DROP", "NESTING_BEHAVIOR", "LOSS_OF_APPETITE", "VULVAR_CHANGES", "MILK_PRESENT"],
+  CAT: ["TEMPERATURE_DROP", "NESTING_BEHAVIOR", "RESTLESSNESS", "LOSS_OF_APPETITE", "MILK_PRESENT"],
+  HORSE: ["UDDER_DEVELOPMENT", "UDDER_FULL", "WAX_APPEARANCE", "VULVAR_RELAXATION", "TAILHEAD_RELAXATION", "MILK_CALCIUM_TEST"],
+  RABBIT: ["FUR_PULLING", "NEST_BUILDING", "RESTLESSNESS"],
+  GOAT: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "NESTING_BEHAVIOR", "LOSS_OF_APPETITE"],
+  SHEEP: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "RESTLESSNESS"],
+  PIG: ["NESTING_BEHAVIOR", "MILK_PRESENT", "VULVAR_CHANGES", "RESTLESSNESS"],
+  CATTLE: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "RESTLESSNESS"],
+  CHICKEN: ["NESTING_BEHAVIOR"],
+  ALPACA: ["UDDER_TIGHT", "VULVAR_CHANGES", "RESTLESSNESS"],
+  LLAMA: ["UDDER_TIGHT", "VULVAR_CHANGES", "RESTLESSNESS"],
+};
+
+/**
+ * Get scheduled milestones configuration for a species
+ */
+function getScheduledMilestonesConfig(species: string): Array<{ type: string; daysFromBreeding: number }> {
+  const gestation = SPECIES_GESTATION_DAYS[species.toUpperCase()] || 63;
+  const speciesUpper = species.toUpperCase();
+
+  switch (speciesUpper) {
+    case "DOG":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 28 },
+        { type: "ULTRASOUND_HEARTBEAT", daysFromBreeding: 35 },
+        { type: "XRAY_COUNT", daysFromBreeding: 55 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 58 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 60 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 2 },
+      ];
+
+    case "CAT":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 21 },
+        { type: "ULTRASOUND_COUNT", daysFromBreeding: 35 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 58 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 3 },
+      ];
+
+    case "RABBIT":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 14 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 28 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 4 },
+      ];
+
+    case "GOAT":
+      return [
+        { type: "ULTRASOUND_COUNT", daysFromBreeding: 45 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 140 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 145 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 5 },
+      ];
+
+    case "SHEEP":
+      return [
+        { type: "ULTRASOUND_COUNT", daysFromBreeding: 45 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 137 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 142 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 5 },
+      ];
+
+    case "PIG":
+      return [
+        { type: "ULTRASOUND_COUNT", daysFromBreeding: 28 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 110 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 111 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 3 },
+      ];
+
+    case "CATTLE":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 30 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 270 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 275 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 7 },
+      ];
+
+    case "CHICKEN":
+      return [
+        { type: "BEGIN_MONITORING", daysFromBreeding: 7 },
+        { type: "DAILY_CHECKS", daysFromBreeding: 14 },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 18 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+      ];
+
+    case "ALPACA":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 30 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 330 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 15 },
+      ];
+
+    case "LLAMA":
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 30 },
+        { type: "BEGIN_MONITORING", daysFromBreeding: 340 },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 15 },
+      ];
+
+    default:
+      // Fallback to dog-like schedule
+      return [
+        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: Math.round(gestation * 0.4) },
+        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: Math.round(gestation * 0.9) },
+        { type: "DUE_DATE", daysFromBreeding: gestation },
+      ];
+  }
+}
+
+/**
+ * Get anchor date for species-generic milestones
+ */
+function getSpeciesAnchorDate(plan: {
+  species: string | null;
+  breedDateActual: Date | null;
+  ovulationConfirmed?: Date | null;
+}): { anchorDate: Date; anchorMode: "OVULATION" | "BREEDING_DATE"; gestationDays: number } | null {
+  const species = (plan.species || "DOG").toUpperCase();
+  const gestationDays = SPECIES_GESTATION_DAYS[species] || 63;
+
+  // Priority 1: Confirmed ovulation (highest accuracy)
+  if (plan.ovulationConfirmed) {
+    return {
+      anchorDate: plan.ovulationConfirmed,
+      anchorMode: "OVULATION",
+      gestationDays,
+    };
+  }
+
+  // Priority 2: Actual breed date (standard accuracy)
+  if (plan.breedDateActual) {
+    return {
+      anchorDate: plan.breedDateActual,
+      anchorMode: "BREEDING_DATE",
+      gestationDays,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Create species-generic birth milestones for a breeding plan
+ * This is the species-aware version of createBreedingMilestones
+ */
+export async function createSpeciesBirthMilestones(
+  breedingPlanId: number,
+  tenantId: number
+): Promise<any[]> {
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: breedingPlanId, tenantId },
+  });
+
+  if (!plan) {
+    throw new Error("Breeding plan not found");
+  }
+
+  const species = (plan.species || "DOG").toUpperCase();
+
+  // For horses, use the existing horse-specific milestones
+  if (species === "HORSE") {
+    return createBreedingMilestones(breedingPlanId, tenantId);
+  }
+
+  // Get anchor date using species-aware priority logic
+  const anchor = getSpeciesAnchorDate(plan as any);
+
+  if (!anchor) {
+    throw new Error("Cannot create milestones: the actual breeding date or ovulation date must be recorded first.");
+  }
+
+  // Check if milestones already exist
+  const existing = await prisma.breedingMilestone.findFirst({
+    where: { breedingPlanId, tenantId },
+  });
+
+  if (existing) {
+    throw new Error("Milestones already exist for this breeding plan. Delete existing milestones first.");
+  }
+
+  // Get species-specific milestone schedule
+  const scheduledMilestones = getScheduledMilestonesConfig(species);
+  const preBirthSigns = SPECIES_PRE_BIRTH_SIGNS[species] || [];
+
+  // Create scheduled milestones
+  const createdScheduled = await Promise.all(
+    scheduledMilestones.map((m) =>
+      prisma.breedingMilestone.create({
+        data: {
+          tenantId,
+          breedingPlanId,
+          milestoneType: m.type as any,
+          scheduledDate: addDays(anchor.anchorDate, m.daysFromBreeding),
+        },
+      })
+    )
+  );
+
+  // Create pre-birth sign milestones (scheduled 7 days before due date)
+  const dueDate = addDays(anchor.anchorDate, anchor.gestationDays);
+  const preBirthDate = addDays(dueDate, -7);
+
+  const createdSigns = await Promise.all(
+    preBirthSigns.map((type) =>
+      prisma.breedingMilestone.create({
+        data: {
+          tenantId,
+          breedingPlanId,
+          milestoneType: type as any,
+          scheduledDate: preBirthDate,
+        },
+      })
+    )
+  );
+
+  return [...createdScheduled, ...createdSigns];
+}
+
+/**
+ * Get birth timeline for any species (species-aware version of getFoalingTimeline)
+ */
+export async function getBirthTimeline(breedingPlanId: number, tenantId: number) {
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: breedingPlanId, tenantId },
+    include: {
+      dam: true,
+      sire: true,
+      offspringGroup: {
+        include: {
+          Offspring: true,
+        },
+      },
+      foalingOutcome: true,
+      breedingMilestones: {
+        orderBy: { scheduledDate: "asc" },
+      },
+    },
+  });
+
+  if (!plan) throw new Error("Breeding plan not found");
+
+  const species = (plan.species || "DOG").toUpperCase();
+  const today = startOfDayUTC(new Date());
+
+  // If horse, use the existing foaling timeline for backwards compatibility
+  if (species === "HORSE") {
+    return getFoalingTimeline(breedingPlanId, tenantId);
+  }
+
+  const gestationDays = SPECIES_GESTATION_DAYS[species] || 63;
+
+  // Handle case when no expected birth date is set
+  if (!plan.expectedBirthDate) {
+    return {
+      breedingPlanId: plan.id,
+      species,
+      dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name } : null,
+      sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name } : null,
+      expectedBirthDate: null,
+      actualBreedDate: plan.breedDateActual,
+      actualBirthDate: plan.birthDateActual,
+      daysUntilBirth: null,
+      gestationDays,
+      status: plan.birthDateActual ? "BIRTHED" : "PLANNING",
+      milestones: plan.breedingMilestones.map((m) => ({
+        id: m.id,
+        type: m.milestoneType,
+        scheduledDate: m.scheduledDate,
+        completedDate: m.completedDate,
+        isCompleted: m.isCompleted,
+        notes: m.notes,
+        daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
+      })),
+      offspring: plan.offspringGroup?.Offspring || [],
+      outcome: plan.foalingOutcome || null,
+    };
+  }
+
+  const expectedBirthStartOfDay = startOfDayUTC(plan.expectedBirthDate);
+  const daysUntilBirth = differenceInDays(expectedBirthStartOfDay, today);
+
+  // Calculate status
+  let status: "PLANNING" | "EXPECTING" | "MONITORING" | "IMMINENT" | "OVERDUE" | "BIRTHED";
+  if (plan.birthDateActual) {
+    status = "BIRTHED";
+  } else if (daysUntilBirth < 0) {
+    status = "OVERDUE";
+  } else if (daysUntilBirth <= 7) {
+    status = "IMMINENT";
+  } else if (daysUntilBirth <= Math.round(gestationDays * 0.1)) {
+    status = "MONITORING";
+  } else {
+    status = "EXPECTING";
+  }
+
+  return {
+    breedingPlanId: plan.id,
+    species,
+    dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name } : null,
+    sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name } : null,
+    expectedBirthDate: plan.expectedBirthDate,
+    actualBreedDate: plan.breedDateActual,
+    actualBirthDate: plan.birthDateActual,
+    daysUntilBirth,
+    gestationDays,
+    status,
+    milestones: plan.breedingMilestones.map((m) => ({
+      id: m.id,
+      type: m.milestoneType,
+      scheduledDate: m.scheduledDate,
+      completedDate: m.completedDate,
+      isCompleted: m.isCompleted,
+      notes: m.notes,
+      daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
+    })),
+    offspring: plan.offspringGroup?.Offspring || [],
+    outcome: plan.foalingOutcome || null,
+  };
+}
+
+/**
+ * Delete all milestones for a breeding plan
+ */
+export async function deleteBirthMilestones(
+  breedingPlanId: number,
+  tenantId: number
+): Promise<{ count: number }> {
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: breedingPlanId, tenantId },
+  });
+
+  if (!plan) {
+    throw new Error("Breeding plan not found");
+  }
+
+  const result = await prisma.breedingMilestone.deleteMany({
+    where: { breedingPlanId, tenantId },
+  });
+
+  return { count: result.count };
+}

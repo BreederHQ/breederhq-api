@@ -282,6 +282,10 @@ import {
   createBreedingMilestones,
   deleteBreedingMilestones,
   recalculateMilestones,
+  // Species-generic birth milestone functions (all species)
+  createSpeciesBirthMilestones,
+  getBirthTimeline,
+  deleteBirthMilestones,
 } from "../services/breeding-foaling-service.js";
 import {
   getMareReproductiveHistory,
@@ -289,6 +293,17 @@ import {
   recalculateMareHistory,
   getFoalingAnalytics,
 } from "../services/mare-reproductive-history-service.js";
+import {
+  createNeonatalCareEntry,
+  getNeonatalCareEntries,
+  deleteNeonatalCareEntry,
+  createNeonatalIntervention,
+  getNeonatalInterventions,
+  updateNeonatalIntervention,
+  getNeonatalDashboard,
+  updateOffspringNeonatalStatus,
+  batchRecordWeights,
+} from "../services/neonatal-care-service.js";
 import { checkArchiveReadiness } from "../services/archive-validation-service.js";
 import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detection.js";
 
@@ -1909,6 +1924,118 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (statusChanged && !damChanged && !sireChanged) {
           await syncPlanAnimalsBreedingStatus(id, tenantId);
         }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // AUTO-CREATE BreedingEvent records when key milestones occur
+      // These events provide a timeline history for each animal's breeding profile
+      // ═══════════════════════════════════════════════════════════════════════════
+      try {
+        const userId = (req as any).user?.id ?? "system";
+        const eventsToCreate: Array<{
+          tenantId: number;
+          animalId: number;
+          eventType: string;
+          occurredAt: Date;
+          outcome?: string;
+          breedingPlanId?: number;
+          partnerAnimalId?: number;
+          title?: string;
+          description?: string;
+          serviceType?: string;
+          totalBorn?: number;
+          bornAlive?: number;
+          stillborn?: number;
+          deliveryType?: string;
+          createdBy?: string;
+        }> = [];
+
+        // Check if breedDateActual was newly set
+        const breedDateNewlySet = !existing.breedDateActual && data.breedDateActual;
+        if (breedDateNewlySet) {
+          const breedDate = data.breedDateActual instanceof Date
+            ? data.breedDateActual
+            : new Date(data.breedDateActual);
+
+          // Create event for dam (if exists)
+          if (updated.damId) {
+            eventsToCreate.push({
+              tenantId,
+              animalId: updated.damId,
+              eventType: "BREEDING_ATTEMPT",
+              occurredAt: breedDate,
+              outcome: "PENDING",
+              breedingPlanId: id,
+              partnerAnimalId: updated.sireId ?? undefined,
+              title: `Breeding with plan ${updated.code || `#${id}`}`,
+              description: `Auto-recorded from breeding plan update`,
+              createdBy: userId,
+            });
+          }
+
+          // Create event for sire (if exists)
+          if (updated.sireId) {
+            eventsToCreate.push({
+              tenantId,
+              animalId: updated.sireId,
+              eventType: "BREEDING_ATTEMPT",
+              occurredAt: breedDate,
+              outcome: "PENDING",
+              breedingPlanId: id,
+              partnerAnimalId: updated.damId ?? undefined,
+              title: `Breeding with plan ${updated.code || `#${id}`}`,
+              description: `Auto-recorded from breeding plan update`,
+              createdBy: userId,
+            });
+          }
+        }
+
+        // Check if status transitioned to PREGNANT
+        const statusChangedToPregnant = existing.status !== "PREGNANT" && String(updated.status) === "PREGNANT";
+        if (statusChangedToPregnant && updated.damId) {
+          eventsToCreate.push({
+            tenantId,
+            animalId: updated.damId,
+            eventType: "PREGNANCY_CONFIRMED",
+            occurredAt: new Date(),
+            outcome: "SUCCESSFUL",
+            breedingPlanId: id,
+            partnerAnimalId: updated.sireId ?? undefined,
+            title: `Pregnancy confirmed for plan ${updated.code || `#${id}`}`,
+            description: `Auto-recorded from breeding plan status change`,
+            createdBy: userId,
+          });
+        }
+
+        // Check if birthDateActual was newly set
+        const birthDateNewlySet = !existing.birthDateActual && data.birthDateActual;
+        if (birthDateNewlySet && updated.damId) {
+          const birthDate = data.birthDateActual instanceof Date
+            ? data.birthDateActual
+            : new Date(data.birthDateActual);
+
+          eventsToCreate.push({
+            tenantId,
+            animalId: updated.damId,
+            eventType: "BIRTH_OUTCOME",
+            occurredAt: birthDate,
+            outcome: "SUCCESSFUL",
+            breedingPlanId: id,
+            partnerAnimalId: updated.sireId ?? undefined,
+            title: `Birth recorded for plan ${updated.code || `#${id}`}`,
+            description: `Auto-recorded from breeding plan update`,
+            createdBy: userId,
+          });
+        }
+
+        // Bulk create all events
+        if (eventsToCreate.length > 0) {
+          await prisma.breedingEvent.createMany({ data: eventsToCreate });
+          req.log?.info?.({ planId: id, eventCount: eventsToCreate.length }, "Auto-created BreedingEvent records");
+        }
+      } catch (eventErr) {
+        // Log but don't fail the update - event creation is secondary
+        req.log?.warn?.({ err: eventErr, planId: id }, "Failed to auto-create BreedingEvent records");
       }
 
       // Ensure offspring group exists when plan reaches BRED status
@@ -4775,6 +4902,261 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const milestones = await recalculateMilestones(Number(id), tenantId);
       reply.send(milestones);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ============================================================================
+  // SPECIES-GENERIC BIRTH MILESTONES (all species, not just horses)
+  // ============================================================================
+
+  // POST /breeding/plans/:id/birth-milestones - Create species-appropriate birth milestones
+  app.post("/breeding/plans/:id/birth-milestones", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const milestones = await createSpeciesBirthMilestones(Number(id), tenantId);
+      reply.status(201).send(milestones);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/plans/:id/birth-timeline - Get species-aware birth timeline with milestones
+  app.get("/breeding/plans/:id/birth-timeline", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const timeline = await getBirthTimeline(Number(id), tenantId);
+      reply.send(timeline);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // DELETE /breeding/plans/:id/birth-milestones - Delete all birth milestones for a plan
+  app.delete("/breeding/plans/:id/birth-milestones", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const result = await deleteBirthMilestones(Number(id), tenantId);
+      reply.send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/birth-milestones/recalculate - Recalculate species-aware milestone dates
+  app.post("/breeding/plans/:id/birth-milestones/recalculate", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      // Delete existing and recreate with current dates
+      await deleteBirthMilestones(Number(id), tenantId);
+      const milestones = await createSpeciesBirthMilestones(Number(id), tenantId);
+      reply.send(milestones);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ============================================================================
+  // NEONATAL CARE TRACKING (litter species - dogs, cats, rabbits, etc.)
+  // ============================================================================
+
+  // GET /breeding/plans/:id/neonatal-dashboard - Get neonatal care dashboard for a plan
+  app.get("/breeding/plans/:id/neonatal-dashboard", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const dashboard = await getNeonatalDashboard(Number(id), tenantId);
+      reply.send(dashboard);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/offspring/:id/care-entries - Get care entries for an offspring
+  app.get("/breeding/offspring/:id/care-entries", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const query = req.query as { limit?: string; offset?: string };
+      const tenantId = (req as any).tenantId;
+
+      const result = await getNeonatalCareEntries(Number(id), tenantId, {
+        limit: query.limit ? Number(query.limit) : undefined,
+        offset: query.offset ? Number(query.offset) : undefined,
+      });
+      reply.send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/offspring/:id/care-entries - Create a care entry
+  app.post("/breeding/offspring/:id/care-entries", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as any;
+      const tenantId = (req as any).tenantId;
+      const userId = (req as any).user?.id;
+
+      const entry = await createNeonatalCareEntry({
+        offspringId: Number(id),
+        tenantId,
+        recordedAt: body.recordedAt ? new Date(body.recordedAt) : new Date(),
+        recordedBy: body.recordedBy,
+        recordedById: userId,
+        weightOz: body.weightOz,
+        temperatureF: body.temperatureF,
+        feedingMethod: body.feedingMethod,
+        feedingVolumeMl: body.feedingVolumeMl,
+        feedingNotes: body.feedingNotes,
+        urinated: body.urinated,
+        stoolQuality: body.stoolQuality,
+        activityLevel: body.activityLevel,
+        notes: body.notes,
+      });
+      reply.status(201).send(entry);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // DELETE /breeding/care-entries/:id - Delete a care entry
+  app.delete("/breeding/care-entries/:id", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const result = await deleteNeonatalCareEntry(Number(id), tenantId);
+      reply.send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/offspring/:id/interventions - Get interventions for an offspring
+  app.get("/breeding/offspring/:id/interventions", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const query = req.query as { limit?: string; offset?: string };
+      const tenantId = (req as any).tenantId;
+
+      const result = await getNeonatalInterventions(Number(id), tenantId, {
+        limit: query.limit ? Number(query.limit) : undefined,
+        offset: query.offset ? Number(query.offset) : undefined,
+      });
+      reply.send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/offspring/:id/interventions - Create an intervention
+  app.post("/breeding/offspring/:id/interventions", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as any;
+      const tenantId = (req as any).tenantId;
+      const userId = (req as any).user?.id;
+
+      const intervention = await createNeonatalIntervention({
+        offspringId: Number(id),
+        tenantId,
+        occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
+        type: body.type,
+        route: body.route,
+        dose: body.dose,
+        administeredBy: body.administeredBy,
+        vetClinic: body.vetClinic,
+        reason: body.reason,
+        response: body.response,
+        followUpNeeded: body.followUpNeeded,
+        followUpDate: body.followUpDate ? new Date(body.followUpDate) : undefined,
+        cost: body.cost,
+        notes: body.notes,
+        recordedById: userId,
+      });
+      reply.status(201).send(intervention);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // PATCH /breeding/interventions/:id - Update an intervention
+  app.patch("/breeding/interventions/:id", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as any;
+      const tenantId = (req as any).tenantId;
+
+      const intervention = await updateNeonatalIntervention(Number(id), tenantId, {
+        response: body.response,
+        followUpNeeded: body.followUpNeeded,
+        followUpDate: body.followUpDate ? new Date(body.followUpDate) : undefined,
+        notes: body.notes,
+      });
+      reply.send(intervention);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // PATCH /breeding/offspring/:id/neonatal-status - Update offspring neonatal status
+  app.patch("/breeding/offspring/:id/neonatal-status", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as any;
+      const tenantId = (req as any).tenantId;
+
+      const offspring = await updateOffspringNeonatalStatus(Number(id), tenantId, {
+        isExtraNeeds: body.isExtraNeeds,
+        neonatalHealthStatus: body.neonatalHealthStatus,
+        neonatalFeedingMethod: body.neonatalFeedingMethod,
+      });
+      reply.send(offspring);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/batch-weights - Batch record weights for multiple offspring
+  app.post("/breeding/plans/:id/batch-weights", async (req, reply) => {
+    try {
+      const body = req.body as { entries: Array<{ offspringId: number; weightOz: number; recordedAt?: string }> };
+      const tenantId = (req as any).tenantId;
+      const userId = (req as any).user?.id;
+
+      const results = await batchRecordWeights(
+        tenantId,
+        body.entries.map((e) => ({
+          offspringId: e.offspringId,
+          weightOz: e.weightOz,
+          recordedAt: e.recordedAt ? new Date(e.recordedAt) : undefined,
+        })),
+        userId
+      );
+      reply.status(201).send({ entries: results });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

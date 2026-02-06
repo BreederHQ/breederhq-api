@@ -874,18 +874,168 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             break;
           }
 
-          // Stripe Connect account updates
+          // Stripe Connect account updates (marketplace providers and tenants)
           case "account.updated": {
+            // Try marketplace provider handler
             try {
-              const stripeConnect = await import("../services/stripe-connect-service.js");
-              await stripeConnect.handleAccountUpdated(event);
+              const marketplaceStripeConnect = await import("../services/stripe-connect-service.js");
+              await marketplaceStripeConnect.handleAccountUpdated(event);
               req.log.info(
                 { accountId: (event.data.object as any).id },
-                "Stripe Connect account updated"
+                "Marketplace Stripe Connect account updated"
               );
             } catch (err: any) {
-              req.log.error({ err }, "Failed to handle account.updated webhook");
+              req.log.error({ err }, "Failed to handle marketplace account.updated webhook");
             }
+
+            // Try tenant handler (for breeder Stripe Connect accounts)
+            try {
+              const tenantStripeConnect = await import("../services/tenant-stripe-connect-service.js");
+              await tenantStripeConnect.handleTenantAccountUpdated(event);
+              req.log.info(
+                { accountId: (event.data.object as any).id },
+                "Tenant Stripe Connect account updated"
+              );
+            } catch (err: any) {
+              req.log.error({ err }, "Failed to handle tenant account.updated webhook");
+            }
+            break;
+          }
+
+          // ─────────────────────────────────────────────────────────────────
+          // Marketplace Provider Invoice Webhooks (from connected accounts)
+          // These events come from provider Stripe Connect accounts
+          // ─────────────────────────────────────────────────────────────────
+
+          case "invoice.sent": {
+            // Invoice was sent to client (from connected account)
+            // Could be marketplace provider OR tenant platform invoice
+            const stripeAccountId = event.account;
+            if (stripeAccountId) {
+              // Try marketplace invoice handler (filters by source: breederhq_marketplace)
+              try {
+                const marketplaceInvoiceService = await import("../services/marketplace-invoice-service.js");
+                await marketplaceInvoiceService.handleInvoiceSent(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Marketplace invoice sent webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle marketplace invoice.sent webhook");
+              }
+
+              // Try tenant invoice handler (filters by source: breederhq_platform)
+              try {
+                const tenantInvoiceService = await import("../services/tenant-invoice-stripe-service.js");
+                await tenantInvoiceService.handleTenantInvoiceSent(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Tenant invoice sent webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle tenant invoice.sent webhook");
+              }
+            }
+            break;
+          }
+
+          case "invoice.paid": {
+            // Invoice was paid (could be subscription, marketplace, or tenant platform)
+            const stripeAccountId = event.account;
+            if (stripeAccountId) {
+              // This is from a connected account - marketplace or tenant invoice
+              // Try marketplace invoice handler (filters by source: breederhq_marketplace)
+              try {
+                const marketplaceInvoiceService = await import("../services/marketplace-invoice-service.js");
+                await marketplaceInvoiceService.handleInvoicePaid(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Marketplace invoice paid webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle marketplace invoice.paid webhook");
+              }
+
+              // Try tenant invoice handler (filters by source: breederhq_platform)
+              try {
+                const tenantInvoiceService = await import("../services/tenant-invoice-stripe-service.js");
+                await tenantInvoiceService.handleTenantInvoicePaid(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Tenant invoice paid webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle tenant invoice.paid webhook");
+              }
+            }
+            // Note: Platform subscription invoice.paid events don't have event.account
+            // and are handled by invoice.payment_succeeded instead
+            break;
+          }
+
+          case "invoice.voided": {
+            // Invoice was voided (from connected account)
+            // Could be marketplace provider OR tenant platform invoice
+            const stripeAccountId = event.account;
+            if (stripeAccountId) {
+              // Try marketplace invoice handler (filters by source: breederhq_marketplace)
+              try {
+                const marketplaceInvoiceService = await import("../services/marketplace-invoice-service.js");
+                await marketplaceInvoiceService.handleInvoiceVoided(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Marketplace invoice voided webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle marketplace invoice.voided webhook");
+              }
+
+              // Try tenant invoice handler (filters by source: breederhq_platform)
+              try {
+                const tenantInvoiceService = await import("../services/tenant-invoice-stripe-service.js");
+                await tenantInvoiceService.handleTenantInvoiceVoided(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Tenant invoice voided webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle tenant invoice.voided webhook");
+              }
+            }
+            break;
+          }
+
+          case "invoice.payment_failed": {
+            // Invoice payment attempt failed
+            // Could be subscription, marketplace, or tenant platform invoice
+            const stripeAccountId = event.account;
+            if (stripeAccountId) {
+              // From connected account - marketplace or tenant invoice
+              // Try marketplace invoice handler (filters by source: breederhq_marketplace)
+              try {
+                const marketplaceInvoiceService = await import("../services/marketplace-invoice-service.js");
+                await marketplaceInvoiceService.handleInvoicePaymentFailed(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Marketplace invoice payment failed webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle marketplace invoice.payment_failed webhook");
+              }
+
+              // Try tenant invoice handler (filters by source: breederhq_platform)
+              try {
+                const tenantInvoiceService = await import("../services/tenant-invoice-stripe-service.js");
+                await tenantInvoiceService.handleTenantInvoicePaymentFailed(event, stripeAccountId);
+                req.log.info(
+                  { invoiceId: (event.data.object as any).id, stripeAccountId },
+                  "Tenant invoice payment failed webhook processed"
+                );
+              } catch (err: any) {
+                req.log.error({ err }, "Failed to handle tenant invoice.payment_failed webhook");
+              }
+            }
+            // Note: Platform subscription failures are already handled above
             break;
           }
 

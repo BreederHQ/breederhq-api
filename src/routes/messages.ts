@@ -11,6 +11,7 @@ import {
   type BusinessHoursSchedule,
 } from "../utils/business-hours.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
+import { broadcastBreederMessageToMarketplaceUser } from "../services/marketplace-websocket-service.js";
 import path from "path";
 import fs from "fs/promises";
 
@@ -278,7 +279,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
           messages: {
             orderBy: { createdAt: "asc" },
-            include: { senderParty: { select: { id: true, name: true } } },
+            include: { senderParty: { select: { id: true, name: true, type: true } } },
           },
         },
       });
@@ -480,6 +481,45 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }, participantPartyIds);
       }
 
+      // Also broadcast to marketplace WebSocket for marketplace buyers
+      // (they connect via a different WebSocket endpoint)
+      if (isOrgSending && message.senderPartyId !== null) {
+        const recipientPartyIds = participantPartyIds.filter(id => id !== userPartyId);
+        for (const recipientPartyId of recipientPartyIds) {
+          try {
+            // Get the party's email
+            const party = await prisma.party.findFirst({
+              where: { id: recipientPartyId, tenantId },
+              select: { email: true },
+            });
+            if (party?.email) {
+              // Look up MarketplaceUser by email
+              const marketplaceUser = await prisma.marketplaceUser.findFirst({
+                where: { email: party.email },
+                select: { id: true },
+              });
+              if (marketplaceUser) {
+                // Broadcast to marketplace WebSocket
+                broadcastBreederMessageToMarketplaceUser(
+                  marketplaceUser.id,
+                  threadId,
+                  {
+                    id: message.id,
+                    body: message.body,
+                    senderPartyId: message.senderPartyId,
+                    senderParty: { type: "ORGANIZATION" },
+                    createdAt: message.createdAt.toISOString(),
+                  }
+                );
+              }
+            }
+          } catch (marketplaceWsErr) {
+            // Don't fail if marketplace broadcast fails
+            console.error("[WS] Failed to broadcast to marketplace user:", marketplaceWsErr);
+          }
+        }
+      }
+
       // Send email notification to recipient(s) when breeder/org sends a reply
       if (isOrgSending) {
         // Find recipients (participants who are not the sender)
@@ -629,6 +669,47 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }, participantPartyIds);
       }
 
+      // Also broadcast to marketplace WebSocket for marketplace buyers
+      // Check if sender is org (breeder) by party type
+      const senderParty = await prisma.party.findFirst({
+        where: { id: userPartyId, tenantId },
+        select: { type: true },
+      });
+      const isOrgSendingUpload = senderParty?.type === "ORGANIZATION";
+
+      if (isOrgSendingUpload && message.senderPartyId !== null) {
+        const recipientPartyIds = participantPartyIds.filter(id => id !== userPartyId);
+        for (const recipientPartyId of recipientPartyIds) {
+          try {
+            const party = await prisma.party.findFirst({
+              where: { id: recipientPartyId, tenantId },
+              select: { email: true },
+            });
+            if (party?.email) {
+              const marketplaceUser = await prisma.marketplaceUser.findFirst({
+                where: { email: party.email },
+                select: { id: true },
+              });
+              if (marketplaceUser) {
+                broadcastBreederMessageToMarketplaceUser(
+                  marketplaceUser.id,
+                  threadId,
+                  {
+                    id: message.id,
+                    body: message.body,
+                    senderPartyId: message.senderPartyId,
+                    senderParty: { type: "ORGANIZATION" },
+                    createdAt: message.createdAt.toISOString(),
+                  }
+                );
+              }
+            }
+          } catch (marketplaceWsErr) {
+            console.error("[WS] Failed to broadcast to marketplace user:", marketplaceWsErr);
+          }
+        }
+      }
+
       return reply.send({
         ok: true,
         message: {
@@ -750,6 +831,95 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             include: { party: { select: { id: true, name: true, email: true, type: true } } },
           },
         },
+      });
+
+      return reply.send({ ok: true, thread: updated });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // DELETE /messages/threads/:id - Soft delete thread (mark as deleted)
+  app.delete("/messages/threads/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const threadId = Number((req.params as any).id);
+
+    try {
+      const existing = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Soft delete: archive the thread
+      await prisma.messageThread.update({
+        where: { id: threadId },
+        data: {
+          archived: true,
+        },
+      });
+
+      return reply.send({ ok: true });
+    } catch (err: any) {
+      return reply.code(500).send({ error: "internal_error", detail: err.message });
+    }
+  });
+
+  // PUT alias for PATCH (some clients use PUT for updates)
+  app.put("/messages/threads/:id", async (req, reply) => {
+    const tenantId = Number((req as any).tenantId);
+    if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+    const threadId = Number((req.params as any).id);
+    const { flagged, archived, isRead } = req.body as {
+      flagged?: boolean;
+      archived?: boolean;
+      isRead?: boolean;
+    };
+
+    try {
+      const existing = await prisma.messageThread.findFirst({
+        where: { id: threadId, tenantId },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const now = new Date();
+      const updateData: any = {};
+
+      if (flagged !== undefined) {
+        updateData.flagged = flagged;
+        updateData.flaggedAt = flagged ? now : null;
+      }
+
+      if (archived !== undefined) {
+        updateData.archived = archived;
+      }
+
+      // Handle marking as unread (update participant's lastReadAt)
+      if (isRead === false) {
+        // Get the org participant and set lastReadAt to null or a past date
+        const { partyId: userPartyId } = await requireMessagingPartyScope(req);
+        await prisma.messageParticipant.updateMany({
+          where: { threadId, partyId: userPartyId },
+          data: { lastReadAt: null },
+        });
+        return reply.send({ ok: true });
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return reply.code(400).send({ error: "no_updates_provided" });
+      }
+
+      const updated = await prisma.messageThread.update({
+        where: { id: threadId },
+        data: updateData,
       });
 
       return reply.send({ ok: true, thread: updated });
