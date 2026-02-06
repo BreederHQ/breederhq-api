@@ -222,6 +222,41 @@ export function broadcastTransactionUpdate(
 }
 
 /**
+ * Broadcast a breeder message to a marketplace user.
+ * Used when a breeder sends a message to a buyer via the platform's Communications Hub.
+ * Looks up the MarketplaceUser by email from the Party record.
+ *
+ * @param marketplaceUserId - The MarketplaceUser.id of the recipient
+ * @param threadId - The MessageThread ID (breeder_XX format will be added by frontend)
+ * @param message - The message details
+ */
+export function broadcastBreederMessageToMarketplaceUser(
+  marketplaceUserId: number,
+  threadId: number,
+  message: {
+    id: number;
+    body: string;
+    senderPartyId: number;
+    senderParty?: { type: string };
+    createdAt: string;
+  }
+): void {
+  const payload = {
+    threadId,
+    source: "breeder" as const,
+    message: {
+      id: message.id,
+      body: message.body,
+      senderPartyId: message.senderPartyId,
+      senderParty: message.senderParty,
+      createdAt: message.createdAt,
+    },
+  };
+
+  sendToUser(marketplaceUserId, "new_message", payload);
+}
+
+/**
  * Get marketplace connection stats (for debugging)
  */
 export function getMarketplaceConnectionStats(): {

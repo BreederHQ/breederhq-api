@@ -937,8 +937,8 @@ export default async function breederMarketplaceRoutes(
     if (!tenantId) return;
 
     try {
-      // Get counts in parallel for all 3 active marketplace listing types
-      const [animalListings, animalPrograms, breedingPrograms] = await Promise.all([
+      // Get counts in parallel for all 4 active marketplace listing types
+      const [animalListings, animalPrograms, breedingPrograms, serviceListings] = await Promise.all([
         // Count individual animal listings (AnimalPublicListing with LIVE status)
         prisma.mktListingIndividualAnimal.count({
           where: {
@@ -962,13 +962,22 @@ export default async function breederMarketplaceRoutes(
             status: "LIVE",
           },
         }),
+
+        // Count service listings (breeder services with LIVE status)
+        prisma.mktListingService.count({
+          where: {
+            tenantId,
+            sourceType: "BREEDER",
+            status: "LIVE",
+          },
+        }),
       ]);
 
       return reply.send({
         animalListings,
         animalPrograms,
         breedingPrograms,
-        serviceListings: 0, // Deprecated - old service listing system removed
+        serviceListings,
       });
     } catch (err: any) {
       req.log?.error?.({ err, tenantId }, "Failed to fetch dashboard stats");

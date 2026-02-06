@@ -34,6 +34,94 @@ const SUPPLEMENT_BENCHMARKS: SupplementBenchmarkSeed[] = [
   // HORSES
   // ─────────────────────────────────────────────────────────────────────────────
   {
+    name: "Selenium/Vitamin E (Pre-Foaling)",
+    description:
+      "White muscle disease prevention for foals in selenium-deficient regions",
+    species: [Species.HORSE],
+    benchmarkSource: "AAEP Guidelines",
+    benchmarkNotes:
+      "Per veterinarian recommendation based on regional selenium levels. Typically 1ml per 200lbs IM.",
+    dosageAmount: null,
+    dosageUnit: null,
+    administrationRoute: "intramuscular",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
+    offsetDays: -30, // 30 days before expected foaling
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Rhinopneumonitis Vaccine (Month 5)",
+    description: "EHV-1/4 vaccination to prevent abortion - first dose",
+    species: [Species.HORSE],
+    benchmarkSource: "AAEP Guidelines",
+    benchmarkNotes:
+      "2ml IM as directed by manufacturer. Follow up at months 7 and 9.",
+    dosageAmount: "2ml",
+    dosageUnit: "IM",
+    administrationRoute: "intramuscular",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: 150, // Month 5 of gestation (~150 days)
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Rhinopneumonitis Vaccine (Month 7)",
+    description: "EHV-1/4 vaccination to prevent abortion - second dose",
+    species: [Species.HORSE],
+    benchmarkSource: "AAEP Guidelines",
+    benchmarkNotes: "2ml IM as directed by manufacturer",
+    dosageAmount: "2ml",
+    dosageUnit: "IM",
+    administrationRoute: "intramuscular",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: 210, // Month 7 of gestation (~210 days)
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Rhinopneumonitis Vaccine (Month 9)",
+    description: "EHV-1/4 vaccination to prevent abortion - third dose",
+    species: [Species.HORSE],
+    benchmarkSource: "AAEP Guidelines",
+    benchmarkNotes: "2ml IM as directed by manufacturer",
+    dosageAmount: "2ml",
+    dosageUnit: "IM",
+    administrationRoute: "intramuscular",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: 270, // Month 9 of gestation (~270 days)
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Folic Acid (Pregnancy) - Equine",
+    description: "Folic acid for mares in pregnancy",
+    species: [Species.HORSE],
+    benchmarkSource: "AAEP Guidelines",
+    benchmarkNotes: null,
+    dosageAmount: "20-40mg",
+    dosageUnit: "daily mixed with feed",
+    administrationRoute: "oral",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: 30, // Start after pregnancy confirmed
+    ageTriggerWeeks: null,
+    durationDays: 300, // Through gestation
+    frequency: SupplementFrequency.DAILY,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
     name: "Regumate (Altrenogest) - Estrus Suppression",
     description:
       "Synthetic progestin to suppress estrus in mares. Commonly used before planned breeding.",
@@ -52,117 +140,82 @@ const SUPPLEMENT_BENCHMARKS: SupplementBenchmarkSeed[] = [
     frequency: SupplementFrequency.DAILY,
     reminderDaysBefore: [7, 3, 1],
   },
-  {
-    name: "Mare Prenatal Vitamin",
-    description: "Daily vitamin supplement during pregnancy for mares.",
-    species: [Species.HORSE],
-    benchmarkSource: "General Practice",
-    benchmarkNotes: null,
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "oral",
-    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
-    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
-    offsetDays: 1, // Start day after breeding
-    ageTriggerWeeks: null,
-    durationDays: null, // Ongoing through pregnancy
-    frequency: SupplementFrequency.ONGOING,
-    reminderDaysBefore: [7, 1],
-  },
-  {
-    name: "Mare Selenium/Vitamin E",
-    description:
-      "Selenium and Vitamin E supplementation for mares in selenium-deficient areas during late gestation.",
-    species: [Species.HORSE],
-    benchmarkSource: "AAEP Guidelines",
-    benchmarkNotes:
-      "Important in selenium-deficient regions. Helps prevent white muscle disease in foals.",
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "oral",
-    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
-    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
-    offsetDays: -90, // Start 90 days before expected foaling
-    ageTriggerWeeks: null,
-    durationDays: 90,
-    frequency: SupplementFrequency.DAILY,
-    reminderDaysBefore: [7, 3, 1],
-  },
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DOGS
   // ─────────────────────────────────────────────────────────────────────────────
   {
-    name: "Folic Acid Supplement - Pre-breeding",
+    name: "Prenatal Folic Acid",
     description:
-      "Folic acid supplementation starting before breeding to support neural tube development.",
+      "Folic acid supplementation to support fetal neural tube development and reduce birth defects",
     species: [Species.DOG],
     benchmarkSource: "Canine Reproduction Guidelines",
     benchmarkNotes:
-      "Research suggests folic acid may reduce risk of cleft palate and other developmental issues.",
-    dosageAmount: null,
-    dosageUnit: null,
+      "400mcg daily, mixed with food. Adjust dosage based on dam weight.",
+    dosageAmount: "400mcg",
+    dosageUnit: "daily",
     administrationRoute: "oral",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
-    offsetDays: -63, // Start 63 days before breeding
+    offsetDays: -14, // Start 14 days before breeding
     ageTriggerWeeks: null,
-    durationDays: 63,
+    durationDays: 77, // 14 days before + 63 days gestation
     frequency: SupplementFrequency.DAILY,
     reminderDaysBefore: [7, 3, 1],
   },
   {
-    name: "Prenatal Vitamin - Canine",
-    description: "Daily prenatal supplement during canine pregnancy.",
-    species: [Species.DOG],
-    benchmarkSource: "General Practice",
-    benchmarkNotes: null,
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "oral",
-    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
-    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
-    offsetDays: 1,
-    ageTriggerWeeks: null,
-    durationDays: null, // Through pregnancy
-    frequency: SupplementFrequency.ONGOING,
-    reminderDaysBefore: [7, 1],
-  },
-  {
-    name: "Puppy Dewormer (Pyrantel)",
+    name: "Calcium Supplementation (Late Pregnancy)",
     description:
-      "Deworming protocol for puppies starting at 2 weeks of age, continuing every 2 weeks until 12 weeks.",
-    species: [Species.DOG],
-    benchmarkSource: "CDC/CAPC Guidelines",
-    benchmarkNotes:
-      "Standard protocol: 2, 4, 6, 8, 10, 12 weeks. Then monthly until 6 months.",
-    dosageAmount: "1ml per 10 lbs",
-    dosageUnit: "ml",
-    administrationRoute: "oral",
-    triggerType: SupplementTriggerType.AGE_BASED,
-    anchorEvent: null,
-    offsetDays: null,
-    ageTriggerWeeks: 2, // Start at 2 weeks old
-    durationDays: 70, // 10 weeks of treatment (2-12 weeks)
-    frequency: SupplementFrequency.WEEKLY, // Approximation - actually every 2 weeks
-    reminderDaysBefore: [3, 1],
-  },
-  {
-    name: "Calcium Supplementation - Late Pregnancy",
-    description:
-      "Calcium supplementation for bitches prone to eclampsia, starting late pregnancy.",
+      "Calcium support for large litters in late pregnancy to prevent eclampsia",
     species: [Species.DOG],
     benchmarkSource: "Veterinary Practice",
     benchmarkNotes:
-      "Controversial - some vets recommend, others advise against pre-whelping calcium. Consult your vet.",
-    dosageAmount: null,
-    dosageUnit: null,
+      "1000-2000mg daily based on dam weight. Do NOT supplement before day 42 of pregnancy.",
+    dosageAmount: "1000-2000mg",
+    dosageUnit: "daily based on dam weight",
     administrationRoute: "oral",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
-    offsetDays: -14, // Start 2 weeks before expected whelping
+    offsetDays: -21, // Start 3 weeks before expected birth
     ageTriggerWeeks: null,
-    durationDays: 28, // Through 2 weeks post-whelping
+    durationDays: 49, // 21 days before + 28 days nursing
+    frequency: SupplementFrequency.DAILY,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Puppy Iron Supplement",
+    description:
+      "Iron supplementation for newborn puppies to prevent iron deficiency anemia",
+    species: [Species.DOG],
+    benchmarkSource: "Veterinary Practice",
+    benchmarkNotes:
+      "50-100mg IM based on puppy weight. Single injection on day 3 of life.",
+    dosageAmount: "50-100mg",
+    dosageUnit: "IM based on puppy weight",
+    administrationRoute: "intramuscular",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
+    offsetDays: 3, // Day 3 of life
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [3, 1],
+  },
+  {
+    name: "Prenatal Omega-3 (DHA/EPA)",
+    description: "Omega-3 fatty acids for fetal brain and eye development",
+    species: [Species.DOG],
+    benchmarkSource: "Canine Reproduction Guidelines",
+    benchmarkNotes:
+      "1000-2000mg daily based on dam weight. Use purified fish oil.",
+    dosageAmount: "1000-2000mg",
+    dosageUnit: "daily based on dam weight",
+    administrationRoute: "oral",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: -7, // Start 1 week before breeding
+    ageTriggerWeeks: null,
+    durationDays: 98, // 7 days before + 63 gestation + 28 nursing
     frequency: SupplementFrequency.DAILY,
     reminderDaysBefore: [7, 3, 1],
   },
@@ -171,124 +224,198 @@ const SUPPLEMENT_BENCHMARKS: SupplementBenchmarkSeed[] = [
   // CATS
   // ─────────────────────────────────────────────────────────────────────────────
   {
-    name: "Prenatal Vitamin - Feline",
-    description: "Daily prenatal supplement during feline pregnancy.",
+    name: "Prenatal Folic Acid (Feline)",
+    description: "Folic acid for fetal development in queens",
     species: [Species.CAT],
-    benchmarkSource: "General Practice",
-    benchmarkNotes: null,
-    dosageAmount: null,
-    dosageUnit: null,
+    benchmarkSource: "Feline Reproduction Guidelines",
+    benchmarkNotes: "200mcg daily, mixed with food",
+    dosageAmount: "200mcg",
+    dosageUnit: "daily",
     administrationRoute: "oral",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
-    offsetDays: 1,
+    offsetDays: -7, // Start 1 week before breeding
     ageTriggerWeeks: null,
-    durationDays: null,
-    frequency: SupplementFrequency.ONGOING,
-    reminderDaysBefore: [7, 1],
+    durationDays: 72, // 7 days before + 65 days gestation
+    frequency: SupplementFrequency.DAILY,
+    reminderDaysBefore: [7, 3, 1],
   },
   {
-    name: "Kitten Dewormer",
-    description:
-      "Deworming protocol for kittens starting at 3 weeks of age.",
+    name: "Taurine Supplementation",
+    description: "Essential taurine for fetal heart and eye development",
     species: [Species.CAT],
-    benchmarkSource: "CAPC Guidelines",
-    benchmarkNotes: "Standard protocol: 3, 5, 7, 9 weeks, then monthly.",
-    dosageAmount: null,
-    dosageUnit: null,
+    benchmarkSource: "Feline Reproduction Guidelines",
+    benchmarkNotes: "250-500mg daily. Critical for feline reproduction.",
+    dosageAmount: "250-500mg",
+    dosageUnit: "daily",
     administrationRoute: "oral",
-    triggerType: SupplementTriggerType.AGE_BASED,
-    anchorEvent: null,
-    offsetDays: null,
-    ageTriggerWeeks: 3,
-    durationDays: 42, // 6 weeks of treatment
-    frequency: SupplementFrequency.WEEKLY,
-    reminderDaysBefore: [3, 1],
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: -14, // Start 2 weeks before breeding
+    ageTriggerWeeks: null,
+    durationDays: 107, // 14 before + 65 gestation + 28 nursing
+    frequency: SupplementFrequency.DAILY,
+    reminderDaysBefore: [7, 3, 1],
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
   // GOATS
   // ─────────────────────────────────────────────────────────────────────────────
   {
-    name: "Selenium/Vitamin E - Pre-Kidding",
-    description:
-      "Selenium and Vitamin E injection for does 4-6 weeks before kidding.",
+    name: "BoSe Injection (Pre-Kidding)",
+    description: "Selenium/Vitamin E for white muscle disease prevention",
     species: [Species.GOAT],
     benchmarkSource: "AASRP Guidelines",
     benchmarkNotes:
-      "Critical in selenium-deficient areas to prevent white muscle disease in kids.",
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "injection",
+      "1ml per 40lbs body weight, given IM or SQ. Adjust for regional selenium status.",
+    dosageAmount: "1ml per 40lbs",
+    dosageUnit: "body weight",
+    administrationRoute: "subcutaneous",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
-    offsetDays: -35, // 5 weeks before kidding
+    offsetDays: -30, // 30 days before expected birth
     ageTriggerWeeks: null,
-    durationDays: 1,
+    durationDays: null,
     frequency: SupplementFrequency.ONCE,
     reminderDaysBefore: [7, 3, 1],
   },
   {
-    name: "CDT Vaccine Booster - Pre-Kidding",
+    name: "CD&T Toxoid (Pre-Kidding)",
     description:
-      "CDT vaccine booster for does 4 weeks before kidding to provide colostral immunity.",
+      "Clostridium perfringens/tetanus vaccination for passive immunity transfer",
     species: [Species.GOAT],
     benchmarkSource: "AASRP Guidelines",
-    benchmarkNotes: null,
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "injection",
+    benchmarkNotes:
+      "2ml SQ, given 4-6 weeks before kidding for colostral antibody transfer",
+    dosageAmount: "2ml",
+    dosageUnit: "SQ",
+    administrationRoute: "subcutaneous",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
-    offsetDays: -28, // 4 weeks before kidding
+    offsetDays: -42, // 6 weeks before expected birth
     ageTriggerWeeks: null,
-    durationDays: 1,
+    durationDays: null,
     frequency: SupplementFrequency.ONCE,
     reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Copper Bolus (Goats Only)",
+    description: "Copper supplementation for goats in copper-deficient regions",
+    species: [Species.GOAT],
+    benchmarkSource: "AASRP Guidelines",
+    benchmarkNotes:
+      "2g bolus for adults. WARNING: Do NOT administer copper bolus to sheep - copper is toxic to sheep!",
+    dosageAmount: "2g",
+    dosageUnit: "bolus for adults",
+    administrationRoute: "oral",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
+    offsetDays: -30, // 30 days before breeding
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Kid BoSe (Newborn)",
+    description: "Selenium/Vitamin E for newborn kids",
+    species: [Species.GOAT],
+    benchmarkSource: "AASRP Guidelines",
+    benchmarkNotes: "0.25ml SQ within 24 hours of birth for selenium-deficient areas",
+    dosageAmount: "0.25ml",
+    dosageUnit: "SQ",
+    administrationRoute: "subcutaneous",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
+    offsetDays: 0, // Day of birth
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [3, 1],
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
   // SHEEP
   // ─────────────────────────────────────────────────────────────────────────────
   {
-    name: "Selenium/Vitamin E - Pre-Lambing",
-    description:
-      "Selenium and Vitamin E supplementation for ewes before lambing.",
+    name: "BoSe Injection (Pre-Lambing)",
+    description: "Selenium/Vitamin E for white muscle disease prevention",
     species: [Species.SHEEP],
     benchmarkSource: "AASRP Guidelines",
-    benchmarkNotes: "Prevents white muscle disease in lambs.",
-    dosageAmount: null,
-    dosageUnit: null,
-    administrationRoute: "injection",
+    benchmarkNotes:
+      "1ml per 40lbs body weight, given IM or SQ. Adjust for regional selenium status.",
+    dosageAmount: "1ml per 40lbs",
+    dosageUnit: "body weight",
+    administrationRoute: "subcutaneous",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
-    offsetDays: -35,
+    offsetDays: -30, // 30 days before expected birth
     ageTriggerWeeks: null,
-    durationDays: 1,
+    durationDays: null,
     frequency: SupplementFrequency.ONCE,
     reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "CD&T Toxoid (Pre-Lambing)",
+    description:
+      "Clostridium perfringens/tetanus vaccination for passive immunity transfer",
+    species: [Species.SHEEP],
+    benchmarkSource: "AASRP Guidelines",
+    benchmarkNotes:
+      "2ml SQ, given 4-6 weeks before lambing for colostral antibody transfer",
+    dosageAmount: "2ml",
+    dosageUnit: "SQ",
+    administrationRoute: "subcutaneous",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
+    offsetDays: -42, // 6 weeks before expected birth
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [7, 3, 1],
+  },
+  {
+    name: "Lamb BoSe (Newborn)",
+    description: "Selenium/Vitamin E for newborn lambs",
+    species: [Species.SHEEP],
+    benchmarkSource: "AASRP Guidelines",
+    benchmarkNotes: "0.25ml SQ within 24 hours of birth for selenium-deficient areas",
+    dosageAmount: "0.25ml",
+    dosageUnit: "SQ",
+    administrationRoute: "subcutaneous",
+    triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
+    anchorEvent: BreedingCycleAnchorEvent.BIRTH_DATE,
+    offsetDays: 0, // Day of birth
+    ageTriggerWeeks: null,
+    durationDays: null,
+    frequency: SupplementFrequency.ONCE,
+    reminderDaysBefore: [3, 1],
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
   // RABBITS
   // ─────────────────────────────────────────────────────────────────────────────
   {
-    name: "Prenatal Supplement - Rabbit",
-    description: "Nutritional supplementation during rabbit pregnancy.",
+    name: "Vitamin E (Pregnancy) - Rabbit",
+    description: "Vitamin E supplementation for improved litter survival",
     species: [Species.RABBIT],
     benchmarkSource: "General Practice",
-    benchmarkNotes: null,
-    dosageAmount: null,
-    dosageUnit: null,
+    benchmarkNotes: "50-100 IU daily in feed or water",
+    dosageAmount: "50-100 IU",
+    dosageUnit: "daily in feed or water",
     administrationRoute: "oral",
     triggerType: SupplementTriggerType.BREEDING_CYCLE_RELATIVE,
     anchorEvent: BreedingCycleAnchorEvent.BREED_DATE,
-    offsetDays: 1,
+    offsetDays: 0, // Start at breeding
     ageTriggerWeeks: null,
-    durationDays: 31, // Rabbit gestation ~31 days
+    durationDays: 31, // Through gestation
     frequency: SupplementFrequency.DAILY,
     reminderDaysBefore: [7, 1],
   },
+
+  // NOTE: PIG, CATTLE, ALPACA, LLAMA protocols omitted - Species enum only supports:
+  // DOG, CAT, HORSE, GOAT, RABBIT, SHEEP
+  // Add those species to Prisma schema to enable their protocols
 
   // ─────────────────────────────────────────────────────────────────────────────
   // ALL SPECIES

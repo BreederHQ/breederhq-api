@@ -369,6 +369,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         if (provider) {
           // Broadcast message to both parties (excluding the sender)
+          // Determine sender type based on who is sending
+          const isProvider = provider.userId === userId;
           broadcastTransactionMessage(
             clientId, // buyer's userId (same as MarketplaceUser.id)
             provider.userId, // provider's userId
@@ -379,6 +381,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               transactionId: String(transactionId),
               messageText: message.messageText,
               createdAt: message.createdAt.toISOString(),
+              senderId: userId,
+              senderType: isProvider ? "provider" : "client",
+              source: "provider", // Identify this as a provider/marketplace message
               sender: {
                 id: message.sender.id,
                 firstName: message.sender.firstName,
@@ -389,7 +394,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           // Broadcast updated unread count to the recipient
           const recipientId = userId === clientId ? provider.userId : clientId;
-          const unreadCount = await prisma.marketplaceMessage.count({
+          const unreadCount = Number(await prisma.marketplaceMessage.count({
             where: {
               thread: {
                 OR: [{ clientId: recipientId }, { provider: { userId: recipientId } }],
@@ -397,9 +402,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               senderId: { not: recipientId },
               readAt: null,
             },
-          });
+          }));
 
-          const unreadThreads = await prisma.marketplaceMessageThread.count({
+          const unreadThreads = Number(await prisma.marketplaceMessageThread.count({
             where: {
               OR: [{ clientId: recipientId }, { provider: { userId: recipientId } }],
               messages: {
@@ -409,7 +414,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 },
               },
             },
-          });
+          }));
 
           broadcastUnreadCount(recipientId, {
             unreadThreads,
@@ -465,6 +470,401 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           });
         }
         console.error("Error sending transaction message:", err);
+        return reply.code(500).send({ error: "internal_error", message: err.message });
+      }
+    }
+  );
+
+  /* ───────────────────────── Buyer/Client Messaging ───────────────────────── */
+
+  /**
+   * GET /my-threads - List all message threads where user is the client (buyer)
+   * This shows service provider inquiries and transaction messages from the buyer's perspective
+   */
+  app.get(
+    "/my-threads",
+    {
+      preHandler: requireMarketplaceAuth,
+      config: {
+        rateLimit: { max: 100, timeWindow: "1 minute" },
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const userId = req.marketplaceUserId!;
+      const { page = "1", limit = "20" } = req.query as {
+        page?: string;
+        limit?: string;
+      };
+
+      try {
+        const where = {
+          clientId: userId,
+          status: "active" as const,
+        };
+
+        const [threads, total] = await Promise.all([
+          prisma.marketplaceMessageThread.findMany({
+            where,
+            include: {
+              provider: {
+                select: {
+                  id: true,
+                  businessName: true,
+                  user: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                    },
+                  },
+                },
+              },
+              listing: {
+                select: {
+                  id: true,
+                  title: true,
+                  slug: true,
+                },
+              },
+              transaction: {
+                select: {
+                  id: true,
+                  status: true,
+                },
+              },
+              messages: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+              },
+            },
+            orderBy: { lastMessageAt: "desc" },
+            skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
+            take: parseInt(limit, 10),
+          }),
+          prisma.marketplaceMessageThread.count({ where }),
+        ]);
+
+        // Calculate unread count per thread (messages from provider not read by client)
+        const threadsWithUnread = await Promise.all(
+          threads.map(async (thread) => {
+            const unreadCount = Number(
+              await prisma.marketplaceMessage.count({
+                where: {
+                  threadId: thread.id,
+                  senderType: "provider",
+                  readAt: null,
+                },
+              })
+            );
+
+            // Serialize BigInt fields
+            const lastMessage = thread.messages[0]
+              ? {
+                  ...thread.messages[0],
+                  id: String(thread.messages[0].id),
+                }
+              : null;
+
+            const transaction = thread.transaction
+              ? {
+                  ...thread.transaction,
+                  id: String(thread.transaction.id),
+                }
+              : null;
+
+            return {
+              id: thread.id,
+              clientId: thread.clientId,
+              providerId: thread.providerId,
+              listingId: thread.listingId,
+              transactionId: thread.transactionId ? String(thread.transactionId) : null,
+              subject: thread.subject,
+              status: thread.status,
+              lastMessageAt: thread.lastMessageAt,
+              createdAt: thread.createdAt,
+              unreadCount,
+              threadType: thread.transactionId ? "transaction" : "inquiry",
+              lastMessage,
+              provider: thread.provider,
+              listing: thread.listing,
+              transaction,
+            };
+          })
+        );
+
+        return reply.send({
+          ok: true,
+          threads: threadsWithUnread,
+          total: Number(total),
+          page: parseInt(page, 10),
+          limit: parseInt(limit, 10),
+        });
+      } catch (err: any) {
+        console.error("Error fetching buyer threads:", err);
+        return reply.code(500).send({ error: "internal_error", message: err.message });
+      }
+    }
+  );
+
+  /**
+   * GET /my-threads/:id - Get single thread with all messages (buyer view)
+   */
+  app.get(
+    "/my-threads/:id",
+    {
+      preHandler: requireMarketplaceAuth,
+      config: {
+        rateLimit: { max: 100, timeWindow: "1 minute" },
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const userId = req.marketplaceUserId!;
+      const { id } = req.params as { id: string };
+      const threadId = parseInt(id, 10);
+
+      if (isNaN(threadId)) {
+        return reply.code(400).send({ error: "invalid_thread_id" });
+      }
+
+      try {
+        const thread = await prisma.marketplaceMessageThread.findFirst({
+          where: { id: threadId, clientId: userId },
+          include: {
+            provider: {
+              select: {
+                id: true,
+                businessName: true,
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+            listing: {
+              select: {
+                id: true,
+                title: true,
+                slug: true,
+              },
+            },
+            transaction: {
+              select: {
+                id: true,
+                status: true,
+                servicePriceCents: true,
+              },
+            },
+          },
+        });
+
+        if (!thread) {
+          return reply.code(404).send({ error: "not_found", message: "Thread not found" });
+        }
+
+        const messages = await prisma.marketplaceMessage.findMany({
+          where: { threadId, deletedAt: null },
+          orderBy: { createdAt: "asc" },
+        });
+
+        // Auto-mark messages as read (messages from provider)
+        await prisma.marketplaceMessage.updateMany({
+          where: {
+            threadId: thread.id,
+            senderType: "provider",
+            readAt: null,
+          },
+          data: {
+            readAt: new Date(),
+          },
+        });
+
+        // Serialize BigInt fields
+        const transaction = thread.transaction
+          ? {
+              ...thread.transaction,
+              id: String(thread.transaction.id),
+            }
+          : null;
+
+        return reply.send({
+          ok: true,
+          thread: {
+            id: thread.id,
+            clientId: thread.clientId,
+            providerId: thread.providerId,
+            listingId: thread.listingId,
+            transactionId: thread.transactionId ? String(thread.transactionId) : null,
+            subject: thread.subject,
+            status: thread.status,
+            lastMessageAt: thread.lastMessageAt,
+            createdAt: thread.createdAt,
+            threadType: thread.transactionId ? "transaction" : "inquiry",
+            provider: thread.provider,
+            listing: thread.listing,
+            transaction,
+          },
+          messages: messages.map((m) => ({
+            id: String(m.id),
+            threadId: m.threadId,
+            senderId: m.senderId,
+            senderType: m.senderType,
+            messageText: m.messageText,
+            createdAt: m.createdAt,
+            readAt: m.readAt,
+          })),
+        });
+      } catch (err: any) {
+        console.error("Error fetching buyer thread:", err);
+        return reply.code(500).send({ error: "internal_error", message: err.message });
+      }
+    }
+  );
+
+  /**
+   * POST /my-threads/:id/messages - Send message as buyer/client
+   */
+  app.post(
+    "/my-threads/:id/messages",
+    {
+      preHandler: [requireMarketplaceAuth, requireEmailVerified],
+      config: {
+        rateLimit: { max: 20, timeWindow: "1 hour" },
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const userId = req.marketplaceUserId!;
+      const { id } = req.params as { id: string };
+      const threadId = parseInt(id, 10);
+      const { messageText } = req.body as { messageText?: string };
+
+      if (isNaN(threadId)) {
+        return reply.code(400).send({ error: "invalid_thread_id" });
+      }
+
+      if (!messageText?.trim()) {
+        return reply.code(400).send({ error: "message_required", message: "Message text is required" });
+      }
+
+      if (messageText.length > 5000) {
+        return reply.code(400).send({
+          error: "message_too_long",
+          message: "Message must be 5000 characters or less",
+        });
+      }
+
+      try {
+        // Verify thread belongs to this buyer
+        const thread = await prisma.marketplaceMessageThread.findFirst({
+          where: { id: threadId, clientId: userId },
+          include: {
+            provider: {
+              select: { userId: true },
+            },
+          },
+        });
+
+        if (!thread) {
+          return reply.code(404).send({ error: "not_found", message: "Thread not found" });
+        }
+
+        // Create message
+        const message = await prisma.marketplaceMessage.create({
+          data: {
+            threadId,
+            senderId: userId,
+            senderType: "client",
+            messageText: messageText.trim(),
+          },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        });
+
+        // Update thread lastMessageAt
+        await prisma.marketplaceMessageThread.update({
+          where: { id: threadId },
+          data: { lastMessageAt: new Date() },
+        });
+
+        // Broadcast to WebSocket clients (if provider is connected)
+        if (thread.provider?.userId) {
+          broadcastTransactionMessage(
+            userId, // buyer
+            thread.provider.userId, // provider
+            userId, // sender (buyer)
+            {
+              id: String(message.id),
+              threadId,
+              transactionId: thread.transactionId ? String(thread.transactionId) : null,
+              messageText: message.messageText,
+              createdAt: message.createdAt.toISOString(),
+              senderId: message.senderId,
+              senderType: message.senderType,
+              source: "provider", // Identify this as a provider/marketplace message
+              sender: {
+                id: message.sender.id,
+                firstName: message.sender.firstName,
+                lastName: message.sender.lastName,
+              },
+            }
+          );
+
+          // Broadcast updated unread count to provider
+          const providerUserId = thread.provider.userId;
+          const unreadCount = Number(
+            await prisma.marketplaceMessage.count({
+              where: {
+                thread: {
+                  OR: [{ clientId: providerUserId }, { provider: { userId: providerUserId } }],
+                },
+                senderId: { not: providerUserId },
+                readAt: null,
+              },
+            })
+          );
+
+          const unreadThreads = Number(
+            await prisma.marketplaceMessageThread.count({
+              where: {
+                OR: [{ clientId: providerUserId }, { provider: { userId: providerUserId } }],
+                messages: {
+                  some: {
+                    senderId: { not: providerUserId },
+                    readAt: null,
+                  },
+                },
+              },
+            })
+          );
+
+          broadcastUnreadCount(providerUserId, {
+            unreadThreads,
+            totalUnreadMessages: unreadCount,
+          });
+        }
+
+        return reply.send({
+          ok: true,
+          message: {
+            id: String(message.id),
+            threadId: message.threadId,
+            senderId: message.senderId,
+            senderType: message.senderType,
+            messageText: message.messageText,
+            createdAt: message.createdAt,
+          },
+        });
+      } catch (err: any) {
+        console.error("Error sending buyer message:", err);
         return reply.code(500).send({ error: "internal_error", message: err.message });
       }
     }

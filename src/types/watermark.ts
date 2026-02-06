@@ -16,14 +16,17 @@ export type WatermarkPosition =
 export type PdfWatermarkPosition = "diagonal" | "header" | "footer";
 export type WatermarkType = "text" | "logo" | "both";
 export type WatermarkSize = "small" | "medium" | "large";
+export type WatermarkPattern = "positions" | "tiled";
 
 export type ImageWatermarkSettings = {
   type: WatermarkType;
   text?: string;
   logoStorageKey?: string;
-  position: WatermarkPosition;
+  position: WatermarkPosition; // Legacy - kept for backwards compatibility
+  positions?: WatermarkPosition[]; // Selected positions (1 or more)
   opacity: number; // 0.1 - 1.0
   size: WatermarkSize;
+  pattern?: WatermarkPattern; // "positions" (default) or "tiled" (full coverage)
 };
 
 export type PdfWatermarkSettings = {
@@ -48,8 +51,10 @@ export type WatermarkOptions = {
   text?: string;
   logoBuffer?: Buffer;
   position: WatermarkPosition | PdfWatermarkPosition;
+  positions?: WatermarkPosition[]; // For "multi" pattern
   opacity: number;
   size?: WatermarkSize;
+  pattern?: WatermarkPattern;
 };
 
 export type TrackAccessParams = {
