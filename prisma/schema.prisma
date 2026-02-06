@@ -1273,6 +1273,10 @@ model User {
   registryVerifications RegistryVerification[] @relation("RegistryVerificationVerifier")
   registrySyncLogs      RegistrySyncLog[]      @relation("RegistrySyncLogInitiator")
 
+  // Neonatal care
+  neonatalCareEntries   NeonatalCareEntry[]
+  neonatalInterventions NeonatalIntervention[]
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -1653,6 +1657,15 @@ model Tenant {
   breedingInquiries         BreedingInquiry[]
   breedingBookingsOffering  BreedingBooking[]             @relation("OfferingBookings")
   breedingBookingsSeeking   BreedingBooking[]             @relation("SeekingBookings")
+
+  // Neonatal Care
+  neonatalCareEntries   NeonatalCareEntry[]
+  neonatalInterventions NeonatalIntervention[]
+
+  // Animal Breeding Profile (user-entered preferences)
+  animalBreedingProfiles  AnimalBreedingProfile[]
+  animalIncompatibilities AnimalIncompatibility[]
+  breedingEventsLog       BreedingEvent[]
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -2943,6 +2956,12 @@ model Animal {
   feedingRecords FeedingRecord[]
   foodChanges    FoodChange[]
 
+  // Breeding Profile (user-entered preferences and history)
+  breedingProfile          AnimalBreedingProfile?
+  breedingEvents           BreedingEvent[]           @relation("BreedingEvents")
+  partnerBreedingEvents    BreedingEvent[]           @relation("PartnerBreedingEvents")
+  incompatibleWithProfiles AnimalIncompatibility[]   @relation("IncompatibleWith")
+
   @@unique([tenantId, microchip])
   @@index([organizationId])
   @@index([tenantId])
@@ -3950,6 +3969,9 @@ model BreedingPlan {
   // Breeding booking that originated this plan
   breedingBooking BreedingBooking?
 
+  // Breeding events linked to this plan
+  breedingEventsLog BreedingEvent[]
+
   // Supplement Tracking
   supplementSchedules SupplementSchedule[]
 
@@ -4481,6 +4503,7 @@ model BreedingMilestone {
 }
 
 enum MilestoneType {
+  // Horse-specific (340-day gestation) - legacy
   VET_PREGNANCY_CHECK_15D
   VET_ULTRASOUND_45D
   VET_ULTRASOUND_90D
@@ -4490,13 +4513,39 @@ enum MilestoneType {
   DUE_DATE_340D
   OVERDUE_VET_CALL_350D
 
-  // Pre-foaling physical signs (user-recorded, not date-triggered)
+  // Species-generic scheduled milestones (all species)
+  PREGNANCY_CONFIRMATION
+  ULTRASOUND_HEARTBEAT
+  ULTRASOUND_COUNT
+  XRAY_COUNT
+  BEGIN_MONITORING
+  DAILY_CHECKS
+  PREPARE_BIRTH_AREA
+  DUE_DATE
+  OVERDUE_VET_CALL
+
+  // Pre-birth physical signs (user-recorded observations)
+  // Universal signs
+  TEMPERATURE_DROP
+  NESTING_BEHAVIOR
+  LOSS_OF_APPETITE
+  RESTLESSNESS
+  VULVAR_CHANGES
+  MILK_PRESENT
+
+  // Horse/ruminant-specific signs
   UDDER_DEVELOPMENT
   UDDER_FULL
   WAX_APPEARANCE
   VULVAR_RELAXATION
   TAILHEAD_RELAXATION
   MILK_CALCIUM_TEST
+  LIGAMENT_SOFTENING
+  UDDER_TIGHT
+
+  // Rabbit-specific signs
+  FUR_PULLING
+  NEST_BUILDING
 
   @@schema("public")
 }
@@ -4517,6 +4566,121 @@ enum FoalNursingStatus {
   ASSISTED
   BOTTLE_FED
   ORPHANED
+
+  @@schema("public")
+}
+
+/**
+ * Neonatal health status for intensive care tracking
+ */
+enum NeonatalHealthStatus {
+  THRIVING
+  WATCH
+  CRITICAL
+  DECEASED
+
+  @@schema("public")
+}
+
+/**
+ * Feeding method for neonates
+ */
+enum NeonatalFeedingMethod {
+  NURSING
+  SUPPLEMENTAL
+  BOTTLE
+  TUBE
+  ORPHANED
+
+  @@schema("public")
+}
+
+/**
+ * Stool quality for neonate monitoring
+ */
+enum StoolQuality {
+  NORMAL
+  SOFT
+  DIARRHEA
+  CONSTIPATED
+  NONE
+
+  @@schema("public")
+}
+
+/**
+ * Activity level for neonate monitoring
+ */
+enum ActivityLevel {
+  VIGOROUS
+  NORMAL
+  WEAK
+  LETHARGIC
+
+  @@schema("public")
+}
+
+/**
+ * Neonatal intervention types
+ */
+enum NeonatalInterventionType {
+  PLASMA_TRANSFUSION
+  COLOSTRUM_SUPPLEMENT
+  SERUM_IMMUNOGLOBULIN
+  SUBQ_FLUIDS
+  IV_FLUIDS
+  DEXTROSE_GLUCOSE
+  TUBE_FEEDING
+  IRON_SUPPLEMENT
+  CALCIUM_SUPPLEMENT
+  OXYGEN_THERAPY
+  DOXAPRAM
+  NALOXONE
+  NEBULIZER
+  ANTIBIOTIC
+  PROBIOTIC
+  DEWORMER
+  VITAMIN_K
+  UMBILICAL_CARE
+  EYE_CARE
+  SKIN_TREATMENT
+  OTHER
+
+  @@schema("public")
+}
+
+/**
+ * Intervention administration route
+ */
+enum InterventionRoute {
+  ORAL
+  SUBCUTANEOUS
+  INTRAVENOUS
+  INTRAMUSCULAR
+  TOPICAL
+  INHALATION
+
+  @@schema("public")
+}
+
+/**
+ * Who administered the intervention
+ */
+enum AdministeredBy {
+  SELF
+  VET
+  VET_TECH
+
+  @@schema("public")
+}
+
+/**
+ * Response to intervention
+ */
+enum InterventionResponse {
+  IMPROVED
+  NO_CHANGE
+  WORSENED
 
   @@schema("public")
 }
@@ -4683,6 +4847,12 @@ model Offspring {
   requiredVetCare Boolean           @default(false)
   vetCareDetails  String?
 
+  // Neonatal care tracking (for litter species)
+  isExtraNeeds          Boolean                @default(false)
+  neonatalHealthStatus  NeonatalHealthStatus?
+  neonatalFeedingMethod NeonatalFeedingMethod?
+  birthWeightOz         Float?
+
   // orthogonal lifecycle dimensions (production canonical state)
   lifeState      OffspringLifeState      @default(ALIVE)
   placementState OffspringPlacementState @default(UNASSIGNED)
@@ -4736,6 +4906,10 @@ model Offspring {
   Events                 OffspringEvent[]
   WaitlistAllocations    WaitlistEntry[]               @relation("WaitlistAllocationOffspring")
   microchipRegistrations AnimalMicrochipRegistration[] @relation("OffspringMicrochipRegistrations")
+
+  // Neonatal care relations
+  NeonatalCareEntries   NeonatalCareEntry[]
+  NeonatalInterventions NeonatalIntervention[]
 
   // finance, tasks, health, documents, contracts
   Invoices   Invoice[]
@@ -4792,6 +4966,92 @@ model OffspringEvent {
 
   @@index([tenantId])
   @@index([offspringId, type, occurredAt])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Neonatal Care - Daily care tracking for litter species
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model NeonatalCareEntry {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  offspringId Int
+  offspring   Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+
+  recordedAt   DateTime
+  recordedBy   String?
+  recordedById String?
+  recordedUser User?    @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  // Weight tracking
+  weightOz            Decimal? @db.Decimal(6, 2)
+  weightChangePercent Decimal? @db.Decimal(5, 2)
+
+  // Temperature (critical for fading syndrome)
+  temperatureF Decimal? @db.Decimal(4, 1)
+
+  // Feeding
+  feedingMethod   NeonatalFeedingMethod?
+  feedingVolumeMl Decimal?               @db.Decimal(5, 1)
+  feedingNotes    String?
+
+  // Elimination
+  urinated     Boolean?
+  stoolQuality StoolQuality?
+
+  // Activity
+  activityLevel ActivityLevel?
+
+  // Notes
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, offspringId, recordedAt])
+  @@index([offspringId, recordedAt])
+  @@schema("public")
+}
+
+model NeonatalIntervention {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  offspringId Int
+  offspring   Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+
+  occurredAt DateTime
+
+  type  NeonatalInterventionType
+  route InterventionRoute?
+  dose  String?
+
+  administeredBy AdministeredBy?
+  vetClinic      String?
+
+  reason   String? @db.Text
+  response InterventionResponse?
+
+  followUpNeeded Boolean   @default(false)
+  followUpDate   DateTime?
+
+  cost  Decimal? @db.Decimal(10, 2)
+  notes String?  @db.Text
+
+  recordedById String?
+  recordedUser User?   @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, offspringId, occurredAt])
+  @@index([offspringId, type])
   @@schema("public")
 }
 
@@ -8259,6 +8519,14 @@ model MarketplaceProvider {
   trustedBadge             Boolean   @default(false) @map("trusted_badge")
   trustedBadgeEarnedAt     DateTime? @map("trusted_badge_earned_at")
 
+  // ============================================================================
+  // Listing Fee Infrastructure (placeholder for future monetization)
+  // ============================================================================
+  listingTier           String?   @map("listing_tier") // e.g., "free", "basic", "premium"
+  listingFeeExempt      Boolean   @default(true) @map("listing_fee_exempt") // True during free launch period
+  listingFeeExemptUntil DateTime? @map("listing_fee_exempt_until") // When free period ends
+  maxActiveListings     Int?      @map("max_active_listings") // Limit based on tier (null = unlimited)
+
   // Status
   status          String    @default("pending")
   activatedAt     DateTime? @map("activated_at")
@@ -8409,14 +8677,19 @@ model MktListingService {
   flagged   Boolean   @default(false)
   flaggedAt DateTime? @map("flagged_at")
 
+  // Featured listing (for future paid promotion)
+  isFeatured    Boolean   @default(false) @map("is_featured")
+  featuredUntil DateTime? @map("featured_until")
+
   // Timestamps
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  assignments  MarketplaceServiceTagAssignment[]
-  transactions MarketplaceTransaction[]
+  assignments    MarketplaceServiceTagAssignment[]
+  transactions   MarketplaceTransaction[]
+  messageThreads MarketplaceMessageThread[]
 
   @@index([providerId])
   @@index([tenantId])
@@ -8426,6 +8699,7 @@ model MktListingService {
   @@index([city, state])
   @@index([sourceType])
   @@index([deletedAt])
+  @@index([isFeatured, featuredUntil])
   @@map("MktListingService")
   @@schema("marketplace")
 }
@@ -8548,6 +8822,11 @@ model MarketplaceInvoice {
   stripePaymentIntentId String?  @unique @map("stripe_payment_intent_id")
   stripeChargeId        String?  @map("stripe_charge_id")
 
+  // Stripe Invoice details (for direct provider invoices)
+  stripeInvoiceUrl    String?   @map("stripe_invoice_url")     // Hosted invoice URL for client payment
+  stripeInvoicePdfUrl String?   @map("stripe_invoice_pdf_url") // PDF download URL
+  stripeInvoiceSentAt DateTime? @map("stripe_invoice_sent_at") // When Stripe sent the email
+
   // Manual payment confirmation
   manualPaymentMarkedAt    DateTime? @map("manual_payment_marked_at")
   manualPaymentMethod      String?   @map("manual_payment_method")
@@ -8597,7 +8876,8 @@ model MarketplaceMessageThread {
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
-  listingId Int?                       @map("listing_id")
+  listingId Int?               @map("listing_id")
+  listing   MktListingService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
   transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -8607,6 +8887,15 @@ model MarketplaceMessageThread {
 
   lastMessageAt DateTime @default(now()) @map("last_message_at")
   createdAt     DateTime @default(now()) @map("created_at")
+
+  // Provider messaging enhancements
+  archivedByProviderAt DateTime? @map("archived_by_provider_at")
+  deletedByProviderAt  DateTime? @map("deleted_by_provider_at")
+
+  // Response time tracking (for "Quick Responder" badge)
+  firstClientMessageAt DateTime? @map("first_client_message_at")
+  firstProviderReplyAt DateTime? @map("first_provider_reply_at")
+  responseTimeSeconds  Int?      @map("response_time_seconds")
 
   // Relations
   messages MarketplaceMessage[]
@@ -8630,7 +8919,8 @@ model MarketplaceMessage {
   messageText String    @map("message_text")
   readAt      DateTime? @map("read_at")
 
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([threadId, createdAt(sort: Desc)])
   @@map("messages")
@@ -10193,5 +10483,139 @@ model BreedingBooking {
   @@index([sourceListingId])
   @@index([seekingPartyId])
   @@index([offeringAnimalId])
+  @@schema("public")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Animal Breeding Profile - User-entered breeding preferences and history
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model AnimalBreedingProfile {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  animalId Int    @unique
+
+  // Status
+  breedingStatus  String    @default("INTACT") // INTACT, PROVEN, RETIRED, NEUTERED, SUSPECTED_ISSUES, UNDER_EVALUATION
+  statusNotes     String?   @db.Text
+  statusChangedAt DateTime?
+
+  // Preferences (all animals)
+  environmentPreference String?  @db.VarChar(50) // INDOOR_ONLY, OUTDOOR_ONLY, EITHER, SPECIFIC_LOCATION
+  environmentNotes      String?  @db.Text
+  temperament           String?  @db.VarChar(50) // CALM, RECEPTIVE, EAGER, NERVOUS, AGGRESSIVE, REQUIRES_ASSISTANCE, VARIABLE
+  temperamentNotes      String?  @db.Text
+  specialRequirements   String?  @db.Text
+  generalNotes          String?  @db.Text
+
+  // Male-specific fields
+  libido                  String?   @db.VarChar(20) // HIGH, MEDIUM, LOW, VARIABLE, UNKNOWN
+  libidoNotes             String?   @db.Text
+  serviceType             String?   @db.VarChar(20) // NATURAL_ONLY, AI_ONLY, BOTH, UNKNOWN
+  collectionTrained       Boolean?
+  collectionNotes         String?   @db.Text
+  fertilityStatus         String?   @db.VarChar(20) // PROVEN, UNPROVEN, SUSPECTED_LOW, CONFIRMED_LOW, UNKNOWN
+  lastFertilityTestDate   DateTime? @db.Date
+  lastFertilityTestResult String?   @db.Text
+  fertilityNotes          String?   @db.Text
+
+  // Female-specific fields
+  heatCycleRegularity    String?   @db.VarChar(20) // REGULAR, IRREGULAR, SILENT, SPLIT, UNKNOWN
+  avgCycleLengthDays     Int?
+  lastHeatDate           DateTime? @db.Date
+  heatNotes              String?   @db.Text
+  pregnancyComplications String?   @db.Text
+  proneToComplications   Boolean   @default(false)
+  naturalBirthCount      Int       @default(0)
+  cSectionCount          Int       @default(0)
+  cSectionNotes          String?   @db.Text
+  lastBirthType          String?   @db.VarChar(20) // NATURAL, C_SECTION
+  lastBirthDate          DateTime? @db.Date
+  maternalRating         String?   @db.VarChar(20) // EXCELLENT, GOOD, FAIR, POOR, UNKNOWN
+  maternalNotes          String?   @db.Text
+  milkProduction         String?   @db.VarChar(20) // ABUNDANT, SUFFICIENT, INSUFFICIENT, NONE, UNKNOWN
+  mastitisHistory        Boolean   @default(false)
+  milkNotes              String?   @db.Text
+  recoveryPattern        String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animal            Animal                  @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  incompatibilities AnimalIncompatibility[]
+
+  @@index([tenantId, animalId])
+  @@index([tenantId, breedingStatus])
+  @@schema("public")
+}
+
+model AnimalIncompatibility {
+  id                   Int      @id @default(autoincrement())
+  tenantId             Int
+  profileId            Int
+  incompatibleAnimalId Int
+
+  reason     String   @db.VarChar(500)
+  severity   String   @default("AVOID") @db.VarChar(20) // AVOID, CAUTION
+  recordedAt DateTime @default(now())
+  recordedBy String?  @db.VarChar(255)
+
+  // Relations
+  tenant             Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profile            AnimalBreedingProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  incompatibleAnimal Animal                @relation("IncompatibleWith", fields: [incompatibleAnimalId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, incompatibleAnimalId])
+  @@index([tenantId])
+  @@index([profileId])
+  @@schema("public")
+}
+
+model BreedingEvent {
+  id       Int @id @default(autoincrement())
+  tenantId Int
+  animalId Int
+
+  eventType  String   @db.VarChar(50) // BREEDING_ATTEMPT, SUCCESSFUL_BREEDING, FAILED_BREEDING, PREGNANCY_CONFIRMED, PREGNANCY_LOSS, BIRTH_OUTCOME, FERTILITY_TEST, HEAT_CYCLE, BEHAVIORAL_NOTE, VET_CONSULTATION, INCOMPATIBILITY, OTHER
+  occurredAt DateTime
+  outcome    String?  @db.VarChar(30) // SUCCESSFUL, UNSUCCESSFUL, PARTIAL, PENDING, NOT_APPLICABLE
+
+  // Related entities
+  breedingPlanId  Int?
+  partnerAnimalId Int?
+
+  // Details
+  title       String? @db.VarChar(200)
+  description String? @db.Text
+
+  // For breeding attempts
+  serviceType        String? @db.VarChar(20) // NATURAL, AI
+  tieDurationMinutes Int?
+
+  // For birth outcomes
+  totalBorn    Int?
+  bornAlive    Int?
+  stillborn    Int?
+  deliveryType String? @db.VarChar(20) // NATURAL, C_SECTION, ASSISTED
+
+  // For fertility tests
+  testType   String? @db.VarChar(100)
+  testResult String? @db.Text
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.VarChar(255)
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animal        Animal        @relation("BreedingEvents", fields: [animalId], references: [id], onDelete: Cascade)
+  breedingPlan  BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
+  partnerAnimal Animal?       @relation("PartnerBreedingEvents", fields: [partnerAnimalId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, animalId, occurredAt])
+  @@index([tenantId, eventType])
+  @@index([breedingPlanId])
   @@schema("public")
 }
