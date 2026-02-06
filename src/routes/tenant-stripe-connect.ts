@@ -350,7 +350,6 @@ export default async function tenantStripeConnectRoutes(
       return reply.send({
         success: true,
         message: "Stripe account connected successfully",
-        accountId,
         ...status,
       });
     } catch (err: any) {
