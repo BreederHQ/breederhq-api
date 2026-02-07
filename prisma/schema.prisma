@@ -533,6 +533,70 @@ enum MediaAccessActor {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols enums
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+enum ActivityCategory {
+  ENS
+  ESI
+  SOCIALIZATION
+  HANDLING
+  ENRICHMENT
+  TRAINING
+  HEALTH
+  ASSESSMENT
+  TRANSITION
+  CUSTOM
+
+  @@schema("public")
+}
+
+enum ActivityFrequency {
+  ONCE
+  DAILY
+  TWICE_DAILY
+  WEEKLY
+  AS_AVAILABLE
+  CHECKLIST
+
+  @@schema("public")
+}
+
+enum RearingAssignmentStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+  CANCELLED
+
+  @@schema("public")
+}
+
+enum RearingExceptionType {
+  SKIPPED
+  DELAYED
+  MODIFIED
+  UNABLE_TO_COMPLETE
+
+  @@schema("public")
+}
+
+enum RearingCompletionScope {
+  LITTER
+  INDIVIDUAL
+
+  @@schema("public")
+}
+
+enum AssessmentType {
+  VOLHARD_PAT
+  CUSTOM
+
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Breeding additions: enums
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -1473,8 +1537,20 @@ model Tenant {
   usageRecords        UsageRecord[]
   usageSnapshots      UsageSnapshot[]
   paymentMethods      PaymentMethod[]
-  unifiedListings     MktListingService[]        // Unified marketplace listings
+  unifiedListings     MktListingBreederService[]        // Unified marketplace listings
+  breedingServices    MktListingBreedingService[]       // Breeding service listings (stud, mare lease, etc.)
   featureChecks       FeatureCheck[]
+
+  // Rearing Protocols
+  rearingProtocols       RearingProtocol[]
+  rearingAssignments     RearingProtocolAssignment[]
+  activityCompletions    ActivityCompletion[]
+  protocolExceptions     OffspringProtocolException[]
+  protocolRatings        ProtocolRating[]
+  protocolComments       ProtocolComment[]
+  protocolCopyRecords    ProtocolCopyRecord[]
+  assessmentResults      AssessmentResult[]
+  rearingCertificates    RearingCertificate[]
 
   // Cross-tenant lineage
   contributedIdentifiers  GlobalAnimalIdentifier[]
@@ -2720,8 +2796,9 @@ model Animal {
   owners                   AnimalOwner[]
   registryIds              AnimalRegistryIdentifier[]
   microchipRegistrations   AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
-  individualAnimalListings MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
-  programParticipants      AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
+  individualAnimalListings   MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
+  breedingServiceAssignments MktBreedingServiceAnimal[]    @relation("AnimalBreedingServiceAssignments")
+  programParticipants        AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
   createdAt                DateTime                      @default(now())
   updatedAt                DateTime                      @updatedAt
   archived                 Boolean                       @default(false)
@@ -3645,6 +3722,96 @@ enum InquiryStatus {
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
+ * Breeding Services (Marketplace)
+ * Stud services, mare leasing, breeding arrangements, etc.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model MktListingBreedingService {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Identity
+  slug        String  @unique
+  headline    String? @db.VarChar(120)
+  description String? @db.Text
+
+  // Intent: OFFERING | SEEKING | LEASE | ARRANGEMENT
+  intent String @db.VarChar(32)
+
+  // Animals (many-to-many via join table)
+  animalAssignments MktBreedingServiceAnimal[]
+
+  // Pricing
+  feeCents     Int?
+  feeDirection String? @db.VarChar(32) // BUYER_PAYS | SELLER_PAYS | SPLIT
+
+  // Breeding Details
+  breedingMethods String[] @default([])
+  guaranteeType   String?  @db.VarChar(32)
+  guaranteeTerms  String?  @db.Text
+
+  // Requirements
+  healthCertRequired Boolean  @default(false)
+  cogginsCurrent     Boolean  @default(false)
+  cultureRequired    Boolean  @default(false)
+  contractRequired   Boolean  @default(false)
+  customRequirements String[] @default([])
+
+  // Availability
+  availableFrom        DateTime?
+  availableTo          DateTime?
+  blackoutDates        String[] @default([]) // ISO date strings
+  maxBookingsPerPeriod Int?
+  acceptingInquiries   Boolean  @default(true)
+
+  // Publishing
+  status      MarketplaceListingStatus @default(DRAFT)
+  publishedAt DateTime?
+  pausedAt    DateTime?
+
+  // Metadata
+  viewCount     Int       @default(0)
+  inquiryCount  Int       @default(0)
+  lastViewedAt  DateTime?
+  lastInquiryAt DateTime?
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([intent])
+  @@map("mkt_listing_breeding_service")
+  @@schema("public")
+}
+
+model MktBreedingServiceAnimal {
+  id        Int                       @id @default(autoincrement())
+  serviceId Int
+  service   MktListingBreedingService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  animalId  Int
+  animal    Animal                    @relation("AnimalBreedingServiceAssignments", fields: [animalId], references: [id], onDelete: Cascade)
+
+  // Per-animal overrides
+  featured       Boolean @default(false)
+  feeOverride    Int?
+  maxBookings    Int?
+  bookingsClosed Boolean @default(false)
+
+  addedAt DateTime @default(now())
+
+  @@unique([serviceId, animalId])
+  @@index([serviceId])
+  @@index([animalId])
+  @@map("mkt_breeding_service_animal")
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
  * Breeding core
  * ────────────────────────────────────────────────────────────────────────────
  */
@@ -4549,6 +4716,9 @@ model OffspringGroup {
   FeedingRecord FeedingRecord[]
   FoodChange    FoodChange[]
 
+  // Rearing Protocols
+  rearingAssignments RearingProtocolAssignment[]
+
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   archivedAt DateTime?
@@ -4716,6 +4886,13 @@ model Offspring {
   OffspringDocument        OffspringDocument[]
   OffspringContract        OffspringContract[]
   schedulingEventTemplates SchedulingEventTemplate[]
+
+  // Rearing Protocols
+  rearingCompletions  ActivityCompletion[]
+  rearingExceptions   OffspringProtocolException[]
+  rearingOverrides    AssignmentOffspringOverride[]
+  rearingAssessments  AssessmentResult[]
+  rearingCertificates RearingCertificate[]
 
   @@index([tenantId])
   @@index([groupId])
@@ -8244,7 +8421,7 @@ model MarketplaceProvider {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  unifiedListings      MktListingService[]         // Unified marketplace listings
+  unifiedListings      MktListingBreederService[]         // Unified marketplace listings
   providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
   providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
   providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
@@ -8317,11 +8494,12 @@ model VerificationRequest {
 }
 
 /**
- * MktListingService - Unified service listings table
+ * MktListingBreederService - Unified service listings table (non-breeding services)
  * Consolidates provider and breeder service listings into single table
  * Uses source_type discriminator to distinguish between sources
+ * NOTE: Table name remains "MktListingService" for backwards compatibility
  */
-model MktListingService {
+model MktListingBreederService {
   id         Int               @id @default(autoincrement())
   sourceType ServiceSourceType @map("source_type")
 
@@ -8440,7 +8618,7 @@ model MarketplaceTransaction {
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
   listingId Int?               @map("listing_id")
-  listing   MktListingService? @relation(fields: [listingId], references: [id])
+  listing   MktListingBreederService? @relation(fields: [listingId], references: [id])
 
   // Transaction details
   serviceDescription String  @map("service_description")
@@ -8581,7 +8759,7 @@ model MarketplaceMessageThread {
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
   listingId Int?               @map("listing_id")
-  listing   MktListingService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listing   MktListingBreederService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
   transaction   MarketplaceTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -8718,7 +8896,7 @@ model MarketplaceServiceTag {
 
 model MarketplaceServiceTagAssignment {
   listingId Int               @map("listing_id")
-  listing   MktListingService @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  listing   MktListingBreederService @relation(fields: [listingId], references: [id], onDelete: Cascade)
   tagId     Int               @map("tag_id")
   tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
@@ -10282,5 +10460,400 @@ model BreedingEvent {
   @@index([tenantId, animalId, occurredAt])
   @@index([tenantId, eventType])
   @@index([breedingPlanId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Protocol Templates
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model RearingProtocol {
+  id       Int     @id @default(autoincrement())
+  tenantId Int? // null = system benchmark
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String? @db.Text
+  species     Species
+
+  isBenchmark Boolean @default(false)
+  isPublic    Boolean @default(false)
+  isActive    Boolean @default(true)
+
+  // Versioning
+  version          Int              @default(1)
+  parentProtocolId Int?
+  parentProtocol   RearingProtocol? @relation("ProtocolVersions", fields: [parentProtocolId], references: [id])
+  childProtocols   RearingProtocol[] @relation("ProtocolVersions")
+  isArchived       Boolean          @default(false)
+
+  // Metadata
+  targetAgeStart        Int // Days from birth
+  targetAgeEnd          Int // Days from birth
+  estimatedDailyMinutes Int?
+
+  // Community features
+  breederName String?
+  rating      Float     @default(0)
+  ratingCount Int       @default(0)
+  usageCount  Int       @default(0)
+  publishedAt DateTime?
+
+  // Origin attribution (for protocols copied from community)
+  originBreederName String?  // Name of breeder who originally shared this
+  copiedAt          DateTime? // When this was copied from community
+
+  // Relations
+  stages      RearingProtocolStage[]
+  assignments RearingProtocolAssignment[]
+  ratings     ProtocolRating[]
+  comments    ProtocolComment[]
+  copyRecords ProtocolCopyRecord[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+  @@index([species, isActive])
+  @@index([isPublic, species])
+  @@index([isBenchmark])
+  @@index([deletedAt])
+  @@schema("public")
+}
+
+model RearingProtocolStage {
+  id         String          @id @default(uuid())
+  protocolId Int
+  protocol   RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String? @db.Text
+  ageStartDays Int
+  ageEndDays   Int
+  order        Int
+
+  activities RearingProtocolActivity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([protocolId, order])
+  @@schema("public")
+}
+
+model RearingProtocolActivity {
+  id      String               @id @default(uuid())
+  stageId String
+  stage   RearingProtocolStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  name              String
+  description       String?           @db.Text
+  instructions      String?           @db.Text
+  category          ActivityCategory
+  frequency         ActivityFrequency
+  durationMinutes   Int?
+  isRequired        Boolean           @default(true)
+  requiresEquipment String[]          @default([])
+  order             Int
+  checklistItems    Json? // Array of ChecklistItem objects
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stageId, order])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Assignments (Protocol → Offspring Group)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model RearingProtocolAssignment {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  offspringGroupId Int
+  offspringGroup   OffspringGroup @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  protocolId       Int
+  protocol         RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+
+  // Snapshot at assignment
+  protocolVersion  Int
+  protocolSnapshot Json? // Full protocol JSON at time of assignment
+  availableUpgrade Int? // If newer version exists
+
+  startDate DateTime
+  status    RearingAssignmentStatus @default(ACTIVE)
+
+  // Liability
+  acknowledgedDisclaimer Boolean   @default(false)
+  acknowledgedAt         DateTime?
+  acknowledgedBy         String? // userId
+
+  // Progress (denormalized for performance)
+  completedActivities Int @default(0)
+  totalActivities     Int @default(0)
+
+  notes String? @db.Text
+
+  // Relations
+  completions  ActivityCompletion[]
+  exceptions   OffspringProtocolException[]
+  overrides    AssignmentOffspringOverride[]
+  assessments  AssessmentResult[]
+  certificates RearingCertificate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([offspringGroupId, protocolId])
+  @@index([tenantId])
+  @@index([offspringGroupId])
+  @@index([protocolId])
+  @@index([status])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Completions
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model ActivityCompletion {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assignmentId Int
+  assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  activityId   String // UUID from protocol activity
+
+  scope       RearingCompletionScope
+  offspringId Int?
+  offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
+
+  completedAt DateTime @default(now())
+  completedBy String // userId
+
+  checklistItemKey String?
+  notes            String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([assignmentId, activityId, offspringId, checklistItemKey])
+  @@index([tenantId])
+  @@index([assignmentId, activityId])
+  @@index([offspringId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Exceptions (per-offspring)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model OffspringProtocolException {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assignmentId Int
+  assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  offspringId  Int
+  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  activityId   String // UUID from protocol activity
+
+  checklistItemKey String?
+  exceptionType    RearingExceptionType
+  reason           String    @db.Text
+  startDate        DateTime?
+  endDate          DateTime?
+
+  createdBy String // userId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([assignmentId])
+  @@index([offspringId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Late Joiner Overrides
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model AssignmentOffspringOverride {
+  id           Int                       @id @default(autoincrement())
+  assignmentId Int
+  assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  offspringId  Int
+  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+
+  customStartDate DateTime?
+  skipToStage     String? // Stage UUID
+  notes           String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([assignmentId, offspringId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Community Ratings
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model ProtocolRating {
+  id         Int             @id @default(autoincrement())
+  protocolId Int
+  protocol   RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+  tenantId   Int
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  rating Int // 1-5
+  review String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([protocolId, tenantId])
+  @@index([protocolId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Comments (Community Q&A)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model ProtocolComment {
+  id         Int             @id @default(autoincrement())
+  protocolId Int
+  protocol   RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+  tenantId   Int
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Comment content
+  content String @db.Text
+
+  // Threading support - null = top-level comment, otherwise = reply
+  parentId Int?
+  parent   ProtocolComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  ProtocolComment[] @relation("CommentReplies")
+
+  // Author info (denormalized for display)
+  authorName String // Tenant/business name at time of posting
+
+  // Moderation
+  isHidden  Boolean @default(false)
+  hiddenAt  DateTime?
+  hiddenBy  String? // Admin who hid it
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([protocolId, createdAt])
+  @@index([parentId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Copy Records (Track unique tenant copies)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model ProtocolCopyRecord {
+  id         Int             @id @default(autoincrement())
+  protocolId Int
+  protocol   RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Cascade)
+  tenantId   Int
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Track when first copied
+  copiedAt DateTime @default(now())
+
+  // Unique constraint: one record per tenant per protocol
+  @@unique([protocolId, tenantId])
+  @@index([protocolId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Assessments (Volhard PAT)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model AssessmentResult {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assignmentId Int
+  assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  offspringId  Int
+  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+
+  assessmentType AssessmentType
+  scores         Json // VolhardScores or custom scores
+  notes          String? @db.Text
+  assessedAt     DateTime @default(now())
+  assessedBy     String // userId
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([assignmentId])
+  @@index([offspringId])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Rearing Protocols: Certificates
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model RearingCertificate {
+  id       String @id @default(uuid())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assignmentId Int
+  assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  offspringId  Int
+  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+
+  offspringName String
+  protocolName  String
+  breederName   String
+
+  completedAt   DateTime
+  issuedAt      DateTime  @default(now())
+  isValid       Boolean   @default(true)
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([tenantId])
+  @@index([assignmentId])
+  @@index([offspringId])
+  @@index([isValid])
   @@schema("public")
 }

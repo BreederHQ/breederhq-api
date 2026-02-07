@@ -163,7 +163,7 @@ export async function calculateActualUsage(
         prisma.mktListingBreedingProgram.count({
           where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
         }),
-        prisma.mktListingService.count({
+        prisma.mktListingBreederService.count({
           where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
         }),
       ]);

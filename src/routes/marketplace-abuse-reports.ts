@@ -72,7 +72,7 @@ async function reportListing(
 
   try {
     // Verify listing exists and is published
-    const listing = await prisma.mktListingService.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: {
         id: listingId,
         deletedAt: null,
@@ -122,7 +122,7 @@ async function reportListing(
 
     // Auto-flag if 3 or more reports in 24 hours
     if (recentReportCount >= 3 && !listing.flaggedAt) {
-      await prisma.mktListingService.update({
+      await prisma.mktListingBreederService.update({
         where: { id: listingId },
         data: {
           flaggedAt: new Date(),
