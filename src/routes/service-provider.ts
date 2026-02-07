@@ -250,7 +250,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       where.status = status.toUpperCase();
     }
 
-    const listings = await prisma.mktListingService.findMany({
+    const listings = await prisma.mktListingBreederService.findMany({
       where,
       orderBy: { createdAt: "desc" },
     });
@@ -326,7 +326,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     }
 
     // Check listing limits based on plan
-    const activeListings = await prisma.mktListingService.count({
+    const activeListings = await prisma.mktListingBreederService.count({
       where: {
         providerId: profile.id,
         status: { in: ["DRAFT", "LIVE"] },
@@ -343,7 +343,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     }
 
     // Create with temporary slug, then update with ID-based slug
-    const listing = await prisma.mktListingService.create({
+    const listing = await prisma.mktListingBreederService.create({
       data: {
         providerId: profile.id,
         sourceType: "PROVIDER",
@@ -363,7 +363,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     // Generate and set slug with ID
     const slug = generateSlug(title, listing.id);
-    const updated = await prisma.mktListingService.update({
+    const updated = await prisma.mktListingBreederService.update({
       where: { id: listing.id },
       data: { slug },
     });
@@ -403,7 +403,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -444,7 +444,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     if (priceType !== undefined) updateData.priceType = priceType || null;
     if (images !== undefined) updateData.images = images ? (images as Prisma.InputJsonValue) : Prisma.JsonNull;
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: updateData,
     });
@@ -482,7 +482,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -494,7 +494,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "title_required_to_publish" });
     }
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: {
         status: "LIVE",
@@ -533,7 +533,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -541,7 +541,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "listing_not_found" });
     }
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: { status: "PAUSED" },
     });
@@ -576,7 +576,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -584,7 +584,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "listing_not_found" });
     }
 
-    await prisma.mktListingService.delete({
+    await prisma.mktListingBreederService.delete({
       where: { id },
     });
 

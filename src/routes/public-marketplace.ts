@@ -2022,7 +2022,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [items, total] = await prisma.$transaction([
-      prisma.mktListingService.findMany({
+      prisma.mktListingBreederService.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip,
@@ -2052,7 +2052,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.mktListingService.count({ where }),
+      prisma.mktListingBreederService.count({ where }),
     ]);
 
     return reply.send({

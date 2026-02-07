@@ -900,11 +900,11 @@ export default async function marketplaceProvidersRoutes(
             tenant: {
               select: {
                 id: true,
-                organization: {
+                organizations: {
+                  take: 1,
                   select: {
                     id: true,
                     name: true,
-                    logoUrl: true,
                   },
                 },
               },
@@ -916,13 +916,15 @@ export default async function marketplaceProvidersRoutes(
           const partyIds = contactsWithParty.map(c => c.partyId!);
 
           // Build tenant lookup for organization info
+          // Note: Organization doesn't have logoUrl - that's on MarketplaceProvider
           const tenantOrgMap = new Map<number, { orgId: number; orgName: string; logoUrl: string | null }>();
           for (const c of contactsWithParty) {
-            if (c.tenant?.organization) {
+            const org = c.tenant?.organizations?.[0];
+            if (org) {
               tenantOrgMap.set(c.partyId!, {
-                orgId: c.tenant.organization.id,
-                orgName: c.tenant.organization.name,
-                logoUrl: c.tenant.organization.logoUrl || null,
+                orgId: org.id,
+                orgName: org.name,
+                logoUrl: null,
               });
             }
           }
@@ -968,11 +970,11 @@ export default async function marketplaceProvidersRoutes(
                 tenant: {
                   select: {
                     id: true,
-                    organization: {
+                    organizations: {
+                      take: 1,
                       select: {
                         id: true,
                         name: true,
-                        logoUrl: true,
                       },
                     },
                   },
@@ -1022,6 +1024,7 @@ export default async function marketplaceProvidersRoutes(
                   }
                 : null;
 
+              const org = thread.tenant?.organizations?.[0];
               return {
                 id: `breeder-${thread.id}`,
                 originalId: thread.id,
@@ -1034,10 +1037,11 @@ export default async function marketplaceProvidersRoutes(
                 threadType: thread.inquiryType || "general",
                 lastMessage,
                 // Breeder organization info for badge display
-                breederInfo: thread.tenant?.organization ? {
-                  id: thread.tenant.organization.id,
-                  name: thread.tenant.organization.name,
-                  logoUrl: thread.tenant.organization.logoUrl,
+                // Note: Organization doesn't have logoUrl - that's on MarketplaceProvider
+                breederInfo: org ? {
+                  id: org.id,
+                  name: org.name,
+                  logoUrl: null,
                   verified: true, // All breeders on platform are verified
                 } : (otherParticipant?.party?.type === "ORGANIZATION" ? {
                   id: otherParticipant.party.id,
@@ -1233,11 +1237,11 @@ export default async function marketplaceProvidersRoutes(
             tenant: {
               select: {
                 id: true,
-                organization: {
+                organizations: {
+                  take: 1,
                   select: {
                     id: true,
                     name: true,
-                    logoUrl: true,
                   },
                 },
               },
@@ -1276,6 +1280,7 @@ export default async function marketplaceProvidersRoutes(
         // Find the breeder organization (other party)
         const otherParticipant = thread.participants.find(p => !partyIds.includes(p.partyId));
 
+        const org = thread.tenant?.organizations?.[0];
         return reply.send({
           thread: {
             id: `breeder-${thread.id}`,
@@ -1287,10 +1292,11 @@ export default async function marketplaceProvidersRoutes(
             lastMessageAt: thread.lastMessageAt,
             archivedAt: thread.archived ? new Date() : null,
             threadType: thread.inquiryType || "general",
-            breederInfo: thread.tenant?.organization ? {
-              id: thread.tenant.organization.id,
-              name: thread.tenant.organization.name,
-              logoUrl: thread.tenant.organization.logoUrl,
+            // Note: Organization doesn't have logoUrl - that's on MarketplaceProvider
+            breederInfo: org ? {
+              id: org.id,
+              name: org.name,
+              logoUrl: null,
               verified: true,
             } : (otherParticipant?.party?.type === "ORGANIZATION" ? {
               id: otherParticipant.party.id,

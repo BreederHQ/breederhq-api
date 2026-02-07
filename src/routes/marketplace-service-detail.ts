@@ -27,7 +27,7 @@ async function getServiceDetail(
     const isNumeric = !isNaN(numericId);
 
     // ==========================================================================
-    // 1. First, try to find in Breeder Services (mktListingService)
+    // 1. First, try to find in Breeder Services (mktListingBreederService)
     // ==========================================================================
     const breederWhere: any = {
       status: "LIVE",
@@ -39,7 +39,7 @@ async function getServiceDetail(
       breederWhere.slug = slugOrId;
     }
 
-    const breederListing = await prisma.mktListingService.findFirst({
+    const breederListing = await prisma.mktListingBreederService.findFirst({
       where: breederWhere,
       include: {
         tenant: {
@@ -63,7 +63,7 @@ async function getServiceDetail(
 
     if (breederListing) {
       // Increment view count asynchronously (fire-and-forget)
-      prisma.mktListingService
+      prisma.mktListingBreederService
         .update({
           where: { id: breederListing.id },
           data: { viewCount: { increment: 1 } },
@@ -127,7 +127,7 @@ async function getServiceDetail(
     }
 
     // Fetch listing with full provider details and tags
-    const listing = await prisma.mktListingService.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: providerWhere,
       include: {
         provider: {
@@ -173,7 +173,7 @@ async function getServiceDetail(
     }
 
     // Increment view count asynchronously (fire-and-forget)
-    prisma.mktListingService
+    prisma.mktListingBreederService
       .update({
         where: { id: listing.id },
         data: { viewCount: { increment: 1 } },
