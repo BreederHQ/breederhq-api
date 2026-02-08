@@ -19,6 +19,10 @@ const SPECIES_PREFIX: Record<Species, string> = {
   GOAT: "GOA",
   SHEEP: "SHE",
   RABBIT: "RAB",
+  CATTLE: "COW",
+  PIG: "PIG",
+  ALPACA: "ALP",
+  LLAMA: "LLA",
 };
 
 // Exchange code expiry (7 days in milliseconds)

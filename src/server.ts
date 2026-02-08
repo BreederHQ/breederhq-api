@@ -5,6 +5,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
+import multipart from "@fastify/multipart";
 import prisma from "./prisma.js";
 import {
   getCookieSecret,
@@ -25,6 +26,7 @@ import {
 } from "./middleware/actor-context.js";
 import { auditFailure } from "./services/audit.js";
 import apiUsageTracking from "./middleware/api-usage-tracking.js";
+import { verifyAccessToken, TokenPayload } from "./services/jwt.service.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -72,6 +74,13 @@ await app.register(rateLimit, {
 // ---------- WebSocket ----------
 await app.register(websocket);
 
+// ---------- Multipart (file uploads) ----------
+await app.register(multipart, {
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max file size
+  },
+});
+
 // ---------- CORS ----------
 // Production: always allow these origins for breederhq.com subdomains
 const PROD_ORIGINS = [
@@ -85,6 +94,7 @@ const DEV_TEST_ORIGINS = [
   "https://app.breederhq.test",
   "https://portal.breederhq.test",
   "https://marketplace.breederhq.test",
+  "https://mobile.breederhq.test",
 ];
 
 await app.register(cors, {
@@ -196,6 +206,11 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/auth/register") return true;
   if (pathname === "/api/v1/auth/dev-login") return true;
   // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
+
+  // Mobile auth routes - use JWT tokens, not cookies, so no CSRF needed
+  if (pathname === "/api/v1/auth/mobile-login") return true;
+  if (pathname === "/api/v1/auth/refresh") return true;
+  if (pathname === "/api/v1/auth/mobile-logout") return true;
 
   // Marketplace auth bootstrap routes - session-based with MARKETPLACE surface
   if (pathname === "/api/v1/marketplace/auth/login") return true;
@@ -415,29 +430,35 @@ async function requireTenantMembership(
   reply: any,
   tenantId: number
 ) {
-  // Use signature-verified session parsing with surface-specific cookie
-  const surface = deriveSurface(req) as SessionSurface;
-  const sess = parseVerifiedSession(req, surface);
-  if (!sess) {
-    reply.code(401).send({ error: "unauthorized" });
-    return null;
+  // Check if userId was already set by JWT auth or session auth earlier in the middleware chain
+  let userId = (req as any).userId as string | undefined;
+
+  if (!userId) {
+    // Fall back to session parsing if userId not already set
+    const surface = deriveSurface(req) as SessionSurface;
+    const sess = parseVerifiedSession(req, surface);
+    if (!sess) {
+      reply.code(401).send({ error: "unauthorized" });
+      return null;
+    }
+    userId = sess.userId;
+    (req as any).userId = userId;
   }
-  (req as any).userId = sess.userId; // stash for downstream
 
   // If tenant tables are missing, allow through in single-tenant mode
   if (!(await detectTenants())) {
-    return sess;
+    return { userId };
   }
 
   const actor = (await app.prisma.user.findUnique({
-    where: { id: sess.userId },
+    where: { id: userId },
     select: { isSuperAdmin: true } as any,
   })) as any;
 
-  if (actor?.isSuperAdmin) return sess; // super admin floats across tenants
+  if (actor?.isSuperAdmin) return { userId }; // super admin floats across tenants
 
   const membership = await (app.prisma as any).tenantMembership.findUnique?.({
-    where: { userId_tenantId: { userId: sess.userId, tenantId } },
+    where: { userId_tenantId: { userId, tenantId } },
     select: { tenantId: true },
   });
 
@@ -446,12 +467,12 @@ async function requireTenantMembership(
     await auditFailure(req, "AUTH_TENANT_DENIED", {
       reason: "forbidden_tenant",
       tenantId,
-      userId: sess.userId,
+      userId,
     });
     reply.code(403).send({ error: "forbidden_tenant" });
     return null;
   }
-  return sess;
+  return { userId };
 }
 
 // ---------- Route imports ----------
@@ -459,6 +480,7 @@ import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
 import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
+import breedingGroupsRoutes from "./routes/breeding-groups.js";
 import animalTraitsRoutes from "./routes/animal-traits.js";
 import animalDocumentsRoutes from "./routes/animal-documents.js";
 import authRoutes from "./routes/auth.js";
@@ -546,6 +568,8 @@ import serviceProviderRoutes from "./routes/service-provider.js"; // Service Pro
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
 import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
+import dairyRoutes from "./routes/dairy.js"; // Dairy production tracking (lactations, milking, DHIA, appraisals)
+import fiberRoutes from "./routes/fiber.js"; // Fiber/wool production tracking (shearings, lab tests)
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
@@ -588,6 +612,11 @@ import rearingCommentsRoutes from "./routes/rearing-comments.js"; // Community c
 import rearingAssessmentsRoutes from "./routes/rearing-assessments.js"; // Volhard PAT and custom assessments
 import rearingCertificatesRoutes from "./routes/rearing-certificates.js"; // Completion certificates
 import rearingImportExportRoutes from "./routes/rearing-import-export.js"; // Protocol import/export
+
+// Mobile App (JWT auth & push notifications)
+import mobileAuthRoutes from "./routes/mobile-auth.js"; // Mobile login, refresh, logout
+import devicesRoutes from "./routes/devices.js"; // Device registration for push notifications
+import { initFirebase } from "./services/push.service.js"; // Firebase Cloud Messaging
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
 declare module "fastify" {
@@ -639,6 +668,10 @@ app.register(
     // NOTE: rearingCertificatesRoutes moved to tenant-authenticated section (line ~1021)
     // TODO: Split into separate public/private plugins if /verify endpoint needs to be public
 
+    // Mobile App (JWT-based authentication for native mobile clients)
+    api.register(mobileAuthRoutes, { prefix: "/auth" }); // /api/v1/auth/mobile-login, /refresh, /mobile-logout
+    api.register(devicesRoutes, { prefix: "/devices" }); // /api/v1/devices/* (push notification registration)
+
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
   { prefix: "/api/v1" }
@@ -646,29 +679,35 @@ app.register(
 
 // ---------- Global error handler ----------
 app.setErrorHandler((err: Error, req, reply) => {
+  // Handle cases where err is undefined, null, or non-Error object
+  const safeErr = err ?? new Error("Unknown error (thrown value was falsy)");
+  const errInfo = {
+    message: safeErr.message ?? String(safeErr),
+    code: (safeErr as any).code,
+    meta: (safeErr as any).meta,
+    stack: safeErr.stack,
+    // Log raw value if it's not a proper Error for debugging
+    ...(!(safeErr instanceof Error) && { rawType: typeof err, rawValue: String(err) }),
+  };
+
   req.log.error(
     {
-      err: {
-        message: err.message,
-        code: (err as any).code,
-        meta: (err as any).meta,
-        stack: err.stack,
-      },
+      err: errInfo,
       url: req.url,
       method: req.method,
     },
     "Unhandled error"
   );
 
-  const code = (err as any).code;
+  const code = (safeErr as any).code;
   if (code === "P2002") {
-    return reply.status(409).send({ error: "duplicate", detail: (err as any).meta?.target });
+    return reply.status(409).send({ error: "duplicate", detail: (safeErr as any).meta?.target });
   }
   if (code === "P2003") {
     return reply.status(409).send({ error: "foreign_key_conflict" });
   }
-  if ((err as any).statusCode) {
-    return reply.status((err as any).statusCode).send({ error: err.message });
+  if ((safeErr as any).statusCode) {
+    return reply.status((safeErr as any).statusCode).send({ error: safeErr.message });
   }
   return reply.status(500).send({ error: "internal_error" });
 });
@@ -797,11 +836,38 @@ app.register(
 
       // ---------- Session verification ----------
       // Use surface-specific cookie for session isolation across subdomains
+      // Also accept JWT Bearer token for mobile clients
       const sess = parseVerifiedSession(req, surface as SessionSurface);
+      let jwtPayload: TokenPayload | null = null;
+
       if (!sess) {
-        return reply.code(401).send({ error: "unauthorized" });
+        // No session cookie - check for JWT Bearer token (mobile auth)
+        const authHeader = req.headers.authorization;
+        if (IS_DEV) {
+          console.log("[JWT Debug] Auth header present:", !!authHeader, authHeader ? authHeader.substring(0, 20) + "..." : "none");
+        }
+        if (authHeader?.startsWith("Bearer ")) {
+          const token = authHeader.slice(7);
+          try {
+            jwtPayload = verifyAccessToken(token);
+            if (IS_DEV) {
+              console.log("[JWT Debug] Token verified, userId:", jwtPayload.userId, "tenantId:", jwtPayload.tenantId);
+            }
+          } catch (err) {
+            // Invalid JWT - fall through to 401
+            if (IS_DEV) {
+              console.log("[JWT Debug] Token verification failed:", (err as Error).message);
+            }
+          }
+        }
+
+        if (!jwtPayload) {
+          return reply.code(401).send({ error: "unauthorized" });
+        }
       }
-      (req as any).userId = sess.userId;
+
+      // Use session userId if available, otherwise use JWT payload
+      (req as any).userId = sess?.userId ?? jwtPayload?.userId;
 
       // ---------- Surface-specific tenant context resolution ----------
       let tenantId: number | null = null;
@@ -841,15 +907,36 @@ app.register(
         // If still no tenant, tenantId stays null (tenantless route or missing context)
 
       } else if (surface === "PLATFORM") {
-        // PLATFORM: tenant from X-Tenant-Id header or session
-        const platformContext = extractPlatformTenantContext(req, sess);
-        tenantId = platformContext.tenantId ?? null;
+        // PLATFORM: tenant from JWT payload (mobile), X-Tenant-Id header, or session
+        if (jwtPayload?.tenantId) {
+          // Mobile JWT auth - tenant is embedded in token
+          tenantId = jwtPayload.tenantId;
+        } else if (sess) {
+          const platformContext = extractPlatformTenantContext(req, sess);
+          tenantId = platformContext.tenantId ?? null;
+        }
 
       }
       // MARKETPLACE: no tenant context needed, tenantId stays null
 
       // ---------- Surface-based ActorContext resolution ----------
-      const resolved = await resolveActorContext(surface, sess.userId, tenantId);
+      const userId = (req as any).userId as string;
+
+      // For JWT-authenticated requests (mobile), trust the token - membership was verified at login
+      // Skip full ActorContext resolution since JWT already contains verified tenantId
+      if (jwtPayload?.tenantId) {
+        (req as any).actorContext = "STAFF";
+        (req as any).tenantId = jwtPayload.tenantId;
+        if (IS_DEV) {
+          console.log("[JWT Auth] Bypassing ActorContext resolution - using JWT tenantId:", jwtPayload.tenantId);
+        }
+        // Skip to tenant membership verification (which now handles JWT auth)
+        const ok = await requireTenantMembership(app, req, reply, jwtPayload.tenantId);
+        if (!ok) return;
+        return; // Continue to route handler
+      }
+
+      const resolved = await resolveActorContext(surface, userId, tenantId);
 
       if (!resolved) {
         // PORTAL without tenant context or no membership → ACTOR_CONTEXT_UNRESOLVABLE
@@ -861,7 +948,7 @@ app.register(
           reason: "actor_context_unresolvable",
           surface,
           tenantId,
-          userId: sess.userId,
+          userId,
         });
         return reply.code(403).send({
           error: errorCode,
@@ -878,7 +965,7 @@ app.register(
           reason: "platform_requires_staff",
           surface,
           actualContext: resolved.context,
-          userId: sess.userId,
+          userId,
           tenantId,
         });
         return reply.code(403).send({
@@ -893,7 +980,7 @@ app.register(
           reason: "portal_requires_client",
           surface,
           actualContext: resolved.context,
-          userId: sess.userId,
+          userId,
           tenantId,
         });
         return reply.code(403).send({
@@ -908,7 +995,7 @@ app.register(
           reason: "marketplace_requires_public",
           surface,
           actualContext: resolved.context,
-          userId: sess.userId,
+          userId,
         });
         return reply.code(403).send({
           error: SURFACE_ACCESS_DENIED,
@@ -948,7 +1035,7 @@ app.register(
             await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
               reason: "tenant_required_for_platform_route",
               surface,
-              userId: sess.userId,
+              userId,
               path: pathOnly,
             });
             return reply.code(403).send({
@@ -990,6 +1077,7 @@ app.register(
     api.register(organizationsRoutes); // /api/v1/organizations/*
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
+    api.register(breedingGroupsRoutes); // /api/v1/breeding/groups/* (livestock group breeding)
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(studVisibilityRoutes); // /api/v1/stud-visibility/* (stud listing visibility rules - P11)
@@ -1003,6 +1091,8 @@ app.register(
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
     api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
+    api.register(dairyRoutes); // /api/v1/dairy/*, /api/v1/animals/:id/dairy/*
+    api.register(fiberRoutes); // /api/v1/fiber/*, /api/v1/animals/:id/fiber/*
     api.register(animalBreedingProfileRoutes); // /api/v1/animals/:id/breeding-profile, /api/v1/animals/:id/breeding-events, /api/v1/animals/:id/breeding-stats
     api.register(microchipRegistrationsRoutes); // /api/v1/microchip-registries, /api/v1/animals/:id/microchip-registrations, /api/v1/offspring/:id/microchip-registrations
     api.register(registryIntegrationRoutes); // /api/v1/registry-connections/*, /api/v1/animals/:id/registries/:id/verify|pedigree (P6)
@@ -1194,6 +1284,9 @@ app.setNotFoundHandler((req, reply) => {
 // ---------- Start ----------
 export async function start() {
   try {
+    // Initialize Firebase for push notifications (optional - will log if not configured)
+    initFirebase();
+
     await app.ready();
     app.printRoutes();
     await app.listen({ port: PORT, host: "0.0.0.0" });
