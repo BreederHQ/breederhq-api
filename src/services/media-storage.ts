@@ -67,6 +67,7 @@ const ALLOWED_DOCUMENT_TYPES = [
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
 ];
 
 const ALLOWED_ALL_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES];
@@ -76,11 +77,15 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export function validateContentType(
   contentType: string,
-  purpose: string
+  purpose: string,
+  subPath?: string
 ): { valid: boolean; error?: string } {
-  // Finance and contract documents can include PDFs
-  const documentPurposes = ["contract", "finance", "credentials"];
-  const allowedTypes = documentPurposes.includes(purpose)
+  // Purposes that allow document uploads (PDF, Word, TXT)
+  const documentPurposes = ["contract", "finance", "credentials", "animal", "offspring"];
+  // Also allow documents if subPath indicates documents folder
+  const isDocumentPath = subPath === "documents";
+  const allowDocuments = documentPurposes.includes(purpose) || isDocumentPath;
+  const allowedTypes = allowDocuments
     ? ALLOWED_ALL_TYPES
     : ALLOWED_IMAGE_TYPES;
 

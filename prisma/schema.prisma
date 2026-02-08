@@ -49,6 +49,10 @@ enum Species {
   GOAT
   RABBIT
   SHEEP
+  CATTLE
+  PIG
+  ALPACA
+  LLAMA
 
   @@schema("public")
 }
@@ -695,6 +699,33 @@ enum PregnancyCheckMethod {
   @@schema("public")
 }
 
+// ============================================================================
+// Breeding Group Enums (Livestock Group Breeding Support)
+// ============================================================================
+
+enum BreedingGroupStatus {
+  ACTIVE // Male currently with females
+  EXPOSURE_COMPLETE // Male removed, awaiting pregnancy checks
+  MONITORING // Some females confirmed pregnant
+  LAMBING // Females are giving birth (species-specific)
+  COMPLETE // All outcomes recorded
+  CANCELED // Group abandoned
+
+  @@schema("public")
+}
+
+enum BreedingGroupMemberStatus {
+  EXPOSED // Was with male during exposure window
+  REMOVED // Separated early from the group
+  NOT_PREGNANT // Confirmed open after pregnancy check
+  PREGNANT // Confirmed pregnant (graduated to BreedingPlan)
+  LAMBING_IMMINENT // Within 2 weeks of expected birth
+  LAMBED // Has given birth
+  FAILED // Pregnancy loss
+
+  @@schema("public")
+}
+
 enum BreedingGuaranteeType {
   NO_GUARANTEE
   LIVE_FOAL
@@ -1299,6 +1330,10 @@ model User {
   neonatalCareEntries   NeonatalCareEntry[]
   neonatalInterventions NeonatalIntervention[]
 
+  // Mobile app (JWT tokens, push notifications)
+  refreshTokens RefreshToken[]
+  devices       Device[]
+
   @@index([partyId])
   @@index([defaultTenantId])
   @@index([phoneE164])
@@ -1447,6 +1482,8 @@ model Tenant {
   foalingOutcomes           FoalingOutcome[]
   breedingMilestones        BreedingMilestone[]
   mareReproductiveHistories MareReproductiveHistory[]
+  breedingGroups            BreedingGroup[]
+  breedingGroupMembers      BreedingGroupMember[]
 
   // Semen inventory (P7)
   semenInventory SemenInventory[]
@@ -1551,6 +1588,18 @@ model Tenant {
   protocolCopyRecords ProtocolCopyRecord[]
   assessmentResults   AssessmentResult[]
   rearingCertificates RearingCertificate[]
+
+  // Dairy Production
+  lactationCycles        LactationCycle[]
+  milkingRecords         MilkingRecord[]
+  dhiaTestRecords        DHIATestRecord[]
+  linearAppraisals       LinearAppraisal[]
+  dairyProductionHistory DairyProductionHistory[]
+
+  // Fiber/Wool Production
+  shearingRecords        ShearingRecord[]
+  fiberLabTests          FiberLabTest[]
+  fiberProductionHistory FiberProductionHistory[]
 
   // Cross-tenant lineage
   contributedIdentifiers GlobalAnimalIdentifier[]
@@ -2222,12 +2271,13 @@ model Organization {
   publicContactEmail String?
 
   contacts            Contact[]
-  animals             Animal[]       @relation("OrgAnimals")
+  animals             Animal[]        @relation("OrgAnimals")
   memberships         Membership[]
-  createdCustomBreeds CustomBreed[]  @relation("CreatedByOrganization")
+  createdCustomBreeds CustomBreed[]   @relation("CreatedByOrganization")
   breedingPlans       BreedingPlan[]
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  breedingGroups      BreedingGroup[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
   externalProvider    String?
   externalId          String?
 
@@ -2844,6 +2894,10 @@ model Animal {
   breedingBookingsOffering BreedingBooking[] @relation("OfferingAnimal")
   breedingBookingsSeeking  BreedingBooking[] @relation("SeekingAnimal")
 
+  // Breeding Groups (livestock group breeding - sheep, goat, cattle, pig)
+  breedingGroupsAsSire      BreedingGroup[]       @relation("BreedingGroupSire")
+  breedingGroupMembersAsDam BreedingGroupMember[] @relation("BreedingGroupDam")
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-tenant animal linking relations
   // ─────────────────────────────────────────────────────────────────────────────
@@ -2863,6 +2917,18 @@ model Animal {
   feedingPlans   FeedingPlan[]
   feedingRecords FeedingRecord[]
   foodChanges    FoodChange[]
+
+  // Dairy Production (goats, cattle, sheep)
+  lactationCycles        LactationCycle[]
+  milkingRecords         MilkingRecord[]
+  dhiaTestRecords        DHIATestRecord[]
+  linearAppraisals       LinearAppraisal[]
+  dairyProductionHistory DairyProductionHistory?
+
+  // Fiber/Wool Production (sheep, goats, rabbits, alpacas, llamas)
+  shearingRecords        ShearingRecord[]
+  fiberLabTests          FiberLabTest[]
+  fiberProductionHistory FiberProductionHistory?
 
   // Breeding Profile (user-entered preferences and history)
   breedingProfile          AnimalBreedingProfile?
@@ -3627,6 +3693,7 @@ model MktListingBreedingProgram {
 
   // Relations
   breedingPlans   BreedingPlan[]
+  breedingGroups  BreedingGroup[]
   media           BreedingProgramMedia[]
   inquiries       BreedingProgramInquiry[]
   waitlistEntries WaitlistEntry[]
@@ -3944,6 +4011,9 @@ model BreedingPlan {
 
   // Breeding booking that originated this plan
   breedingBooking BreedingBooking?
+
+  // Breeding group member that graduated to this plan (livestock group breeding)
+  groupMember BreedingGroupMember? @relation("GroupMemberPlan")
 
   // Breeding events linked to this plan
   breedingEventsLog BreedingEvent[]
@@ -9643,6 +9713,67 @@ enum SuccessRating {
   @@schema("public")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dairy Production Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum LactationStatus {
+  FRESH // Recently freshened, early lactation
+  MILKING // Active milking
+  DRY // Dried off, not milking
+  PREGNANT_DRY // Dried off and confirmed pregnant
+  TRANSITION // Transitioning between states
+
+  @@schema("public")
+}
+
+enum MilkingFrequency {
+  ONCE_DAILY // 1x milking per day
+  TWICE_DAILY // 2x milking per day
+  THREE_DAILY // 3x milking per day
+
+  @@schema("public")
+}
+
+enum DHIATestType {
+  STANDARD // Standard DHIA supervised test
+  OWNER_SAMPLER // Owner-sampler program
+  HERD_TEST // Herd-wide testing
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fiber/Wool Production Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ShearingType {
+  FULL_BODY // Complete shearing
+  PARTIAL // Partial shearing (e.g., show trim)
+  BELLY_CRUTCH // Belly and crutch area only
+
+  @@schema("public")
+}
+
+enum FleeceGrade {
+  PRIME // Top quality fleece
+  CHOICE // High quality
+  STANDARD // Average quality
+  UTILITY // Below average, usable
+  REJECT // Not usable
+
+  @@schema("public")
+}
+
+enum FiberLabTestType {
+  MICRON_ANALYSIS // Fiber diameter measurement
+  YIELD_TEST // Clean yield percentage
+  STAPLE_STRENGTH // Fiber strength testing
+  FULL_PROFILE // Comprehensive fiber analysis
+
+  @@schema("public")
+}
+
 // Lookup table of known microchip registries (seeded data)
 model MicrochipRegistry {
   id          Int                  @id @default(autoincrement())
@@ -10035,6 +10166,283 @@ model FoodChange {
   @@index([tenantId, offspringGroupId])
   @@index([animalId, changeDate])
   @@index([offspringGroupId, changeDate])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dairy Production Models
+// For tracking milk production in goats, cattle, and sheep
+// ─────────────────────────────────────────────────────────────────────────────
+
+model LactationCycle {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  lactationNumber  Int
+  status           LactationStatus  @default(FRESH)
+  freshenDate      DateTime         @db.Date
+  dryOffDate       DateTime?        @db.Date
+  milkingFrequency MilkingFrequency @default(TWICE_DAILY)
+
+  days305MilkLbs    Decimal? @db.Decimal(10, 2)
+  days305FatLbs     Decimal? @db.Decimal(8, 3)
+  days305ProteinLbs Decimal? @db.Decimal(8, 3)
+
+  peakMilkDate    DateTime? @db.Date
+  peakMilkLbs     Decimal?  @db.Decimal(6, 2)
+  daysToReachPeak Int?
+
+  avgButterfatPct Decimal? @db.Decimal(4, 2)
+  avgProteinPct   Decimal? @db.Decimal(4, 2)
+  avgSCC          Int?
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  milkingRecords  MilkingRecord[]
+  dhiaTestRecords DHIATestRecord[]
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, status])
+  @@index([animalId, freshenDate])
+  @@schema("public")
+}
+
+model MilkingRecord {
+  id               Int             @id @default(autoincrement())
+  tenantId         Int
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId         Int
+  animal           Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  lactationCycleId Int?
+  lactationCycle   LactationCycle? @relation(fields: [lactationCycleId], references: [id], onDelete: SetNull)
+
+  milkedAt         DateTime
+  sessionNumber    Int?
+  daysInMilk       Int?
+  milkLbs          Decimal  @db.Decimal(6, 2)
+  butterfatPct     Decimal? @db.Decimal(4, 2)
+  proteinPct       Decimal? @db.Decimal(4, 2)
+  somaticCellCount Int?
+  lactose          Decimal? @db.Decimal(4, 2)
+  conductivity     Decimal? @db.Decimal(6, 2)
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, milkedAt])
+  @@index([lactationCycleId])
+  @@schema("public")
+}
+
+model DHIATestRecord {
+  id               Int             @id @default(autoincrement())
+  tenantId         Int
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId         Int
+  animal           Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  lactationCycleId Int?
+  lactationCycle   LactationCycle? @relation(fields: [lactationCycleId], references: [id], onDelete: SetNull)
+
+  testDate         DateTime     @db.Date
+  testType         DHIATestType @default(STANDARD)
+  daysInMilk       Int?
+  testDayMilkLbs   Decimal      @db.Decimal(6, 2)
+  butterfatPct     Decimal?     @db.Decimal(4, 2)
+  proteinPct       Decimal?     @db.Decimal(4, 2)
+  lactose          Decimal?     @db.Decimal(4, 2)
+  fatLbs           Decimal?     @db.Decimal(6, 3)
+  proteinLbs       Decimal?     @db.Decimal(6, 3)
+  somaticCellCount Int?
+  milkUreaNitrogen Decimal?     @db.Decimal(5, 2)
+
+  labName        String?
+  labTestNumber  String?
+  certificateUrl String? @db.Text
+  documentId     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, testDate])
+  @@index([lactationCycleId])
+  @@schema("public")
+}
+
+model LinearAppraisal {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  appraisalDate     DateTime @db.Date
+  appraiserName     String?
+  appraiserId       String?
+  finalScore        Int
+  classification    String?
+  generalAppearance Int?
+  dairyCharacter    Int?
+  bodyCapacity      Int?
+  mammarySystem     Int?
+  allScores         Json?    @db.JsonB
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, appraisalDate])
+  @@schema("public")
+}
+
+model DairyProductionHistory {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int    @unique
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  totalLactations         Int       @default(0)
+  completedLactations     Int       @default(0)
+  best305DayMilkLbs       Decimal?  @db.Decimal(10, 2)
+  best305DayFatLbs        Decimal?  @db.Decimal(8, 3)
+  best305DayProteinLbs    Decimal?  @db.Decimal(8, 3)
+  avg305DayMilkLbs        Decimal?  @db.Decimal(10, 2)
+  avgPeakMilkLbs          Decimal?  @db.Decimal(6, 2)
+  avgDaysToReachPeak      Int?
+  lifetimeMilkLbs         Decimal?  @db.Decimal(12, 2)
+  lifetimeFatLbs          Decimal?  @db.Decimal(10, 3)
+  lifetimeProteinLbs      Decimal?  @db.Decimal(10, 3)
+  lifetimeAvgButterfatPct Decimal?  @db.Decimal(4, 2)
+  lifetimeAvgProteinPct   Decimal?  @db.Decimal(4, 2)
+  lifetimeAvgSCC          Int?
+  bestAppraisalScore      Int?
+  bestAppraisalDate       DateTime? @db.Date
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fiber/Wool Production Models
+// For tracking fleece production in sheep, goats, rabbits, alpacas, llamas
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ShearingRecord {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  shearingDate          DateTime     @db.Date
+  shearingType          ShearingType @default(FULL_BODY)
+  daysSinceLastShearing Int?
+  grossWeightLbs        Decimal      @db.Decimal(6, 2)
+  cleanWeightLbs        Decimal?     @db.Decimal(6, 2)
+  yieldPct              Decimal?     @db.Decimal(5, 2)
+  stapleLengthIn        Decimal?     @db.Decimal(4, 2)
+  grade                 FleeceGrade?
+  handleQuality         String?
+  crimpPerInch          Decimal?     @db.Decimal(4, 1)
+  vegetableMatter       String?
+  weathering            String?
+  cotting               Boolean?
+  tenderness            String?
+  soldTo                String?
+  salePriceCents        Int?
+  fiberBuyer            String?
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  labTests FiberLabTest[]
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, shearingDate])
+  @@index([tenantId, grade])
+  @@schema("public")
+}
+
+model FiberLabTest {
+  id               Int             @id @default(autoincrement())
+  tenantId         Int
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId         Int
+  animal           Animal          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  shearingRecordId Int?
+  shearingRecord   ShearingRecord? @relation(fields: [shearingRecordId], references: [id], onDelete: SetNull)
+
+  testDate               DateTime         @db.Date
+  testType               FiberLabTestType @default(MICRON_ANALYSIS)
+  labName                String?
+  avgFiberDiameter       Decimal?         @db.Decimal(5, 2)
+  standardDeviation      Decimal?         @db.Decimal(5, 2)
+  coefficientOfVariation Decimal?         @db.Decimal(5, 2)
+  comfortFactor          Decimal?         @db.Decimal(5, 2)
+  spinningFineness       Decimal?         @db.Decimal(5, 2)
+  curvature              Decimal?         @db.Decimal(6, 2)
+  stapleStrengthNKtex    Decimal?         @db.Decimal(6, 2)
+  positionOfBreak        String?
+  cleanFleeceYieldPct    Decimal?         @db.Decimal(5, 2)
+  histogramData          Json?            @db.JsonB
+  certificateNumber      String?
+  certificateUrl         String?          @db.Text
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
+  @@index([animalId, testDate])
+  @@index([shearingRecordId])
+  @@schema("public")
+}
+
+model FiberProductionHistory {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalId Int    @unique
+  animal   Animal @relation(fields: [animalId], references: [id], onDelete: Cascade)
+
+  totalShearings      Int          @default(0)
+  totalGrossWeightLbs Decimal?     @db.Decimal(10, 2)
+  totalCleanWeightLbs Decimal?     @db.Decimal(10, 2)
+  avgGrossWeightLbs   Decimal?     @db.Decimal(6, 2)
+  avgCleanWeightLbs   Decimal?     @db.Decimal(6, 2)
+  avgYieldPct         Decimal?     @db.Decimal(5, 2)
+  avgStapleLengthIn   Decimal?     @db.Decimal(4, 2)
+  avgMicron           Decimal?     @db.Decimal(5, 2)
+  micronTrend         String?
+  bestMicron          Decimal?     @db.Decimal(5, 2)
+  bestFleeceWeightLbs Decimal?     @db.Decimal(6, 2)
+  bestGradeAchieved   FleeceGrade?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, animalId])
   @@schema("public")
 }
 
@@ -10891,5 +11299,167 @@ model RearingCertificate {
   @@index([assignmentId])
   @@index([offspringId])
   @@index([isValid])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Mobile App: Refresh Tokens (JWT-based auth for mobile clients)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @db.VarChar(64)
+  deviceId  String?   @db.VarChar(255)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Mobile App: Devices (FCM push notification tokens)
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+model Device {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fcmToken  String   @db.VarChar(255)
+  platform  String   @db.VarChar(10) // 'ios' | 'android'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, fcmToken])
+  @@index([userId])
+  @@map("devices")
+  @@schema("public")
+}
+
+// ============================================================================
+// Breeding Groups: Livestock Group Breeding Support
+// Enables one male + multiple females exposure scenarios for sheep, goat, cattle, pig
+// See: docs/codebase/architecture-decisions/0008-BREEDING-GROUP-ENTITY.md
+// ============================================================================
+
+/**
+ * BreedingGroup - A group mating scenario where one male is introduced
+ * to multiple females for an exposure window.
+ * Used for livestock species: sheep (tupping), cattle (joining), goat, pig
+ */
+model BreedingGroup {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  organizationId Int?
+  organization   Organization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  // Breeding Program linkage (optional)
+  programId Int?
+  program   MktListingBreedingProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+
+  // Group metadata
+  name        String // User-provided name (e.g., "Fall 2026 Merino Group")
+  species     Species
+  breedText   String? // Optional breed description
+  seasonLabel String? // Optional season label (e.g., "Fall 2026")
+  notes       String? @db.Text
+
+  // The single male (ram/buck/bull/boar) for this group
+  sireId Int
+  sire   Animal @relation("BreedingGroupSire", fields: [sireId], references: [id], onDelete: Restrict)
+
+  // Exposure window
+  exposureStartDate DateTime // When male was introduced to the females
+  exposureEndDate   DateTime? // When male was removed (null = still with females)
+
+  // Group status lifecycle
+  status BreedingGroupStatus @default(ACTIVE)
+
+  // Members (females in the group)
+  members BreedingGroupMember[]
+
+  // Audit
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // Soft delete
+
+  @@index([tenantId])
+  @@index([tenantId, species])
+  @@index([tenantId, status])
+  @@index([organizationId])
+  @@index([sireId])
+  @@index([programId])
+  @@index([exposureStartDate])
+  @@index([deletedAt])
+  @@schema("public")
+}
+
+/**
+ * BreedingGroupMember - An individual female in a breeding group.
+ * When confirmed pregnant, a BreedingPlan is auto-created and linked.
+ */
+model BreedingGroupMember {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Group membership
+  groupId Int
+  group   BreedingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  // The female (ewe/doe/cow/sow)
+  damId Int
+  dam   Animal @relation("BreedingGroupDam", fields: [damId], references: [id], onDelete: Restrict)
+
+  // Member status lifecycle
+  memberStatus BreedingGroupMemberStatus @default(EXPOSED)
+
+  // Exposure tracking (may differ from group dates)
+  exposedAt DateTime? // Date this female was exposed (defaults to group start)
+  removedAt DateTime? // Date this female was removed from group (if applicable)
+
+  // Pregnancy confirmation
+  pregnancyConfirmedAt DateTime?
+  pregnancyCheckMethod PregnancyCheckMethod?
+
+  // Link to graduated BreedingPlan (set when confirmed pregnant)
+  breedingPlanId Int?          @unique
+  breedingPlan   BreedingPlan? @relation("GroupMemberPlan", fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Calculated expected birth date range (from exposure window + gestation)
+  expectedBirthStart DateTime? // Earliest expected birth (exposureStart + min gestation)
+  expectedBirthEnd   DateTime? // Latest expected birth (exposureEnd + max gestation)
+
+  // Actual birth outcome
+  actualBirthDate DateTime?
+  offspringCount  Int? // Number of offspring born
+
+  // Notes
+  notes String? @db.Text
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Unique constraint: a dam can only be in one group at a time
+  // (enforced in application layer with status check - dam can be in multiple COMPLETE groups)
+  @@unique([groupId, damId])
+  @@index([tenantId])
+  @@index([groupId])
+  @@index([damId])
+  @@index([memberStatus])
+  @@index([breedingPlanId])
+  @@index([expectedBirthStart])
   @@schema("public")
 }
