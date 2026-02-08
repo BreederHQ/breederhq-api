@@ -189,7 +189,7 @@ async function handleUploadUrl(
   }
 
   // Validate content type for this purpose
-  const typeValidation = validateContentType(contentType, context.purpose);
+  const typeValidation = validateContentType(contentType, context.purpose, context.subPath);
   if (!typeValidation.valid) {
     return reply.status(400).send({
       error: "invalid_content_type",

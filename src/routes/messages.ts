@@ -12,8 +12,53 @@ import {
 } from "../utils/business-hours.js";
 import { broadcastNewMessage } from "../services/websocket-service.js";
 import { broadcastBreederMessageToMarketplaceUser } from "../services/marketplace-websocket-service.js";
+import { sendPushToUser } from "../services/push.service.js";
 import path from "path";
 import fs from "fs/promises";
+
+/**
+ * Helper to send push notification for new message.
+ * Looks up the user by party email and sends push if they have registered devices.
+ */
+async function sendMessagePushNotification(
+  tenantId: number,
+  recipientPartyId: number,
+  senderName: string,
+  messageBody: string,
+  threadId: number
+): Promise<void> {
+  try {
+    // Get recipient party's email
+    const recipientParty = await prisma.party.findFirst({
+      where: { id: recipientPartyId, tenantId },
+      select: { email: true },
+    });
+
+    if (!recipientParty?.email) return;
+
+    // Find user with this email
+    const user = await prisma.user.findFirst({
+      where: { email: recipientParty.email },
+      select: { id: true },
+    });
+
+    if (!user) return;
+
+    // Send push notification
+    await sendPushToUser(
+      user.id,
+      `New message from ${senderName}`,
+      messageBody.length > 100 ? messageBody.substring(0, 97) + "..." : messageBody,
+      {
+        type: "new_message",
+        threadId: String(threadId),
+      }
+    );
+  } catch (error) {
+    // Don't fail message send if push fails
+    console.error("Failed to send message push notification:", error);
+  }
+}
 
 // Allowed MIME types for message attachments
 const ALLOWED_MIME_TYPES = [
@@ -481,6 +526,29 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }, participantPartyIds);
       }
 
+      // Send push notification to breeder when client sends a message
+      if (!isOrgSending && tenantOrg) {
+        try {
+          // Get sender's name
+          const senderParty = await prisma.party.findFirst({
+            where: { id: userPartyId, tenantId },
+            select: { name: true },
+          });
+
+          // Send push to the org party (breeder)
+          await sendMessagePushNotification(
+            tenantId,
+            tenantOrg.partyId,
+            senderParty?.name || "A contact",
+            messageBody,
+            threadId
+          );
+        } catch (pushErr) {
+          // Don't fail message send if push fails
+          console.error("Failed to send push to breeder:", pushErr);
+        }
+      }
+
       // Also broadcast to marketplace WebSocket for marketplace buyers
       // (they connect via a different WebSocket endpoint)
       if (isOrgSending && message.senderPartyId !== null) {
@@ -554,6 +622,15 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   senderParty?.name || "Your breeder",
                   messageBody,
                   threadId // Pass threadId for reply-to address generation
+                );
+
+                // Also send mobile push notification
+                await sendMessagePushNotification(
+                  tenantId,
+                  recipientPartyId,
+                  senderParty?.name || "Your breeder",
+                  messageBody,
+                  threadId
                 );
               }
             }
