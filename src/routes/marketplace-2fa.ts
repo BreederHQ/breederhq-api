@@ -209,18 +209,17 @@ export default async function marketplace2faRoutes(
       return reply.code(400).send({ error: "invalid_phone_number" });
     }
 
-    try {
-      const result = await sendUserSMSVerification(userId, phoneNumber);
+    const result = await sendUserSMSVerification(userId, phoneNumber);
 
-      return reply.send({
-        ok: true,
-        expiresAt: result.expiresAt,
-        ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
-      });
-    } catch (err: any) {
-      req.log?.error?.({ err, userId }, "Failed to send SMS verification");
-      return reply.code(500).send({ error: "send_failed" });
+    if (!result.success) {
+      return reply.code(501).send({ error: result.error, message: "SMS verification is not yet available" });
     }
+
+    return reply.send({
+      ok: true,
+      expiresAt: result.expiresAt,
+      ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
+    });
   });
 
   /**
@@ -281,17 +280,17 @@ export default async function marketplace2faRoutes(
     }
 
     if (action === "send") {
-      try {
-        const result = await sendUserSMSVerification(userId, user.smsPhoneNumber);
-        return reply.send({
-          ok: true,
-          expiresAt: result.expiresAt,
-          ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
-        });
-      } catch (err: any) {
-        req.log?.error?.({ err, userId }, "Failed to send SMS challenge");
-        return reply.code(500).send({ error: "send_failed" });
+      const result = await sendUserSMSVerification(userId, user.smsPhoneNumber);
+
+      if (!result.success) {
+        return reply.code(501).send({ error: result.error, message: "SMS verification is not yet available" });
       }
+
+      return reply.send({
+        ok: true,
+        expiresAt: result.expiresAt,
+        ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
+      });
     }
 
     if (action === "verify") {

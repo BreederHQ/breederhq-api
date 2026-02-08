@@ -1223,6 +1223,72 @@ export async function sendContractCompletedWithPdfEmail(
   });
 }
 
+/** ───────────────────────── Tenant Invoice Payment Notifications ───────────────────────── */
+
+/**
+ * Send invoice payment failed notification to breeder (tenant invoices)
+ */
+export async function sendTenantInvoicePaymentFailedEmail(
+  tenantId: number,
+  data: {
+    breederEmail: string;
+    breederName: string;
+    clientName: string;
+    invoiceNumber: string;
+    invoiceId: number;
+    totalAmount: string;
+    attemptCount: number;
+  }
+): Promise<void> {
+  const recipient = { email: data.breederEmail, name: data.breederName };
+
+  const subject = `⚠️ Payment Failed - Invoice ${data.invoiceNumber}`;
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">⚠️ Payment Failed</h2>
+
+      <p>Hi ${recipient.name},</p>
+
+      <p>A payment attempt for invoice <strong>${data.invoiceNumber}</strong> has failed.</p>
+
+      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
+        <p style="margin: 0;"><strong>Invoice:</strong> ${data.invoiceNumber}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Client:</strong> ${data.clientName}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Amount:</strong> ${data.totalAmount}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Payment Attempts:</strong> ${data.attemptCount}</p>
+      </div>
+
+      <p><strong>What happens next?</strong></p>
+      <ul style="color: #6b7280;">
+        <li>Stripe will automatically retry the payment</li>
+        <li>The client has been notified to update their payment method</li>
+        <li>You can reach out to the client directly if needed</li>
+      </ul>
+
+      <p>
+        <a href="${APP_URL}/invoices/${data.invoiceId}" style="background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+          View Invoice
+        </a>
+      </p>
+
+      <p style="color: #666; font-size: 14px; margin-top: 32px;">
+        Thanks,<br>
+        The BreederHQ Team
+      </p>
+    </div>
+  `;
+
+  await sendEmail({
+    tenantId,
+    to: recipient.email,
+    subject,
+    html,
+    category: "transactional",
+    templateKey: "tenant_invoice_payment_failed",
+    relatedInvoiceId: data.invoiceId,
+  });
+}
+
 /** ───────────────────────── Tenant Provisioning Notifications ───────────────────────── */
 
 export interface TenantWelcomeEmailData {

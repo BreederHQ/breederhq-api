@@ -145,7 +145,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
       try {
         // Fetch listing to verify buyer is not the provider
-        const listing = await prisma.mktListingService.findUnique({
+        const listing = await prisma.mktListingBreederService.findUnique({
           where: { id: body.serviceListingId },
           include: {
             provider: true,
@@ -1076,7 +1076,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
         // If listingId provided, get provider from listing
         if (body.listingId) {
-          listing = await prisma.mktListingService.findUnique({
+          listing = await prisma.mktListingBreederService.findUnique({
             where: { id: body.listingId },
             select: { id: true, title: true, providerId: true },
           });
@@ -1243,7 +1243,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
             // Also increment listing inquiry count
             if (body.listingId) {
-              await prisma.mktListingService.update({
+              await prisma.mktListingBreederService.update({
                 where: { id: body.listingId },
                 data: { inquiryCount: { increment: 1 } },
               });
@@ -1301,7 +1301,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
 
           // Increment listing inquiry count
           if (body.listingId) {
-            await prisma.mktListingService.update({
+            await prisma.mktListingBreederService.update({
               where: { id: body.listingId },
               data: { inquiryCount: { increment: 1 } },
             });

@@ -13,6 +13,7 @@ import {
   type Animal,
   type Sex,
 } from "@prisma/client";
+import prismaClient from "../prisma.js";
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -76,7 +77,23 @@ type __OG_EventInput = {
 };
 
 type __OG_Authorizer = { ensureAdmin(tenantId: number, actorId: string): Promise<void> };
-const __og_authorizer: __OG_Authorizer = { async ensureAdmin() { } }; // replace with real check
+const __og_authorizer: __OG_Authorizer = {
+  async ensureAdmin(tenantId: number, actorId: string): Promise<void> {
+    if (!actorId) throw new Error("Actor ID required for admin operations");
+
+    const membership = await prismaClient.tenantMembership.findFirst({
+      where: {
+        tenantId,
+        userId: actorId,
+        role: { in: ["OWNER", "ADMIN"] },
+      },
+    });
+
+    if (!membership) {
+      throw new Error("Admin access required for this operation");
+    }
+  },
+};
 
 export function __makeOffspringGroupsService({ prisma, authorizer }: { prisma: PrismaClient; authorizer?: __OG_Authorizer }) {
   function expectedBirthFromPlan(plan: Pick<BreedingPlan, "expectedBirthDate" | "lockedOvulationDate">): Date | null {

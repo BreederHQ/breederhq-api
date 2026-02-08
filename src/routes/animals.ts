@@ -11,6 +11,7 @@ import * as identityMatchingService from "../services/identity-matching-service.
 import type { IdentifierType, OwnerRole } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
 import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
+import { uploadBuffer, deleteFile } from "../services/media-storage.js";
 
 const AVATAR_SIZE = 256;
 
@@ -1089,6 +1090,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
     // POST /animals/:id/photo
+  // Uploads animal photo to S3, resizes to 256x256 avatar
+  // Max upload size: 10MB (images are resized anyway)
+  const MAX_PHOTO_SIZE = 10 * 1024 * 1024; // 10MB
+
   app.post("/animals/:id/photo", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
@@ -1104,28 +1109,74 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const buf = await file.toBuffer();
 
+    // Validate file size before processing
+    if (buf.length > MAX_PHOTO_SIZE) {
+      return reply.code(400).send({
+        error: "file_too_large",
+        message: "Photo must be less than 10MB",
+      });
+    }
+
+    // Validate content type
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return reply.code(400).send({
+        error: "invalid_content_type",
+        message: "Photo must be JPEG, PNG, WebP, or HEIC format",
+      });
+    }
+
+    // Resize to avatar size
     const resized = await sharp(buf)
       .rotate()
       .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: "cover" })
       .jpeg({ quality: 80 })
       .toBuffer();
 
-    const uploadDir = path.join(process.cwd(), "uploads", "animals", String(tenantId));
-    await fs.mkdir(uploadDir, { recursive: true });
+    // Upload to S3: tenants/{tenantId}/animal/{animalId}/photos/{uuid}.jpg
+    const { storageKey, cdnUrl } = await uploadBuffer(
+      {
+        ownerType: "tenant",
+        ownerId: tenantId,
+        purpose: "animal",
+        resourceId: String(id),
+        subPath: "photos",
+      },
+      "photo.jpg",
+      resized,
+      "image/jpeg"
+    );
 
-    const filename = `animal-${id}.jpg`;
-    const filepath = path.join(uploadDir, filename);
-    await fs.writeFile(filepath, resized);
-
-    const photoUrl = `/uploads/animals/${tenantId}/${filename}`;
-
-    const updated = await prisma.animal.update({
+    // Get old photoUrl to delete from S3 if it's an S3 URL
+    const oldAnimal = await prisma.animal.findUnique({
       where: { id },
-      data: { photoUrl },
       select: { photoUrl: true },
     });
 
-    reply.send(updated);
+    // Update animal with new CDN URL
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { photoUrl: cdnUrl },
+      select: { photoUrl: true },
+    });
+
+    // Clean up old S3 photo if it was an S3 URL (not legacy local path)
+    if (oldAnimal?.photoUrl?.includes("tenants/") || oldAnimal?.photoUrl?.includes("s3.")) {
+      try {
+        // Extract storage key from CDN URL
+        const urlParts = oldAnimal.photoUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const oldKey = urlParts.slice(keyIndex).join("/");
+          await deleteFile(oldKey);
+        }
+      } catch (e) {
+        // Ignore delete failures for old photos
+        req.log.warn({ error: e, oldUrl: oldAnimal.photoUrl }, "Failed to delete old photo");
+      }
+    }
+
+    reply.send({ photoUrl: updated.photoUrl, storageKey });
   });
 
     // DELETE /animals/:id/photo
@@ -1138,7 +1189,25 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
 
-    // optional: also delete file from disk if you want to reclaim space
+    // Get current photo URL to delete from S3
+    const animal = await prisma.animal.findUnique({
+      where: { id },
+      select: { photoUrl: true },
+    });
+
+    // Delete from S3 if it's an S3 URL
+    if (animal?.photoUrl?.includes("tenants/") || animal?.photoUrl?.includes("s3.")) {
+      try {
+        const urlParts = animal.photoUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const storageKey = urlParts.slice(keyIndex).join("/");
+          await deleteFile(storageKey);
+        }
+      } catch (e) {
+        req.log.warn({ error: e, photoUrl: animal.photoUrl }, "Failed to delete photo from S3");
+      }
+    }
 
     const updated = await prisma.animal.update({
       where: { id },

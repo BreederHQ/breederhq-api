@@ -61,11 +61,6 @@ async function deleteDuplicates() {
   });
   console.log(`   - Breeds: ${deletedBreeds.count}`);
 
-  const deletedShares = await prisma.animalShare.deleteMany({
-    where: { animalId: { in: idsToDelete } },
-  });
-  console.log(`   - Shares: ${deletedShares.count}`);
-
   const deletedTraits = await prisma.animalTraitValue.deleteMany({
     where: { animalId: { in: idsToDelete } },
   });

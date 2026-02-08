@@ -422,7 +422,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           animal: { archived: false },
         },
         include: {
-          animal: { select: { id: true, name: true, nickname: true } },
+          animal: { select: { id: true, name: true } },
         },
         orderBy: { administeredAt: "desc" },
       }).catch(() => []) || [];
@@ -456,7 +456,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // Only show expired or due within 30 days
         if (daysRemaining <= 30) {
-          const animalName = rec.animal?.nickname || rec.animal?.name || "Animal";
+          const animalName = rec.animal?.name || "Animal";
           const protocolName = rec.protocolKey.split(".").pop()?.replace(/_/g, " ") || rec.protocolKey;
           const isExpired = daysRemaining < 0;
 

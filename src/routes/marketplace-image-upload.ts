@@ -1,23 +1,15 @@
 // src/routes/marketplace-image-upload.ts
 // S3 Image Upload API for Service Provider Portal
+// Uses unified S3 client and semantic storage paths
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
+import { getS3Client, getS3Bucket, getCdnDomain } from "../services/s3-client.js";
 
-// Initialize S3 client (AWS SDK v3)
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION || "us-east-1",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-  },
-});
-
-const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || "breederhq-assets";
-const CDN_DOMAIN = process.env.CDN_DOMAIN || `${S3_BUCKET_NAME}.s3.amazonaws.com`;
+// Size limits
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 
 /**
  * POST /api/v1/marketplace/images/upload-url
@@ -28,12 +20,14 @@ async function getPresignedUploadUrl(
     Body: {
       filename: string;
       contentType: string;
-      context?: "service_listing" | "profile_photo" | "breeding_animal";
+      contentLength?: number;
+      context?: "service_listing" | "profile_photo" | "profile_banner" | "service_banner" | "breeding_animal";
+      serviceId?: string; // Required for service_banner context
     };
   }>,
   reply: FastifyReply
 ) {
-  const { filename, contentType, context = "service_listing" } = request.body;
+  const { filename, contentType, contentLength, context = "service_listing", serviceId } = request.body;
 
   // Get user ID from session (marketplace auth uses different session keys)
   // Adjust based on your auth middleware
@@ -72,11 +66,27 @@ async function getPresignedUploadUrl(
   }
 
   // Validate context
-  const allowedContexts = ["service_listing", "profile_photo", "breeding_animal"];
+  const allowedContexts = ["service_listing", "profile_photo", "profile_banner", "service_banner", "breeding_animal"];
   if (!allowedContexts.includes(context)) {
     return reply.status(400).send({
       error: "invalid_context",
       message: "Invalid upload context",
+    });
+  }
+
+  // Validate serviceId is provided for service_banner context
+  if (context === "service_banner" && !serviceId) {
+    return reply.status(400).send({
+      error: "missing_service_id",
+      message: "serviceId is required for service_banner uploads",
+    });
+  }
+
+  // Validate file size if provided
+  if (contentLength && contentLength > MAX_IMAGE_SIZE) {
+    return reply.status(400).send({
+      error: "file_too_large",
+      message: "Image must be less than 10MB",
     });
   }
 
@@ -93,35 +103,66 @@ async function getPresignedUploadUrl(
     });
   }
 
-  // Generate unique S3 key
-  // Format: {context}/{userId}/{uuid}.{ext}
+  // Get provider ID if available (for semantic path)
+  const providerId = (request as any).marketplaceProvider?.id;
+
+  // Generate unique S3 key with semantic path structure
+  // Format: providers/{providerId}/services/photos/{uuid}.ext (if provider)
+  //     or: marketplace/{context}/{userId}/{uuid}.ext (fallback)
   const uniqueId = uuidv4();
-  const s3Key = `${context}/${userId}/${uniqueId}.${ext}`;
+  let s3Key: string;
+
+  if (providerId) {
+    // Semantic path for providers based on context
+    let subPath: string;
+    switch (context) {
+      case "profile_photo":
+        subPath = "profile/photo";
+        break;
+      case "profile_banner":
+        subPath = "profile/banner";
+        break;
+      case "service_banner":
+        subPath = `services/${serviceId}/banner`;
+        break;
+      case "service_listing":
+      default:
+        subPath = "services/photos";
+        break;
+    }
+    s3Key = `providers/${providerId}/${subPath}/${uniqueId}.${ext}`;
+  } else {
+    // Fallback for non-provider users (shouldn't happen in normal flow)
+    s3Key = `marketplace/${context}/${userId}/${uniqueId}.${ext}`;
+  }
 
   // === GENERATE PRESIGNED URL ===
 
   try {
-    // Create PutObject command
+    const s3 = getS3Client();
+    const bucket = getS3Bucket();
+    const cdnDomain = getCdnDomain();
+
+    // Create PutObject command with optional ContentLength constraint
     const command = new PutObjectCommand({
-      Bucket: S3_BUCKET_NAME,
+      Bucket: bucket,
       Key: s3Key,
       ContentType: contentType,
+      ...(contentLength && { ContentLength: contentLength }),
     });
 
     // Generate presigned URL (expires in 5 minutes)
-    const presignedUrl = await getSignedUrl(s3Client, command, {
+    const presignedUrl = await getSignedUrl(s3, command, {
       expiresIn: 300,
     });
 
     // Generate CDN URL for accessing the uploaded file
-    const cdnUrl = `https://${CDN_DOMAIN}/${s3Key}`;
-
-    // Optional: Log upload request for analytics/abuse prevention
-    // (You can add database logging here if needed)
+    const cdnUrl = `https://${cdnDomain}/${s3Key}`;
 
     return reply.send({
       uploadUrl: presignedUrl,
       cdnUrl,
+      maxAllowedSize: MAX_IMAGE_SIZE,
       key: s3Key,
       expiresIn: 300,
     });
@@ -158,8 +199,15 @@ async function deleteImage(
     });
   }
 
-  // Verify ownership (key should contain userId)
-  if (!key.includes(`/${userId}/`)) {
+  // Get provider ID for ownership check
+  const providerId = (request as any).marketplaceProvider?.id;
+  const decodedKey = decodeURIComponent(key);
+
+  // Verify ownership - check for provider ID or user ID in the path
+  const hasProviderAccess = providerId && decodedKey.includes(`providers/${providerId}/`);
+  const hasUserAccess = decodedKey.includes(`/${userId}/`);
+
+  if (!hasProviderAccess && !hasUserAccess) {
     return reply.status(403).send({
       error: "forbidden",
       message: "You do not have permission to delete this image",
@@ -167,14 +215,17 @@ async function deleteImage(
   }
 
   try {
+    const s3 = getS3Client();
+    const bucket = getS3Bucket();
+
     // Create DeleteObject command
     const command = new DeleteObjectCommand({
-      Bucket: S3_BUCKET_NAME,
-      Key: decodeURIComponent(key),
+      Bucket: bucket,
+      Key: decodedKey,
     });
 
     // Execute delete
-    await s3Client.send(command);
+    await s3.send(command);
 
     return reply.send({ ok: true });
   } catch (error) {

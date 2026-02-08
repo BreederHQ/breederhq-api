@@ -38,7 +38,26 @@ type __OG_EventInput = {
 };
 
 type __OG_Authorizer = { ensureAdmin(tenantId: number, actorId: string): Promise<void> };
-const __og_authorizer: __OG_Authorizer = { async ensureAdmin() { } }; // replace with real check
+
+import prismaClient from "../prisma.js";
+
+const __og_authorizer: __OG_Authorizer = {
+  async ensureAdmin(tenantId: number, actorId: string): Promise<void> {
+    if (!actorId) throw new Error("Actor ID required for admin operations");
+
+    const membership = await prismaClient.tenantMembership.findFirst({
+      where: {
+        tenantId,
+        userId: actorId,
+        role: { in: ["OWNER", "ADMIN"] },
+      },
+    });
+
+    if (!membership) {
+      throw new Error("Admin access required for this operation");
+    }
+  },
+};
 
 export function __makeOffspringGroupsService({
   prisma,

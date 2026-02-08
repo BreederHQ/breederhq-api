@@ -3,6 +3,7 @@
 //
 // POST /api/v1/webhooks/resend/inbound - Handle inbound email from Resend
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { Resend } from "resend";
 import prisma from "../prisma.js";
@@ -28,6 +29,76 @@ import {
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+
+// Resend uses Svix for webhooks - standard signature format
+const SIGNATURE_TOLERANCE_SECONDS = 300; // 5 minutes
+
+/**
+ * Verify Resend webhook signature using Svix standard
+ * Returns { valid: true } if signature is valid or verification is disabled
+ * Returns { valid: false, error: string } if signature is invalid
+ */
+function verifyWebhookSignature(
+  rawBody: Buffer,
+  svixId: string | undefined,
+  svixTimestamp: string | undefined,
+  svixSignature: string | undefined
+): { valid: true } | { valid: false; error: string } {
+  // If no secret configured, skip verification (development mode)
+  if (!RESEND_WEBHOOK_SECRET) {
+    console.warn("⚠️  RESEND_WEBHOOK_SECRET not configured - skipping signature verification");
+    return { valid: true };
+  }
+
+  // Check required headers
+  if (!svixId || !svixTimestamp || !svixSignature) {
+    return { valid: false, error: "missing_svix_headers" };
+  }
+
+  // Check timestamp is within tolerance
+  const timestamp = parseInt(svixTimestamp, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (isNaN(timestamp) || Math.abs(now - timestamp) > SIGNATURE_TOLERANCE_SECONDS) {
+    return { valid: false, error: "timestamp_out_of_range" };
+  }
+
+  // Construct signed payload: "svix_id.timestamp.body"
+  const signedPayload = `${svixId}.${svixTimestamp}.${rawBody.toString("utf8")}`;
+
+  // Parse signature header (format: "v1,base64sig v1,base64sig2 ...")
+  // Svix sends multiple signatures, any valid one means success
+  const signatures = svixSignature.split(" ");
+
+  for (const sig of signatures) {
+    const [version, sigValue] = sig.split(",");
+    if (version !== "v1") continue;
+
+    try {
+      // Webhook secret may have "whsec_" prefix
+      let secret = RESEND_WEBHOOK_SECRET;
+      if (secret.startsWith("whsec_")) {
+        secret = secret.slice(6);
+      }
+
+      const expectedSig = createHmac("sha256", Buffer.from(secret, "base64"))
+        .update(signedPayload)
+        .digest("base64");
+
+      const actualSigBuf = Buffer.from(sigValue, "base64");
+      const expectedSigBuf = Buffer.from(expectedSig, "base64");
+
+      if (actualSigBuf.length === expectedSigBuf.length &&
+          timingSafeEqual(actualSigBuf, expectedSigBuf)) {
+        return { valid: true };
+      }
+    } catch {
+      // Try next signature
+      continue;
+    }
+  }
+
+  return { valid: false, error: "invalid_signature" };
+}
 
 /**
  * Fetch full email content from Resend's Received Email API
@@ -106,16 +177,26 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
    * 2. New conversation to tenant: {tenant-slug}@mail.breederhq.com
    */
   app.post("/inbound", async (req, reply) => {
-    // TODO: Implement Resend webhook signature verification
-    // Resend likely uses Svix standard (svix-signature header)
-    // For now, signature verification is disabled to get basic functionality working
-    // See: https://resend.com/docs/webhooks/verify-webhook-signatures
+    // Verify webhook signature (Svix standard)
+    const rawBody = (req as any).rawBody as Buffer | undefined;
+    if (!rawBody) {
+      req.log.error("Raw body not available for webhook verification");
+      return reply.code(400).send({ error: "raw_body_missing" });
+    }
 
-    // Log headers for debugging (remove in production)
-    req.log.info({
-      headers: Object.keys(req.headers),
-      hasSignature: !!(req.headers["svix-signature"] || req.headers["resend-signature"]),
-    }, "Inbound webhook received");
+    const verification = verifyWebhookSignature(
+      rawBody,
+      req.headers["svix-id"] as string | undefined,
+      req.headers["svix-timestamp"] as string | undefined,
+      req.headers["svix-signature"] as string | undefined
+    );
+
+    if (!verification.valid) {
+      req.log.warn({ error: verification.error }, "Webhook signature verification failed");
+      return reply.code(401).send({ error: verification.error });
+    }
+
+    req.log.info("Inbound webhook received - signature verified");
 
     const event = req.body as ResendInboundEvent;
 
