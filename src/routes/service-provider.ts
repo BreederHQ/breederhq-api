@@ -89,12 +89,28 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     const profile = await prisma.serviceProviderProfile.findUnique({
       where: { userId },
-      // listings relation removed (old marketplace listing system deprecated)
     });
 
     if (!profile) {
       return reply.code(404).send({ error: "profile_not_found" });
     }
+
+    // Get listing counts from mktListingBreederService (unified marketplace system)
+    const [listingsCount, activeListingsCount] = await Promise.all([
+      prisma.mktListingBreederService.count({
+        where: {
+          providerId: profile.id,
+          category: { in: PROVIDER_SERVICE_TYPES },
+        },
+      }),
+      prisma.mktListingBreederService.count({
+        where: {
+          providerId: profile.id,
+          category: { in: PROVIDER_SERVICE_TYPES },
+          status: "LIVE",
+        },
+      }),
+    ]);
 
     return reply.send({
       id: profile.id,
@@ -110,8 +126,8 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       stripeSubscriptionId: profile.stripeSubscriptionId,
       createdAt: profile.createdAt.toISOString(),
       updatedAt: profile.updatedAt.toISOString(),
-      listingsCount: 0, // listings relation removed
-      activeListingsCount: 0, // listings relation removed
+      listingsCount,
+      activeListingsCount,
     });
   });
 
@@ -602,18 +618,30 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     const profile = await prisma.serviceProviderProfile.findUnique({
       where: { userId },
-      // listings relation removed (old marketplace listing system deprecated)
     });
 
     if (!profile) {
       return reply.code(404).send({ error: "profile_not_found" });
     }
 
-    // Listing stats removed (old marketplace listing system deprecated)
-    const totalListings = 0;
-    const activeListings = 0;
-    const totalViews = 0;
-    const totalInquiries = 0;
+    // Get listing stats from mktListingBreederService (unified marketplace system)
+    const listings = await prisma.mktListingBreederService.findMany({
+      where: {
+        providerId: profile.id,
+        category: { in: PROVIDER_SERVICE_TYPES },
+      },
+      select: {
+        status: true,
+        viewCount: true,
+        inquiryCount: true,
+      },
+    });
+
+    const totalListings = listings.length;
+    const activeListings = listings.filter((l) => l.status === "LIVE").length;
+    const draftListings = listings.filter((l) => l.status === "DRAFT").length;
+    const totalViews = listings.reduce((sum, l) => sum + (l.viewCount ?? 0), 0);
+    const totalInquiries = listings.reduce((sum, l) => sum + (l.inquiryCount ?? 0), 0);
 
     return reply.send({
       profile: {
@@ -625,7 +653,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       stats: {
         totalListings,
         activeListings,
-        draftListings: totalListings - activeListings,
+        draftListings,
         totalViews,
         totalInquiries,
       },

@@ -703,10 +703,23 @@ export async function handleInvoicePaid(
 ): Promise<void> {
   const stripeInvoice = event.data.object as Stripe.Invoice;
 
-  // Find our invoice by Stripe ID
+  // Find our invoice by Stripe ID with relations for email sending
   const invoice = await prisma.marketplaceInvoice.findFirst({
     where: {
       stripeInvoiceId: stripeInvoice.id,
+    },
+    include: {
+      provider: {
+        include: {
+          user: { select: { email: true, firstName: true } },
+        },
+      },
+      client: {
+        select: { email: true, firstName: true },
+      },
+      transaction: {
+        select: { serviceDescription: true },
+      },
     },
   });
 
@@ -766,7 +779,41 @@ export async function handleInvoicePaid(
     amountPaid: stripeInvoice.amount_paid,
   });
 
-  // TODO: Send confirmation emails to provider and client
+  // Send confirmation emails (import dynamically to avoid circular deps)
+  try {
+    const { sendPaymentReceivedEmailToBuyer, sendPaymentReceivedEmailToProvider } =
+      await import("./marketplace-email-service.js");
+
+    const totalAmount = `$${(stripeInvoice.amount_paid / 100).toFixed(2)}`;
+    const serviceTitle = invoice.transaction?.serviceDescription?.split(":")[0] || "Service";
+
+    // Send confirmation to client/buyer
+    if (invoice.client?.email) {
+      sendPaymentReceivedEmailToBuyer({
+        buyerEmail: invoice.client.email,
+        buyerFirstName: invoice.client.firstName || "Customer",
+        transactionId: Number(invoice.transactionId),
+        serviceTitle,
+        providerBusinessName: invoice.provider.businessName || "Provider",
+        totalAmount,
+      }).catch((err) => console.error("[Invoice Email] Failed to send buyer confirmation:", err));
+    }
+
+    // Send notification to provider
+    if (invoice.provider.user?.email) {
+      sendPaymentReceivedEmailToProvider({
+        providerEmail: invoice.provider.user.email,
+        providerBusinessName: invoice.provider.businessName || "Provider",
+        transactionId: Number(invoice.transactionId),
+        serviceTitle,
+        buyerName: invoice.client?.firstName || "Customer",
+        totalAmount,
+        paymentMode: "stripe",
+      }).catch((err) => console.error("[Invoice Email] Failed to send provider notification:", err));
+    }
+  } catch (err) {
+    console.error("[Invoice Email] Failed to send confirmation emails:", err);
+  }
 }
 
 /**
@@ -814,10 +861,20 @@ export async function handleInvoicePaymentFailed(
 ): Promise<void> {
   const stripeInvoice = event.data.object as Stripe.Invoice;
 
-  // Find our invoice by Stripe ID
+  // Find our invoice by Stripe ID with relations for email sending
   const invoice = await prisma.marketplaceInvoice.findFirst({
     where: {
       stripeInvoiceId: stripeInvoice.id,
+    },
+    include: {
+      provider: {
+        include: {
+          user: { select: { email: true } },
+        },
+      },
+      client: {
+        select: { firstName: true, lastName: true, email: true },
+      },
     },
   });
 
@@ -832,5 +889,27 @@ export async function handleInvoicePaymentFailed(
     attemptCount: stripeInvoice.attempt_count,
   });
 
-  // TODO: Optionally notify provider of failed payment attempt
+  // Send notification to provider about failed payment
+  try {
+    const { sendInvoicePaymentFailedToProvider } = await import("./marketplace-email-service.js");
+
+    const clientName = invoice.client?.firstName && invoice.client?.lastName
+      ? `${invoice.client.firstName} ${invoice.client.lastName}`
+      : invoice.client?.email || "Customer";
+    const totalAmount = `$${(Number(invoice.totalCents) / 100).toFixed(2)}`;
+
+    if (invoice.provider?.user?.email) {
+      sendInvoicePaymentFailedToProvider({
+        providerEmail: invoice.provider.user.email,
+        providerBusinessName: invoice.provider.businessName || "Provider",
+        clientName,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceId: invoice.id,
+        totalAmount,
+        attemptCount: stripeInvoice.attempt_count || 1,
+      }).catch((err) => console.error("[Invoice Email] Failed to send payment failed notification:", err));
+    }
+  } catch (err) {
+    console.error("[Invoice Email] Failed to send payment failed notification:", err);
+  }
 }

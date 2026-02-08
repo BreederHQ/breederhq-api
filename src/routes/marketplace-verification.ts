@@ -84,18 +84,17 @@ export default async function marketplaceVerificationRoutes(
       return reply.code(404).send({ error: "provider_not_found" });
     }
 
-    try {
-      const result = await sendProviderPhoneVerification(provider.id, phoneNumber);
+    const result = await sendProviderPhoneVerification(provider.id, phoneNumber);
 
-      return reply.send({
-        ok: true,
-        expiresAt: result.expiresAt,
-        ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
-      });
-    } catch (err: any) {
-      req.log?.error?.({ err, providerId: provider.id }, "Failed to send phone verification");
-      return reply.code(500).send({ error: "send_failed" });
+    if (!result.success) {
+      return reply.code(501).send({ error: result.error, message: "SMS verification is not yet available" });
     }
+
+    return reply.send({
+      ok: true,
+      expiresAt: result.expiresAt,
+      ...(EXPOSE_DEV_TOKENS && result.code ? { dev_code: result.code } : {}),
+    });
   });
 
   /**
@@ -154,22 +153,17 @@ export default async function marketplaceVerificationRoutes(
       return reply.code(400).send({ error: "already_verified" });
     }
 
-    try {
-      const session = await createProviderIdentitySession(provider.id);
+    const session = await createProviderIdentitySession(provider.id);
 
-      if (!session) {
-        return reply.code(500).send({ error: "session_creation_failed" });
-      }
-
-      return reply.send({
-        ok: true,
-        sessionId: session.sessionId,
-        clientSecret: session.clientSecret,
-      });
-    } catch (err: any) {
-      req.log?.error?.({ err, providerId: provider.id }, "Failed to create identity session");
-      return reply.code(500).send({ error: "session_creation_failed" });
+    if (!session.success) {
+      return reply.code(501).send({ error: session.error, message: "Identity verification is not yet available" });
     }
+
+    return reply.send({
+      ok: true,
+      sessionId: session.sessionId,
+      clientSecret: session.clientSecret,
+    });
   });
 
   /**
@@ -426,22 +420,17 @@ export default async function marketplaceVerificationRoutes(
       });
     }
 
-    try {
-      const session = await createUserIdentitySession(userId);
+    const session = await createUserIdentitySession(userId);
 
-      if (!session) {
-        return reply.code(500).send({ error: "session_creation_failed" });
-      }
-
-      return reply.send({
-        ok: true,
-        sessionId: session.sessionId,
-        clientSecret: session.clientSecret,
-      });
-    } catch (err: any) {
-      req.log?.error?.({ err, userId }, "Failed to create identity session");
-      return reply.code(500).send({ error: "session_creation_failed" });
+    if (!session.success) {
+      return reply.code(501).send({ error: session.error, message: "Identity verification is not yet available" });
     }
+
+    return reply.send({
+      ok: true,
+      sessionId: session.sessionId,
+      clientSecret: session.clientSecret,
+    });
   });
 
   /**

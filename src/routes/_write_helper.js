@@ -1,1 +1,0 @@
-const fs = require("fs");const path = require("path");const t = path.join("C:","Users","Aaron","Documents","Projects","breederhq-api","src","routes","breeding-discovery-listings.ts");const b = Buffer.from(process.argv[1],"base64");fs.writeFileSync(t, b);console.log("Written",b.length,"bytes");

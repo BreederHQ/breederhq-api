@@ -24,6 +24,7 @@ import {
   ACTOR_CONTEXT_UNRESOLVABLE,
 } from "./middleware/actor-context.js";
 import { auditFailure } from "./services/audit.js";
+import apiUsageTracking from "./middleware/api-usage-tracking.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -110,6 +111,10 @@ await app.register(cors, {
   ],
   exposedHeaders: ["set-cookie"],
 });
+
+// ---------- API Usage Tracking ----------
+// Tracks API calls per tenant for billing and usage analytics
+await app.register(apiUsageTracking);
 
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
@@ -503,6 +508,7 @@ import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Ad
 import adminSubscriptionRoutes from "./routes/admin-subscriptions.js"; // Admin subscription management
 import adminFeatureRoutes from "./routes/admin-features.js"; // Admin feature registry & analytics
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
+import marketplaceReportProviderRoutes from "./routes/marketplace-report-provider.js"; // Marketplace report provider
 import marketplaceServiceTagsRoutes from "./routes/marketplace-service-tags.js"; // Marketplace service tags
 import marketplaceImageUploadRoutes from "./routes/marketplace-image-upload.js"; // Marketplace image uploads (S3 presigned URLs)
 import marketplaceServiceDetailRoutes from "./routes/marketplace-service-detail.js"; // Marketplace service detail (public)
@@ -1071,6 +1077,7 @@ app.register(
     api.register(marketplaceWaitlistRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/waitlist/* (auth required)
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
+    api.register(marketplaceReportProviderRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-provider (auth required)
     api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
     api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
     api.register(mktBreedingServicesRoutes, { prefix: "/mkt-breeding-services" }); // /api/v1/mkt-breeding-services/* Breeding services listings (stud, mare lease, etc.)

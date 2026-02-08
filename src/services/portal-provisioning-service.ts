@@ -2,6 +2,7 @@
 // Service for auto-provisioning portal access when breeder sends DM to contact without access
 
 import { createHash, randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { sendEmail, buildFromAddress } from "./email-service.js";
 import { generateReplyToAddress } from "./inbound-email-service.js";
@@ -120,7 +121,7 @@ export async function autoProvisionPortalAccessForDM(
       ]);
     } else {
       // Create new portal access record
-      await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await tx.portalAccess.create({
           data: {
             tenantId,
@@ -146,12 +147,12 @@ export async function autoProvisionPortalAccessForDM(
 
         // If user with this email exists, create INVITED membership
         if (existingUser) {
-          const existingMembership = await (tx as any).tenantMembership.findUnique({
+          const existingMembership = await tx.tenantMembership.findUnique({
             where: { userId_tenantId: { userId: existingUser.id, tenantId } },
           });
 
           if (!existingMembership) {
-            await (tx as any).tenantMembership.create({
+            await tx.tenantMembership.create({
               data: {
                 userId: existingUser.id,
                 tenantId,
@@ -174,10 +175,11 @@ export async function autoProvisionPortalAccessForDM(
       data: {
         tenantId,
         partyId,
-        kind: "PORTAL_INVITE_AUTO_SENT" as any, // Cast since enum may not have this yet
+        kind: "PORTAL_INVITE_AUTO_SENT",
         title: "Portal access automatically enabled",
         detail: "Portal invite sent automatically when breeder initiated a message",
-        actorId: triggeredBy.userId ? undefined : undefined, // TODO: convert userId string to int if needed
+        // Note: actorId expects an integer User ID, but triggeredBy.userId is a string
+        // If we need to link to a User, a separate lookup would be required
       },
     }).catch(() => {
       // Don't fail if activity logging fails
