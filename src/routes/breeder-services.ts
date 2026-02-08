@@ -46,7 +46,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const services = await prisma.mktListingService.findMany({
+      const services = await prisma.mktListingBreederService.findMany({
         where,
         take: limit ? parseInt(limit, 10) : undefined,
         orderBy: {
@@ -78,9 +78,15 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         },
       });
 
+      // Convert BigInt fields to numbers for JSON serialization
+      const serializedServices = services.map((s) => ({
+        ...s,
+        priceCents: s.priceCents != null ? Number(s.priceCents) : null,
+      }));
+
       return reply.send({
-        items: services,
-        total: services.length,
+        items: serializedServices,
+        total: serializedServices.length,
       });
     } catch (error) {
       console.error("Error fetching breeder services:", error);
@@ -112,7 +118,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const service = await prisma.mktListingService.findFirst({
+      const service = await prisma.mktListingBreederService.findFirst({
         where: {
           id: serviceId,
           tenantId,
@@ -127,7 +133,11 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         });
       }
 
-      return reply.send(service);
+      // Convert BigInt fields to numbers for JSON serialization
+      return reply.send({
+        ...service,
+        priceCents: service.priceCents != null ? Number(service.priceCents) : null,
+      });
     } catch (error) {
       console.error("Error fetching breeder service:", error);
       return reply.code(500).send({
@@ -179,7 +189,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
 
-      const service = await prisma.mktListingService.create({
+      const service = await prisma.mktListingBreederService.create({
         data: {
           tenantId,
           sourceType: "BREEDER",
@@ -192,7 +202,11 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.code(201).send(service);
+      // Convert BigInt fields to numbers for JSON serialization
+      return reply.code(201).send({
+        ...service,
+        priceCents: service.priceCents != null ? Number(service.priceCents) : null,
+      });
     } catch (error) {
       console.error("Error creating breeder service:", error);
       return reply.code(500).send({
@@ -241,7 +255,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
 
     try {
       // Verify ownership
-      const existing = await prisma.mktListingService.findFirst({
+      const existing = await prisma.mktListingBreederService.findFirst({
         where: {
           id: serviceId,
           tenantId,
@@ -256,12 +270,16 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
         });
       }
 
-      const service = await prisma.mktListingService.update({
+      const service = await prisma.mktListingBreederService.update({
         where: { id: serviceId },
         data: req.body,
       });
 
-      return reply.send(service);
+      // Convert BigInt fields to numbers for JSON serialization
+      return reply.send({
+        ...service,
+        priceCents: service.priceCents != null ? Number(service.priceCents) : null,
+      });
     } catch (error) {
       console.error("Error updating breeder service:", error);
       return reply.code(500).send({
@@ -292,7 +310,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const service = await prisma.mktListingService.updateMany({
+      const service = await prisma.mktListingBreederService.updateMany({
         where: {
           id: serviceId,
           tenantId,
@@ -341,7 +359,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const service = await prisma.mktListingService.updateMany({
+      const service = await prisma.mktListingBreederService.updateMany({
         where: {
           id: serviceId,
           tenantId,
@@ -390,7 +408,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      await prisma.mktListingService.deleteMany({
+      await prisma.mktListingBreederService.deleteMany({
         where: {
           id: serviceId,
           tenantId,

@@ -10,7 +10,7 @@
  */
 
 import prisma from "../prisma.js";
-import type { MarketplaceTransaction, MktListingService, MarketplaceProvider, MarketplaceUser } from "@prisma/client";
+import type { MarketplaceTransaction, MktListingBreederService, MarketplaceProvider, MarketplaceUser } from "@prisma/client";
 import { stripe } from "./stripe-service.js";
 
 /**
@@ -78,7 +78,7 @@ export function calculateTransactionFees(
  * @param listing - Service listing to validate
  * @throws Error if listing is not available
  */
-function validateListingAvailability(listing: MktListingService | null): void {
+function validateListingAvailability(listing: MktListingBreederService | null): void {
   if (!listing) {
     throw new Error("listing_not_found");
   }
@@ -113,7 +113,7 @@ export async function createTransaction(params: {
   const { clientId, serviceListingId, buyerNotes } = params;
 
   // Fetch listing with provider details
-  const listing = await prisma.mktListingService.findUnique({
+  const listing = await prisma.mktListingBreederService.findUnique({
     where: { id: serviceListingId },
     include: {
       provider: {

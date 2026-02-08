@@ -24,6 +24,7 @@ import {
   ACTOR_CONTEXT_UNRESOLVABLE,
 } from "./middleware/actor-context.js";
 import { auditFailure } from "./services/audit.js";
+import apiUsageTracking from "./middleware/api-usage-tracking.js";
 
 // ---------- Env ----------
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -110,6 +111,10 @@ await app.register(cors, {
   ],
   exposedHeaders: ["set-cookie"],
 });
+
+// ---------- API Usage Tracking ----------
+// Tracks API calls per tenant for billing and usage analytics
+await app.register(apiUsageTracking);
 
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
@@ -503,6 +508,7 @@ import adminBreederReportsRoutes from "./routes/admin-breeder-reports.js"; // Ad
 import adminSubscriptionRoutes from "./routes/admin-subscriptions.js"; // Admin subscription management
 import adminFeatureRoutes from "./routes/admin-features.js"; // Admin feature registry & analytics
 import marketplaceReportBreederRoutes from "./routes/marketplace-report-breeder.js"; // Marketplace report breeder
+import marketplaceReportProviderRoutes from "./routes/marketplace-report-provider.js"; // Marketplace report provider
 import marketplaceServiceTagsRoutes from "./routes/marketplace-service-tags.js"; // Marketplace service tags
 import marketplaceImageUploadRoutes from "./routes/marketplace-image-upload.js"; // Marketplace image uploads (S3 presigned URLs)
 import marketplaceServiceDetailRoutes from "./routes/marketplace-service-detail.js"; // Marketplace service detail (public)
@@ -544,6 +550,7 @@ import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; 
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
+import mktBreedingServicesRoutes from "./routes/mkt-breeding-services.js"; // Breeding Services Listings (stud, mare lease, etc.)
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
@@ -571,6 +578,16 @@ import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js
 import tenantStripeConnectRoutes from "./routes/tenant-stripe-connect.js"; // Tenant Stripe Connect (breeder payments)
 import animalBreedingProfileRoutes from "./routes/animal-breeding-profile.js"; // Animal Breeding Profile (user-entered preferences)
 
+// Rearing Protocols (Offspring Module)
+import rearingProtocolsRoutes from "./routes/rearing-protocols.js"; // Rearing Protocols CRUD
+import rearingAssignmentsRoutes from "./routes/rearing-assignments.js"; // Protocol assignments to offspring groups
+import rearingCompletionsRoutes from "./routes/rearing-completions.js"; // Activity completions
+import rearingExceptionsRoutes from "./routes/rearing-exceptions.js"; // Per-offspring exceptions
+import rearingCommunityRoutes from "./routes/rearing-community.js"; // Community sharing and discovery
+import rearingCommentsRoutes from "./routes/rearing-comments.js"; // Community comments and Q&A
+import rearingAssessmentsRoutes from "./routes/rearing-assessments.js"; // Volhard PAT and custom assessments
+import rearingCertificatesRoutes from "./routes/rearing-certificates.js"; // Completion certificates
+import rearingImportExportRoutes from "./routes/rearing-import-export.js"; // Protocol import/export
 
 // ---------- TS typing: prisma + req.tenantId/req.userId/req.surface/req.actorContext/req.tenantSlug ----------
 declare module "fastify" {
@@ -619,6 +636,8 @@ app.register(
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
     api.register(marketplaceAdminModerationRoutes, { prefix: "/marketplace/admin" }); // /api/v1/marketplace/admin/* (Admin moderation queue)
     api.register(marketplaceBreedsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeds/* (Public breeds search)
+    // NOTE: rearingCertificatesRoutes moved to tenant-authenticated section (line ~1021)
+    // TODO: Split into separate public/private plugins if /verify endpoint needs to be public
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
   },
@@ -999,6 +1018,17 @@ app.register(
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
+
+    // Rearing Protocols
+    api.register(rearingProtocolsRoutes);   // /api/v1/rearing-protocols/*
+    api.register(rearingAssignmentsRoutes); // /api/v1/offspring-groups/:groupId/rearing-assignments/*, /api/v1/rearing-assignments/*
+    api.register(rearingCompletionsRoutes); // /api/v1/rearing-assignments/:id/completions/*, /api/v1/rearing-completions/*
+    api.register(rearingExceptionsRoutes);  // /api/v1/rearing-assignments/:id/exceptions/*, /api/v1/rearing-exceptions/*
+    api.register(rearingCommunityRoutes);   // /api/v1/rearing-protocols/community/*
+    api.register(rearingCommentsRoutes);    // /api/v1/rearing-protocols/:id/comments/*
+    api.register(rearingAssessmentsRoutes); // /api/v1/rearing-assignments/:id/assessments/*, /api/v1/rearing-assessments/*
+    api.register(rearingCertificatesRoutes); // /api/v1/rearing-assignments/:id/certificates/*, /api/v1/rearing-certificates/*
+    api.register(rearingImportExportRoutes); // /api/v1/rearing-protocols/import/*, /api/v1/rearing-protocols/:id/export
     api.register(userRoutes);          // /api/v1/users/* and /api/v1/user
     api.register(tagsRoutes);
     api.register(invoicesRoutes);      // /api/v1/invoices/* Finance MVP
@@ -1047,8 +1077,10 @@ app.register(
     api.register(marketplaceWaitlistRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/waitlist/* (auth required)
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
+    api.register(marketplaceReportProviderRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-provider (auth required)
     api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
     api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
+    api.register(mktBreedingServicesRoutes, { prefix: "/mkt-breeding-services" }); // /api/v1/mkt-breeding-services/* Breeding services listings (stud, mare lease, etc.)
   },
   { prefix: "/api/v1" }
 );

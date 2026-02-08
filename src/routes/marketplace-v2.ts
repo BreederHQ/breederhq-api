@@ -2190,7 +2190,7 @@ export default async function marketplaceV2Routes(
       startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
 
       // Get all service listings for this tenant
-      const services = await prisma.mktListingService.findMany({
+      const services = await prisma.mktListingBreederService.findMany({
         where: {
           sourceType: "BREEDER",
           tenantId,

@@ -89,12 +89,28 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     const profile = await prisma.serviceProviderProfile.findUnique({
       where: { userId },
-      // listings relation removed (old marketplace listing system deprecated)
     });
 
     if (!profile) {
       return reply.code(404).send({ error: "profile_not_found" });
     }
+
+    // Get listing counts from mktListingBreederService (unified marketplace system)
+    const [listingsCount, activeListingsCount] = await Promise.all([
+      prisma.mktListingBreederService.count({
+        where: {
+          providerId: profile.id,
+          category: { in: PROVIDER_SERVICE_TYPES },
+        },
+      }),
+      prisma.mktListingBreederService.count({
+        where: {
+          providerId: profile.id,
+          category: { in: PROVIDER_SERVICE_TYPES },
+          status: "LIVE",
+        },
+      }),
+    ]);
 
     return reply.send({
       id: profile.id,
@@ -110,8 +126,8 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       stripeSubscriptionId: profile.stripeSubscriptionId,
       createdAt: profile.createdAt.toISOString(),
       updatedAt: profile.updatedAt.toISOString(),
-      listingsCount: 0, // listings relation removed
-      activeListingsCount: 0, // listings relation removed
+      listingsCount,
+      activeListingsCount,
     });
   });
 
@@ -250,7 +266,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       where.status = status.toUpperCase();
     }
 
-    const listings = await prisma.mktListingService.findMany({
+    const listings = await prisma.mktListingBreederService.findMany({
       where,
       orderBy: { createdAt: "desc" },
     });
@@ -326,7 +342,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     }
 
     // Check listing limits based on plan
-    const activeListings = await prisma.mktListingService.count({
+    const activeListings = await prisma.mktListingBreederService.count({
       where: {
         providerId: profile.id,
         status: { in: ["DRAFT", "LIVE"] },
@@ -343,7 +359,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     }
 
     // Create with temporary slug, then update with ID-based slug
-    const listing = await prisma.mktListingService.create({
+    const listing = await prisma.mktListingBreederService.create({
       data: {
         providerId: profile.id,
         sourceType: "PROVIDER",
@@ -363,7 +379,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     // Generate and set slug with ID
     const slug = generateSlug(title, listing.id);
-    const updated = await prisma.mktListingService.update({
+    const updated = await prisma.mktListingBreederService.update({
       where: { id: listing.id },
       data: { slug },
     });
@@ -403,7 +419,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -444,7 +460,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
     if (priceType !== undefined) updateData.priceType = priceType || null;
     if (images !== undefined) updateData.images = images ? (images as Prisma.InputJsonValue) : Prisma.JsonNull;
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: updateData,
     });
@@ -482,7 +498,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -494,7 +510,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "title_required_to_publish" });
     }
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: {
         status: "LIVE",
@@ -533,7 +549,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -541,7 +557,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "listing_not_found" });
     }
 
-    const listing = await prisma.mktListingService.update({
+    const listing = await prisma.mktListingBreederService.update({
       where: { id },
       data: { status: "PAUSED" },
     });
@@ -576,7 +592,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_id" });
     }
 
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: { id, providerId: profile.id },
     });
 
@@ -584,7 +600,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "listing_not_found" });
     }
 
-    await prisma.mktListingService.delete({
+    await prisma.mktListingBreederService.delete({
       where: { id },
     });
 
@@ -602,18 +618,30 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
 
     const profile = await prisma.serviceProviderProfile.findUnique({
       where: { userId },
-      // listings relation removed (old marketplace listing system deprecated)
     });
 
     if (!profile) {
       return reply.code(404).send({ error: "profile_not_found" });
     }
 
-    // Listing stats removed (old marketplace listing system deprecated)
-    const totalListings = 0;
-    const activeListings = 0;
-    const totalViews = 0;
-    const totalInquiries = 0;
+    // Get listing stats from mktListingBreederService (unified marketplace system)
+    const listings = await prisma.mktListingBreederService.findMany({
+      where: {
+        providerId: profile.id,
+        category: { in: PROVIDER_SERVICE_TYPES },
+      },
+      select: {
+        status: true,
+        viewCount: true,
+        inquiryCount: true,
+      },
+    });
+
+    const totalListings = listings.length;
+    const activeListings = listings.filter((l) => l.status === "LIVE").length;
+    const draftListings = listings.filter((l) => l.status === "DRAFT").length;
+    const totalViews = listings.reduce((sum, l) => sum + (l.viewCount ?? 0), 0);
+    const totalInquiries = listings.reduce((sum, l) => sum + (l.inquiryCount ?? 0), 0);
 
     return reply.send({
       profile: {
@@ -625,7 +653,7 @@ export default async function serviceProviderRoutes(app: FastifyInstance) {
       stats: {
         totalListings,
         activeListings,
-        draftListings: totalListings - activeListings,
+        draftListings,
         totalViews,
         totalInquiries,
       },

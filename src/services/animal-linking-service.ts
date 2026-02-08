@@ -276,6 +276,9 @@ export async function searchBreederByEmailOrPhone(
     select: {
       id: true,
       name: true,
+      city: true,
+      region: true,
+      country: true,
     },
     take: 20,
   });
@@ -302,9 +305,9 @@ export async function searchBreederByEmailOrPhone(
     results.push({
       tenantId: t.id,
       tenantName: t.name,
-      city: null, // TODO: Add tenant location fields
-      state: null,
-      country: null,
+      city: t.city,
+      state: t.region, // Tenant uses "region" for state/province
+      country: t.country,
       shareableAnimalCount: shareableCount,
     });
   }

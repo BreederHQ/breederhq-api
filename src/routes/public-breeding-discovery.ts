@@ -4,6 +4,10 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { publicBreedingInquirySchema } from "../validation/breeding-discovery.js";
+import {
+  sendInquiryConfirmationToUser,
+  sendInquiryNotificationToBreeder,
+} from "../services/marketplace-email-service.js";
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -188,7 +192,18 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
           status: "PUBLISHED",
           acceptInquiries: true,
         },
-        select: { id: true, tenantId: true },
+        select: {
+          id: true,
+          tenantId: true,
+          headline: true,
+          inquiryEmail: true,
+          tenant: {
+            select: {
+              name: true,
+              primaryEmail: true,
+            },
+          },
+        },
       });
 
       if (!listing) {
@@ -233,6 +248,33 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
         return created;
       });
 
+      // Send email notifications (non-blocking)
+      const breederEmail = listing.inquiryEmail || listing.tenant?.primaryEmail;
+      const breederName = listing.tenant?.name || "Breeder";
+
+      // Send confirmation to inquirer
+      sendInquiryConfirmationToUser({
+        userEmail: data.inquirerEmail,
+        userName: data.inquirerName,
+        breederName,
+        listingTitle: listing.headline || undefined,
+        message: data.message,
+      }).catch((e) => console.error("Failed to send inquiry confirmation:", e));
+
+      // Send notification to breeder
+      if (breederEmail) {
+        sendInquiryNotificationToBreeder({
+          breederEmail,
+          breederName,
+          inquirerName: data.inquirerName,
+          inquirerEmail: data.inquirerEmail,
+          listingTitle: listing.headline || undefined,
+          message: data.message,
+          threadId: inquiry.id, // Using inquiry ID as reference
+          tenantId: listing.tenantId,
+        }).catch((e) => console.error("Failed to send inquiry notification to breeder:", e));
+      }
+
       reply.code(201).send({
         success: true,
         inquiryId: inquiry.id,
@@ -241,6 +283,223 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[public-breeding-discovery]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+  // =========================================================================
+  // MktListingBreedingService - Public Breeding Services (stud, lease, etc.)
+  // =========================================================================
+
+  // GET /public/breeding-services - Browse published breeding services
+  app.get("/public/breeding-services", async (req, reply) => {
+    try {
+      const q = (req.query || {}) as Record<string, unknown>;
+      const { page, limit, skip } = parsePaging(q);
+
+      const where: any = {
+        status: "LIVE", // Only published listings
+      };
+
+      // Filters
+      if (q.intent) where.intent = String(q.intent).toLowerCase();
+      if (q.species) {
+        // Filter by species through animal assignments
+        where.animalAssignments = {
+          some: {
+            animal: {
+              species: String(q.species).toUpperCase(),
+            },
+          },
+        };
+      }
+      if (q.breed) {
+        where.animalAssignments = {
+          some: {
+            animal: {
+              breed: { contains: String(q.breed), mode: "insensitive" },
+            },
+          },
+        };
+      }
+
+      // Fee range filters
+      if (q.minFee) {
+        const minFee = parseIntStrict(q.minFee);
+        if (minFee) where.feeCents = { ...where.feeCents, gte: minFee };
+      }
+      if (q.maxFee) {
+        const maxFee = parseIntStrict(q.maxFee);
+        if (maxFee) where.feeCents = { ...where.feeCents, lte: maxFee };
+      }
+
+      // Guarantee filter
+      if (q.hasGuarantee === "true") {
+        where.guaranteeType = { not: null };
+      }
+
+      // Search
+      const search = String(q.q || "").trim();
+      if (search) {
+        where.OR = [
+          { headline: { contains: search, mode: "insensitive" } },
+          { description: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      const [items, total] = await prisma.$transaction([
+        prisma.mktListingBreedingService.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip,
+          take: limit,
+          select: {
+            id: true,
+            slug: true,
+            headline: true,
+            description: true,
+            intent: true,
+            feeCents: true,
+            feeDirection: true,
+            breedingMethods: true,
+            guaranteeType: true,
+            healthCertRequired: true,
+            availableFrom: true,
+            availableTo: true,
+            acceptingInquiries: true,
+            viewCount: true,
+            inquiryCount: true,
+            publishedAt: true,
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
+            },
+            animalAssignments: {
+              select: {
+                featured: true,
+                feeOverride: true,
+                animal: {
+                  select: {
+                    id: true,
+                    name: true,
+                    species: true,
+                    breed: true,
+                    sex: true,
+                    photoUrl: true,
+                    primaryLineType: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        prisma.mktListingBreedingService.count({ where }),
+      ]);
+
+      // Convert BigInt and format response - cast to any to access selected relations
+      const formattedItems = items.map((item: any) => ({
+        ...item,
+        feeCents: item.feeCents != null ? Number(item.feeCents) : null,
+        animals: (item.animalAssignments || []).map((a: any) => ({
+          ...a.animal,
+          featured: a.featured,
+          feeOverride: a.feeOverride != null ? Number(a.feeOverride) : null,
+        })),
+        animalAssignments: undefined, // Remove raw assignments
+      }));
+
+      reply.send({ items: formattedItems, total, page, limit });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[public-breeding-services]", msg);
+      reply.code(500).send({ error: "internal_error", message: msg });
+    }
+  });
+
+  // GET /public/breeding-services/:slug - Get single breeding service by slug
+  app.get("/public/breeding-services/:slug", async (req, reply) => {
+    try {
+      const slug = String((req.params as any).slug);
+
+      const service = await prisma.mktListingBreedingService.findFirst({
+        where: {
+          slug,
+          status: "LIVE",
+        },
+        include: {
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              city: true,
+              region: true,
+              country: true,
+            },
+          },
+          animalAssignments: {
+            include: {
+              animal: {
+                select: {
+                  id: true,
+                  name: true,
+                  species: true,
+                  breed: true,
+                  sex: true,
+                  birthDate: true,
+                  photoUrl: true,
+                  primaryLineType: true,
+                  lineTypes: true,
+                  registryIds: {
+                    select: {
+                      identifier: true,
+                      registry: {
+                        select: {
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!service) return reply.code(404).send({ error: "not_found" });
+
+      // Increment view count
+      await prisma.mktListingBreedingService.update({
+        where: { id: service.id },
+        data: { viewCount: { increment: 1 } },
+      });
+
+      // Format response - cast to any to access included relations
+      const svc = service as any;
+      const response = {
+        ...service,
+        feeCents: service.feeCents != null ? Number(service.feeCents) : null,
+        tenant: {
+          ...svc.tenant,
+          state: svc.tenant?.region, // Map region to state for frontend compatibility
+        },
+        animals: (svc.animalAssignments || []).map((a: any) => ({
+          ...a.animal,
+          featured: a.featured,
+          feeOverride: a.feeOverride != null ? Number(a.feeOverride) : null,
+          maxBookings: a.maxBookings,
+          bookingsClosed: a.bookingsClosed,
+        })),
+        animalAssignments: undefined,
+      };
+
+      reply.send(response);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[public-breeding-services]", msg);
       reply.code(500).send({ error: "internal_error", message: msg });
     }
   });

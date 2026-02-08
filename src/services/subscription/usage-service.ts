@@ -163,27 +163,58 @@ export async function calculateActualUsage(
         prisma.mktListingBreedingProgram.count({
           where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
         }),
-        prisma.mktListingService.count({
+        prisma.mktListingBreederService.count({
           where: { tenantId, status: { in: ["DRAFT", "LIVE", "PAUSED"] } },
         }),
       ]);
       return individualAnimals + animalPrograms + breedingPrograms + services;
     }
 
-    case "STORAGE_BYTES":
-      // TODO: Implement storage calculation (sum of all uploaded files)
-      // For now, return 0 - will need to track file sizes on upload
-      return 0;
+    case "STORAGE_BYTES": {
+      // Sum storage from documents table (only READY documents)
+      const result = await prisma.document.aggregate({
+        where: {
+          tenantId,
+          status: "READY",
+          sizeBytes: { not: null },
+        },
+        _sum: { sizeBytes: true },
+      });
+      return result._sum?.sizeBytes ?? 0;
+    }
 
     case "SMS_SENT":
-      // TODO: Implement SMS tracking
-      // Count SMS sent this billing period
-      return 0;
+      // SMS sending requires Twilio/AWS SNS integration (see marketplace-verification-service.ts)
+      // When SMS service is implemented, it should call recordUsage(tenantId, "SMS_SENT", 1, metadata)
+      // The usage-service will then read from UsageRecord table
+      // For now, sum any recorded SMS usage events
+      {
+        const smsRecords = await prisma.usageRecord.aggregate({
+          where: {
+            tenantId,
+            metricKey: "SMS_SENT",
+          },
+          _sum: { value: true },
+        });
+        return smsRecords._sum?.value ?? 0;
+      }
 
     case "API_CALLS":
-      // TODO: Implement API call tracking
-      // Count API calls this billing period
-      return 0;
+      // API call tracking requires middleware-level instrumentation
+      // Implementation options:
+      // 1. Low volume: Use recordUsage() in API route middleware
+      // 2. High volume: Use Redis counters + periodic flush to DB
+      // When implemented, middleware should call recordUsage(tenantId, "API_CALLS", 1, metadata)
+      {
+        const apiRecords = await prisma.usageRecord.aggregate({
+          where: {
+            tenantId,
+            metricKey: "API_CALLS",
+          },
+          _sum: { value: true },
+        });
+        return apiRecords._sum?.value ?? 0;
+      }
 
     default:
       return 0;

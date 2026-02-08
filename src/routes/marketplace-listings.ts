@@ -251,7 +251,7 @@ export default async function marketplaceListingsRoutes(
       // Use transaction to create listing and assign tags atomically
       const result = await prisma.$transaction(async (tx) => {
         // 1. Create listing with draft status
-        const listing = await tx.mktListingService.create({
+        const listing = await tx.mktListingBreederService.create({
           data: {
             providerId: provider.id,
             slug: "",  // Will be generated after creation
@@ -281,7 +281,7 @@ export default async function marketplaceListingsRoutes(
         const slug = generateSlug(title, listing.id);
 
         // 3. Update with generated slug
-        const updated = await tx.mktListingService.update({
+        const updated = await tx.mktListingBreederService.update({
           where: { id: listing.id },
           data: { slug },
         });
@@ -314,7 +314,7 @@ export default async function marketplaceListingsRoutes(
         }
 
         // 5. Fetch final listing with tags
-        const finalListing = await tx.mktListingService.findUnique({
+        const finalListing = await tx.mktListingBreederService.findUnique({
           where: { id: listing.id },
           include: {
             assignments: {
@@ -372,7 +372,7 @@ export default async function marketplaceListingsRoutes(
 
     try {
       const [listings, total] = await Promise.all([
-        prisma.mktListingService.findMany({
+        prisma.mktListingBreederService.findMany({
           where,
           orderBy,
           skip,
@@ -385,7 +385,7 @@ export default async function marketplaceListingsRoutes(
             },
           },
         }),
-        prisma.mktListingService.count({ where }),
+        prisma.mktListingBreederService.count({ where }),
       ]);
 
       return reply.send({
@@ -423,7 +423,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const listing = await prisma.mktListingService.findFirst({
+      const listing = await prisma.mktListingBreederService.findFirst({
         where: {
           id: listingId,
           providerId: provider.id,
@@ -475,7 +475,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const existing = await prisma.mktListingService.findFirst({
+    const existing = await prisma.mktListingBreederService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -662,7 +662,7 @@ export default async function marketplaceListingsRoutes(
       if (tagIds !== null) {
         const result = await prisma.$transaction(async (tx) => {
           // 1. Update listing fields
-          const updated = await tx.mktListingService.update({
+          const updated = await tx.mktListingBreederService.update({
             where: { id: listingId },
             data: updateData,
           });
@@ -721,7 +721,7 @@ export default async function marketplaceListingsRoutes(
           }
 
           // 6. Fetch final listing with tags
-          const finalListing = await tx.mktListingService.findUnique({
+          const finalListing = await tx.mktListingBreederService.findUnique({
             where: { id: listingId },
             include: {
               assignments: {
@@ -738,7 +738,7 @@ export default async function marketplaceListingsRoutes(
         return reply.send(toListingDTO(result));
       } else {
         // No tag updates, just update listing fields
-        const updated = await prisma.mktListingService.update({
+        const updated = await prisma.mktListingBreederService.update({
           where: { id: listingId },
           data: updateData,
           include: {
@@ -788,7 +788,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.mktListingService.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -827,7 +827,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const updated = await prisma.mktListingService.update({
+      const updated = await prisma.mktListingBreederService.update({
         where: { id: listingId },
         data: {
           status: "LIVE",
@@ -866,7 +866,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.mktListingService.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -882,7 +882,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      const updated = await prisma.mktListingService.update({
+      const updated = await prisma.mktListingBreederService.update({
         where: { id: listingId },
         data: {
           status: "DRAFT",
@@ -920,7 +920,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     // Check ownership
-    const listing = await prisma.mktListingService.findFirst({
+    const listing = await prisma.mktListingBreederService.findFirst({
       where: {
         id: listingId,
         providerId: provider.id,
@@ -936,7 +936,7 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
-      await prisma.mktListingService.update({
+      await prisma.mktListingBreederService.update({
         where: { id: listingId },
         data: {
           deletedAt: new Date(),
@@ -961,7 +961,7 @@ export default async function marketplaceListingsRoutes(
   /**
    * Browse/search published listings (public)
    *
-   * UNIFIED VIEW: Queries the unified mktListingService table containing
+   * UNIFIED VIEW: Queries the unified mktListingBreederService table containing
    * both provider and breeder listings.
    */
   app.get("/public/listings", {
@@ -1028,7 +1028,7 @@ export default async function marketplaceListingsRoutes(
 
       // Query unified table with pagination
       const [listings, total] = await Promise.all([
-        prisma.mktListingService.findMany({
+        prisma.mktListingBreederService.findMany({
           where,
           orderBy,
           skip,
@@ -1054,7 +1054,7 @@ export default async function marketplaceListingsRoutes(
             },
           },
         }),
-        prisma.mktListingService.count({ where }),
+        prisma.mktListingBreederService.count({ where }),
       ]);
 
       // Transform to public DTO
@@ -1133,7 +1133,7 @@ export default async function marketplaceListingsRoutes(
   /**
    * View single public listing by slug or ID
    * Accepts either a numeric ID or a slug string
-   * UNIFIED: Queries the unified mktListingService table
+   * UNIFIED: Queries the unified mktListingBreederService table
    */
   app.get("/public/listings/:slugOrId", {
     config: { rateLimit: { max: 100, timeWindow: "1 minute" } },
@@ -1157,7 +1157,7 @@ export default async function marketplaceListingsRoutes(
       }
 
       // Query unified table
-      const listing = await prisma.mktListingService.findFirst({
+      const listing = await prisma.mktListingBreederService.findFirst({
         where,
         include: {
           provider: {
@@ -1197,7 +1197,7 @@ export default async function marketplaceListingsRoutes(
       }
 
       // Increment view count (fire-and-forget)
-      prisma.mktListingService.update({
+      prisma.mktListingBreederService.update({
         where: { id: listing.id },
         data: { viewCount: { increment: 1 } },
       }).catch((err) => {

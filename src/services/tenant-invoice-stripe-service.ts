@@ -595,10 +595,14 @@ export async function handleTenantInvoicePaid(
     return;
   }
 
-  // Find our invoice by Stripe ID
+  // Find our invoice by Stripe ID with relations for email sending
   const invoice = await prisma.invoice.findFirst({
     where: {
       stripeInvoiceId: stripeInvoice.id,
+    },
+    include: {
+      tenant: { select: { name: true, primaryEmail: true } },
+      clientParty: { select: { name: true, email: true } },
     },
   });
 
@@ -644,7 +648,51 @@ export async function handleTenantInvoicePaid(
     amountPaid: stripeInvoice.amount_paid,
   });
 
-  // TODO: Send confirmation emails to breeder and client
+  // Send confirmation emails
+  try {
+    const { sendEmail } = await import("./email-service.js");
+    const { renderInvoiceEmail } = await import("./email-templates.js");
+
+    const totalAmount = `$${(stripeInvoice.amount_paid / 100).toFixed(2)}`;
+
+    // Send confirmation to client
+    if (invoice.clientParty?.email) {
+      const emailContent = renderInvoiceEmail({
+        invoiceNumber: invoice.invoiceNumber,
+        amountCents: stripeInvoice.amount_paid,
+        clientName: invoice.clientParty.name || "Customer",
+        tenantName: invoice.tenant?.name || "BreederHQ",
+      });
+
+      sendEmail({
+        tenantId: invoice.tenantId,
+        to: invoice.clientParty.email,
+        subject: `Payment Received - ${emailContent.subject}`,
+        html: emailContent.html,
+        text: emailContent.text,
+        templateKey: "invoice_paid_confirmation",
+        relatedInvoiceId: invoice.id,
+        category: "transactional",
+      }).catch((err) => console.error("[Tenant Invoice Email] Failed to send client confirmation:", err));
+    }
+
+    // Send notification to tenant/breeder
+    if (invoice.tenant?.primaryEmail) {
+      const clientName = invoice.clientParty?.name || "Customer";
+      sendEmail({
+        tenantId: invoice.tenantId,
+        to: invoice.tenant.primaryEmail,
+        subject: `Payment Received: Invoice ${invoice.invoiceNumber}`,
+        html: `<p>Invoice ${invoice.invoiceNumber} has been paid by ${clientName}. Amount: ${totalAmount}</p>`,
+        text: `Invoice ${invoice.invoiceNumber} has been paid by ${clientName}. Amount: ${totalAmount}`,
+        templateKey: "invoice_paid_notification",
+        relatedInvoiceId: invoice.id,
+        category: "transactional",
+      }).catch((err) => console.error("[Tenant Invoice Email] Failed to send breeder notification:", err));
+    }
+  } catch (err) {
+    console.error("[Tenant Invoice Email] Failed to send confirmation emails:", err);
+  }
 }
 
 /**
@@ -704,10 +752,14 @@ export async function handleTenantInvoicePaymentFailed(
     return;
   }
 
-  // Find our invoice by Stripe ID
+  // Find our invoice by Stripe ID with relations for email sending
   const invoice = await prisma.invoice.findFirst({
     where: {
       stripeInvoiceId: stripeInvoice.id,
+    },
+    include: {
+      tenant: { select: { name: true, primaryEmail: true } },
+      clientParty: { select: { name: true, email: true } },
     },
   });
 
@@ -722,7 +774,27 @@ export async function handleTenantInvoicePaymentFailed(
     attemptCount: stripeInvoice.attempt_count,
   });
 
-  // TODO: Optionally notify breeder of failed payment attempt
+  // Send notification to breeder about failed payment
+  try {
+    const { sendTenantInvoicePaymentFailedEmail } = await import("./email-service.js");
+
+    const clientName = invoice.clientParty?.name || "Customer";
+    const totalAmount = `$${(Number(invoice.amountCents) / 100).toFixed(2)}`;
+
+    if (invoice.tenant?.primaryEmail) {
+      sendTenantInvoicePaymentFailedEmail(invoice.tenantId, {
+        breederEmail: invoice.tenant.primaryEmail,
+        breederName: invoice.tenant.name || "Breeder",
+        clientName,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceId: invoice.id,
+        totalAmount,
+        attemptCount: stripeInvoice.attempt_count || 1,
+      }).catch((err) => console.error("[Tenant Invoice Email] Failed to send payment failed notification:", err));
+    }
+  } catch (err) {
+    console.error("[Tenant Invoice Email] Failed to send payment failed notification:", err);
+  }
 }
 
 // ============================================================================

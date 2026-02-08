@@ -929,16 +929,17 @@ export default async function breederMarketplaceRoutes(
    * Returns counts of:
    *   - Animal Listings (direct listings)
    *   - Animal Programs (offspring groups)
-   *   - Service Listings
-   *   - Pending Inquiries
+   *   - Breeding Programs (offspring group listings)
+   *   - Service Listings (professional breeder services)
+   *   - Breeding Listings (breeding service listings - stud, seeking, lease, arrangement)
    */
   app.get("/dashboard/stats", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
     try {
-      // Get counts in parallel for all 4 active marketplace listing types
-      const [animalListings, animalPrograms, breedingPrograms, serviceListings] = await Promise.all([
+      // Get counts in parallel for all 5 active marketplace listing types
+      const [animalListings, animalPrograms, breedingPrograms, serviceListings, breedingListings] = await Promise.all([
         // Count individual animal listings (AnimalPublicListing with LIVE status)
         prisma.mktListingIndividualAnimal.count({
           where: {
@@ -964,11 +965,19 @@ export default async function breederMarketplaceRoutes(
         }),
 
         // Count service listings (breeder services with LIVE status)
-        prisma.mktListingService.count({
+        prisma.mktListingBreederService.count({
           where: {
             tenantId,
             sourceType: "BREEDER",
             status: "LIVE",
+          },
+        }),
+
+        // Count breeding service listings (stud offerings, seeking, lease, arrangement)
+        prisma.mktListingBreedingService.count({
+          where: {
+            tenantId,
+            status: { in: ["LIVE", "DRAFT", "PAUSED"] }, // Include all non-closed listings
           },
         }),
       ]);
@@ -978,6 +987,7 @@ export default async function breederMarketplaceRoutes(
         animalPrograms,
         breedingPrograms,
         serviceListings,
+        breedingListings,
       });
     } catch (err: any) {
       req.log?.error?.({ err, tenantId }, "Failed to fetch dashboard stats");

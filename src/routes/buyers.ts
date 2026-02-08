@@ -20,9 +20,10 @@
 // POST   /api/v1/buyers/:id/tags         - Add tag
 // DELETE /api/v1/buyers/:id/tags/:tagId  - Remove tag
 
-import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import type { BuyerStatus, InterestLevel, Sex, Prisma } from "@prisma/client";
+import { getActorId } from "../utils/session.js";
 
 // ───────────────────────── Helpers ─────────────────────────
 
@@ -1285,13 +1286,27 @@ const buyersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /buyers/migrate - Run buyer migration for tenant
+  // Requires OWNER or ADMIN role as this is an expensive operation
   app.post("/buyers/migrate", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      // TODO: Add admin/permission check here
-      // This is a potentially expensive operation
+      // Verify admin permissions
+      const actorId = getActorId(req);
+      if (!actorId) return reply.code(401).send({ error: "unauthorized" });
+
+      const membership = await prisma.tenantMembership.findFirst({
+        where: {
+          tenantId,
+          userId: actorId,
+          role: { in: ["OWNER", "ADMIN"] },
+        },
+      });
+
+      if (!membership) {
+        return reply.code(403).send({ error: "admin_required", message: "Admin access required for migration" });
+      }
 
       const { runFullBuyerMigration } = await import("../services/buyer-migration-service.js");
       const result = await runFullBuyerMigration(tenantId);

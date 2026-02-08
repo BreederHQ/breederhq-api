@@ -1010,6 +1010,39 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       // Average fee calculation removed (old marketplace listing system deprecated)
       const avgFeeCents = 0;
 
+      // Fetch recent breeding bookings with payments
+      const bookingsWithPayments = await prisma.breedingBooking.findMany({
+        where: {
+          offeringTenantId: tenantId,
+          species: "HORSE",
+          totalPaidCents: { gt: 0 },
+          status: { notIn: ["CANCELLED", "INQUIRY"] },
+        },
+        select: {
+          id: true,
+          totalPaidCents: true,
+          externalAnimalName: true,
+          statusChangedAt: true,
+          createdAt: true,
+          offeringAnimal: { select: { id: true, name: true } },
+          seekingAnimal: { select: { id: true, name: true } },
+          seekingParty: { select: { id: true, name: true } },
+        },
+        orderBy: { statusChangedAt: "desc" },
+        take: 10,
+      });
+
+      const recentPayments = bookingsWithPayments.map((b) => ({
+        id: b.id,
+        stallionId: b.offeringAnimal?.id || 0,
+        stallionName: b.offeringAnimal?.name || "Unknown",
+        mareOwnerName: b.seekingParty?.name || "Unknown",
+        mareName: b.seekingAnimal?.name || b.externalAnimalName || undefined,
+        amountCents: b.totalPaidCents || 0,
+        paidAt: b.statusChangedAt?.toISOString() || b.createdAt.toISOString(),
+        status: "PAID" as const,
+      }));
+
       return reply.send({
         summary: {
           totalRevenueCents,
@@ -1018,7 +1051,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           avgFeeCents,
         },
         byStallion,
-        recentPayments: [], // TODO: Populate from BreedingBooking payment records
+        recentPayments,
       });
     } catch (err) {
       console.error("Error fetching breeding revenue:", err);

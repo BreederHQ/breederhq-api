@@ -1597,6 +1597,89 @@ If you continue to have issues, please contact our support team.
   });
 }
 
+// ---------- Payment Failed Notifications ----------
+
+/**
+ * Send invoice payment failed notification to provider (marketplace)
+ */
+export async function sendInvoicePaymentFailedToProvider(data: {
+  providerEmail: string;
+  providerBusinessName: string;
+  clientName: string;
+  invoiceNumber: string;
+  invoiceId: number;
+  totalAmount: string;
+  attemptCount: number;
+}): Promise<void> {
+  const dashboardUrl = `${MARKETPLACE_URL}/provider/invoices/${data.invoiceId}`;
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">⚠️ Payment Failed</h2>
+
+      <p>Hi ${data.providerBusinessName},</p>
+
+      <p>A payment attempt for invoice <strong>${data.invoiceNumber}</strong> has failed.</p>
+
+      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
+        <p style="margin: 0;"><strong>Invoice:</strong> ${data.invoiceNumber}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Customer:</strong> ${data.clientName}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Amount:</strong> ${data.totalAmount}</p>
+        <p style="margin: 8px 0 0 0;"><strong>Payment Attempts:</strong> ${data.attemptCount}</p>
+      </div>
+
+      <p><strong>What happens next?</strong></p>
+      <ul style="color: #6b7280;">
+        <li>Stripe will automatically retry the payment</li>
+        <li>The customer has been notified to update their payment method</li>
+        <li>You can reach out to the customer directly if needed</li>
+      </ul>
+
+      <p style="margin: 24px 0;">
+        <a href="${dashboardUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
+          View Invoice
+        </a>
+      </p>
+
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        — The ${FROM_NAME} Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+⚠️ Payment Failed
+
+Hi ${data.providerBusinessName},
+
+A payment attempt for invoice ${data.invoiceNumber} has failed.
+
+Invoice: ${data.invoiceNumber}
+Customer: ${data.clientName}
+Amount: ${data.totalAmount}
+Payment Attempts: ${data.attemptCount}
+
+What happens next?
+• Stripe will automatically retry the payment
+• The customer has been notified to update their payment method
+• You can reach out to the customer directly if needed
+
+View invoice: ${dashboardUrl}
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: 0,
+    to: data.providerEmail,
+    subject: `Payment Failed - Invoice ${data.invoiceNumber}`,
+    html,
+    text,
+    templateKey: "marketplace_invoice_payment_failed_provider",
+    category: "transactional",
+  });
+}
+
 /**
  * P-02: Send auto-reply when inbound email is received for an inactive/unknown address
  */
