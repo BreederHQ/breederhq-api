@@ -105,6 +105,9 @@ const ORIGIN_TO_SURFACE: Record<string, Surface> = {
   "https://app.breederhq.com": "PLATFORM",
   "https://portal.breederhq.com": "PORTAL",
   "https://marketplace.breederhq.com": "MARKETPLACE",
+  // Mobile app (Capacitor WebView)
+  "https://localhost": "PLATFORM",
+  "capacitor://localhost": "PLATFORM",
 };
 
 /**
