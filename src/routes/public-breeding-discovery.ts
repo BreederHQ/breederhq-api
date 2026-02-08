@@ -4,6 +4,10 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { publicBreedingInquirySchema } from "../validation/breeding-discovery.js";
+import {
+  sendInquiryConfirmationToUser,
+  sendInquiryNotificationToBreeder,
+} from "../services/marketplace-email-service.js";
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -188,7 +192,18 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
           status: "PUBLISHED",
           acceptInquiries: true,
         },
-        select: { id: true, tenantId: true },
+        select: {
+          id: true,
+          tenantId: true,
+          headline: true,
+          inquiryEmail: true,
+          tenant: {
+            select: {
+              name: true,
+              primaryEmail: true,
+            },
+          },
+        },
       });
 
       if (!listing) {
@@ -232,6 +247,33 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
 
         return created;
       });
+
+      // Send email notifications (non-blocking)
+      const breederEmail = listing.inquiryEmail || listing.tenant?.primaryEmail;
+      const breederName = listing.tenant?.name || "Breeder";
+
+      // Send confirmation to inquirer
+      sendInquiryConfirmationToUser({
+        userEmail: data.inquirerEmail,
+        userName: data.inquirerName,
+        breederName,
+        listingTitle: listing.headline || undefined,
+        message: data.message,
+      }).catch((e) => console.error("Failed to send inquiry confirmation:", e));
+
+      // Send notification to breeder
+      if (breederEmail) {
+        sendInquiryNotificationToBreeder({
+          breederEmail,
+          breederName,
+          inquirerName: data.inquirerName,
+          inquirerEmail: data.inquirerEmail,
+          listingTitle: listing.headline || undefined,
+          message: data.message,
+          threadId: inquiry.id, // Using inquiry ID as reference
+          tenantId: listing.tenantId,
+        }).catch((e) => console.error("Failed to send inquiry notification to breeder:", e));
+      }
 
       reply.code(201).send({
         success: true,

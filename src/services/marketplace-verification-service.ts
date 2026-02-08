@@ -10,6 +10,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import Stripe from "stripe";
 import prisma from "../prisma.js";
 import type {
   MarketplaceUser,
@@ -20,6 +21,10 @@ import type {
   VerificationRequestStatus,
   TwoFactorMethod,
 } from "@prisma/client";
+
+// Initialize Stripe (only if API key is configured)
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" }) : null;
 
 // ---------- Token Utilities ----------
 
@@ -35,18 +40,11 @@ function newRawToken(): string {
   return b64url(randomBytes(32));
 }
 
-function generateOTP(): string {
-  // Generate 6-digit numeric code
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
 // ---------- Types ----------
 
-export type PhoneVerificationResult = {
-  success: boolean;
-  code?: string; // Only returned in dev mode
-  expiresAt: Date;
-};
+export type PhoneVerificationResult =
+  | { success: true; code?: string; expiresAt: Date }
+  | { success: false; error: string };
 
 export type VerificationStatusResult = {
   tier: BreederVerificationTier | ServiceProviderVerificationTier | null;
@@ -78,38 +76,19 @@ export type VerificationStatusResult = {
 
 // ---------- Phone Verification (for Breeders/Providers) ----------
 
-const PHONE_CODE_EXPIRY_MINUTES = 10;
-
 /**
  * Send phone verification code to a provider
+ * NOTE: SMS sending is not yet configured - returns error
  */
 export async function sendProviderPhoneVerification(
-  providerId: number,
-  phoneNumber: string
+  _providerId: number,
+  _phoneNumber: string
 ): Promise<PhoneVerificationResult> {
-  const code = generateOTP();
-  const hash = sha256b64url(code);
-  const expiresAt = new Date(Date.now() + PHONE_CODE_EXPIRY_MINUTES * 60 * 1000);
-
-  // Store hashed code
-  await prisma.marketplaceProvider.update({
-    where: { id: providerId },
-    data: {
-      publicPhone: phoneNumber,
-      phoneVerificationToken: hash,
-      phoneVerificationTokenExpires: expiresAt,
-    },
-  });
-
-  // TODO: Send SMS via Twilio/AWS SNS
-  // await sendSMS(phoneNumber, `Your BreederHQ verification code is: ${code}`);
-
-  const IS_PROD = process.env.NODE_ENV === "production";
-
+  // SMS verification is not yet configured
+  // When ready, integrate Twilio or AWS SNS here
   return {
-    success: true,
-    code: IS_PROD ? undefined : code, // Only return code in dev for testing
-    expiresAt,
+    success: false,
+    error: "sms_not_configured",
   };
 }
 
@@ -157,32 +136,17 @@ export async function verifyProviderPhoneCode(
 
 /**
  * Send SMS verification code to a marketplace user (for 2FA setup)
+ * NOTE: SMS sending is not yet configured - returns error
  */
 export async function sendUserSMSVerification(
-  userId: number,
-  phoneNumber: string
+  _userId: number,
+  _phoneNumber: string
 ): Promise<PhoneVerificationResult> {
-  const code = generateOTP();
-  const hash = sha256b64url(code);
-  const expiresAt = new Date(Date.now() + PHONE_CODE_EXPIRY_MINUTES * 60 * 1000);
-
-  await prisma.marketplaceUser.update({
-    where: { id: userId },
-    data: {
-      smsPhoneNumber: phoneNumber,
-      smsVerificationToken: hash,
-      smsVerificationTokenExpires: expiresAt,
-    },
-  });
-
-  // TODO: Send SMS via Twilio/AWS SNS
-
-  const IS_PROD = process.env.NODE_ENV === "production";
-
+  // SMS verification is not yet configured
+  // When ready, integrate Twilio or AWS SNS here
   return {
-    success: true,
-    code: IS_PROD ? undefined : code,
-    expiresAt,
+    success: false,
+    error: "sms_not_configured",
   };
 }
 
@@ -447,34 +411,91 @@ export async function getUserVerificationStatus(
 
 // ---------- Stripe Identity ----------
 
+export type IdentitySessionResult =
+  | { success: true; sessionId: string; clientSecret: string }
+  | { success: false; error: string };
+
 /**
  * Create Stripe Identity verification session for a provider
  */
 export async function createProviderIdentitySession(
   providerId: number
-): Promise<{ sessionId: string; clientSecret: string } | null> {
-  // TODO: Integrate with Stripe Identity API
-  // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-  // const session = await stripe.identity.verificationSessions.create({
-  //   type: 'document',
-  //   metadata: { providerId: String(providerId) },
-  // });
+): Promise<IdentitySessionResult> {
+  if (!stripe) {
+    return {
+      success: false,
+      error: "stripe_not_configured",
+    };
+  }
 
-  // For now, return placeholder
-  const sessionId = `vi_${newRawToken()}`;
+  try {
+    // Fetch provider to verify it exists
+    const provider = await prisma.marketplaceProvider.findUnique({
+      where: { id: providerId },
+      select: {
+        id: true,
+        verificationTier: true,
+        stripeIdentitySessionId: true,
+        user: {
+          select: { id: true, email: true },
+        },
+      },
+    });
 
-  await prisma.marketplaceProvider.update({
-    where: { id: providerId },
-    data: {
-      stripeIdentitySessionId: sessionId,
-      stripeIdentityStatus: "pending",
-    },
-  });
+    if (!provider) {
+      return {
+        success: false,
+        error: "provider_not_found",
+      };
+    }
 
-  return {
-    sessionId,
-    clientSecret: `${sessionId}_secret_${newRawToken()}`,
-  };
+    // Check if already verified
+    if (provider.verificationTier === "IDENTITY_VERIFIED") {
+      return {
+        success: false,
+        error: "already_verified",
+      };
+    }
+
+    // Create Stripe Identity verification session
+    const verificationSession = await stripe.identity.verificationSessions.create({
+      type: "document",
+      metadata: {
+        entityType: "provider",
+        providerId: providerId.toString(),
+        userId: provider.user.id,
+      },
+      options: {
+        document: {
+          allowed_types: ["driving_license", "passport", "id_card"],
+          require_id_number: false,
+          require_live_capture: true,
+          require_matching_selfie: true,
+        },
+      },
+    });
+
+    // Store session ID in provider record
+    await prisma.marketplaceProvider.update({
+      where: { id: providerId },
+      data: {
+        stripeIdentitySessionId: verificationSession.id,
+        stripeIdentityStatus: "pending",
+      },
+    });
+
+    return {
+      success: true,
+      sessionId: verificationSession.id,
+      clientSecret: verificationSession.client_secret!,
+    };
+  } catch (error: any) {
+    console.error("[createProviderIdentitySession] Error:", error);
+    return {
+      success: false,
+      error: error.message || "identity_session_failed",
+    };
+  }
 }
 
 /**
@@ -522,21 +543,81 @@ export async function handleProviderIdentityResult(
  */
 export async function createUserIdentitySession(
   userId: number
-): Promise<{ sessionId: string; clientSecret: string } | null> {
-  const sessionId = `vi_${newRawToken()}`;
+): Promise<IdentitySessionResult> {
+  if (!stripe) {
+    return {
+      success: false,
+      error: "stripe_not_configured",
+    };
+  }
 
-  await prisma.marketplaceUser.update({
-    where: { id: userId },
-    data: {
-      stripeIdentitySessionId: sessionId,
-      stripeIdentityStatus: "pending",
-    },
-  });
+  try {
+    // Fetch user to verify it exists
+    const user = await prisma.marketplaceUser.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        serviceProviderTier: true,
+        stripeIdentitySessionId: true,
+      },
+    });
 
-  return {
-    sessionId,
-    clientSecret: `${sessionId}_secret_${newRawToken()}`,
-  };
+    if (!user) {
+      return {
+        success: false,
+        error: "user_not_found",
+      };
+    }
+
+    // Check if already verified at identity level
+    if (user.serviceProviderTier === "IDENTITY_VERIFIED" ||
+        user.serviceProviderTier === "VERIFIED_PROFESSIONAL" ||
+        user.serviceProviderTier === "ACCREDITED_PROVIDER") {
+      return {
+        success: false,
+        error: "already_verified",
+      };
+    }
+
+    // Create Stripe Identity verification session
+    const verificationSession = await stripe.identity.verificationSessions.create({
+      type: "document",
+      metadata: {
+        entityType: "marketplace_user",
+        marketplaceUserId: userId.toString(),
+      },
+      options: {
+        document: {
+          allowed_types: ["driving_license", "passport", "id_card"],
+          require_id_number: false,
+          require_live_capture: true,
+          require_matching_selfie: true,
+        },
+      },
+    });
+
+    // Store session ID in user record
+    await prisma.marketplaceUser.update({
+      where: { id: userId },
+      data: {
+        stripeIdentitySessionId: verificationSession.id,
+        stripeIdentityStatus: "pending",
+      },
+    });
+
+    return {
+      success: true,
+      sessionId: verificationSession.id,
+      clientSecret: verificationSession.client_secret!,
+    };
+  } catch (error: any) {
+    console.error("[createUserIdentitySession] Error:", error);
+    return {
+      success: false,
+      error: error.message || "identity_session_failed",
+    };
+  }
 }
 
 /**

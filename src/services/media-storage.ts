@@ -194,6 +194,40 @@ function extractExtension(filename: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Direct upload (for server-side uploads, e.g., image processing)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Upload a buffer directly to S3 (for server-side processing like image resizing).
+ * Returns the storage key and CDN URL.
+ */
+export async function uploadBuffer(
+  context: UploadContext,
+  filename: string,
+  buffer: Buffer,
+  contentType: string
+): Promise<{ storageKey: string; cdnUrl: string }> {
+  const s3 = getS3Client();
+  const bucket = getS3Bucket();
+  const storageKey = generateStorageKey(context, filename);
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: contentType,
+      ContentLength: buffer.length,
+    })
+  );
+
+  const cdnDomain = getCdnDomain();
+  const cdnUrl = `https://${cdnDomain}/${storageKey}`;
+
+  return { storageKey, cdnUrl };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Presigned URL generation
 // ─────────────────────────────────────────────────────────────────────────────
 

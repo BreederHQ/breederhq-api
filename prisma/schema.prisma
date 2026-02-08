@@ -2503,6 +2503,10 @@ enum PartyActivityKind {
   EMAIL_CHANGE_REQUESTED // Client requested email change
   EMAIL_CHANGE_VERIFIED // Client verified new email
   EMAIL_CHANGE_EXPIRED // Email change request expired
+  // Portal access events
+  PORTAL_INVITE_AUTO_SENT // Portal invite sent automatically (e.g., DM triggered)
+  PORTAL_ACCESS_GRANTED // Portal access granted manually
+  PORTAL_ACCESS_REVOKED // Portal access revoked
 
   @@schema("public")
 }
