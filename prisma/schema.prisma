@@ -836,7 +836,6 @@ enum WaitlistStatus {
   @@schema("public")
 }
 
-
 enum BreedingPlanBuyerStage {
   POSSIBLE_MATCH
   INQUIRY
@@ -1254,6 +1253,9 @@ model User {
   marketplaceBlocks MarketplaceUserBlock[] @relation("BlockedMarketplaceUser")
   marketplaceFlag   MarketplaceUserFlag?   @relation("MarketplaceUserFlagUser")
 
+  // Provider reports (user as reporter)
+  providerReportsSubmitted MarketplaceProviderReport[] @relation("UserProviderReports")
+
   // Breeder reports (user as reporter or reviewer)
   breederReportsSubmitted BreederReport[] @relation("BreederReportReporter")
   breederReportsReviewed  BreederReport[] @relation("BreederReportReviewedBy")
@@ -1376,7 +1378,6 @@ model VerificationToken {
   @@schema("public")
 }
 
-
 model Invite {
   id             Int       @id @default(autoincrement())
   email          String
@@ -1467,43 +1468,43 @@ model Tenant {
   // Stud listing visibility rules
   studVisibilityRules StudVisibilityRule[]
 
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  LitterEvent            LitterEvent[]
-  OffspringGroupEvent    OffspringGroupEvent[]
-  OffspringEvent         OffspringEvent[]
-  OffspringGroupBuyer    OffspringGroupBuyer[]
-  BreedingPlanBuyer      BreedingPlanBuyer[]
-  Invoice                Invoice[]
-  InvoiceLineItem        InvoiceLineItem[]
-  Payment                Payment[]
-  Expense                Expense[]
-  Sequence               Sequence[]
-  IdempotencyKey         IdempotencyKey[]
-  Campaign               Campaign[]
-  CampaignAttribution    CampaignAttribution[]
-  EmailSendLog           EmailSendLog[]
-  MessageThread          MessageThread[]
-  Task                   Task[]
-  HealthEvent            HealthEvent[]
-  VaccinationRecord      VaccinationRecord[]
-  Document               Document[]
-  ContractTemplate       ContractTemplate[]
-  Contract               Contract[]
-  ContractParty          ContractParty[]
-  SignatureEvent         SignatureEvent[]
-  OffspringDocument      OffspringDocument[]
-  OffspringContract      OffspringContract[]
-  OffspringInvoiceLink   OffspringInvoiceLink[]
-  AnimalOwnershipChange  AnimalOwnershipChange[]
-  PaymentIntent          PaymentIntent[]
-  AnimalTraitValue       AnimalTraitValue[]
-  AnimalTraitEntry       AnimalTraitEntry[]
-  Template               Template[]
-  AutoReplyRule          AutoReplyRule[]
-  AutoReplyLog           AutoReplyLog[]
-  portalAccesses         PortalAccess[]          @relation("PortalAccessTenant")
-  portalInvites          PortalInvite[]          @relation("PortalInviteTenant")
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  LitterEvent           LitterEvent[]
+  OffspringGroupEvent   OffspringGroupEvent[]
+  OffspringEvent        OffspringEvent[]
+  OffspringGroupBuyer   OffspringGroupBuyer[]
+  BreedingPlanBuyer     BreedingPlanBuyer[]
+  Invoice               Invoice[]
+  InvoiceLineItem       InvoiceLineItem[]
+  Payment               Payment[]
+  Expense               Expense[]
+  Sequence              Sequence[]
+  IdempotencyKey        IdempotencyKey[]
+  Campaign              Campaign[]
+  CampaignAttribution   CampaignAttribution[]
+  EmailSendLog          EmailSendLog[]
+  MessageThread         MessageThread[]
+  Task                  Task[]
+  HealthEvent           HealthEvent[]
+  VaccinationRecord     VaccinationRecord[]
+  Document              Document[]
+  ContractTemplate      ContractTemplate[]
+  Contract              Contract[]
+  ContractParty         ContractParty[]
+  SignatureEvent        SignatureEvent[]
+  OffspringDocument     OffspringDocument[]
+  OffspringContract     OffspringContract[]
+  OffspringInvoiceLink  OffspringInvoiceLink[]
+  AnimalOwnershipChange AnimalOwnershipChange[]
+  PaymentIntent         PaymentIntent[]
+  AnimalTraitValue      AnimalTraitValue[]
+  AnimalTraitEntry      AnimalTraitEntry[]
+  Template              Template[]
+  AutoReplyRule         AutoReplyRule[]
+  AutoReplyLog          AutoReplyLog[]
+  portalAccesses        PortalAccess[]          @relation("PortalAccessTenant")
+  portalInvites         PortalInvite[]          @relation("PortalInviteTenant")
 
   // Scheduling
   schedulingEventTemplates     SchedulingEventTemplate[]
@@ -1533,27 +1534,27 @@ model Tenant {
   breederReportFlag BreederReportFlag? @relation("BreederReportFlag")
 
   // Subscription & Billing
-  subscriptions       Subscription[]
-  usageRecords        UsageRecord[]
-  usageSnapshots      UsageSnapshot[]
-  paymentMethods      PaymentMethod[]
-  unifiedListings     MktListingBreederService[]        // Unified marketplace listings
-  breedingServices    MktListingBreedingService[]       // Breeding service listings (stud, mare lease, etc.)
-  featureChecks       FeatureCheck[]
+  subscriptions    Subscription[]
+  usageRecords     UsageRecord[]
+  usageSnapshots   UsageSnapshot[]
+  paymentMethods   PaymentMethod[]
+  unifiedListings  MktListingBreederService[] // Unified marketplace listings
+  breedingServices MktListingBreedingService[] // Breeding service listings (stud, mare lease, etc.)
+  featureChecks    FeatureCheck[]
 
   // Rearing Protocols
-  rearingProtocols       RearingProtocol[]
-  rearingAssignments     RearingProtocolAssignment[]
-  activityCompletions    ActivityCompletion[]
-  protocolExceptions     OffspringProtocolException[]
-  protocolRatings        ProtocolRating[]
-  protocolComments       ProtocolComment[]
-  protocolCopyRecords    ProtocolCopyRecord[]
-  assessmentResults      AssessmentResult[]
-  rearingCertificates    RearingCertificate[]
+  rearingProtocols    RearingProtocol[]
+  rearingAssignments  RearingProtocolAssignment[]
+  activityCompletions ActivityCompletion[]
+  protocolExceptions  OffspringProtocolException[]
+  protocolRatings     ProtocolRating[]
+  protocolComments    ProtocolComment[]
+  protocolCopyRecords ProtocolCopyRecord[]
+  assessmentResults   AssessmentResult[]
+  rearingCertificates RearingCertificate[]
 
   // Cross-tenant lineage
-  contributedIdentifiers  GlobalAnimalIdentifier[]
+  contributedIdentifiers GlobalAnimalIdentifier[]
 
   // Cross-tenant animal linking
   linkRequestsFrom         AnimalLinkRequest[]     @relation("LinkRequestFrom")
@@ -1615,7 +1616,6 @@ model Tenant {
   registryConnections RegistryConnection[]
   registrySyncLogs    RegistrySyncLog[]
 
-
   // Supplement Tracking
   supplementProtocols       SupplementProtocol[]
   supplementSchedules       SupplementSchedule[]
@@ -1637,8 +1637,8 @@ model Tenant {
   breedingDiscoveryPrograms BreedingDiscoveryProgram[]
   breedingListings          BreedingListing[]
   breedingInquiries         BreedingInquiry[]
-  breedingBookingsOffering  BreedingBooking[]             @relation("OfferingBookings")
-  breedingBookingsSeeking   BreedingBooking[]             @relation("SeekingBookings")
+  breedingBookingsOffering  BreedingBooking[]          @relation("OfferingBookings")
+  breedingBookingsSeeking   BreedingBooking[]          @relation("SeekingBookings")
 
   // Neonatal Care
   neonatalCareEntries   NeonatalCareEntry[]
@@ -2162,7 +2162,6 @@ model PaymentMethod {
   @@schema("public")
 }
 
-
 model ServiceProviderProfile {
   id Int @id @default(autoincrement())
 
@@ -2196,7 +2195,6 @@ model ServiceProviderProfile {
   @@index([plan])
   @@schema("public")
 }
-
 
 model Organization {
   id       Int    @id @default(autoincrement())
@@ -2331,7 +2329,6 @@ model Party {
 
   // MessagingHub - unlinked emails that were later linked to this party
   unlinkedEmailsLinked UnlinkedEmail[] @relation("UnlinkedEmailsLinked")
-
 
   // Breeding Discovery (Phase 2) - seeking party on bookings
   breedingBookings BreedingBooking[]
@@ -2725,7 +2722,7 @@ model Animal {
   // Breeding Discovery: Line type classification
   lineTypes       String[] // e.g., ["show", "working", "field", "pet"]
   primaryLineType String? // Primary classification for filtering
-  lineDescription String? @db.Text // Free-text description of breeding lines
+  lineDescription String?  @db.Text // Free-text description of breeding lines
 
   // Breeding Discovery: Relations
   breedingListings BreedingListing[]
@@ -2796,16 +2793,16 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
-  tagAssignments           TagAssignment[]
-  owners                   AnimalOwner[]
-  registryIds              AnimalRegistryIdentifier[]
-  microchipRegistrations   AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
+  tagAssignments             TagAssignment[]
+  owners                     AnimalOwner[]
+  registryIds                AnimalRegistryIdentifier[]
+  microchipRegistrations     AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
   individualAnimalListings   MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
   breedingServiceAssignments MktBreedingServiceAnimal[]    @relation("AnimalBreedingServiceAssignments")
   programParticipants        AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
-  createdAt                DateTime                      @default(now())
-  updatedAt                DateTime                      @updatedAt
-  archived                 Boolean                       @default(false)
+  createdAt                  DateTime                      @default(now())
+  updatedAt                  DateTime                      @updatedAt
+  archived                   Boolean                       @default(false)
 
   // Soft delete
   deletedAt         DateTime?
@@ -2844,7 +2841,6 @@ model Animal {
   // Semen inventory (stallions only) - P7
   semenInventory SemenInventory[] @relation("StallionSemenInventory")
 
-
   // Breeding Discovery bookings (Phase 2)
   breedingBookingsOffering BreedingBooking[] @relation("OfferingAnimal")
   breedingBookingsSeeking  BreedingBooking[] @relation("SeekingAnimal")
@@ -2871,9 +2867,9 @@ model Animal {
 
   // Breeding Profile (user-entered preferences and history)
   breedingProfile          AnimalBreedingProfile?
-  breedingEvents           BreedingEvent[]           @relation("BreedingEvents")
-  partnerBreedingEvents    BreedingEvent[]           @relation("PartnerBreedingEvents")
-  incompatibleWithProfiles AnimalIncompatibility[]   @relation("IncompatibleWith")
+  breedingEvents           BreedingEvent[]         @relation("BreedingEvents")
+  partnerBreedingEvents    BreedingEvent[]         @relation("PartnerBreedingEvents")
+  incompatibleWithProfiles AnimalIncompatibility[] @relation("IncompatibleWith")
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -2994,7 +2990,6 @@ model AnimalRegistryIdentifier {
   @@index([registryId])
   @@schema("public")
 }
-
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -3766,9 +3761,9 @@ model MktListingBreedingService {
   // Availability
   availableFrom        DateTime?
   availableTo          DateTime?
-  blackoutDates        String[] @default([]) // ISO date strings
+  blackoutDates        String[]  @default([]) // ISO date strings
   maxBookingsPerPeriod Int?
-  acceptingInquiries   Boolean  @default(true)
+  acceptingInquiries   Boolean   @default(true)
 
   // Publishing
   status      MarketplaceListingStatus @default(DRAFT)
@@ -4069,7 +4064,6 @@ model ReproductiveCycle {
   @@schema("public")
 }
 
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Breeding plug-ins
@@ -4305,9 +4299,6 @@ model SemenUsage {
   @@index([tenantId, usageDate])
   @@schema("public")
 }
-
-
-
 
 model PregnancyCheck {
   id       Int    @id @default(autoincrement())
@@ -5007,7 +4998,7 @@ model NeonatalIntervention {
   administeredBy AdministeredBy?
   vetClinic      String?
 
-  reason   String? @db.Text
+  reason   String?               @db.Text
   response InterventionResponse?
 
   followUpNeeded Boolean   @default(false)
@@ -5793,7 +5784,7 @@ model Expense {
   // Optional link to food product (for FOOD category expenses)
   foodProductId Int?
   foodProduct   FoodProduct? @relation(fields: [foodProductId], references: [id], onDelete: SetNull)
-  quantityValue Float?  // Quantity purchased (for FOOD category)
+  quantityValue Float? // Quantity purchased (for FOOD category)
   quantityUnit  String? // Unit: OZ, LB, G, KG (for FOOD category)
 
   notes String?
@@ -6912,7 +6903,6 @@ model OffspringInvoiceLink {
   @@schema("public")
 }
 
-
 /**
  * Portal Access Management
  * Controls client portal access per Party (Contact or Organization)
@@ -7758,7 +7748,6 @@ model AnimalPrivacySettings {
   @@schema("public")
 }
 
-
 /**
  * ────────────────────────────────────────────────────────────────────────────
  * Cross-Tenant Animal Linking
@@ -8418,6 +8407,10 @@ model MarketplaceProvider {
   suspendedAt     DateTime? @map("suspended_at")
   suspendedReason String?   @map("suspended_reason")
 
+  // Flagging (auto-flagged when 3+ reports received)
+  flaggedAt  DateTime? @map("flagged_at")
+  flagReason String?   @map("flag_reason") @db.Text
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -8425,12 +8418,13 @@ model MarketplaceProvider {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  unifiedListings      MktListingBreederService[]         // Unified marketplace listings
+  unifiedListings      MktListingBreederService[] // Unified marketplace listings
   providerThreads      MarketplaceMessageThread[]  @relation("ProviderThreads")
   providerTransactions MarketplaceTransaction[]    @relation("ProviderTransactions")
   providerInvoices     MarketplaceInvoice[]        @relation("ProviderInvoices")
   reviews              MarketplaceReview[]         @relation("ReviewsForProvider")
   verificationRequests VerificationRequest[]       @relation("ProviderVerificationRequests")
+  reports              MarketplaceProviderReport[] @relation("ProviderReports")
 
   @@index([userId])
   @@index([tenantId])
@@ -8439,7 +8433,48 @@ model MarketplaceProvider {
   @@index([city, state, status])
   @@index([deletedAt])
   @@index([verificationTier])
+  @@index([flaggedAt])
   @@map("providers")
+  @@schema("marketplace")
+}
+
+/**
+ * MarketplaceProviderReport - User reports against service providers
+ * Allows marketplace users to report providers for fraud, harassment, spam, etc.
+ * Auto-flags providers when 3+ pending reports are received.
+ */
+model MarketplaceProviderReport {
+  id Int @id @default(autoincrement())
+
+  providerId Int                 @map("provider_id")
+  provider   MarketplaceProvider @relation("ProviderReports", fields: [providerId], references: [id], onDelete: Cascade)
+
+  // Reporter info (BHQ User ID from session)
+  reporterUserId String  @map("reporter_user_id") @db.VarChar(36)
+  reporterEmail  String? @map("reporter_email")
+  reporter       User    @relation("UserProviderReports", fields: [reporterUserId], references: [id], onDelete: Cascade)
+
+  // Report details
+  reason   String // fraud, harassment, spam, misrepresentation, other
+  severity String // low, medium, high
+  details  String? @db.Text
+
+  // Optional context
+  relatedListingIds    Int[]   @default([]) @map("related_listing_ids")
+  relatedTransactionId BigInt? @map("related_transaction_id")
+
+  // Status
+  status     String    @default("pending") // pending, reviewed, dismissed, action_taken
+  adminNotes String?   @map("admin_notes") @db.Text
+  reviewedAt DateTime? @map("reviewed_at")
+  reviewedBy Int?      @map("reviewed_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([providerId, status])
+  @@index([reporterUserId])
+  @@index([status, createdAt])
+  @@map("provider_reports")
   @@schema("marketplace")
 }
 
@@ -8591,8 +8626,8 @@ model MktListingBreederService {
 }
 
 model MarketplaceAbuseReport {
-  id        Int                       @id @default(autoincrement())
-  listingId Int                       @map("listing_id")
+  id        Int @id @default(autoincrement())
+  listingId Int @map("listing_id")
 
   reason        String
   details       String?   @db.Text
@@ -8621,7 +8656,7 @@ model MarketplaceTransaction {
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation("ProviderTransactions", fields: [providerId], references: [id], onDelete: Restrict)
 
-  listingId Int?               @map("listing_id")
+  listingId Int?                      @map("listing_id")
   listing   MktListingBreederService? @relation(fields: [listingId], references: [id])
 
   // Transaction details
@@ -8709,7 +8744,7 @@ model MarketplaceInvoice {
   stripeChargeId        String?  @map("stripe_charge_id")
 
   // Stripe Invoice details (for direct provider invoices)
-  stripeInvoiceUrl    String?   @map("stripe_invoice_url")     // Hosted invoice URL for client payment
+  stripeInvoiceUrl    String?   @map("stripe_invoice_url") // Hosted invoice URL for client payment
   stripeInvoicePdfUrl String?   @map("stripe_invoice_pdf_url") // PDF download URL
   stripeInvoiceSentAt DateTime? @map("stripe_invoice_sent_at") // When Stripe sent the email
 
@@ -8762,7 +8797,7 @@ model MarketplaceMessageThread {
   providerId Int                 @map("provider_id")
   provider   MarketplaceProvider @relation("ProviderThreads", fields: [providerId], references: [id], onDelete: Cascade)
 
-  listingId Int?               @map("listing_id")
+  listingId Int?                      @map("listing_id")
   listing   MktListingBreederService? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   transactionId BigInt?                 @map("transaction_id")
@@ -8825,7 +8860,7 @@ model MarketplaceReview {
   clientId Int             @map("client_id")
   client   MarketplaceUser @relation("ReviewsByClient", fields: [clientId], references: [id], onDelete: Restrict)
 
-  listingId Int?                       @map("listing_id")
+  listingId Int? @map("listing_id")
 
   // Rating & review
   rating     Int // 1-5 stars
@@ -8899,10 +8934,10 @@ model MarketplaceServiceTag {
 }
 
 model MarketplaceServiceTagAssignment {
-  listingId Int               @map("listing_id")
+  listingId Int                      @map("listing_id")
   listing   MktListingBreederService @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  tagId     Int               @map("tag_id")
-  tag       MarketplaceServiceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     Int                      @map("tag_id")
+  tag       MarketplaceServiceTag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([listingId, tagId])
   @@index([listingId])
@@ -8910,7 +8945,6 @@ model MarketplaceServiceTagAssignment {
   @@map("service_tag_assignments")
   @@schema("marketplace")
 }
-
 
 model StripeIdentitySession {
   id Int @id @default(autoincrement())
@@ -8930,7 +8964,6 @@ model StripeIdentitySession {
   @@map("stripe_identity_sessions")
   @@schema("marketplace")
 }
-
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -10016,19 +10049,19 @@ model BreederProfile {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Attributes
-  registryAffiliations String[]
-  primaryRegistry      String?
-  breedingLineTypes    String[]
-  breedingPhilosophy   String?   @db.Text
+  registryAffiliations  String[]
+  primaryRegistry       String?
+  breedingLineTypes     String[]
+  breedingPhilosophy    String?  @db.Text
   requiresHealthTesting Boolean  @default(false)
-  requiresContract     Boolean   @default(false)
-  requiredTests        String[]
+  requiresContract      Boolean  @default(false)
+  requiredTests         String[]
 
   // Exclusions
   excludedRegistries String[]
   excludedLineTypes  String[]
   excludedAttributes String[]
-  exclusionNotes     String? @db.Text
+  exclusionNotes     String?  @db.Text
 
   // Visibility toggles
   showRegistryAffiliations Boolean @default(true)
@@ -10036,9 +10069,9 @@ model BreederProfile {
   showRequirements         Boolean @default(true)
 
   // Public info
-  publicBio  String? @db.Text
-  websiteUrl String?
-  socialLinks Json?  @db.JsonB
+  publicBio   String? @db.Text
+  websiteUrl  String?
+  socialLinks Json?   @db.JsonB
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -10051,7 +10084,7 @@ model BreedingDiscoveryProgram {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  programNumber String @unique
+  programNumber String  @unique
   name          String
   description   String? @db.Text
 
@@ -10061,7 +10094,7 @@ model BreedingDiscoveryProgram {
   // Defaults inherited by listings
   defaultBreedingMethods       String[]
   defaultGuaranteeType         String?
-  defaultGuaranteeTerms        String? @db.Text
+  defaultGuaranteeTerms        String?  @db.Text
   defaultRequiresHealthTesting Boolean  @default(false)
   defaultRequiredTests         String[]
   defaultRequiresContract      Boolean  @default(false)
@@ -10113,13 +10146,13 @@ model BreedingListing {
   intent BreedingListingIntent
 
   headline    String
-  description String? @db.Text
+  description String?  @db.Text
   media       String[]
 
   // Pricing
   feeCents     Int?
   feeDirection BreedingListingFeeDirection?
-  feeNotes     String? @db.Text
+  feeNotes     String?                      @db.Text
 
   // Availability
   availableFrom   DateTime?
@@ -10127,7 +10160,7 @@ model BreedingListing {
   seasonName      String?
   breedingMethods String[]
   maxBookings     Int?
-  currentBookings Int @default(0)
+  currentBookings Int       @default(0)
 
   // Guarantee
   guaranteeType  String?
@@ -10140,10 +10173,10 @@ model BreedingListing {
   additionalRequirements String?  @db.Text
 
   // Lifecycle
-  status      BreedingListingStatus @default(DRAFT)
-  publishedAt DateTime?
-  pausedAt    DateTime?
-  closedAt    DateTime?
+  status       BreedingListingStatus @default(DRAFT)
+  publishedAt  DateTime?
+  pausedAt     DateTime?
+  closedAt     DateTime?
   closedReason String?
 
   // Public marketplace settings
@@ -10165,9 +10198,9 @@ model BreedingListing {
   metaDescription String?
 
   // Inquiry settings
-  acceptInquiries    Boolean @default(true)
-  inquiryEmail       String?
-  inquiryPhone       String?
+  acceptInquiries     Boolean @default(true)
+  inquiryEmail        String?
+  inquiryPhone        String?
   inquiryInstructions String? @db.Text
 
   // Counters
@@ -10217,7 +10250,7 @@ model BreedingInquiry {
   isBreeder     Boolean @default(false)
 
   // Content
-  message            String @db.Text
+  message            String  @db.Text
   interestedInMethod String?
 
   // Status
@@ -10261,7 +10294,7 @@ model BreedingBooking {
 
   // Seeking side (the party requesting breeding)
   seekingPartyId  Int
-  seekingParty    Party  @relation(fields: [seekingPartyId], references: [id])
+  seekingParty    Party   @relation(fields: [seekingPartyId], references: [id])
   seekingTenantId Int?
   seekingTenant   Tenant? @relation("SeekingBookings", fields: [seekingTenantId], references: [id])
   seekingAnimalId Int?
@@ -10288,8 +10321,8 @@ model BreedingBooking {
 
   // Pricing
   agreedFeeCents Int
-  depositCents   Int @default(0)
-  totalPaidCents Int @default(0)
+  depositCents   Int                         @default(0)
+  totalPaidCents Int                         @default(0)
   feeDirection   BreedingListingFeeDirection
 
   // Status
@@ -10297,7 +10330,7 @@ model BreedingBooking {
   statusChangedAt DateTime              @default(now())
 
   // Requirements
-  requirements       Json? @db.JsonB
+  requirements       Json?   @db.JsonB
   requirementsConfig String?
 
   // Guarantee
@@ -10308,8 +10341,8 @@ model BreedingBooking {
   breedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: SetNull)
 
   // Semen inventory linkage (for shipped semen bookings)
-  semenUsageId Int?         @unique
-  semenUsage   SemenUsage?  @relation(fields: [semenUsageId], references: [id], onDelete: SetNull)
+  semenUsageId Int?        @unique
+  semenUsage   SemenUsage? @relation(fields: [semenUsageId], references: [id], onDelete: SetNull)
 
   // Outcome tracking
   outcomeRecordedAt DateTime?
@@ -10338,9 +10371,9 @@ model BreedingBooking {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 model AnimalBreedingProfile {
-  id       Int    @id @default(autoincrement())
+  id       Int @id @default(autoincrement())
   tenantId Int
-  animalId Int    @unique
+  animalId Int @unique
 
   // Status
   breedingStatus  String    @default("INTACT") // INTACT, PROVEN, RETIRED, NEUTERED, SUSPECTED_ISSUES, UNDER_EVALUATION
@@ -10348,12 +10381,12 @@ model AnimalBreedingProfile {
   statusChangedAt DateTime?
 
   // Preferences (all animals)
-  environmentPreference String?  @db.VarChar(50) // INDOOR_ONLY, OUTDOOR_ONLY, EITHER, SPECIFIC_LOCATION
-  environmentNotes      String?  @db.Text
-  temperament           String?  @db.VarChar(50) // CALM, RECEPTIVE, EAGER, NERVOUS, AGGRESSIVE, REQUIRES_ASSISTANCE, VARIABLE
-  temperamentNotes      String?  @db.Text
-  specialRequirements   String?  @db.Text
-  generalNotes          String?  @db.Text
+  environmentPreference String? @db.VarChar(50) // INDOOR_ONLY, OUTDOOR_ONLY, EITHER, SPECIFIC_LOCATION
+  environmentNotes      String? @db.Text
+  temperament           String? @db.VarChar(50) // CALM, RECEPTIVE, EAGER, NERVOUS, AGGRESSIVE, REQUIRES_ASSISTANCE, VARIABLE
+  temperamentNotes      String? @db.Text
+  specialRequirements   String? @db.Text
+  generalNotes          String? @db.Text
 
   // Male-specific fields
   libido                  String?   @db.VarChar(20) // HIGH, MEDIUM, LOW, VARIABLE, UNKNOWN
@@ -10399,7 +10432,7 @@ model AnimalBreedingProfile {
 }
 
 model AnimalIncompatibility {
-  id                   Int      @id @default(autoincrement())
+  id                   Int @id @default(autoincrement())
   tenantId             Int
   profileId            Int
   incompatibleAnimalId Int
@@ -10487,11 +10520,11 @@ model RearingProtocol {
   isActive    Boolean @default(true)
 
   // Versioning
-  version          Int              @default(1)
+  version          Int               @default(1)
   parentProtocolId Int?
-  parentProtocol   RearingProtocol? @relation("ProtocolVersions", fields: [parentProtocolId], references: [id])
+  parentProtocol   RearingProtocol?  @relation("ProtocolVersions", fields: [parentProtocolId], references: [id])
   childProtocols   RearingProtocol[] @relation("ProtocolVersions")
-  isArchived       Boolean          @default(false)
+  isArchived       Boolean           @default(false)
 
   // Metadata
   targetAgeStart        Int // Days from birth
@@ -10506,7 +10539,7 @@ model RearingProtocol {
   publishedAt DateTime?
 
   // Origin attribution (for protocols copied from community)
-  originBreederName String?  // Name of breeder who originally shared this
+  originBreederName String? // Name of breeder who originally shared this
   copiedAt          DateTime? // When this was copied from community
 
   // Relations
@@ -10583,7 +10616,7 @@ model RearingProtocolAssignment {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   offspringGroupId Int
-  offspringGroup   OffspringGroup @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
+  offspringGroup   OffspringGroup  @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
   protocolId       Int
   protocol         RearingProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
 
@@ -10641,7 +10674,7 @@ model ActivityCompletion {
 
   scope       RearingCompletionScope
   offspringId Int?
-  offspring   Offspring? @relation(fields: [offspringId], references: [id], onDelete: SetNull)
+  offspring   Offspring?             @relation(fields: [offspringId], references: [id], onDelete: SetNull)
 
   completedAt DateTime @default(now())
   completedBy String // userId
@@ -10672,12 +10705,12 @@ model OffspringProtocolException {
   assignmentId Int
   assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   offspringId  Int
-  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  offspring    Offspring                 @relation(fields: [offspringId], references: [id], onDelete: Cascade)
   activityId   String // UUID from protocol activity
 
   checklistItemKey String?
   exceptionType    RearingExceptionType
-  reason           String    @db.Text
+  reason           String               @db.Text
   startDate        DateTime?
   endDate          DateTime?
 
@@ -10702,11 +10735,11 @@ model AssignmentOffspringOverride {
   assignmentId Int
   assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   offspringId  Int
-  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  offspring    Offspring                 @relation(fields: [offspringId], references: [id], onDelete: Cascade)
 
   customStartDate DateTime?
   skipToStage     String? // Stage UUID
-  notes           String? @db.Text
+  notes           String?   @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -10764,9 +10797,9 @@ model ProtocolComment {
   authorName String // Tenant/business name at time of posting
 
   // Moderation
-  isHidden  Boolean @default(false)
-  hiddenAt  DateTime?
-  hiddenBy  String? // Admin who hid it
+  isHidden Boolean   @default(false)
+  hiddenAt DateTime?
+  hiddenBy String? // Admin who hid it
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -10812,12 +10845,12 @@ model AssessmentResult {
   assignmentId Int
   assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   offspringId  Int
-  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  offspring    Offspring                 @relation(fields: [offspringId], references: [id], onDelete: Cascade)
 
   assessmentType AssessmentType
   scores         Json // VolhardScores or custom scores
-  notes          String? @db.Text
-  assessedAt     DateTime @default(now())
+  notes          String?        @db.Text
+  assessedAt     DateTime       @default(now())
   assessedBy     String // userId
 
   createdAt DateTime @default(now())
@@ -10843,7 +10876,7 @@ model RearingCertificate {
   assignmentId Int
   assignment   RearingProtocolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   offspringId  Int
-  offspring    Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  offspring    Offspring                 @relation(fields: [offspringId], references: [id], onDelete: Cascade)
 
   offspringName String
   protocolName  String
