@@ -572,6 +572,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         forSale: true,
         inSyndication: true,
         isLeased: true,
+        // Livestock identification fields (sheep, goat, cattle, pig)
+        earTagNumber: true,
+        earTagRfidNumber: true,
+        tattooNumber: true,
+        brandMark: true,
+        scrapieTagNumber: true,
         // Marketplace program participants (conditional)
         ...(wantProgramParticipants && {
           programParticipants: {
@@ -861,6 +867,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       forSale: boolean;
       inSyndication: boolean;
       isLeased: boolean;
+      // Livestock identification fields
+      earTagNumber: string | null;
+      earTagRfidNumber: string | null;
+      tattooNumber: string | null;
+      brandMark: string | null;
+      scrapieTagNumber: string | null;
     }>;
 
 
@@ -984,6 +996,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.inSyndication !== undefined) data.inSyndication = !!b.inSyndication;
     if (b.isLeased !== undefined) data.isLeased = !!b.isLeased;
 
+    // Livestock identification fields
+    if (b.earTagNumber !== undefined) data.earTagNumber = b.earTagNumber;
+    if (b.earTagRfidNumber !== undefined) data.earTagRfidNumber = b.earTagRfidNumber;
+    if (b.tattooNumber !== undefined) data.tattooNumber = b.tattooNumber;
+    if (b.brandMark !== undefined) data.brandMark = b.brandMark;
+    if (b.scrapieTagNumber !== undefined) data.scrapieTagNumber = b.scrapieTagNumber;
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -1017,6 +1036,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           forSale: true,
           inSyndication: true,
           isLeased: true,
+          // Livestock identification fields
+          earTagNumber: true,
+          earTagRfidNumber: true,
+          tattooNumber: true,
+          brandMark: true,
+          scrapieTagNumber: true,
         },
       });
       reply.send(updated);

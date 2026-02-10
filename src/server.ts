@@ -1,9 +1,15 @@
 // src/server.ts
+
+// Initialize Sentry FIRST - before any other imports
+import { initSentry, captureException, setUser, flush, Sentry } from "./lib/sentry.js";
+initSentry();
+
 import Fastify, { FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import redis from "@fastify/redis";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import prisma from "./prisma.js";
@@ -61,13 +67,25 @@ await app.register(cookie, {
   hook: "onRequest",
 });
 
+// ---------- Redis (optional, for horizontal scaling) ----------
+// When REDIS_URL is set, enables shared state across API instances for:
+// - Rate limiting (enforced across all instances)
+// - Future: WebSocket pub/sub, session store, etc.
+const REDIS_URL = process.env.REDIS_URL;
+if (REDIS_URL) {
+  await app.register(redis, { url: REDIS_URL });
+  app.log.info("Redis connected - rate limits will be shared across instances");
+} else {
+  app.log.info("Redis not configured - using in-memory rate limiting (single instance only)");
+}
+
 // ---------- Rate limit (opt-in per route) ----------
-// IMPORTANT: Uses in-memory store by default. For production with multiple API instances,
-// configure a shared store (Redis) to enforce rate limits across all instances.
+// Uses Redis store when available, falls back to in-memory for local dev.
 // See: https://github.com/fastify/fastify-rate-limit#custom-store
 await app.register(rateLimit, {
   global: false,
   ban: 2,
+  redis: app.redis, // undefined falls back to in-memory
   errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
 });
 
@@ -129,6 +147,14 @@ await app.register(apiUsageTracking);
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/", async () => ({ ok: true }));
+
+// Sentry test endpoint (dev only) - throws an error to verify Sentry capture
+if (IS_DEV) {
+  app.post("/api/v1/__test-sentry-error", async () => {
+    throw new Error("Test Sentry error - this is intentional");
+  });
+}
+
 app.get("/__diag", async (req, reply) => {
   // In production, only superadmins can access diagnostics
   // Non-production allows unauthenticated access for debugging
@@ -205,6 +231,7 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/auth/login") return true;
   if (pathname === "/api/v1/auth/register") return true;
   if (pathname === "/api/v1/auth/dev-login") return true;
+  if (pathname === "/api/v1/__test-sentry-error") return true; // Dev-only Sentry test
   // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
 
   // Mobile auth routes - use JWT tokens, not cookies, so no CSRF needed
@@ -351,6 +378,23 @@ app.addHook("preHandler", async (req, reply) => {
   }
 });
 
+// ---------- Sentry: finish transaction on response ----------
+app.addHook("onResponse", async (req, reply) => {
+  const transaction = (req as any)._sentryTransaction;
+  if (transaction) {
+    // Add response status to transaction
+    transaction.setStatus(reply.statusCode >= 400 ? "internal_error" : "ok");
+    transaction.end();
+  }
+
+  // Set user context if authenticated (for subsequent errors)
+  const userId = (req as any).userId;
+  const tenantId = (req as any).tenantId;
+  if (userId) {
+    setUser({ id: userId, tenantId });
+  }
+});
+
 // Tolerate empty POST bodies on /auth/logout
 app.addHook("preValidation", (req, _reply, done) => {
   if (req.method === "POST" && req.url.includes("/auth/logout") && req.body == null) {
@@ -393,6 +437,14 @@ app.addHook("onRequest", async (req, reply) => {
   const surface = deriveSurface(req);
   (req as any).surface = surface;
   req.log.info({ m: req.method, url: req.url, surface }, "REQ");
+
+  // Start Sentry transaction for performance monitoring
+  const transaction = Sentry.startInactiveSpan({
+    name: `${req.method} ${req.routeOptions?.url || req.url}`,
+    op: "http.server",
+    forceTransaction: true,
+  });
+  (req as any)._sentryTransaction = transaction;
 
   // In production, reject UNKNOWN surfaces immediately (before any auth logic)
   if (surface === "UNKNOWN") {
@@ -658,8 +710,8 @@ app.register(
     api.register(marketplaceVerificationRoutes, { prefix: "/marketplace/verification" }); // /api/v1/marketplace/verification/* (Phone, identity, packages)
     api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
     api.register(marketplaceServiceTagsRoutes, { prefix: "/marketplace/service-tags" }); // /api/v1/marketplace/service-tags/* (Service tags for provider portal)
-    api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload)
-    api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access)
+    // NOTE: marketplaceImageUploadRoutes moved to tenant-scoped subtree for proper auth (req.userId)
+    // NOTE: mediaRoutes moved to tenant-scoped subtree for proper auth (req.tenantId for platform uploads)
     api.register(marketplaceServiceDetailRoutes, { prefix: "/marketplace/services" }); // /api/v1/marketplace/services/:slugOrId (Public service detail)
     api.register(marketplaceAbuseReportsRoutes, { prefix: "/marketplace/listings" }); // /api/v1/marketplace/listings/report (Abuse reporting)
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
@@ -699,15 +751,35 @@ app.setErrorHandler((err: Error, req, reply) => {
     "Unhandled error"
   );
 
+  // Send to Sentry (skip expected errors)
   const code = (safeErr as any).code;
+  const statusCode = (safeErr as any).statusCode;
+  const isExpectedError =
+    code === "P2002" || // Duplicate key
+    code === "P2003" || // Foreign key constraint
+    statusCode === 400 || // Bad request
+    statusCode === 401 || // Unauthorized
+    statusCode === 403 || // Forbidden
+    statusCode === 404;   // Not found
+
+  if (!isExpectedError) {
+    captureException(safeErr, {
+      url: req.url,
+      method: req.method,
+      tenantId: (req as any).tenantId,
+      userId: (req as any).userId,
+      surface: (req as any).surface,
+    });
+  }
+
   if (code === "P2002") {
     return reply.status(409).send({ error: "duplicate", detail: (safeErr as any).meta?.target });
   }
   if (code === "P2003") {
     return reply.status(409).send({ error: "foreign_key_conflict" });
   }
-  if ((safeErr as any).statusCode) {
-    return reply.status((safeErr as any).statusCode).send({ error: safeErr.message });
+  if (statusCode) {
+    return reply.status(statusCode).send({ error: safeErr.message });
   }
   return reply.status(500).send({ error: "internal_error" });
 });
@@ -1084,6 +1156,8 @@ app.register(
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(breederMarketplaceRoutes, { prefix: "/marketplace/breeder" }); // /api/v1/marketplace/breeder/* (dashboard stats)
+    api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload - moved from mixed-auth for proper userId)
+    api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access - moved from public for proper auth)
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
@@ -1310,6 +1384,7 @@ process.on("SIGTERM", async () => {
   app.log.info("SIGTERM received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
 });
@@ -1317,6 +1392,7 @@ process.on("SIGINT", async () => {
   app.log.info("SIGINT received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
 });

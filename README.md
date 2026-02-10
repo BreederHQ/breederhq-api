@@ -68,13 +68,28 @@ Set `COOKIE_DOMAIN=.breederhq.test` and use `/etc/hosts` entries:
 127.0.0.1 marketplace.breederhq.test
 ```
 
+### Redis (Horizontal Scaling)
+
+**Optional.** When `REDIS_URL` is set, the API enables shared state across multiple instances:
+
+- **Rate limiting** - Enforced across all API instances
+- **WebSocket pub/sub** - Real-time messages reach users on any instance
+- **Geocoding cache** - Shared cache avoids duplicate external API calls
+
+**Environment variable:**
+```bash
+REDIS_URL=redis://localhost:6379
+# Or with auth: redis://user:password@host:6379
+```
+
+**Behavior:**
+| Feature | Without Redis | With Redis |
+|---------|---------------|------------|
+| Rate Limiting | Per-instance only | Shared across instances |
+| WebSocket Messages | Local connections only | Broadcast to all instances via pub/sub |
+| Geocoding Cache | In-memory (lost on restart) | Shared with 24h TTL |
+
 ### Rate Limiting
-
-**Development:** Uses in-memory store (suitable for single instance)
-
-**Production:** Requires shared store for multiple API instances
-
-The current implementation uses `@fastify/rate-limit` with default in-memory store. For production deployments with multiple API instances (horizontal scaling), you must configure a shared rate limit store (Redis recommended).
 
 **Rate-limited endpoints:**
 - `POST /auth/login` - 5 req/min
@@ -90,22 +105,4 @@ The current implementation uses `@fastify/rate-limit` with default in-memory sto
 ./scripts/smoke-test-rate-limits.ps1
 ```
 
-**Production configuration example (Redis):**
-```typescript
-// In src/server.ts, modify rateLimit registration:
-import redis from '@fastify/redis'
-
-await app.register(redis, {
-  host: process.env.REDIS_HOST,
-  port: Number(process.env.REDIS_PORT),
-})
-
-await app.register(rateLimit, {
-  global: false,
-  ban: 2,
-  redis: app.redis, // Use Redis instead of in-memory
-  errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
-})
-```
-
-See [@fastify/rate-limit docs](https://github.com/fastify/fastify-rate-limit#custom-store) for store configuration.
+See [@fastify/rate-limit docs](https://github.com/fastify/fastify-rate-limit#custom-store) for advanced store configuration.

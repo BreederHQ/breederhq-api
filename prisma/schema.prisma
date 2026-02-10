@@ -2842,6 +2842,16 @@ model Animal {
   pickupAt           DateTime?
   placedAt           DateTime?
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Livestock Identification (SHEEP, GOAT, CATTLE, PIG only)
+  // These fields are species-conditional in the UI - only shown for livestock
+  // ─────────────────────────────────────────────────────────────────────────────
+  earTagNumber     String? // Visual ear tag number (livestock)
+  earTagRfidNumber String? // Electronic ID / RFID tag number (livestock)
+  tattooNumber     String? // Tattoo ID (livestock, horses)
+  brandMark        String? // Brand mark description (cattle, horses)
+  scrapieTagNumber String? // USDA Scrapie ID (sheep, goats - federal requirement)
+
   tagAssignments             TagAssignment[]
   owners                     AnimalOwner[]
   registryIds                AnimalRegistryIdentifier[]
@@ -3078,6 +3088,9 @@ model MktListingIndividualAnimal {
   // Content
   summary     String? @db.Text
   description String? @db.Text
+
+  // Media
+  coverImageUrl String? @db.VarChar(500)
 
   // Data Drawer Configuration (which data points to show)
   dataDrawerConfig Json @db.JsonB // { identity: {...}, media: {...}, healthTesting: {...}, ... }
@@ -3679,6 +3692,13 @@ model MktListingBreedingProgram {
   acceptReservations Boolean                  @default(false) // Auto-accept deposits vs manual waitlist
   comingSoon         Boolean                  @default(false) // Coming Soon badge for programs in development
 
+  // Display Settings (for marketplace detail page)
+  offspringDisplayMode      String  @default("curated") // "curated" | "window_shopping" | "litter_selection"
+  comingSoonWeeksThreshold  Int     @default(8) // Weeks before expected birth to show "Coming Soon" badge
+  showParentPhotos          Boolean @default(true) // Show dam/sire photos on plan cards
+  showOffspringPhotos       Boolean @default(true) // Show offspring photos in detail drawer
+  showPricing               Boolean @default(true) // Show pricing info publicly
+
   // Pricing & Details
   pricingTiers      Json? // [{tier: "Pet", priceRange: "$2,500", description: "..."}]
   whatsIncluded     String? @db.Text // What comes with each animal
@@ -3801,6 +3821,9 @@ model MktListingBreedingService {
   slug        String  @unique
   headline    String? @db.VarChar(120)
   description String? @db.Text
+
+  // Media
+  coverImageUrl String? @db.VarChar(500)
 
   // Intent: OFFERING | SEEKING | LEASE | ARRANGEMENT
   intent String @db.VarChar(32)
@@ -11443,7 +11466,10 @@ model BreedingGroupMember {
 
   // Actual birth outcome
   actualBirthDate DateTime?
-  offspringCount  Int? // Number of offspring born
+  offspringCount  Int?       // Total number of offspring born
+  liveCount       Int?       // Number born alive
+  stillbornCount  Int?       // Number stillborn
+  birthNotes      String? @db.Text // Complications or notes about the birth
 
   // Notes
   notes String? @db.Text

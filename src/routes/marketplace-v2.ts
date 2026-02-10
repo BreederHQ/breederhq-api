@@ -208,6 +208,7 @@ export default async function marketplaceV2Routes(
       title?: string;
       summary?: string;
       description?: string;
+      coverImageUrl?: string;
       dataDrawerConfig: any;
       listingContent?: any;
       priceModel: string;

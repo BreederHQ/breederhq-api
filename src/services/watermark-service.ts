@@ -529,6 +529,25 @@ export function isImageMimeType(mimeType: string | null): boolean {
 }
 
 /**
+ * Get image dimensions from S3 without loading the full image into memory.
+ * Uses Sharp's metadata extraction which only reads the header.
+ */
+export async function getImageDimensionsFromS3(
+  storageKey: string
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const buffer = await fetchFromS3(storageKey);
+    const metadata = await sharp(buffer).metadata();
+    return {
+      width: metadata.width || 0,
+      height: metadata.height || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve template variables in watermark text
  * Supported: {{businessName}}, {{date}}
  */
