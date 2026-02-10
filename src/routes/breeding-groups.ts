@@ -147,6 +147,9 @@ function toMemberDTO(record: any) {
     expectedBirthEnd: record.expectedBirthEnd?.toISOString() || null,
     actualBirthDate: record.actualBirthDate?.toISOString() || null,
     offspringCount: record.offspringCount,
+    liveCount: record.liveCount,
+    stillbornCount: record.stillbornCount,
+    birthNotes: record.birthNotes,
     notes: record.notes,
     createdAt: record.createdAt.toISOString(),
   };
@@ -192,7 +195,7 @@ const breedingGroupsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           }),
         ]);
 
-        reply.send({ data: groups.map(toGroupDTO), total, page, limit, totalPages: Math.ceil(total / limit) });
+        reply.send({ items: groups.map(toGroupDTO), total, page, limit, totalPages: Math.ceil(total / limit) });
       } catch (err) {
         const { status, payload } = errorReply(err);
         reply.status(status).send(payload);
@@ -623,6 +626,97 @@ const breedingGroupsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         if (!member) return reply.code(404).send({ error: "member_not_found" });
 
         const updated = await prisma.breedingGroupMember.update({ where: { id: member.id }, data: { memberStatus }, include: memberInclude });
+        reply.send(toMemberDTO(updated));
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        reply.status(status).send(payload);
+      }
+    }
+  );
+
+  // POST /breeding/groups/:id/members/:damId/record-birth - Record birth outcome
+  app.post<{
+    Params: { id: string; damId: string };
+    Body: {
+      actualBirthDate: string;
+      offspringCount: number;
+      liveCount?: number;
+      stillbornCount?: number;
+      birthNotes?: string;
+    };
+  }>(
+    "/breeding/groups/:id/members/:damId/record-birth",
+    async (req, reply) => {
+      try {
+        const tenantId = Number((req as any).tenantId);
+        const groupId = toNum(req.params.id);
+        const damId = toNum(req.params.damId);
+        if (!groupId) return reply.code(400).send({ error: "invalid_group_id" });
+        if (!damId) return reply.code(400).send({ error: "invalid_dam_id" });
+
+        const { actualBirthDate, offspringCount, liveCount, stillbornCount, birthNotes } = req.body;
+
+        // Validate required fields
+        if (!actualBirthDate) {
+          return reply.code(400).send({ error: "validation_error", message: "actualBirthDate is required" });
+        }
+        if (offspringCount === undefined || offspringCount === null || offspringCount < 0) {
+          return reply.code(400).send({ error: "validation_error", message: "offspringCount must be >= 0" });
+        }
+
+        const birthDate = parseDate(actualBirthDate);
+        if (!birthDate) {
+          return reply.code(400).send({ error: "validation_error", message: "Invalid date format" });
+        }
+
+        const member = await prisma.breedingGroupMember.findFirst({
+          where: { groupId, damId, group: { tenantId, deletedAt: null } },
+          include: { group: true },
+        });
+        if (!member) return reply.code(404).send({ error: "member_not_found" });
+
+        // Only pregnant members can have birth recorded
+        if (member.memberStatus !== "PREGNANT" && member.memberStatus !== "LAMBING_IMMINENT") {
+          return reply.code(400).send({
+            error: "validation_error",
+            message: "Birth can only be recorded for pregnant members",
+          });
+        }
+
+        // Calculate live/stillborn counts if not provided
+        const live = liveCount ?? offspringCount;
+        const stillborn = stillbornCount ?? 0;
+
+        // Update the member with birth information
+        const updated = await prisma.breedingGroupMember.update({
+          where: { id: member.id },
+          data: {
+            memberStatus: "LAMBED",
+            actualBirthDate: birthDate,
+            offspringCount,
+            liveCount: live,
+            stillbornCount: stillborn,
+            birthNotes: birthNotes || null,
+          },
+          include: memberInclude,
+        });
+
+        // Check if all pregnant members have lambed - if so, update group status
+        const remainingPregnant = await prisma.breedingGroupMember.count({
+          where: {
+            groupId,
+            memberStatus: { in: ["PREGNANT", "LAMBING_IMMINENT"] },
+          },
+        });
+
+        if (remainingPregnant === 0 && member.group.status !== "COMPLETE") {
+          // All births recorded - mark group as complete
+          await prisma.breedingGroup.update({
+            where: { id: groupId },
+            data: { status: "COMPLETE" },
+          });
+        }
+
         reply.send(toMemberDTO(updated));
       } catch (err) {
         const { status, payload } = errorReply(err);

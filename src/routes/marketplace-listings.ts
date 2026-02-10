@@ -274,6 +274,7 @@ export default async function marketplaceListingsRoutes(
             metaDescription,
             keywords,
             status: "DRAFT",
+            sourceType: "PROVIDER",  // Provider-created listing
           },
         });
 
@@ -981,6 +982,8 @@ export default async function marketplaceListingsRoutes(
     const zip = query.zip ? String(query.zip).trim() : undefined;
     const priceMin = query.priceMin ? parseInt(query.priceMin, 10) : undefined;
     const priceMax = query.priceMax ? parseInt(query.priceMax, 10) : undefined;
+    // Tenant/breeder filter - can be tenant slug or numeric ID
+    const tenantIdParam = query.tenantId ? String(query.tenantId).trim() : undefined;
 
     // Parse sort
     const sortParam = query.sort || "-publishedAt";
@@ -1002,6 +1005,16 @@ export default async function marketplaceListingsRoutes(
       }
       if (category) where.category = category.toLowerCase();
       if (subcategory) where.subcategory = subcategory;
+      // Filter by tenant (breeder) - supports both numeric ID and slug
+      if (tenantIdParam) {
+        const isNumericTenant = /^\d+$/.test(tenantIdParam);
+        if (isNumericTenant) {
+          where.tenantId = parseInt(tenantIdParam, 10);
+        } else {
+          // Filter by tenant slug
+          where.tenant = { slug: tenantIdParam };
+        }
+      }
       if (city) where.city = { contains: city, mode: "insensitive" };
       if (state) where.state = { contains: state, mode: "insensitive" };
       if (zip) where.zip = { startsWith: zip };

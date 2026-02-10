@@ -29,6 +29,22 @@ function errorReply(err: unknown) {
   return { status: 500, payload: { error: "internal_error", message: msg } };
 }
 
+// Map frontend string IDs to benchmark protocol names in the database
+const BENCHMARK_STRING_ID_TO_NAME: Record<string, string> = {
+  benchmark_ens: "Early Neurological Stimulation (ENS)",
+  benchmark_esi: "Early Scent Introduction (ESI)",
+  benchmark_rule_of_7s: "Rule of 7s Socialization",
+  benchmark_handling: "Handling Protocol",
+  benchmark_sound: "Sound Desensitization",
+  benchmark_crate: "Crate Training Introduction",
+  benchmark_cat_socialization: "Kitten Socialization Program",
+  benchmark_cat_litter: "Litter Training Basics",
+  benchmark_horse_imprint: "Foal Imprinting Protocol",
+  benchmark_horse_halter: "Halter Training Basics",
+  benchmark_goat_handling: "Kid Handling Protocol",
+  benchmark_goat_bottle: "Bottle Feeding Protocol",
+};
+
 // Include protocol details in assignment response
 const assignmentInclude = {
   protocol: {
@@ -110,10 +126,32 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       }
 
       const body = req.body as any;
-      const protocolId = idNum(body.protocolId);
+      // Support both camelCase (protocolId) and snake_case (protocol_id)
+      const rawProtocolId = body.protocolId ?? body.protocol_id;
 
-      if (!protocolId) {
+      if (!rawProtocolId) {
         return reply.code(400).send({ error: "protocol_id_required" });
+      }
+
+      // Handle both numeric IDs (custom protocols) and string IDs (benchmark protocols)
+      let protocolId: number | null = null;
+      let benchmarkStringId: string | null = null;
+
+      if (typeof rawProtocolId === "number") {
+        protocolId = rawProtocolId > 0 ? rawProtocolId : null;
+      } else if (typeof rawProtocolId === "string") {
+        // Try to parse as number first
+        const numId = parseInt(rawProtocolId, 10);
+        if (!isNaN(numId) && numId > 0) {
+          protocolId = numId;
+        } else {
+          // It's a string ID (benchmark protocol like "benchmark_rule_of_7s")
+          benchmarkStringId = rawProtocolId;
+        }
+      }
+
+      if (!protocolId && !benchmarkStringId) {
+        return reply.code(400).send({ error: "invalid_protocol_id" });
       }
 
       // Verify group belongs to tenant
@@ -126,14 +164,31 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       }
 
       // Get protocol (own or benchmark)
-      const protocol = await prisma.rearingProtocol.findFirst({
-        where: {
-          id: protocolId,
+      // For benchmark protocols, we look up by name using the string ID mapping
+      // For custom protocols, we look up by numeric ID
+      let protocolWhere;
+      if (benchmarkStringId) {
+        const benchmarkName = BENCHMARK_STRING_ID_TO_NAME[benchmarkStringId];
+        if (!benchmarkName) {
+          return reply.code(400).send({ error: "unknown_benchmark_protocol" });
+        }
+        protocolWhere = {
+          name: benchmarkName,
+          isBenchmark: true,
+          tenantId: null,
+        };
+      } else {
+        protocolWhere = {
+          id: protocolId!,
           OR: [
             { tenantId, deletedAt: null },
             { isBenchmark: true, tenantId: null },
           ],
-        },
+        };
+      }
+
+      const protocol = await prisma.rearingProtocol.findFirst({
+        where: protocolWhere,
         include: {
           stages: {
             orderBy: { order: "asc" },
@@ -150,9 +205,9 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "protocol_not_found" });
       }
 
-      // Check for existing assignment
+      // Check for existing assignment (use protocol.id which is always the numeric id)
       const existingAssignment = await prisma.rearingProtocolAssignment.findFirst({
-        where: { offspringGroupId: groupId, protocolId },
+        where: { offspringGroupId: groupId, protocolId: protocol.id },
       });
 
       if (existingAssignment) {
@@ -170,19 +225,22 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         // Increment usage count for non-benchmarks
         if (!protocol.isBenchmark) {
           await tx.rearingProtocol.update({
-            where: { id: protocolId },
+            where: { id: protocol.id },
             data: { usageCount: { increment: 1 } },
           });
         }
+
+        // Support both camelCase and snake_case for startDate
+        const startDateRaw = body.startDate ?? body.start_date;
 
         return tx.rearingProtocolAssignment.create({
           data: {
             tenantId,
             offspringGroupId: groupId,
-            protocolId,
+            protocolId: protocol.id,
             protocolVersion: protocol.version,
             protocolSnapshot: protocol as any, // Store full protocol JSON
-            startDate: body.startDate ? new Date(body.startDate) : new Date(),
+            startDate: startDateRaw ? new Date(startDateRaw) : new Date(),
             status: "ACTIVE",
             totalActivities,
             notes: trimToNull(body.notes),

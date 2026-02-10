@@ -88,6 +88,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         slug: service.slug,
         headline: service.headline,
         description: service.description,
+        coverImageUrl: service.coverImageUrl,
         intent: service.intent,
         feeCents: service.feeCents,
         feeDirection: service.feeDirection,
@@ -190,6 +191,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
 
       return reply.send({
         ...service,
+        coverImageUrl: service.coverImageUrl || null,
         availableFrom: service.availableFrom?.toISOString() || null,
         availableTo: service.availableTo?.toISOString() || null,
         publishedAt: service.publishedAt?.toISOString() || null,
@@ -225,6 +227,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     Body: {
       headline: string;
       description?: string;
+      coverImageUrl?: string;
       intent: string;
       animalIds?: number[];
       feeCents?: number;
@@ -251,6 +254,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const {
       headline,
       description,
+      coverImageUrl,
       intent,
       animalIds,
       feeCents,
@@ -295,6 +299,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
           slug: `temp-${Date.now()}`,
           headline,
           description: description || null,
+          coverImageUrl: coverImageUrl || null,
           intent: intent.toLowerCase(),
           feeCents: feeCents || null,
           feeDirection: feeDirection || null,
@@ -369,6 +374,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       return reply.code(201).send({
         ...result,
         slug: finalSlug,
+        coverImageUrl: result?.coverImageUrl || null,
         availableFrom: result?.availableFrom?.toISOString() || null,
         availableTo: result?.availableTo?.toISOString() || null,
         createdAt: result?.createdAt.toISOString(),
@@ -394,6 +400,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     Body: {
       headline?: string;
       description?: string;
+      coverImageUrl?: string;
       intent?: string;
       animalIds?: number[];
       feeCents?: number;
@@ -523,6 +530,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
 
       return reply.send({
         ...result,
+        coverImageUrl: result?.coverImageUrl || null,
         availableFrom: result?.availableFrom?.toISOString() || null,
         availableTo: result?.availableTo?.toISOString() || null,
         publishedAt: result?.publishedAt?.toISOString() || null,
