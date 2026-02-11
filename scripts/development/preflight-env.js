@@ -15,7 +15,8 @@ const REQUIRED_VARS = [
     name: 'COOKIE_SECRET',
     minLength: 32,
     description: 'Session cookie signing secret',
-    hint: 'Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"'
+    hint: 'Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+    skipIf: () => process.env.USE_SECRETS_MANAGER === 'true'
   },
   {
     name: 'DATABASE_URL',
@@ -23,7 +24,7 @@ const REQUIRED_VARS = [
     description: 'PostgreSQL connection string',
     hint: 'Set to your Neon pooler connection URL',
     // Skip check if using AWS Secrets Manager
-    skipIf: () => process.env.AWS_SECRET_NAME && process.env.AWS_ACCESS_KEY_ID
+    skipIf: () => process.env.USE_SECRETS_MANAGER === 'true'
   }
 ];
 
