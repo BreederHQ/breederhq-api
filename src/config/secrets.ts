@@ -18,7 +18,7 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
   }
 
   // PRODUCTION: Fetch database credentials from AWS Secrets Manager
-  const secretName = process.env.AWS_SECRET_NAME || "breederhq/prod";
+  const secretName = process.env.AWS_SECRET_NAME || `breederhq-api/${ NODE_ENV }`;
   const region = process.env.AWS_REGION || "us-east-2";
 
   const client = new SecretsManagerClient({
