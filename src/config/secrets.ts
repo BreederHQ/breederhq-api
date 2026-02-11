@@ -11,7 +11,7 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
   const NODE_ENV = process.env.NODE_ENV || "development";
 
   // LOCAL DEVELOPMENT: Return empty (use existing .env files)
-  if (NODE_ENV !== "production") {
+  if (process.env.USE_SECRETS_MANAGER !== "true") {
     console.log("✓ Development mode - using .env files");
     secretsCache = {};
     return secretsCache;
