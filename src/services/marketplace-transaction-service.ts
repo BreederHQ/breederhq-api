@@ -11,7 +11,7 @@
 
 import prisma from "../prisma.js";
 import type { MarketplaceTransaction, MktListingBreederService, MarketplaceProvider, MarketplaceUser } from "@prisma/client";
-import { stripe } from "./stripe-service.js";
+import { getStripe } from "./stripe-service.js";
 
 /**
  * Fee calculation result
@@ -489,7 +489,7 @@ export async function createTransactionCheckout(
   }
 
   // Create Stripe Checkout session
-  const session = await stripe.checkout.sessions.create({
+  const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     customer_email: transaction.client.email,
     line_items: [
@@ -701,7 +701,7 @@ export async function refundTransaction(
     try {
       // Create refund through Stripe API
       // This will automatically reverse the application fee and transfer proportionally
-      await stripe.refunds.create({
+      await getStripe().refunds.create({
         payment_intent: invoice.stripePaymentIntentId,
         amount: refundAmountCents, // Stripe API uses cents
         reason: "requested_by_customer",

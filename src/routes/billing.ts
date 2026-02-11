@@ -15,7 +15,7 @@ import {
   addSubscriptionAddOn,
   cancelSubscription,
   syncSubscriptionFromStripe,
-  stripe,
+  getStripe,
 } from "../services/stripe-service.js";
 import prisma from "../prisma.js";
 import { auditSuccess } from "../services/audit.js";
@@ -431,7 +431,7 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Verify webhook signature
         let event;
         try {
-          event = stripe.webhooks.constructEvent(
+          event = getStripe().webhooks.constructEvent(
             (req as any).rawBody as Buffer,
             signature as string,
             STRIPE_WEBHOOK_SECRET

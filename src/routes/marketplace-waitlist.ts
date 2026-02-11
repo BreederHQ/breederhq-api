@@ -15,7 +15,7 @@ import prisma from "../prisma.js";
 import { parseVerifiedSession } from "../utils/session.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
-import { stripe } from "../services/stripe-service.js";
+import { getStripe } from "../services/stripe-service.js";
 import { sendWaitlistSignupNotificationEmail } from "../services/email-service.js";
 import { sendWaitlistConfirmationToUser } from "../services/marketplace-email-service.js";
 
@@ -681,7 +681,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         },
       };
 
-      const session = await stripe.checkout.sessions.create(checkoutConfig);
+      const session = await getStripe().checkout.sessions.create(checkoutConfig);
 
       if (!session.url) {
         return reply.code(500).send({ error: "checkout_session_failed" });
