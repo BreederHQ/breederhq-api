@@ -32,7 +32,7 @@ import {
   provideRequestedInfo,
 } from "../services/marketplace-verification-service.js";
 import prisma from "../prisma.js";
-import { stripe } from "../services/stripe-service.js";
+import { getStripe } from "../services/stripe-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -227,7 +227,7 @@ export default async function marketplaceVerificationRoutes(
     try {
       // B-03 FIX: Create Stripe PaymentIntent for verification fee
       // Store packageType in metadata - submittedInfo will be passed in complete call
-      const paymentIntent = await stripe.paymentIntents.create({
+      const paymentIntent = await getStripe().paymentIntents.create({
         amount: amountCents,
         currency: "usd",
         metadata: {
@@ -283,7 +283,7 @@ export default async function marketplaceVerificationRoutes(
 
     try {
       // B-03 FIX: Verify payment actually succeeded
-      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const paymentIntent = await getStripe().paymentIntents.retrieve(paymentIntentId);
 
       // Verify this payment is for this provider
       if (paymentIntent.metadata.providerId !== String(provider.id)) {
@@ -491,7 +491,7 @@ export default async function marketplaceVerificationRoutes(
     try {
       // B-03 FIX: Create Stripe PaymentIntent for verification fee
       // Store packageType in metadata - submittedInfo will be passed in complete call
-      const paymentIntent = await stripe.paymentIntents.create({
+      const paymentIntent = await getStripe().paymentIntents.create({
         amount: amountCents,
         currency: "usd",
         metadata: {
@@ -537,7 +537,7 @@ export default async function marketplaceVerificationRoutes(
 
     try {
       // B-03 FIX: Verify payment actually succeeded
-      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const paymentIntent = await getStripe().paymentIntents.retrieve(paymentIntentId);
 
       // Verify this payment is for this user
       if (paymentIntent.metadata.userId !== String(userId)) {
