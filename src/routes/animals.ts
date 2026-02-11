@@ -3222,6 +3222,322 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  /**
+   * GET /animals/export/nsip
+   * Export sheep data in Pedigree Master-compatible format for NSIP submission
+   * Query params:
+   *   - birthDateFrom: ISO date string (filter offspring born after this date)
+   *   - birthDateTo: ISO date string (filter offspring born before this date)
+   *   - includeWeights: boolean (include birth/weaning/post-weaning weights)
+   *   - includeParentage: boolean (include sire/dam registration numbers)
+   */
+  app.get("/animals/export/nsip", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const q = req.query as {
+      birthDateFrom?: string;
+      birthDateTo?: string;
+      includeWeights?: string;
+      includeParentage?: string;
+    };
+
+    try {
+      const includeWeights = q.includeWeights !== "false";
+      const includeParentage = q.includeParentage !== "false";
+
+      // Build date filters
+      const dateFilters: { gte?: Date; lte?: Date } = {};
+      if (q.birthDateFrom) {
+        dateFilters.gte = new Date(q.birthDateFrom);
+      }
+      if (q.birthDateTo) {
+        dateFilters.lte = new Date(q.birthDateTo);
+      }
+
+      // Fetch sheep offspring with related data
+      const offspring = await prisma.offspring.findMany({
+        where: {
+          tenantId,
+          group: {
+            species: "SHEEP",
+          },
+          bornAt: Object.keys(dateFilters).length > 0 ? dateFilters : undefined,
+        },
+        include: {
+          group: {
+            select: {
+              species: true,
+            },
+          },
+          promotedAnimal: {
+            select: {
+              id: true,
+              name: true,
+              sex: true,
+              breed: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          NeonatalCareEntries: includeWeights
+            ? {
+                select: {
+                  weightOz: true,
+                  recordedAt: true,
+                },
+                orderBy: { recordedAt: "asc" },
+              }
+            : undefined,
+        },
+        orderBy: { bornAt: "asc" },
+      });
+
+      if (offspring.length === 0) {
+        return reply.code(404).send({
+          error: "no_data",
+          message: "No sheep offspring found for the specified date range",
+        });
+      }
+
+      // Helper to get primary registration number
+      const getRegistrationNumber = (registryIds: Array<{ identifier: string; registry: { name: string } }>) => {
+        // Prefer NSIP or ASI registry, then first available
+        const nsipReg = registryIds.find((r) => r.registry.name.toLowerCase().includes("nsip"));
+        if (nsipReg) return nsipReg.identifier;
+
+        const asiReg = registryIds.find((r) => r.registry.name.toLowerCase().includes("asi"));
+        if (asiReg) return asiReg.identifier;
+
+        return registryIds[0]?.identifier || "";
+      };
+
+      // Helper to get weaning weight (weight at 60-90 days)
+      const getWeaningWeight = (
+        birthDate: Date,
+        entries: Array<{ weightOz: any; recordedAt: Date }>
+      ): number | null => {
+        const targetDays = [90, 75, 60]; // Prefer 90-day, then 75, then 60
+        for (const days of targetDays) {
+          const targetDate = new Date(birthDate);
+          targetDate.setDate(targetDate.getDate() + days);
+
+          // Find entry closest to target date (within 7 days)
+          const closest = entries.find((e) => {
+            const entryDate = new Date(e.recordedAt);
+            const diffDays = Math.abs((entryDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
+            return diffDays <= 7;
+          });
+
+          if (closest && closest.weightOz) {
+            // Convert oz to lbs
+            return Number(closest.weightOz) / 16;
+          }
+        }
+        return null;
+      };
+
+      // Helper to get post-weaning weight (weight at 120+ days)
+      const getPostWeaningWeight = (
+        birthDate: Date,
+        entries: Array<{ weightOz: any; recordedAt: Date }>
+      ): number | null => {
+        const targetDate = new Date(birthDate);
+        targetDate.setDate(targetDate.getDate() + 120);
+
+        // Find entry closest to 120 days or later
+        const postWeaningEntries = entries.filter((e) => {
+          const entryDate = new Date(e.recordedAt);
+          return entryDate >= targetDate;
+        });
+
+        if (postWeaningEntries.length > 0 && postWeaningEntries[0].weightOz) {
+          return Number(postWeaningEntries[0].weightOz) / 16;
+        }
+        return null;
+      };
+
+      // Count siblings for birth type
+      const siblingCounts = new Map<number, number>();
+      for (const o of offspring) {
+        const damId = o.damId;
+        const birthDateStr = o.bornAt?.toISOString().split("T")[0];
+        const key = `${damId}-${birthDateStr}`;
+        siblingCounts.set(o.id, (siblingCounts.get(o.id) || 0) + 1);
+      }
+
+      // Group by dam+birth date for sibling count
+      const damBirthGroups = new Map<string, number[]>();
+      for (const o of offspring) {
+        const key = `${o.damId}-${o.bornAt?.toISOString().split("T")[0]}`;
+        if (!damBirthGroups.has(key)) {
+          damBirthGroups.set(key, []);
+        }
+        damBirthGroups.get(key)!.push(o.id);
+      }
+
+      // Build tab-delimited rows (Pedigree Master format)
+      const rows: string[][] = [];
+
+      // Header row
+      const headers = [
+        "Animal_ID",
+        "Birth_Date",
+        "Sex",
+        "Breed",
+        "Birth_Type",
+        "Rear_Type",
+      ];
+
+      if (includeWeights) {
+        headers.push("Birth_Wt_Lb", "Wean_Wt_Lb", "Post_Wean_Wt_Lb");
+      }
+
+      if (includeParentage) {
+        headers.push("Sire_ID", "Dam_ID");
+      }
+
+      rows.push(headers);
+
+      // Data rows
+      for (const o of offspring) {
+        const animal = o.promotedAnimal;
+        const dam = o.dam;
+        const sire = o.sire;
+
+        // Determine animal ID (prefer scrapie tag, then registration, then internal ID)
+        // If offspring is promoted to Animal, use animal data; otherwise use offspring data
+        const animalId =
+          animal?.scrapieTagNumber ||
+          (animal?.registryIds ? getRegistrationNumber(animal.registryIds as any) : "") ||
+          o.name ||
+          String(animal?.id || o.id);
+
+        // Birth date
+        const birthDate = o.bornAt ? new Date(o.bornAt).toISOString().split("T")[0] : "";
+
+        // Sex (M/F for Pedigree Master) - use offspring sex if no promoted animal
+        const sex = (animal?.sex || o.sex) === "MALE" ? "M" : (animal?.sex || o.sex) === "FEMALE" ? "F" : "";
+
+        // Breed - use offspring breed if no promoted animal
+        const breed = animal?.breed || o.breed || "";
+
+        // Birth type (1=single, 2=twin, 3=triplet, etc.)
+        const damBirthKey = `${o.damId}-${o.bornAt?.toISOString().split("T")[0]}`;
+        const siblingCount = damBirthGroups.get(damBirthKey)?.length || 1;
+        const birthType = String(siblingCount);
+
+        // Rear type (assume same as birth type unless orphaned)
+        const rearType = birthType;
+
+        const row = [animalId, birthDate, sex, breed, birthType, rearType];
+
+        if (includeWeights) {
+          // Birth weight (convert oz to lbs if stored in oz)
+          let birthWt = "";
+          if (o.birthWeight) {
+            birthWt = o.birthWeight.toFixed(1);
+          } else if (o.birthWeightOz) {
+            birthWt = (Number(o.birthWeightOz) / 16).toFixed(1);
+          }
+
+          // Weaning weight
+          let weanWt = "";
+          if (o.bornAt && o.NeonatalCareEntries && o.NeonatalCareEntries.length > 0) {
+            const ww = getWeaningWeight(new Date(o.bornAt), o.NeonatalCareEntries as any);
+            if (ww !== null) {
+              weanWt = ww.toFixed(1);
+            }
+          }
+
+          // Post-weaning weight
+          let postWeanWt = "";
+          if (o.bornAt && o.NeonatalCareEntries && o.NeonatalCareEntries.length > 0) {
+            const pww = getPostWeaningWeight(new Date(o.bornAt), o.NeonatalCareEntries as any);
+            if (pww !== null) {
+              postWeanWt = pww.toFixed(1);
+            }
+          }
+
+          row.push(birthWt, weanWt, postWeanWt);
+        }
+
+        if (includeParentage) {
+          // Sire ID
+          const sireId =
+            sire?.scrapieTagNumber ||
+            (sire?.registryIds ? getRegistrationNumber(sire.registryIds as any) : "") ||
+            String(sire?.id || "");
+
+          // Dam ID
+          const damId =
+            dam?.scrapieTagNumber ||
+            (dam?.registryIds ? getRegistrationNumber(dam.registryIds as any) : "") ||
+            String(dam?.id || "");
+
+          row.push(sireId, damId);
+        }
+
+        rows.push(row);
+      }
+
+      // Generate tab-delimited content (Pedigree Master format)
+      const content = rows.map((row) => row.join("\t")).join("\n");
+
+      // Generate filename with date
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `nsip-export-${today}.txt`;
+
+      reply
+        .header("Content-Type", "text/tab-separated-values")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(content);
+    } catch (error) {
+      console.error("NSIP export error:", error);
+      return reply.code(500).send({
+        error: "export_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // Lineage / Pedigree endpoints
   // ──────────────────────────────────────────────────────────────────────────

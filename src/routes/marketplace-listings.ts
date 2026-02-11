@@ -838,6 +838,11 @@ export default async function marketplaceListingsRoutes(
 
       return reply.send({
         ok: true,
+        listing: {
+          id: updated.id,
+          status: updated.status,
+          publishedAt: updated.publishedAt?.toISOString() || new Date().toISOString(),
+        },
       });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to publish listing");
@@ -892,6 +897,10 @@ export default async function marketplaceListingsRoutes(
 
       return reply.send({
         ok: true,
+        listing: {
+          id: updated.id,
+          status: updated.status,
+        },
       });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to unpublish listing");
@@ -1052,6 +1061,7 @@ export default async function marketplaceListingsRoutes(
                 id: true,
                 businessName: true,
                 logoUrl: true,
+                coverImageUrl: true,
                 averageRating: true,
                 totalReviews: true,
                 city: true,
@@ -1079,6 +1089,7 @@ export default async function marketplaceListingsRoutes(
               name: listing.provider.businessName,
               businessName: listing.provider.businessName,
               logoUrl: listing.provider.logoUrl,
+              coverImageUrl: listing.provider.coverImageUrl,
               averageRating: listing.provider.averageRating ? String(listing.provider.averageRating) : "0",
               totalReviews: listing.provider.totalReviews || 0,
               city: listing.provider.city,
@@ -1091,6 +1102,7 @@ export default async function marketplaceListingsRoutes(
               name: listing.tenant?.name || "Unknown Breeder",
               businessName: listing.tenant?.name || "Unknown Breeder",
               logoUrl: null,
+              coverImageUrl: null,
               averageRating: "0",
               totalReviews: 0,
               city: listing.city,

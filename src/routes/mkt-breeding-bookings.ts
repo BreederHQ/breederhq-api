@@ -1,6 +1,6 @@
-// src/routes/mkt-breeding-services.ts
-// Breeding Services Listings Management Routes
-// Authenticated routes for breeders to manage breeding service offerings
+// src/routes/mkt-breeding-bookings.ts
+// Breeding Bookings Listings Management Routes
+// Authenticated routes for breeders to manage breeding booking offerings
 // (stud services, mare leasing, breeding arrangements, etc.)
 
 import type { FastifyInstance } from "fastify";
@@ -27,10 +27,10 @@ function generateSlug(headline: string, id: number): string {
   return `bs-${base}-${id}`;
 }
 
-export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
+export default async function mktBreedingBookingsRoutes(app: FastifyInstance) {
   /**
-   * GET /api/v1/mkt-breeding-services
-   * Get all breeding service listings for the authenticated breeder
+   * GET /api/v1/mkt-breeding-bookings
+   * Get all breeding booking listings for the authenticated breeder
    */
   app.get<{
     Querystring: {
@@ -58,14 +58,14 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const services = await prisma.mktListingBreedingService.findMany({
+      const bookings = await prisma.mktListingBreedingBooking.findMany({
         where,
         take: limit ? parseInt(limit, 10) : undefined,
         orderBy: {
           createdAt: "desc",
         },
         include: {
-          animalAssignments: {
+          animals: {
             include: {
               animal: {
                 select: {
@@ -82,47 +82,47 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       });
 
       // Transform to DTO
-      const items = services.map((service) => ({
-        id: service.id,
-        tenantId: service.tenantId,
-        slug: service.slug,
-        headline: service.headline,
-        description: service.description,
-        coverImageUrl: service.coverImageUrl,
-        intent: service.intent,
-        feeCents: service.feeCents,
-        feeDirection: service.feeDirection,
-        breedingMethods: service.breedingMethods,
-        guaranteeType: service.guaranteeType,
-        guaranteeTerms: service.guaranteeTerms,
-        healthCertRequired: service.healthCertRequired,
-        cogginsCurrent: service.cogginsCurrent,
-        cultureRequired: service.cultureRequired,
-        contractRequired: service.contractRequired,
-        customRequirements: service.customRequirements,
-        availableFrom: service.availableFrom?.toISOString() || null,
-        availableTo: service.availableTo?.toISOString() || null,
-        blackoutDates: service.blackoutDates,
-        maxBookingsPerPeriod: service.maxBookingsPerPeriod,
-        acceptingInquiries: service.acceptingInquiries,
-        status: service.status,
-        publishedAt: service.publishedAt?.toISOString() || null,
-        pausedAt: service.pausedAt?.toISOString() || null,
-        viewCount: service.viewCount,
-        inquiryCount: service.inquiryCount,
-        notes: service.notes,
-        createdAt: service.createdAt.toISOString(),
-        updatedAt: service.updatedAt.toISOString(),
-        animals: service.animalAssignments.map((a) => ({
-          id: a.animal.id,
-          name: a.animal.name,
-          species: a.animal.species,
-          sex: a.animal.sex,
-          photoUrl: a.animal.photoUrl,
-          featured: a.featured,
-          feeOverride: a.feeOverride,
-          maxBookings: a.maxBookings,
-          bookingsClosed: a.bookingsClosed,
+      const items = bookings.map((booking) => ({
+        id: booking.id,
+        tenantId: booking.tenantId,
+        slug: booking.slug,
+        headline: booking.headline,
+        description: booking.description,
+        coverImageUrl: booking.coverImageUrl,
+        intent: booking.intent,
+        feeCents: booking.feeCents,
+        feeDirection: booking.feeDirection,
+        breedingMethods: booking.breedingMethods,
+        guaranteeType: booking.guaranteeType,
+        guaranteeTerms: booking.guaranteeTerms,
+        healthCertRequired: booking.healthCertRequired,
+        cogginsCurrent: booking.cogginsCurrent,
+        cultureRequired: booking.cultureRequired,
+        contractRequired: booking.contractRequired,
+        customRequirements: booking.customRequirements,
+        availableFrom: booking.availableFrom?.toISOString() || null,
+        availableTo: booking.availableTo?.toISOString() || null,
+        blackoutDates: booking.blackoutDates,
+        maxBookingsPerPeriod: booking.maxBookingsPerPeriod,
+        acceptingInquiries: booking.acceptingInquiries,
+        status: booking.status,
+        publishedAt: booking.publishedAt?.toISOString() || null,
+        pausedAt: booking.pausedAt?.toISOString() || null,
+        viewCount: booking.viewCount,
+        inquiryCount: booking.inquiryCount,
+        notes: booking.notes,
+        createdAt: booking.createdAt.toISOString(),
+        updatedAt: booking.updatedAt.toISOString(),
+        animals: booking.animals.map((ba) => ({
+          id: ba.animal.id,
+          name: ba.animal.name,
+          species: ba.animal.species,
+          sex: ba.animal.sex,
+          photoUrl: ba.animal.photoUrl,
+          featured: ba.featured,
+          feeOverride: ba.feeOverride,
+          maxBookings: ba.maxBookings,
+          bookingsClosed: ba.bookingsClosed,
         })),
       }));
 
@@ -131,17 +131,17 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         total: items.length,
       });
     } catch (error) {
-      console.error("Error fetching breeding services:", error);
+      console.error("Error fetching breeding bookings:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to fetch breeding service listings",
+        message: "Failed to fetch breeding booking listings",
       });
     }
   });
 
   /**
-   * GET /api/v1/mkt-breeding-services/:id
-   * Get a specific breeding service listing
+   * GET /api/v1/mkt-breeding-bookings/:id
+   * Get a specific breeding booking listing
    */
   app.get<{
     Params: {
@@ -151,22 +151,22 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
-    const serviceId = parseInt(req.params.id, 10);
-    if (isNaN(serviceId)) {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) {
       return reply.code(400).send({
         error: "invalid_id",
-        message: "Invalid service ID",
+        message: "Invalid booking ID",
       });
     }
 
     try {
-      const service = await prisma.mktListingBreedingService.findFirst({
+      const booking = await prisma.mktListingBreedingBooking.findFirst({
         where: {
-          id: serviceId,
+          id: bookingId,
           tenantId,
         },
         include: {
-          animalAssignments: {
+          animals: {
             include: {
               animal: {
                 select: {
@@ -182,46 +182,49 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         },
       });
 
-      if (!service) {
+      if (!booking) {
         return reply.code(404).send({
           error: "not_found",
-          message: "Breeding service not found",
+          message: "Breeding booking not found",
         });
       }
 
+      // Transform animals to match frontend DTO
+      const animals = booking.animals.map((ba) => ({
+        id: ba.animal.id,
+        name: ba.animal.name,
+        species: ba.animal.species,
+        sex: ba.animal.sex,
+        photoUrl: ba.animal.photoUrl,
+        featured: ba.featured,
+        feeOverride: ba.feeOverride,
+        maxBookings: ba.maxBookings,
+        bookingsClosed: ba.bookingsClosed,
+      }));
+
       return reply.send({
-        ...service,
-        coverImageUrl: service.coverImageUrl || null,
-        availableFrom: service.availableFrom?.toISOString() || null,
-        availableTo: service.availableTo?.toISOString() || null,
-        publishedAt: service.publishedAt?.toISOString() || null,
-        pausedAt: service.pausedAt?.toISOString() || null,
-        createdAt: service.createdAt.toISOString(),
-        updatedAt: service.updatedAt.toISOString(),
-        animals: service.animalAssignments.map((a) => ({
-          id: a.animal.id,
-          name: a.animal.name,
-          species: a.animal.species,
-          sex: a.animal.sex,
-          photoUrl: a.animal.photoUrl,
-          featured: a.featured,
-          feeOverride: a.feeOverride,
-          maxBookings: a.maxBookings,
-          bookingsClosed: a.bookingsClosed,
-        })),
+        ...booking,
+        coverImageUrl: booking.coverImageUrl || null,
+        availableFrom: booking.availableFrom?.toISOString() || null,
+        availableTo: booking.availableTo?.toISOString() || null,
+        publishedAt: booking.publishedAt?.toISOString() || null,
+        pausedAt: booking.pausedAt?.toISOString() || null,
+        createdAt: booking.createdAt.toISOString(),
+        updatedAt: booking.updatedAt.toISOString(),
+        animals,
       });
     } catch (error) {
-      console.error("Error fetching breeding service:", error);
+      console.error("Error fetching breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to fetch breeding service",
+        message: "Failed to fetch breeding booking",
       });
     }
   });
 
   /**
-   * POST /api/v1/mkt-breeding-services
-   * Create a new breeding service listing
+   * POST /api/v1/mkt-breeding-bookings
+   * Create a new breeding booking listing
    */
   app.post<{
     Body: {
@@ -292,8 +295,8 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      // Create service with a temporary slug
-      const service = await prisma.mktListingBreedingService.create({
+      // Create booking with a temporary slug and animal assignments
+      const booking = await prisma.mktListingBreedingBooking.create({
         data: {
           tenantId,
           slug: `temp-${Date.now()}`,
@@ -318,44 +321,27 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
           acceptingInquiries: acceptingInquiries ?? true,
           notes: notes || null,
           status: "DRAFT",
+          // Create animal assignments if provided
+          animals: animalIds && animalIds.length > 0 ? {
+            create: animalIds.map((animalId) => ({
+              animalId,
+            })),
+          } : undefined,
         },
       });
 
       // Update slug with ID
-      const finalSlug = generateSlug(headline, service.id);
-      await prisma.mktListingBreedingService.update({
-        where: { id: service.id },
+      const finalSlug = generateSlug(headline, booking.id);
+      await prisma.mktListingBreedingBooking.update({
+        where: { id: booking.id },
         data: { slug: finalSlug },
       });
 
-      // Add animal assignments if provided
-      if (animalIds && animalIds.length > 0) {
-        // Verify animals belong to this tenant
-        const animals = await prisma.animal.findMany({
-          where: {
-            id: { in: animalIds },
-            tenantId,
-          },
-          select: { id: true },
-        });
-
-        const validAnimalIds = animals.map((a) => a.id);
-
-        if (validAnimalIds.length > 0) {
-          await prisma.mktBreedingServiceAnimal.createMany({
-            data: validAnimalIds.map((animalId) => ({
-              serviceId: service.id,
-              animalId,
-            })),
-          });
-        }
-      }
-
-      // Fetch the complete service with animals
-      const result = await prisma.mktListingBreedingService.findUnique({
-        where: { id: service.id },
+      // Fetch the complete booking with animals
+      const result = await prisma.mktListingBreedingBooking.findUnique({
+        where: { id: booking.id },
         include: {
-          animalAssignments: {
+          animals: {
             include: {
               animal: {
                 select: {
@@ -371,6 +357,19 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         },
       });
 
+      // Transform animals to match frontend DTO
+      const animals = result?.animals.map((ba) => ({
+        id: ba.animal.id,
+        name: ba.animal.name,
+        species: ba.animal.species,
+        sex: ba.animal.sex,
+        photoUrl: ba.animal.photoUrl,
+        featured: ba.featured,
+        feeOverride: ba.feeOverride,
+        maxBookings: ba.maxBookings,
+        bookingsClosed: ba.bookingsClosed,
+      })) || [];
+
       return reply.code(201).send({
         ...result,
         slug: finalSlug,
@@ -379,19 +378,20 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         availableTo: result?.availableTo?.toISOString() || null,
         createdAt: result?.createdAt.toISOString(),
         updatedAt: result?.updatedAt.toISOString(),
+        animals,
       });
     } catch (error) {
-      console.error("Error creating breeding service:", error);
+      console.error("Error creating breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to create breeding service",
+        message: "Failed to create breeding booking",
       });
     }
   });
 
   /**
-   * PUT /api/v1/mkt-breeding-services/:id
-   * Update a breeding service listing
+   * PUT /api/v1/mkt-breeding-bookings/:id
+   * Update a breeding booking listing
    */
   app.put<{
     Params: {
@@ -424,19 +424,19 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
-    const serviceId = parseInt(req.params.id, 10);
-    if (isNaN(serviceId)) {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) {
       return reply.code(400).send({
         error: "invalid_id",
-        message: "Invalid service ID",
+        message: "Invalid booking ID",
       });
     }
 
     try {
       // Verify ownership
-      const existing = await prisma.mktListingBreedingService.findFirst({
+      const existing = await prisma.mktListingBreedingBooking.findFirst({
         where: {
-          id: serviceId,
+          id: bookingId,
           tenantId,
         },
       });
@@ -444,7 +444,7 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       if (!existing) {
         return reply.code(404).send({
           error: "not_found",
-          message: "Breeding service not found",
+          message: "Breeding booking not found",
         });
       }
 
@@ -473,46 +473,44 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         data.availableTo = availableTo ? new Date(availableTo) : null;
       }
 
-      const service = await prisma.mktListingBreedingService.update({
-        where: { id: serviceId },
-        data,
-      });
-
-      // Update animal assignments if provided
+      // Update booking and handle animal assignments if provided
       if (animalIds !== undefined) {
-        // Remove existing assignments
-        await prisma.mktBreedingServiceAnimal.deleteMany({
-          where: { serviceId },
-        });
-
-        // Add new assignments
-        if (animalIds.length > 0) {
-          const animals = await prisma.animal.findMany({
-            where: {
-              id: { in: animalIds },
-              tenantId,
-            },
-            select: { id: true },
+        // Use transaction to delete old assignments and create new ones
+        await prisma.$transaction(async (tx) => {
+          // Delete all existing assignments
+          await tx.mktBreedingBookingAnimal.deleteMany({
+            where: { bookingId },
           });
 
-          const validAnimalIds = animals.map((a) => a.id);
+          // Update the booking (without nested animals)
+          await tx.mktListingBreedingBooking.update({
+            where: { id: bookingId },
+            data,
+          });
 
-          if (validAnimalIds.length > 0) {
-            await prisma.mktBreedingServiceAnimal.createMany({
-              data: validAnimalIds.map((animalId) => ({
-                serviceId,
+          // Create new animal assignments if any
+          if (animalIds.length > 0) {
+            await tx.mktBreedingBookingAnimal.createMany({
+              data: animalIds.map((animalId) => ({
+                bookingId,
                 animalId,
               })),
             });
           }
-        }
+        });
+      } else {
+        // Just update the booking without touching animals
+        await prisma.mktListingBreedingBooking.update({
+          where: { id: bookingId },
+          data,
+        });
       }
 
-      // Fetch updated service with animals
-      const result = await prisma.mktListingBreedingService.findUnique({
-        where: { id: serviceId },
+      // Fetch updated booking with animals
+      const result = await prisma.mktListingBreedingBooking.findUnique({
+        where: { id: bookingId },
         include: {
-          animalAssignments: {
+          animals: {
             include: {
               animal: {
                 select: {
@@ -528,6 +526,19 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         },
       });
 
+      // Transform animals to match frontend DTO
+      const animals = result?.animals.map((ba) => ({
+        id: ba.animal.id,
+        name: ba.animal.name,
+        species: ba.animal.species,
+        sex: ba.animal.sex,
+        photoUrl: ba.animal.photoUrl,
+        featured: ba.featured,
+        feeOverride: ba.feeOverride,
+        maxBookings: ba.maxBookings,
+        bookingsClosed: ba.bookingsClosed,
+      })) || [];
+
       return reply.send({
         ...result,
         coverImageUrl: result?.coverImageUrl || null,
@@ -537,19 +548,20 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
         pausedAt: result?.pausedAt?.toISOString() || null,
         createdAt: result?.createdAt.toISOString(),
         updatedAt: result?.updatedAt.toISOString(),
+        animals,
       });
     } catch (error) {
-      console.error("Error updating breeding service:", error);
+      console.error("Error updating breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to update breeding service",
+        message: "Failed to update breeding booking",
       });
     }
   });
 
   /**
-   * POST /api/v1/mkt-breeding-services/:id/publish
-   * Publish a breeding service listing
+   * POST /api/v1/mkt-breeding-bookings/:id/publish
+   * Publish a breeding booking listing
    */
   app.post<{
     Params: {
@@ -559,18 +571,18 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
-    const serviceId = parseInt(req.params.id, 10);
-    if (isNaN(serviceId)) {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) {
       return reply.code(400).send({
         error: "invalid_id",
-        message: "Invalid service ID",
+        message: "Invalid booking ID",
       });
     }
 
     try {
-      const result = await prisma.mktListingBreedingService.updateMany({
+      const result = await prisma.mktListingBreedingBooking.updateMany({
         where: {
-          id: serviceId,
+          id: bookingId,
           tenantId,
         },
         data: {
@@ -583,23 +595,23 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       if (result.count === 0) {
         return reply.code(404).send({
           error: "not_found",
-          message: "Breeding service not found",
+          message: "Breeding booking not found",
         });
       }
 
       return reply.send({ ok: true });
     } catch (error) {
-      console.error("Error publishing breeding service:", error);
+      console.error("Error publishing breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to publish breeding service",
+        message: "Failed to publish breeding booking",
       });
     }
   });
 
   /**
-   * POST /api/v1/mkt-breeding-services/:id/pause
-   * Pause a breeding service listing
+   * POST /api/v1/mkt-breeding-bookings/:id/pause
+   * Pause a breeding booking listing
    */
   app.post<{
     Params: {
@@ -609,18 +621,18 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
-    const serviceId = parseInt(req.params.id, 10);
-    if (isNaN(serviceId)) {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) {
       return reply.code(400).send({
         error: "invalid_id",
-        message: "Invalid service ID",
+        message: "Invalid booking ID",
       });
     }
 
     try {
-      const result = await prisma.mktListingBreedingService.updateMany({
+      const result = await prisma.mktListingBreedingBooking.updateMany({
         where: {
-          id: serviceId,
+          id: bookingId,
           tenantId,
         },
         data: {
@@ -632,23 +644,23 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       if (result.count === 0) {
         return reply.code(404).send({
           error: "not_found",
-          message: "Breeding service not found",
+          message: "Breeding booking not found",
         });
       }
 
       return reply.send({ ok: true });
     } catch (error) {
-      console.error("Error pausing breeding service:", error);
+      console.error("Error pausing breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to pause breeding service",
+        message: "Failed to pause breeding booking",
       });
     }
   });
 
   /**
-   * DELETE /api/v1/mkt-breeding-services/:id
-   * Delete a breeding service listing
+   * DELETE /api/v1/mkt-breeding-bookings/:id
+   * Delete a breeding booking listing
    */
   app.delete<{
     Params: {
@@ -658,19 +670,19 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
-    const serviceId = parseInt(req.params.id, 10);
-    if (isNaN(serviceId)) {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) {
       return reply.code(400).send({
         error: "invalid_id",
-        message: "Invalid service ID",
+        message: "Invalid booking ID",
       });
     }
 
     try {
       // This will cascade delete animal assignments due to onDelete: Cascade
-      const result = await prisma.mktListingBreedingService.deleteMany({
+      const result = await prisma.mktListingBreedingBooking.deleteMany({
         where: {
-          id: serviceId,
+          id: bookingId,
           tenantId,
         },
       });
@@ -678,16 +690,16 @@ export default async function mktBreedingServicesRoutes(app: FastifyInstance) {
       if (result.count === 0) {
         return reply.code(404).send({
           error: "not_found",
-          message: "Breeding service not found",
+          message: "Breeding booking not found",
         });
       }
 
       return reply.send({ ok: true });
     } catch (error) {
-      console.error("Error deleting breeding service:", error);
+      console.error("Error deleting breeding booking:", error);
       return reply.code(500).send({
         error: "server_error",
-        message: "Failed to delete breeding service",
+        message: "Failed to delete breeding booking",
       });
     }
   });

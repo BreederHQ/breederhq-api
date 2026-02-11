@@ -21,6 +21,227 @@ function parsePaging(q: Record<string, unknown>) {
   return { page, limit, skip };
 }
 
+/**
+ * Populate animal data based on dataDrawerConfig settings
+ */
+async function populateAnimalDataFromConfig(
+  animalId: number,
+  tenantId: number,
+  config: any
+): Promise<any> {
+  const result: any = {};
+
+  try {
+    // Fetch genetics data if enabled
+    if (config.genetics?.enabled) {
+      const geneticsData = await prisma.animalGenetics.findFirst({
+        where: { animalId },
+      });
+
+      if (geneticsData) {
+        result.genetics = {};
+
+        // Breed composition (JSON field)
+        if (config.genetics.showBreedComposition && geneticsData.breedComposition) {
+          result.genetics.breedComposition = geneticsData.breedComposition;
+        }
+
+        // Coat color (JSON array of loci)
+        if (config.genetics.showCoatColor && geneticsData.coatColorData) {
+          result.genetics.coatColor = geneticsData.coatColorData;
+        }
+
+        // COI (JSON field with structure { coefficient, percentage, ... })
+        if (config.genetics.showCOI && geneticsData.coi) {
+          const coiData = geneticsData.coi as any;
+          result.genetics.coi = coiData.percentage || coiData.coefficient || null;
+        }
+
+        // Predicted adult weight (JSON field)
+        if (config.genetics.showPredictedWeight && geneticsData.predictedAdultWeight) {
+          const weightData = geneticsData.predictedAdultWeight as any;
+          result.genetics.predictedWeight = weightData.value
+            ? `${weightData.value} ${weightData.unit || 'lbs'}`
+            : null;
+        }
+
+        // Health genetics (JSON array)
+        if (config.genetics.showHealthGenetics && geneticsData.healthGeneticsData) {
+          result.genetics.healthGenetics = geneticsData.healthGeneticsData;
+        }
+
+        // Additional genetics fields
+        result.genetics.coatType = geneticsData.coatTypeData || null;
+        result.genetics.physicalTraits = geneticsData.physicalTraitsData || null;
+        result.genetics.eyeColor = geneticsData.eyeColorData || null;
+        result.genetics.otherTraits = geneticsData.otherTraitsData || null;
+      }
+    }
+
+    // Fetch lineage data if enabled
+    if (config.lineage?.enabled) {
+      const animal = await prisma.animal.findUnique({
+        where: { id: animalId },
+        select: {
+          sireId: true,
+          damId: true,
+        },
+      });
+
+      if (animal) {
+        result.lineage = {};
+
+        if (config.lineage.showSire && animal.sireId) {
+          const sire = await prisma.animal.findUnique({
+            where: { id: animal.sireId },
+            select: {
+              id: true,
+              name: true,
+              breed: true,
+              photoUrl: true,
+            },
+          });
+          if (sire) result.lineage.sire = sire;
+        }
+
+        if (config.lineage.showDam && animal.damId) {
+          const dam = await prisma.animal.findUnique({
+            where: { id: animal.damId },
+            select: {
+              id: true,
+              name: true,
+              breed: true,
+              photoUrl: true,
+            },
+          });
+          if (dam) result.lineage.dam = dam;
+        }
+      }
+    }
+
+    // Fetch achievements data if enabled
+    if (config.achievements?.enabled) {
+      result.achievements = {};
+
+      // Fetch titles
+      const titles = await prisma.animalTitle.findMany({
+        where: {
+          animalId,
+          isPublic: true,
+        },
+        select: {
+          id: true,
+          titleName: true,
+          abbreviation: true,
+          dateEarned: true,
+        },
+      });
+      result.achievements.titles = titles.map((t) => ({
+        id: t.id,
+        name: t.titleName,
+        abbreviation: t.abbreviation,
+        date: t.dateEarned?.toISOString().split('T')[0],
+      }));
+
+      // Fetch competition results
+      const competitions = await prisma.animalCompetition.findMany({
+        where: {
+          animalId,
+          isPublic: true,
+        },
+        select: {
+          id: true,
+          eventName: true,
+          eventDate: true,
+          placement: true,
+          className: true,
+        },
+        orderBy: {
+          eventDate: 'desc',
+        },
+        take: 10, // Limit to recent 10
+      });
+      result.achievements.competitions = competitions.map((c) => ({
+        id: c.id,
+        eventName: c.eventName,
+        date: c.eventDate?.toISOString().split('T')[0],
+        placement: c.placement,
+        class: c.className,
+      }));
+    }
+
+    // Fetch health clearances if enabled
+    if (config.health?.enabled) {
+      const healthTraits = await prisma.animalHealthTrait.findMany({
+        where: {
+          animalId,
+          marketplaceVisible: true,
+        },
+        select: {
+          id: true,
+          traitName: true,
+          result: true,
+          testDate: true,
+        },
+      });
+
+      result.health = {
+        traits: healthTraits.map((t) => ({
+          id: t.id,
+          name: t.traitName,
+          status: t.result,
+          testDate: t.testDate?.toISOString().split('T')[0],
+        })),
+      };
+    }
+
+    // Fetch registry information if enabled
+    if (config.registry?.enabled) {
+      const registrations = await prisma.animalRegistration.findMany({
+        where: {
+          animalId,
+        },
+        select: {
+          id: true,
+          registrationNumber: true,
+          organization: true,
+          verified: true,
+        },
+      });
+
+      result.registry = {
+        registrations: registrations.map((r) => ({
+          id: r.id,
+          number: r.registrationNumber,
+          organization: r.organization,
+          verified: r.verified,
+        })),
+      };
+    }
+
+    // Fetch breeding information if enabled
+    if (config.breeding?.enabled && config.breeding.showOffspringCount) {
+      const offspringCount = await prisma.animal.count({
+        where: {
+          OR: [
+            { sireId: animalId },
+            { damId: animalId },
+          ],
+        },
+      });
+
+      result.breeding = {
+        offspringCount,
+      };
+    }
+
+    return result;
+  } catch (err) {
+    console.error(`[populateAnimalDataFromConfig] Error for animal ${animalId}:`, err);
+    return result; // Return partial data if some sections fail
+  }
+}
+
 const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /public/breeding-listings - Browse listings
   app.get("/public/breeding-listings", async (req, reply) => {
@@ -287,10 +508,10 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
     }
   });
   // =========================================================================
-  // MktListingBreedingService - Public Breeding Services (stud, lease, etc.)
+  // MktListingBreedingBooking - Public Breeding Bookings (stud, lease, etc.)
   // =========================================================================
 
-  // GET /public/breeding-services - Browse published breeding services
+  // GET /public/breeding-services - Browse published breeding bookings
   app.get("/public/breeding-services", async (req, reply) => {
     try {
       const q = (req.query || {}) as Record<string, unknown>;
@@ -302,25 +523,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
 
       // Filters
       if (q.intent) where.intent = String(q.intent).toLowerCase();
-      if (q.species) {
-        // Filter by species through animal assignments
-        where.animalAssignments = {
-          some: {
-            animal: {
-              species: String(q.species).toUpperCase(),
-            },
-          },
-        };
-      }
-      if (q.breed) {
-        where.animalAssignments = {
-          some: {
-            animal: {
-              breed: { contains: String(q.breed), mode: "insensitive" },
-            },
-          },
-        };
-      }
+      // Note: Species/breed filtering through animal assignments removed - feature deprecated
 
       // Fee range filters
       if (q.minFee) {
@@ -347,7 +550,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
       }
 
       const [items, total] = await prisma.$transaction([
-        prisma.mktListingBreedingService.findMany({
+        prisma.mktListingBreedingBooking.findMany({
           where,
           orderBy: { publishedAt: "desc" },
           skip,
@@ -357,6 +560,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
             slug: true,
             headline: true,
             description: true,
+            coverImageUrl: true,
             intent: true,
             feeCents: true,
             feeDirection: true,
@@ -376,10 +580,8 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
                 slug: true,
               },
             },
-            animalAssignments: {
-              select: {
-                featured: true,
-                feeOverride: true,
+            animals: {
+              include: {
                 animal: {
                   select: {
                     id: true,
@@ -388,26 +590,28 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
                     breed: true,
                     sex: true,
                     photoUrl: true,
-                    primaryLineType: true,
                   },
                 },
               },
             },
           },
         }),
-        prisma.mktListingBreedingService.count({ where }),
+        prisma.mktListingBreedingBooking.count({ where }),
       ]);
 
-      // Convert BigInt and format response - cast to any to access selected relations
+      // Convert BigInt and format response
       const formattedItems = items.map((item: any) => ({
         ...item,
         feeCents: item.feeCents != null ? Number(item.feeCents) : null,
-        animals: (item.animalAssignments || []).map((a: any) => ({
-          ...a.animal,
-          featured: a.featured,
-          feeOverride: a.feeOverride != null ? Number(a.feeOverride) : null,
-        })),
-        animalAssignments: undefined, // Remove raw assignments
+        animals: item.animals?.map((assignment: any) => ({
+          id: assignment.animal.id,
+          name: assignment.animal.name,
+          species: assignment.animal.species,
+          breed: assignment.animal.breed,
+          sex: assignment.animal.sex,
+          photoUrl: assignment.animal.photoUrl,
+          featured: assignment.featured,
+        })) || [],
       }));
 
       reply.send({ items: formattedItems, total, page, limit });
@@ -418,12 +622,12 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
     }
   });
 
-  // GET /public/breeding-services/:slug - Get single breeding service by slug
+  // GET /public/breeding-services/:slug - Get single breeding booking by slug
   app.get("/public/breeding-services/:slug", async (req, reply) => {
     try {
       const slug = String((req.params as any).slug);
 
-      const service = await prisma.mktListingBreedingService.findFirst({
+      const service = await prisma.mktListingBreedingBooking.findFirst({
         where: {
           slug,
           status: "LIVE",
@@ -439,7 +643,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
               country: true,
             },
           },
-          animalAssignments: {
+          animals: {
             include: {
               animal: {
                 select: {
@@ -448,20 +652,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
                   species: true,
                   breed: true,
                   sex: true,
-                  birthDate: true,
                   photoUrl: true,
-                  primaryLineType: true,
-                  lineTypes: true,
-                  registryIds: {
-                    select: {
-                      identifier: true,
-                      registry: {
-                        select: {
-                          name: true,
-                        },
-                      },
-                    },
-                  },
                 },
               },
             },
@@ -472,13 +663,38 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
       if (!service) return reply.code(404).send({ error: "not_found" });
 
       // Increment view count
-      await prisma.mktListingBreedingService.update({
+      await prisma.mktListingBreedingBooking.update({
         where: { id: service.id },
         data: { viewCount: { increment: 1 } },
       });
 
-      // Format response - cast to any to access included relations
+      // Format animals array
       const svc = service as any;
+      const animals = svc.animals?.map((assignment: any) => ({
+        id: assignment.animal.id,
+        name: assignment.animal.name,
+        species: assignment.animal.species,
+        breed: assignment.animal.breed,
+        sex: assignment.animal.sex,
+        photoUrl: assignment.animal.photoUrl,
+        featured: assignment.featured,
+        feeOverride: assignment.feeOverride != null ? Number(assignment.feeOverride) : null,
+      })) || [];
+
+      // Populate animal data based on dataDrawerConfig
+      let animalData = null;
+      if (service.dataDrawerConfig && animals.length > 0) {
+        const primaryAnimal = animals[0];
+        const config = service.dataDrawerConfig as any;
+
+        animalData = await populateAnimalDataFromConfig(
+          primaryAnimal.id,
+          service.tenantId,
+          config
+        );
+      }
+
+      // Format response
       const response = {
         ...service,
         feeCents: service.feeCents != null ? Number(service.feeCents) : null,
@@ -486,14 +702,8 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
           ...svc.tenant,
           state: svc.tenant?.region, // Map region to state for frontend compatibility
         },
-        animals: (svc.animalAssignments || []).map((a: any) => ({
-          ...a.animal,
-          featured: a.featured,
-          feeOverride: a.feeOverride != null ? Number(a.feeOverride) : null,
-          maxBookings: a.maxBookings,
-          bookingsClosed: a.bookingsClosed,
-        })),
-        animalAssignments: undefined,
+        animals,
+        animalData,
       };
 
       reply.send(response);

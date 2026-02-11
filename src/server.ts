@@ -575,6 +575,7 @@ import portalRoutes from "./routes/portal.js"; // Portal public routes (activati
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
 import portalProfileRoutes from "./routes/portal-profile.js"; // Portal profile self-service
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
+import portalProtocolsRoutes from "./routes/portal-protocols.js"; // Portal training protocol continuation
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
@@ -616,7 +617,6 @@ import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time 
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
-import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
 import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
@@ -626,7 +626,7 @@ import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; 
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
-import mktBreedingServicesRoutes from "./routes/mkt-breeding-services.js"; // Breeding Services Listings (stud, mare lease, etc.)
+import mktBreedingBookingsRoutes from "./routes/mkt-breeding-bookings.js"; // Breeding Bookings Listings (stud, mare lease, etc.)
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
@@ -864,12 +864,12 @@ app.register(
         "/marketplace/animal-programs",
         "/marketplace/animals",
         "/marketplace/services",
-        "/marketplace/direct-listings",
+        "/marketplace/mkt-listing-individual-animals",
         "/api/v1/marketplace/offspring-groups",
         "/api/v1/marketplace/animal-programs",
         "/api/v1/marketplace/animals",
         "/api/v1/marketplace/services",
-        "/api/v1/marketplace/direct-listings",
+        "/api/v1/marketplace/mkt-listing-individual-animals",
       ];
 
       // Check if path matches public browse patterns (including detail pages like /animal-programs/:slug)
@@ -1214,6 +1214,7 @@ app.register(
     api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
+    api.register(portalProtocolsRoutes); // /api/v1/portal/protocols/* Portal training protocol continuation
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
     api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
 
@@ -1224,6 +1225,7 @@ app.register(
     api.register(portalProfileRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/profile/*
     api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
     api.register(portalContractsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/contracts/*
+    api.register(portalProtocolsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/protocols/*
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
@@ -1242,9 +1244,8 @@ app.register(
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
     api.register(marketplaceReportProviderRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-provider (auth required)
-    api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
     api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
-    api.register(mktBreedingServicesRoutes, { prefix: "/mkt-breeding-services" }); // /api/v1/mkt-breeding-services/* Breeding services listings (stud, mare lease, etc.)
+    api.register(mktBreedingBookingsRoutes, { prefix: "/mkt-breeding-bookings" }); // /api/v1/mkt-breeding-bookings/* Breeding bookings listings (stud, mare lease, etc.)
   },
   { prefix: "/api/v1" }
 );

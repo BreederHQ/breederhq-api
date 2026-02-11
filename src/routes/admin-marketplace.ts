@@ -51,6 +51,67 @@ async function requireSuperAdmin(req: any, reply: any): Promise<string | null> {
 
 const adminMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // --------------------------------------------------------------------------
+  // GET /admin/marketplace/metrics
+  // Get marketplace overview metrics for admin dashboard
+  // --------------------------------------------------------------------------
+  app.get("/admin/marketplace/metrics", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      // Calculate date 30 days ago for "recent" counts
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const [
+        totalUsers,
+        totalProviders,
+        totalProviderListings,
+        totalBreedingListings,
+        totalAnimalListings,
+        termsAcceptedCount,
+        recentSignups,
+        recentProviders,
+      ] = await Promise.all([
+        // Total marketplace users
+        prisma.marketplaceUser.count(),
+        // Total service providers
+        prisma.marketplaceProvider.count(),
+        // Total breeder service listings (from marketplace providers and breeders)
+        prisma.mktListingBreederService.count({ where: { deletedAt: null } }),
+        // Total breeding booking listings (no deletedAt field on this model)
+        prisma.mktListingBreedingBooking.count(),
+        // Total individual animal listings (no deletedAt field on this model)
+        prisma.mktListingIndividualAnimal.count(),
+        // Total provider terms acceptances
+        prisma.marketplaceProviderTermsAcceptance.count(),
+        // Recent signups (last 30 days)
+        prisma.marketplaceUser.count({
+          where: { createdAt: { gte: thirtyDaysAgo } },
+        }),
+        // Recent providers (last 30 days)
+        prisma.marketplaceProvider.count({
+          where: { createdAt: { gte: thirtyDaysAgo } },
+        }),
+      ]);
+
+      return reply.send({
+        totalUsers,
+        totalProviders,
+        totalProviderListings,
+        totalBreedingListings,
+        totalAnimalListings,
+        termsAcceptedCount,
+        recentSignups,
+        recentProviders,
+      });
+    } catch (err: any) {
+      console.error("[admin/marketplace/metrics] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
   // GET /admin/marketplace/flagged-users
   // Get paginated list of flagged/suspended marketplace users
   // --------------------------------------------------------------------------

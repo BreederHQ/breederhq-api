@@ -615,7 +615,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /direct-listings - Direct Animal Listings index (V2 individual listings) - PUBLIC
+  // GET /mkt-listing-individual-animals - Direct Animal Listings index (V2 individual listings) - PUBLIC
   // --------------------------------------------------------------------------
   app.get<{
     Querystring: {
@@ -630,7 +630,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       limit?: string;
       offset?: string;
     };
-  }>("/direct-listings", async (req, reply) => {
+  }>("/mkt-listing-individual-animals", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
     const { search, species, breed, templateType, location, priceMin, priceMax, tenantSlug } = req.query;
@@ -800,10 +800,10 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /direct-listings/:slug - Direct Listing detail - PUBLIC
+  // GET /mkt-listing-individual-animals/:slug - Direct Listing detail - PUBLIC
   // --------------------------------------------------------------------------
   app.get<{ Params: { slug: string } }>(
-    "/direct-listings/:slug",
+    "/mkt-listing-individual-animals/:slug",
     async (req, reply) => {
       // PUBLIC: No auth required - this is a public browsing endpoint
 
