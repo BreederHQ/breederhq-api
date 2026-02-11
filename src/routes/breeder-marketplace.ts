@@ -973,8 +973,8 @@ export default async function breederMarketplaceRoutes(
           },
         }),
 
-        // Count breeding service listings (stud offerings, seeking, lease, arrangement)
-        prisma.mktListingBreedingService.count({
+        // Count breeding booking listings (stud offerings, seeking, lease, arrangement)
+        prisma.mktListingBreedingBooking.count({
           where: {
             tenantId,
             status: { in: ["LIVE", "DRAFT", "PAUSED"] }, // Include all non-closed listings

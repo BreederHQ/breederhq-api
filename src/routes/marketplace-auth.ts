@@ -44,6 +44,7 @@ import {
 } from "../utils/session.js";
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { randomBytes } from "node:crypto";
+import { hasAcceptedCurrentProviderTerms } from "../services/marketplace-provider-terms-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -721,6 +722,26 @@ export default async function marketplaceAuthRoutes(
       const randomPassword = randomBytes(32).toString("base64");
       const passwordHash = await bcrypt.hash(randomPassword, 12);
 
+      // Check if they're a breeder (has tenant with active subscription) before creation
+      const tenantMembershipForCreate = await prisma.tenantMembership.findFirst({
+        where: { userId: platformUserId },
+        include: {
+          tenant: {
+            include: {
+              subscriptions: {
+                where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                take: 1,
+              },
+            },
+          },
+        },
+      });
+
+      const isBreederAtCreate = !!(
+        tenantMembershipForCreate?.tenant?.subscriptions &&
+        tenantMembershipForCreate.tenant.subscriptions.length > 0
+      );
+
       marketplaceUser = await prisma.marketplaceUser.create({
         data: {
           email,
@@ -730,7 +751,7 @@ export default async function marketplaceAuthRoutes(
           userType: "buyer", // Default to buyer, can be upgraded later
           status: "active",
           emailVerified: true, // Platform users already verified their email
-          // tenantId can be set later if they have a breeder account
+          tenantId: isBreederAtCreate ? tenantMembershipForCreate!.tenant.id : null,
         },
       });
 
@@ -738,6 +759,8 @@ export default async function marketplaceAuthRoutes(
         platformUserId,
         marketplaceUserId: marketplaceUser.id,
         email,
+        isBreeder: isBreederAtCreate,
+        tenantId: marketplaceUser.tenantId,
       }, "Created MarketplaceUser via SSO from platform");
     }
 
@@ -840,6 +863,7 @@ export default async function marketplaceAuthRoutes(
           let breederTenant = null;
 
           if (user.tenantId) {
+            // User already linked to tenant - check subscription status
             const tenant = await prisma.tenant.findUnique({
               where: { id: user.tenantId },
               include: {
@@ -858,13 +882,58 @@ export default async function marketplaceAuthRoutes(
             if (isBreeder && tenant) {
               breederTenant = { id: tenant.id, name: tenant.name };
             }
+          } else {
+            // User not linked - check if they're a platform breeder and auto-link
+            const platformUser = await prisma.user.findFirst({
+              where: { email: user.email },
+              select: { id: true },
+            });
+
+            if (platformUser) {
+              const tenantMembership = await prisma.tenantMembership.findFirst({
+                where: { userId: platformUser.id },
+                include: {
+                  tenant: {
+                    include: {
+                      subscriptions: {
+                        where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                        take: 1,
+                      },
+                    },
+                  },
+                },
+              });
+
+              if (
+                tenantMembership?.tenant?.subscriptions &&
+                tenantMembership.tenant.subscriptions.length > 0
+              ) {
+                // Auto-link marketplace user to their tenant
+                await prisma.marketplaceUser.update({
+                  where: { id: user.id },
+                  data: { tenantId: tenantMembership.tenant.id },
+                });
+
+                isBreeder = true;
+                breederTenant = {
+                  id: tenantMembership.tenant.id,
+                  name: tenantMembership.tenant.name,
+                };
+              }
+            }
           }
+
+          // Check provider status and terms acceptance
+          const isProvider = user.userType === "provider";
+          const hasAcceptedProviderTerms = await hasAcceptedCurrentProviderTerms(user.id);
 
           return reply.send({
             hasMarketplaceSession: true,
             hasPlatformSession: false, // Don't check if already logged in
             isBreeder,
             breederTenant,
+            isProvider,
+            hasAcceptedProviderTerms,
             user: {
               id: user.id,
               email: user.email,
@@ -921,6 +990,8 @@ export default async function marketplaceAuthRoutes(
             id: tenantMembership.tenant.id,
             name: tenantMembership.tenant.name,
           } : null,
+          isProvider: false,
+          hasAcceptedProviderTerms: false,
           platformUser: {
             email: platformUser.email,
             firstName: platformUser.firstName,
@@ -935,6 +1006,8 @@ export default async function marketplaceAuthRoutes(
       hasPlatformSession: false,
       isBreeder: false,
       breederTenant: null,
+      isProvider: false,
+      hasAcceptedProviderTerms: false,
     });
   });
 }

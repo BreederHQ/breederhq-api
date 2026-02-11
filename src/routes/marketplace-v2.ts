@@ -10,11 +10,11 @@
  * All endpoints require tenant context via X-Tenant-Id header.
  *
  * Direct Listing Endpoints:
- *   GET    /direct-listings              - List direct listings
- *   GET    /direct-listings/:id          - Get single direct listing
- *   POST   /direct-listings              - Create/update direct listing
- *   PATCH  /direct-listings/:id/status   - Update listing status
- *   DELETE /direct-listings/:id          - Delete direct listing
+ *   GET    /mkt-listing-individual-animals              - List direct listings
+ *   GET    /mkt-listing-individual-animals/:id          - Get single direct listing
+ *   POST   /mkt-listing-individual-animals              - Create/update direct listing
+ *   PATCH  /mkt-listing-individual-animals/:id/status   - Update listing status
+ *   DELETE /mkt-listing-individual-animals/:id          - Delete direct listing
  *
  * Animal Program Endpoints:
  *   GET    /animal-programs                                              - List animal programs
@@ -88,7 +88,7 @@ export default async function marketplaceV2Routes(
   _opts: FastifyPluginOptions
 ) {
   /**
-   * GET /direct-listings - List breeder's direct animal listings
+   * GET /mkt-listing-individual-animals - List breeder's direct animal listings
    */
   app.get<{
     Querystring: {
@@ -97,7 +97,7 @@ export default async function marketplaceV2Routes(
       page?: string;
       limit?: string;
     };
-  }>("/direct-listings", async (req, reply) => {
+  }>("/mkt-listing-individual-animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -151,11 +151,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * GET /direct-listings/:id - Get single direct listing
+   * GET /mkt-listing-individual-animals/:id - Get single direct listing
    */
   app.get<{
     Params: { id: string };
-  }>("/direct-listings/:id", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -194,7 +194,7 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * POST /direct-listings - Create or update direct listing
+   * POST /mkt-listing-individual-animals - Create or update direct listing
    */
   app.post<{
     Body: {
@@ -232,7 +232,7 @@ export default async function marketplaceV2Routes(
       healthCertRequired?: boolean;
       requiredTests?: string[];
     };
-  }>("/direct-listings", async (req, reply) => {
+  }>("/mkt-listing-individual-animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -347,12 +347,12 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * PATCH /direct-listings/:id/status - Update listing status
+   * PATCH /mkt-listing-individual-animals/:id/status - Update listing status
    */
   app.patch<{
     Params: { id: string };
     Body: { status: string };
-  }>("/direct-listings/:id/status", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/status", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -380,11 +380,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * DELETE /direct-listings/:id - Delete direct listing
+   * DELETE /mkt-listing-individual-animals/:id - Delete direct listing
    */
   app.delete<{
     Params: { id: string };
-  }>("/direct-listings/:id", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -406,11 +406,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * GET /direct-listings/:id/availability - Get stud service availability (P1 Sprint)
+   * GET /mkt-listing-individual-animals/:id/availability - Get stud service availability (P1 Sprint)
    */
   app.get<{
     Params: { id: string };
-  }>("/direct-listings/:id/availability", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/availability", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -454,12 +454,12 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * POST /direct-listings/:id/book - Book a stud service slot (P1 Sprint)
+   * POST /mkt-listing-individual-animals/:id/book - Book a stud service slot (P1 Sprint)
    * Atomically increments bookingsReceived count
    */
   app.post<{
     Params: { id: string };
-  }>("/direct-listings/:id/book", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/book", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -739,12 +739,17 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      // Extract fields that need type casting
-      const { defaultGuaranteeType, seasonStart, seasonEnd, ...restFields } = rest;
+      // Extract fields that need type casting or transformation
+      const { defaultGuaranteeType, seasonStart, seasonEnd, published, ...restFields } = rest;
 
       const data = {
         tenantId,
         ...restFields,
+        // Transform 'published' boolean to status/publishedAt fields
+        ...(published !== undefined && {
+          status: published ? "LIVE" : "DRAFT",
+          publishedAt: published ? new Date() : null,
+        }),
         // Cast date strings to Date objects
         ...(seasonStart !== undefined && { seasonStart: seasonStart ? new Date(seasonStart) : null }),
         ...(seasonEnd !== undefined && { seasonEnd: seasonEnd ? new Date(seasonEnd) : null }),

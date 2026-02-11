@@ -1671,7 +1671,7 @@ async function seedStorefronts(
   });
 
   if (!marketplaceUser) {
-    // Create MarketplaceUser for the breeder
+    // Create MarketplaceUser for the breeder with tenantId linked
     const passwordHash = await bcrypt.hash('BHQ_Provider_2024!', 12);
     marketplaceUser = await prisma.marketplaceUser.create({
       data: {
@@ -1682,9 +1682,17 @@ async function seedStorefronts(
         emailVerified: true,
         userType: 'provider',
         status: 'active',
+        tenantId, // Link to tenant so isBreeder check works
       },
     });
-    console.log(`  + Created provider MarketplaceUser: ${ownerUser.email}`);
+    console.log(`  + Created provider MarketplaceUser: ${ownerUser.email} (tenantId: ${tenantId})`);
+  } else if (!marketplaceUser.tenantId) {
+    // Existing marketplace user without tenantId - link them
+    await prisma.marketplaceUser.update({
+      where: { id: marketplaceUser.id },
+      data: { tenantId },
+    });
+    console.log(`  = Updated MarketplaceUser with tenantId: ${ownerUser.email} (tenantId: ${tenantId})`);
   }
 
   // Check if MarketplaceProvider already exists

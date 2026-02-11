@@ -19,6 +19,13 @@ import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { requireProvider, requireProviderWithStripe } from "../middleware/marketplace-provider-auth.js";
 import { findMarketplaceUserById } from "../services/marketplace-auth-service.js";
+import {
+  validateProviderTermsPayload,
+  writeProviderTermsAcceptance,
+  getProviderTermsStatus,
+  CURRENT_PROVIDER_TERMS_VERSION,
+  PROVIDER_TERMS_EFFECTIVE_DATE,
+} from "../services/marketplace-provider-terms-service.js";
 import { sendProviderWelcomeEmail } from "../services/marketplace-email-service.js";
 import { geocodeCityState, geocodeZipCode } from "../services/geocoding-service.js";
 import { broadcastTransactionMessage, broadcastUnreadCount } from "../services/marketplace-websocket-service.js";
@@ -224,6 +231,89 @@ export default async function marketplaceProvidersRoutes(
       return reply.code(500).send({
         error: "registration_failed",
         message: "Failed to create provider account. Please try again.",
+      });
+    }
+  });
+
+  /* ───────────────────────── Accept Provider Terms ───────────────────────── */
+
+  /**
+   * POST /accept-terms
+   * Records provider service agreement acceptance for legal compliance.
+   * Must be called before user can become a provider.
+   */
+  app.post("/accept-terms", {
+    config: { rateLimit: { max: 5, timeWindow: "5 minutes" } },
+    preHandler: requireMarketplaceAuth,
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+
+    const body = req.body as { version?: string; effectiveDate?: string } | undefined;
+
+    // Validate payload
+    let payload;
+    try {
+      payload = validateProviderTermsPayload(body);
+    } catch (err: any) {
+      const errorCode = err.message || "PROVIDER_TERMS_ACCEPTANCE_INVALID";
+      return reply.code(400).send({
+        error: errorCode,
+        message: "Invalid terms acceptance payload. Please ensure version and effective date match current terms.",
+        currentVersion: CURRENT_PROVIDER_TERMS_VERSION,
+        currentEffectiveDate: PROVIDER_TERMS_EFFECTIVE_DATE,
+      });
+    }
+
+    try {
+      // Write acceptance record (BLOCKING - must succeed for compliance)
+      const result = await writeProviderTermsAcceptance(userId, payload, req);
+
+      return reply.code(201).send({
+        ok: true,
+        acceptedAt: result.acceptedAt.toISOString(),
+        version: result.version,
+        message: "Provider service agreement accepted. You can now register as a provider.",
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, userId }, "Failed to record provider terms acceptance");
+
+      // Check for unique constraint violation (already accepted this version)
+      if (err.code === "P2002") {
+        // Already accepted - return success anyway
+        const status = await getProviderTermsStatus(userId);
+        return reply.code(200).send({
+          ok: true,
+          acceptedAt: status.acceptedAt?.toISOString() ?? new Date().toISOString(),
+          version: status.acceptedVersion ?? payload.version,
+          message: "Provider service agreement was already accepted.",
+          alreadyAccepted: true,
+        });
+      }
+
+      return reply.code(500).send({
+        error: "PROVIDER_TERMS_ACCEPTANCE_FAILED",
+        message: "Failed to record your acceptance. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * GET /terms-status
+   * Check current provider terms acceptance status for the authenticated user.
+   */
+  app.get("/terms-status", {
+    preHandler: requireMarketplaceAuth,
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+
+    try {
+      const status = await getProviderTermsStatus(userId);
+      return reply.send(status);
+    } catch (err: any) {
+      req.log?.error?.({ err, userId }, "Failed to get provider terms status");
+      return reply.code(500).send({
+        error: "PROVIDER_TERMS_STATUS_FAILED",
+        message: "Failed to retrieve terms status.",
       });
     }
   });
