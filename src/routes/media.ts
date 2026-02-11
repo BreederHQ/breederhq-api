@@ -274,7 +274,7 @@ async function handleUploadUrl(
     if (context.type === "tenant") {
       await prisma.document.create({
         data: {
-          tenantId: context.tenantId,
+          tenantId: context.tenantId!,
           scope: mapPurposeToScope(context.purpose),
           kind: "generic",
           title: filename,
