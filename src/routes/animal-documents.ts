@@ -68,6 +68,10 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       url: doc.url,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
+      // Extract category from data JSON field (safely handle null/undefined)
+      category: doc.data && typeof doc.data === 'object' && 'category' in doc.data
+        ? (doc.data as { category?: string }).category || null
+        : null,
       linkedTraits: doc.traitValueLinks.map(link => ({
         traitKey: link.animalTraitValue.traitDefinition.key,
         displayName: link.animalTraitValue.traitDefinition.displayName,
@@ -95,21 +99,68 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       sizeBytes?: number;
       visibility?: string;
       linkTraitKeys?: string[];
+      storageKey?: string;
+      cdnUrl?: string;
+      category?: string;
     };
 
     if (!body.title) return reply.code(400).send({ error: "title_required" });
 
-    // Document scope is ANIMAL for animal-linked documents
-    const createdDoc = await prisma.document.create({
-      data: {
-        tenantId, animalId, scope: "animal", title: body.title,
-        originalFileName: body.originalFileName || null,
-        mimeType: body.mimeType || null,
-        sizeBytes: body.sizeBytes || null,
-        visibility: body.visibility as any || "PRIVATE",
-        status: "PLACEHOLDER",
-      },
-    });
+    let createdDoc;
+
+    // Check if document already exists from media upload flow (has storageKey)
+    // This prevents duplicate documents when /media/upload-url already created one
+    if (body.storageKey) {
+      const existingDoc = await prisma.document.findFirst({
+        where: { storageKey: body.storageKey, tenantId },
+      });
+
+      if (existingDoc) {
+        // Update existing document with the user-provided title and metadata
+        createdDoc = await prisma.document.update({
+          where: { id: existingDoc.id },
+          data: {
+            animalId,
+            title: body.title,
+            originalFileName: body.originalFileName || existingDoc.originalFileName,
+            mimeType: body.mimeType || existingDoc.mimeType,
+            sizeBytes: body.sizeBytes || existingDoc.sizeBytes,
+            visibility: body.visibility as any || existingDoc.visibility || "PRIVATE",
+            status: "READY",
+            // Store category in data JSON field (Document model doesn't have category column yet)
+            data: body.category ? { category: body.category } : existingDoc.data,
+          },
+        });
+      } else {
+        // storageKey provided but no existing doc - create new with storageKey
+        createdDoc = await prisma.document.create({
+          data: {
+            tenantId, animalId, scope: "animal", title: body.title,
+            storageKey: body.storageKey,
+            url: body.cdnUrl || null,
+            originalFileName: body.originalFileName || null,
+            mimeType: body.mimeType || null,
+            sizeBytes: body.sizeBytes || null,
+            visibility: body.visibility as any || "PRIVATE",
+            status: "READY",
+            data: body.category ? { category: body.category } : null,
+          },
+        });
+      }
+    } else {
+      // No storageKey - create placeholder document (legacy flow)
+      createdDoc = await prisma.document.create({
+        data: {
+          tenantId, animalId, scope: "animal", title: body.title,
+          originalFileName: body.originalFileName || null,
+          mimeType: body.mimeType || null,
+          sizeBytes: body.sizeBytes || null,
+          visibility: body.visibility as any || "PRIVATE",
+          status: "PLACEHOLDER",
+          data: body.category ? { category: body.category } : null,
+        },
+      });
+    }
 
     const linkedTraits: any[] = [];
 

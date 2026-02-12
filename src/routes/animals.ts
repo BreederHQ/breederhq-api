@@ -2313,8 +2313,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         healthGeneticsData: true,
         coatTypeData: true,
         physicalTraitsData: true,
+        performanceData: true,
+        temperamentData: true,
         eyeColorData: true,
         otherTraitsData: true,
+        breedComposition: true,
+        coi: true,
+        mhcDiversity: true,
+        lineage: true,
+        predictedAdultWeight: true,
+        lifeStage: true,
       },
     });
 
@@ -2327,8 +2335,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         health: [],
         coatType: [],
         physicalTraits: [],
+        performance: [],
+        temperament: [],
         eyeColor: [],
         otherTraits: [],
+        breedComposition: [],
       });
     }
 
@@ -2340,8 +2351,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       health: genetics.healthGeneticsData || [],
       coatType: genetics.coatTypeData || [],
       physicalTraits: genetics.physicalTraitsData || [],
+      performance: genetics.performanceData || [],
+      temperament: genetics.temperamentData || [],
       eyeColor: genetics.eyeColorData || [],
       otherTraits: genetics.otherTraitsData || [],
+      breedComposition: genetics.breedComposition || [],
+      coi: genetics.coi || null,
+      mhcDiversity: genetics.mhcDiversity || null,
+      lineage: genetics.lineage || null,
+      predictedAdultWeight: genetics.predictedAdultWeight || null,
+      lifeStage: genetics.lifeStage || null,
     });
   });
 
@@ -2353,18 +2372,48 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(animalId, tenantId);
 
+    // Get animal species for code normalization
+    const animal = await prisma.animal.findUnique({
+      where: { id: animalId },
+      select: { species: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
     const body = req.body as any;
+
+    // Import normalizer
+    const { normalizeGeneticData } = await import("../utils/genetics-code-normalizer.js");
+
+    // Normalize genetic data to ensure consistent locus codes
+    const normalizedBody = normalizeGeneticData({
+      coatColor: body.coatColorData || body.coatColor || [],
+      coatType: body.coatTypeData || body.coatType || [],
+      physicalTraits: body.physicalTraitsData || body.physicalTraits || [],
+      performance: body.performanceData || body.performance || [],
+      temperament: body.temperamentData || body.temperament || [],
+      eyeColor: body.eyeColorData || body.eyeColor || [],
+      health: body.healthGeneticsData || body.health || [],
+      otherTraits: body.otherTraitsData || body.otherTraits || [],
+    }, animal.species || 'DOG');
 
     const data = {
       testProvider: body.testProvider || null,
       testDate: body.testDate ? new Date(body.testDate) : null,
       testId: body.testId || null,
-      coatColorData: body.coatColor || [],
-      healthGeneticsData: body.health || [],
-      coatTypeData: body.coatType || [],
-      physicalTraitsData: body.physicalTraits || [],
-      eyeColorData: body.eyeColor || [],
-      otherTraitsData: body.otherTraits || [],
+      coatColorData: normalizedBody.coatColor,
+      healthGeneticsData: normalizedBody.health,
+      coatTypeData: normalizedBody.coatType,
+      physicalTraitsData: normalizedBody.physicalTraits,
+      performanceData: normalizedBody.performance,
+      temperamentData: normalizedBody.temperament,
+      eyeColorData: normalizedBody.eyeColor,
+      otherTraitsData: normalizedBody.otherTraits,
+      breedComposition: body.breedComposition || [],
+      coi: body.coi || null,
+      mhcDiversity: body.mhcDiversity || null,
+      lineage: body.lineage || null,
+      predictedAdultWeight: body.predictedAdultWeight || null,
+      lifeStage: body.lifeStage || null,
     };
 
     const genetics = await prisma.animalGenetics.upsert({
@@ -2376,6 +2425,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       update: data,
     });
 
+    // Note: animal_loci table is automatically synced via database trigger
+    // No manual sync needed - database handles it on INSERT/UPDATE
+
     reply.send({
       testProvider: genetics.testProvider,
       testDate: genetics.testDate,
@@ -2384,8 +2436,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       health: genetics.healthGeneticsData || [],
       coatType: genetics.coatTypeData || [],
       physicalTraits: genetics.physicalTraitsData || [],
+      performance: genetics.performanceData || [],
+      temperament: genetics.temperamentData || [],
       eyeColor: genetics.eyeColorData || [],
       otherTraits: genetics.otherTraitsData || [],
+      breedComposition: genetics.breedComposition || [],
+      coi: genetics.coi || null,
+      mhcDiversity: genetics.mhcDiversity || null,
+      lineage: genetics.lineage || null,
+      predictedAdultWeight: genetics.predictedAdultWeight || null,
+      lifeStage: genetics.lifeStage || null,
     });
   });
 
@@ -2841,6 +2901,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const dbFormat = toDatabaseFormat(parseResult.genetics);
 
+    // Get animal species for code normalization
+    const animal = await prisma.animal.findUnique({
+      where: { id: animalId },
+      select: { species: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    // Normalize imported genetic data to ensure consistent locus codes
+    const { normalizeGeneticData } = await import("../utils/genetics-code-normalizer.js");
+    const normalizedDbFormat = normalizeGeneticData({
+      coatColor: dbFormat.coatColorData || [],
+      coatType: dbFormat.coatTypeData || [],
+      physicalTraits: dbFormat.physicalTraitsData || [],
+      eyeColor: dbFormat.eyeColorData || [],
+      health: dbFormat.healthGeneticsData || [],
+      otherTraits: dbFormat.otherTraitsData || [],
+    }, animal.species || 'DOG');
+
     // Get existing genetics if merge strategy
     let existingGenetics = null;
     if (mergeStrategy === "merge") {
@@ -2867,8 +2945,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       testProvider: provider.name,
       testDate: body.testDate ? new Date(body.testDate) : new Date(),
       testId: body.testId || null,
-      coatColorData: mergeArrays(existingGenetics?.coatColorData as any, dbFormat.coatColorData),
-      healthGeneticsData: mergeArrays(existingGenetics?.healthGeneticsData as any, dbFormat.healthGeneticsData),
+      coatColorData: mergeArrays(existingGenetics?.coatColorData as any, normalizedDbFormat.coatColor),
+      healthGeneticsData: mergeArrays(existingGenetics?.healthGeneticsData as any, normalizedDbFormat.health),
       coatTypeData: mergeArrays(existingGenetics?.coatTypeData as any, dbFormat.coatTypeData),
       physicalTraitsData: mergeArrays(existingGenetics?.physicalTraitsData as any, dbFormat.physicalTraitsData),
       eyeColorData: mergeArrays(existingGenetics?.eyeColorData as any, dbFormat.eyeColorData),
@@ -2883,6 +2961,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
       update: data,
     });
+
+    // Note: animal_loci table is automatically synced via database trigger
+    // No manual sync needed - database handles it on INSERT/UPDATE
 
     reply.send({
       success: true,
