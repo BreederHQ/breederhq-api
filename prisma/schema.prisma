@@ -2843,6 +2843,7 @@ model Animal {
   Invoice           Invoice[]
   Expense           Expense[]
   genetics          AnimalGenetics?
+  loci              AnimalLoci[]    @relation("AnimalLoci")
 
   // Title & Competition tracking
   titles             AnimalTitle[]
@@ -2945,7 +2946,9 @@ model AnimalGenetics {
   coatColorData      Json?     @db.JsonB
   healthGeneticsData Json?     @db.JsonB
   coatTypeData       Json?     @db.JsonB // Furnishings, Curly, Long Hair, Shedding
-  physicalTraitsData Json?     @db.JsonB // Size (IGF1), Bobtail, Dewclaws, etc.
+  physicalTraitsData Json?     @db.JsonB // Size (IGF1), Bobtail, Dewclaws, Height genes
+  performanceData    Json?     @db.JsonB // Speed (MSTN), Gait (DMRT3), Endurance, Athletic traits
+  temperamentData    Json?     @db.JsonB // Serotonin transporter, Dopamine receptor, behavioral genetics
   eyeColorData       Json?     @db.JsonB // Eye color genetics
   otherTraitsData    Json?     @db.JsonB // Breed-specific traits
 
@@ -2961,6 +2964,38 @@ model AnimalGenetics {
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([animalId])
+  @@schema("public")
+}
+
+/// Normalized genetics table for high-performance searching
+/// One row per locus per animal - enables fast queries for carriers, compatibility, etc.
+model AnimalLoci {
+  id             Int      @id @default(autoincrement())
+  animalId       Int      @map("animal_id")
+  category       String   // coatColor, health, physicalTraits, etc.
+  locus          String   // E, A, TO, HYPP, etc. (normalized short codes)
+  locusName      String   @map("locus_name") // Extension, Agouti, Tobiano, etc.
+  allele1        String?
+  allele2        String?
+  genotype       String?  // Combined genotype or status (N/N, Clear, TO/to, etc.)
+  networkVisible Boolean  @default(false) @map("network_visible")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  animal Animal @relation("AnimalLoci", fields: [animalId], references: [id], onDelete: Cascade)
+
+  @@unique([animalId, category, locus], name: "animal_loci_animal_id_category_locus_key")
+  @@index([animalId], name: "animal_loci_animal_id_idx")
+  @@index([locus], name: "animal_loci_locus_idx")
+  @@index([category], name: "animal_loci_category_idx")
+  @@index([genotype], name: "animal_loci_genotype_idx")
+  @@index([allele1], name: "animal_loci_allele1_idx")
+  @@index([allele2], name: "animal_loci_allele2_idx")
+  @@index([locus, genotype], name: "animal_loci_locus_genotype_idx")
+  @@index([locus, allele1], name: "animal_loci_locus_allele1_idx")
+  @@index([locus, allele2], name: "animal_loci_locus_allele2_idx")
+  @@index([category, locus], name: "animal_loci_category_locus_idx")
+  @@map("animal_loci")
   @@schema("public")
 }
 

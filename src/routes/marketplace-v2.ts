@@ -1612,6 +1612,47 @@ export default async function marketplaceV2Routes(
         isPublic: c.isPublic,
       }));
 
+      // Calculate genetics category stats
+      const calculateCategoryStats = (lociArray: any[] | null) => {
+        if (!lociArray || !Array.isArray(lociArray) || lociArray.length === 0) {
+          return null;
+        }
+
+        // Count loci with actual data (allele1, allele2, or genotype populated)
+        const provided = lociArray.filter((locus: any) => {
+          return (
+            (locus.allele1 && locus.allele1.trim()) ||
+            (locus.allele2 && locus.allele2.trim()) ||
+            (locus.genotype && locus.genotype.trim() && locus.genotype !== "?/?")
+          );
+        }).length;
+
+        // Count loci that have data AND are marked as public
+        const publicCount = lociArray.filter((locus: any) => {
+          const hasData =
+            (locus.allele1 && locus.allele1.trim()) ||
+            (locus.allele2 && locus.allele2.trim()) ||
+            (locus.genotype && locus.genotype.trim() && locus.genotype !== "?/?");
+          return hasData && locus.networkVisible === true;
+        }).length;
+
+        return {
+          available: lociArray.length, // Total loci in the array
+          provided, // Loci with actual genetic data
+          public: publicCount, // Loci with data that are marked as public
+        };
+      };
+
+      const categoryStats = animal.genetics
+        ? {
+            coatColor: calculateCategoryStats(animal.genetics.coatColorData as any[] | null),
+            healthGenetics: calculateCategoryStats(animal.genetics.healthGeneticsData as any[] | null),
+            coatType: calculateCategoryStats(animal.genetics.coatTypeData as any[] | null),
+            physicalTraits: calculateCategoryStats(animal.genetics.physicalTraitsData as any[] | null),
+            eyeColor: calculateCategoryStats(animal.genetics.eyeColorData as any[] | null),
+          }
+        : null;
+
       // Build response
       const response = {
         animal: {
@@ -1646,14 +1687,21 @@ export default async function marketplaceV2Routes(
                 id: animal.genetics.id,
                 testProvider: animal.genetics.testProvider,
                 testDate: animal.genetics.testDate,
+                species: animal.species, // Added for loci lookup
                 breedComposition: animal.genetics.breedComposition,
-                coatColorData: animal.genetics.coatColorData,
-                healthGeneticsData: animal.genetics.healthGeneticsData,
-                coatTypeData: animal.genetics.coatTypeData,
-                physicalTraitsData: animal.genetics.physicalTraitsData,
-                eyeColorData: animal.genetics.eyeColorData,
+                coatColorData: animal.genetics.coatColorData as any[] | null,
+                healthGeneticsData: animal.genetics.healthGeneticsData as any[] | null,
+                coatTypeData: animal.genetics.coatTypeData as any[] | null,
+                physicalTraitsData: animal.genetics.physicalTraitsData as any[] | null,
+                eyeColorData: animal.genetics.eyeColorData as any[] | null,
+                // Frontend expects these but DB doesn't have them yet - return null
+                performanceGeneticsData: null,
+                temperamentGeneticsData: null,
+                breedSpecificMarkersData: null,
                 coi: animal.genetics.coi,
                 predictedAdultWeight: animal.genetics.predictedAdultWeight,
+                // Category statistics for privacy UI
+                categoryStats: categoryStats || {},
               }
             : null,
         },

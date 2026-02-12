@@ -46,9 +46,16 @@ async function populateAnimalDataFromConfig(
           result.genetics.breedComposition = geneticsData.breedComposition;
         }
 
-        // Coat color (JSON array of loci)
+        // Coat color (JSON array of loci) - filter by privacy and non-empty values
         if (config.genetics.showCoatColor && geneticsData.coatColorData) {
-          result.genetics.coatColor = geneticsData.coatColorData;
+          const coatColorArray = geneticsData.coatColorData as any[];
+          result.genetics.coatColor = Array.isArray(coatColorArray)
+            ? coatColorArray.filter((locus: any) =>
+                locus.networkVisible === true &&
+                locus.allele1 &&
+                locus.allele2
+              )
+            : [];
         }
 
         // COI (JSON field with structure { coefficient, percentage, ... })
@@ -65,16 +72,124 @@ async function populateAnimalDataFromConfig(
             : null;
         }
 
-        // Health genetics (JSON array)
+        // Health genetics (JSON array) - filter by privacy and map to expected format
         if (config.genetics.showHealthGenetics && geneticsData.healthGeneticsData) {
-          result.genetics.healthGenetics = geneticsData.healthGeneticsData;
+          const healthGeneticsArray = geneticsData.healthGeneticsData as any[];
+          result.genetics.healthGenetics = Array.isArray(healthGeneticsArray)
+            ? healthGeneticsArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus, // Short code as fallback
+                }))
+            : [];
         }
 
-        // Additional genetics fields
-        result.genetics.coatType = geneticsData.coatTypeData || null;
-        result.genetics.physicalTraits = geneticsData.physicalTraitsData || null;
-        result.genetics.eyeColor = geneticsData.eyeColorData || null;
-        result.genetics.otherTraits = geneticsData.otherTraitsData || null;
+        // Additional genetics fields - filter by privacy, non-empty values, and map to expected format
+        if (config.genetics.showCoatType && geneticsData.coatTypeData) {
+          const coatTypeArray = geneticsData.coatTypeData as any[];
+          const filtered = Array.isArray(coatTypeArray)
+            ? coatTypeArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus,
+                }))
+            : [];
+          result.genetics.coatType = filtered.length > 0 ? filtered : null;
+        } else {
+          result.genetics.coatType = null;
+        }
+
+        if (config.genetics.showPhysicalTraits && geneticsData.physicalTraitsData) {
+          const physicalTraitsArray = geneticsData.physicalTraitsData as any[];
+          const filtered = Array.isArray(physicalTraitsArray)
+            ? physicalTraitsArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus,
+                }))
+            : [];
+          result.genetics.physicalTraits = filtered.length > 0 ? filtered : null;
+        } else {
+          result.genetics.physicalTraits = null;
+        }
+
+        if (config.genetics.showEyeColor && geneticsData.eyeColorData) {
+          const eyeColorArray = geneticsData.eyeColorData as any[];
+          const filtered = Array.isArray(eyeColorArray)
+            ? eyeColorArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus,
+                }))
+            : [];
+          result.genetics.eyeColor = filtered.length > 0 ? filtered : null;
+        } else {
+          result.genetics.eyeColor = null;
+        }
+
+        if (config.genetics.showBreedSpecificMarkers && geneticsData.breedSpecificMarkersData) {
+          const breedSpecificArray = geneticsData.breedSpecificMarkersData as any[];
+          const filtered = Array.isArray(breedSpecificArray)
+            ? breedSpecificArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus,
+                }))
+            : [];
+          result.genetics.breedSpecificMarkers = filtered.length > 0 ? filtered : null;
+        } else {
+          result.genetics.breedSpecificMarkers = null;
+        }
+
+        if (geneticsData.otherTraitsData) {
+          const otherTraitsArray = geneticsData.otherTraitsData as any[];
+          const filtered = Array.isArray(otherTraitsArray)
+            ? otherTraitsArray
+                .filter((trait: any) =>
+                  trait.networkVisible === true &&
+                  trait.genotype &&
+                  trait.genotype.trim() !== ''
+                )
+                .map((trait: any) => ({
+                  name: trait.locusName || trait.locus,
+                  result: trait.genotype,
+                  trait: trait.locus,
+                }))
+            : [];
+          result.genetics.otherTraits = filtered.length > 0 ? filtered : null;
+        } else {
+          result.genetics.otherTraits = null;
+        }
       }
     }
 
@@ -131,23 +246,26 @@ async function populateAnimalDataFromConfig(
         },
         select: {
           id: true,
-          titleName: true,
-          abbreviation: true,
-          dateEarned: true,
+          titleDefinition: {
+            select: {
+              fullName: true,
+              abbreviation: true,
+            },
+          },
+          createdAt: true,
         },
       });
       result.achievements.titles = titles.map((t) => ({
         id: t.id,
-        name: t.titleName,
-        abbreviation: t.abbreviation,
-        date: t.dateEarned?.toISOString().split('T')[0],
+        name: t.titleDefinition?.fullName || 'Unknown',
+        abbreviation: t.titleDefinition?.abbreviation || '',
+        date: t.createdAt?.toISOString().split('T')[0],
       }));
 
       // Fetch competition results
-      const competitions = await prisma.animalCompetition.findMany({
+      const competitions = await prisma.competitionEntry.findMany({
         where: {
           animalId,
-          isPublic: true,
         },
         select: {
           id: true,
@@ -172,49 +290,61 @@ async function populateAnimalDataFromConfig(
 
     // Fetch health clearances if enabled
     if (config.health?.enabled) {
-      const healthTraits = await prisma.animalHealthTrait.findMany({
+      const healthTraits = await prisma.animalTraitValue.findMany({
         where: {
           animalId,
           marketplaceVisible: true,
         },
         select: {
           id: true,
-          traitName: true,
-          result: true,
-          testDate: true,
+          status: true,
+          performedAt: true,
+          traitDefinition: {
+            select: {
+              displayName: true,
+            },
+          },
         },
       });
 
       result.health = {
         traits: healthTraits.map((t) => ({
           id: t.id,
-          name: t.traitName,
-          status: t.result,
-          testDate: t.testDate?.toISOString().split('T')[0],
+          name: t.traitDefinition.displayName,
+          status: t.status || 'UNKNOWN',
+          testDate: t.performedAt?.toISOString().split('T')[0],
         })),
       };
     }
 
     // Fetch registry information if enabled
     if (config.registry?.enabled) {
-      const registrations = await prisma.animalRegistration.findMany({
+      const registrations = await prisma.animalRegistryIdentifier.findMany({
         where: {
           animalId,
         },
         select: {
           id: true,
-          registrationNumber: true,
-          organization: true,
-          verified: true,
+          identifier: true,
+          registry: {
+            select: {
+              name: true,
+            },
+          },
+          verification: {
+            select: {
+              id: true,
+            },
+          },
         },
       });
 
       result.registry = {
         registrations: registrations.map((r) => ({
           id: r.id,
-          number: r.registrationNumber,
-          organization: r.organization,
-          verified: r.verified,
+          number: r.identifier,
+          organization: r.registry.name,
+          verified: !!r.verification,
         })),
       };
     }
