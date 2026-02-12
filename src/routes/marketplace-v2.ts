@@ -1495,9 +1495,10 @@ export default async function marketplaceV2Routes(
 
       const privacy = animal.privacySettings || defaultPrivacy;
 
-      // Get trait definition IDs that support history and are networkVisible
+      // Get trait definition IDs that support history (all traits, not just visible)
+      // History is needed for HealthView to render correctly regardless of visibility state
       const historyTraitDefinitionIds = animal.AnimalTraitValue
-        .filter((t) => t.networkVisible === true && t.traitDefinition.supportsHistory)
+        .filter((t) => t.traitDefinition.supportsHistory)
         .map((t) => t.traitDefinitionId);
 
       // Fetch history entries for traits that support it
@@ -1529,22 +1530,25 @@ export default async function marketplaceV2Routes(
         historyByTraitDefId.set(entry.traitDefinitionId, existing);
       }
 
-      // Filter health traits to ones marked as public (networkVisible)
-      // The Health tab "Public" toggle controls networkVisible, not marketplaceVisible
+      // Return ALL health traits with their networkVisible values
+      // This matches how Animals HealthTab works - HealthView needs full data to show toggle states
       const healthTraits = animal.AnimalTraitValue
-        .filter((t) => t.networkVisible === true)
         .map((t) => {
           const traitHistory = historyByTraitDefId.get(t.traitDefinitionId) || [];
           return {
             id: t.id,
+            traitKey: t.traitDefinition.key,
             key: t.traitDefinition.key,
             displayName: t.traitDefinition.displayName,
             category: t.traitDefinition.category,
             valueType: t.traitDefinition.valueType,
+            enumValues: t.traitDefinition.enumValues,
             value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
             status: t.status,
             performedAt: t.performedAt,
             verified: t.verified,
+            networkVisible: t.networkVisible,
+            marketplaceVisible: t.marketplaceVisible,
             supportsHistory: t.traitDefinition.supportsHistory,
             history: t.traitDefinition.supportsHistory ? traitHistory.map((h) => ({
               id: h.id,
