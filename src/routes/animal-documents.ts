@@ -1,5 +1,6 @@
 // src/routes/animal-documents.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
 function parseIntStrict(v: unknown): number | null {
@@ -128,7 +129,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             visibility: body.visibility as any || existingDoc.visibility || "PRIVATE",
             status: "READY",
             // Store category in data JSON field (Document model doesn't have category column yet)
-            data: body.category ? { category: body.category } : existingDoc.data,
+            data: body.category ? { category: body.category } : (existingDoc.data ?? Prisma.DbNull),
           },
         });
       } else {
@@ -143,7 +144,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             sizeBytes: body.sizeBytes || null,
             visibility: body.visibility as any || "PRIVATE",
             status: "READY",
-            data: body.category ? { category: body.category } : null,
+            data: body.category ? { category: body.category } : Prisma.DbNull,
           },
         });
       }
@@ -157,7 +158,7 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
           sizeBytes: body.sizeBytes || null,
           visibility: body.visibility as any || "PRIVATE",
           status: "PLACEHOLDER",
-          data: body.category ? { category: body.category } : null,
+          data: body.category ? { category: body.category } : Prisma.DbNull,
         },
       });
     }
