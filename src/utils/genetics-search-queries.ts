@@ -48,7 +48,7 @@ export async function findCarriers(
     ORDER BY a.id
   `;
 
-  const params = [locus];
+  const params: (string | number)[] = [locus];
   if (species) params.push(species);
   if (tenantId) params.push(tenantId);
 
@@ -82,7 +82,7 @@ export async function findAnimalsWithAllele(
     ORDER BY a.id
   `;
 
-  const params = [locus, allele];
+  const params: (string | number)[] = [locus, allele];
   if (tenantId) params.push(tenantId);
 
   return await prisma.$queryRawUnsafe<AnimalWithLocus[]>(query, ...params);
@@ -115,7 +115,7 @@ export async function findByGenotype(
     ORDER BY a.id
   `;
 
-  const params = [locus, genotype];
+  const params: (string | number)[] = [locus, genotype];
   if (tenantId) params.push(tenantId);
 
   return await prisma.$queryRawUnsafe<AnimalWithLocus[]>(query, ...params);
@@ -274,7 +274,7 @@ export async function getLocusStats(
     ORDER BY count DESC
   `;
 
-  const params = [locus];
+  const params: (string | number)[] = [locus];
   if (species) params.push(species);
   if (tenantId) params.push(tenantId);
 
@@ -303,7 +303,7 @@ export async function findByCategory(
     ORDER BY "lociCount" DESC
   `;
 
-  const params = [category];
+  const params: (string | number)[] = [category];
   if (tenantId) params.push(tenantId);
 
   return await prisma.$queryRawUnsafe<{ animalId: number; lociCount: number }[]>(query, ...params);

@@ -136,7 +136,7 @@ export async function sendTemplatedEmail(
   const { tenantId, to, templateId, context, category, relatedInvoiceId, metadata, from, replyTo } = params;
 
   const template = await prisma.template.findFirst({
-    where: { id: templateId, tenantId },
+    where: { id: templateId, tenantId: tenantId ?? undefined },
     include: { content: true },
   });
 

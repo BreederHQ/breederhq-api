@@ -1,6 +1,7 @@
 // src/routes/rearing-assignments.ts
 // Rearing Protocols API - Protocol assignments to offspring groups
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
@@ -522,7 +523,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
             offspringId,
             protocolId: assignment.protocolId,
             protocolVersion: assignment.protocolVersion,
-            protocolSnapshot: assignment.protocolSnapshot,
+            protocolSnapshot: assignment.protocolSnapshot ?? Prisma.DbNull,
             startDate: assignment.startDate,
             status: "ACTIVE",
             totalActivities: assignment.totalActivities,
