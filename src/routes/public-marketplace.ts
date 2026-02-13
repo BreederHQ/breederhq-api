@@ -37,6 +37,7 @@ import {
   sendInquiryConfirmationToUser,
   sendInquiryNotificationToBreeder,
 } from "../services/marketplace-email-service.js";
+import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
 
 // ============================================================================
 // Security: Environment flags
@@ -986,6 +987,17 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
               url: `https://${process.env.CDN_DOMAIN || "cdn.breederhq.com"}/${a.storageKey}`,
               caption: null,
             }));
+        }
+
+        // Populate structured animalData using shared service (for ListingDataSections)
+        if (config && animal.id) {
+          response.animalData = await populateAnimalDataFromConfig(
+            animal.id,
+            tenant.id,
+            config,
+            privacy
+          );
+          response.dataDrawerConfig = config;
         }
 
         // Increment view count asynchronously
