@@ -241,7 +241,7 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
       // Verify offspring belongs to the assignment's group
       const offspring = await prisma.offspring.findFirst({
-        where: { id: offspringId, groupId: assignment.offspringGroupId, tenantId },
+        where: { id: offspringId, groupId: assignment.offspringGroupId ?? undefined, tenantId },
       });
 
       if (!offspring) {

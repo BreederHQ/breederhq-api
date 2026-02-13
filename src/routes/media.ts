@@ -256,7 +256,7 @@ async function handleUploadUrl(
     // Build upload context
     const uploadContext: UploadContext = {
       ownerType: context.type as OwnerType,
-      ownerId: context.type === "provider" ? context.providerId : context.tenantId,
+      ownerId: context.type === "provider" ? context.providerId : context.tenantId!,
       purpose: context.purpose,
       resourceId: context.resourceId,
       subPath: context.subPath,
@@ -274,7 +274,7 @@ async function handleUploadUrl(
     if (context.type === "tenant") {
       await prisma.document.create({
         data: {
-          tenantId: context.tenantId,
+          tenantId: context.tenantId!,
           scope: mapPurposeToScope(context.purpose),
           kind: "generic",
           title: filename,

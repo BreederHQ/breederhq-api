@@ -1183,7 +1183,9 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Calculate current stage and progress for each assignment
       const protocols = assignments.map((assignment) => {
-        const birthDate = assignment.offspringGroup.actualBirthOn;
+        const group = assignment.offspringGroup;
+        if (!group) return null;
+        const birthDate = group.actualBirthOn;
         const ageInDays = birthDate
           ? Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24))
           : 0;
@@ -1226,10 +1228,10 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           id: assignment.id,
           protocolId: assignment.protocol.id,
           protocolName: assignment.protocol.name,
-          groupId: assignment.offspringGroup.id,
-          groupName: assignment.offspringGroup.name || `Litter ${assignment.offspringGroup.id}`,
-          species: assignment.offspringGroup.species,
-          offspringCount: assignment.offspringGroup._count?.Offspring || 0,
+          groupId: group.id,
+          groupName: group.name || `Litter ${group.id}`,
+          species: group.species,
+          offspringCount: group._count?.Offspring || 0,
           ageInDays,
           currentStage: currentStage
             ? {
@@ -1245,7 +1247,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           activitiesDueToday,
           startDate: assignment.startDate.toISOString(),
         };
-      });
+      }).filter((p): p is NonNullable<typeof p> => p !== null);
 
       // Calculate summary stats
       const totalActiveProtocols = protocols.length;

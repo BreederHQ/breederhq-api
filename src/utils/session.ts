@@ -383,7 +383,7 @@ export function maybeRotateSession(
  */
 export function getActorId(req: FastifyRequest): string | null {
   const sess = parseVerifiedSession(req);
-  return sess?.userId ?? null;
+  return sess?.userId ?? req.userId ?? null;
 }
 
 /**
