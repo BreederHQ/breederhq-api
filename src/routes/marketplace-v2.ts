@@ -29,6 +29,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { MarketplaceListingStatus, BreedingGuaranteeType } from "@prisma/client";
 import prisma from "../prisma.js";
+import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
 
 // ============================================================================
 // Helpers
@@ -1667,6 +1668,7 @@ export default async function marketplaceV2Routes(
           sex: animal.sex,
           birthDate: animal.birthDate,
           photoUrl: animal.photoUrl,
+          coverImageUrl: animal.coverImageUrl,
         },
         privacySettings: privacy,
         // Registrations
@@ -2633,6 +2635,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           animalId: listing.animal?.id,
           animalName: listing.animal?.name,
           animalPhotoUrl: listing.animal?.photoUrl,
+          animalCoverImageUrl: listing.animal?.coverImageUrl || null,
           animalSpecies: listing.animal?.species || null,
           animalBreed: listing.animal?.breed || null,
           animalSex: listing.animal?.sex || null,
@@ -2774,6 +2777,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             locationCity: listing.locationCity,
             locationRegion: listing.locationRegion,
             locationCountry: listing.locationCountry,
+            coverImageUrl: listing.coverImageUrl || null,
             publishedAt: listing.publishedAt,
             viewCount: listing.viewCount,
           },
@@ -2794,6 +2798,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             sex: animal.sex,
             birthDate: privacy?.showFullDob ? animal.birthDate : null,
             photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
+            coverImageUrl: privacy?.showPhoto ? animal.coverImageUrl : null,
           },
           data: {} as any,
         };
@@ -2935,6 +2940,17 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               offspringCount,
             };
           }
+        }
+
+        // Populate structured animalData using shared service (for ListingDataSections)
+        if (config && animal.id) {
+          response.animalData = await populateAnimalDataFromConfig(
+            animal.id,
+            listing.tenantId,
+            config,
+            privacy
+          );
+          response.dataDrawerConfig = config;
         }
 
         // Update view count (async, don't wait)

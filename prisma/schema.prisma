@@ -1174,6 +1174,13 @@ enum NotificationType {
   supplement_overdue
   supplement_schedule_complete
 
+  // Network Breeding Discovery notifications
+  network_breeding_inquiry // New breeding inquiry received from network search
+  network_inquiry_response // Breeder responded to your inquiry
+  breeding_data_agreement_request // New breeding data agreement request
+  breeding_data_agreement_approved // Breeding data agreement approved by owner
+  breeding_data_agreement_rejected // Breeding data agreement declined by owner
+
   @@schema("public")
 }
 
@@ -1697,6 +1704,18 @@ model Tenant {
   animalBreedingProfiles  AnimalBreedingProfile[]
   animalIncompatibilities AnimalIncompatibility[]
   breedingEventsLog       BreedingEvent[]
+
+  // Network Breeding Discovery
+  networkVisibility           NetworkVisibility        @default(VISIBLE)
+  inquiryPermission           InquiryPermission        @default(ANYONE)
+  shareCodes                  ShareCode[]
+  animalAccessesAsOwner       AnimalAccess[]           @relation("AnimalAccessOwner")
+  animalAccessesAsAccessor    AnimalAccess[]           @relation("AnimalAccessAccessor")
+  networkSearchIndexes        NetworkSearchIndex[]
+  networkInquiriesSent        NetworkBreedingInquiry[] @relation("NetworkBreedingInquirySender")
+  networkInquiriesReceived    NetworkBreedingInquiry[] @relation("NetworkBreedingInquiryRecipient")
+  breedingAgreementsRequested BreedingDataAgreement[]  @relation("BreedingAgreementRequester")
+  breedingAgreementsApproving BreedingDataAgreement[]  @relation("BreedingAgreementApprover")
 
   @@index([name])
   @@index([quickResponderBadge])
@@ -2708,7 +2727,8 @@ model Animal {
   notes            String?
   breed            String?
 
-  photoUrl String? @db.Text
+  photoUrl      String? @db.Text
+  coverImageUrl String? @db.Text
 
   canonicalBreedId Int?
   canonicalBreed   Breed? @relation(fields: [canonicalBreedId], references: [id], onDelete: SetNull)
@@ -2741,8 +2761,8 @@ model Animal {
   lineDescription String?  @db.Text // Free-text description of breeding lines
 
   // Breeding Discovery: Relations
-  breedingListings        BreedingListing[]
-  breedingBookingAnimals  MktBreedingBookingAnimal[]
+  breedingListings       BreedingListing[]
+  breedingBookingAnimals MktBreedingBookingAnimal[]
 
   // legacy links
   litterId         Int?
@@ -2843,7 +2863,7 @@ model Animal {
   Invoice           Invoice[]
   Expense           Expense[]
   genetics          AnimalGenetics?
-  loci              AnimalLoci[]    @relation("AnimalLoci")
+  loci              AnimalLoci[]        @relation("AnimalLoci")
 
   // Title & Competition tracking
   titles             AnimalTitle[]
@@ -2917,6 +2937,10 @@ model Animal {
   // Rearing Protocols (for keepers and promoted animals continuing protocol)
   rearingAssignments RearingProtocolAssignment[] @relation("AnimalProtocolAssignment")
 
+  // Network Breeding Discovery
+  networkSearchVisible Boolean        @default(true)
+  animalAccesses       AnimalAccess[] @relation("AnimalAccessAnimal")
+
   @@unique([tenantId, microchip])
   @@index([organizationId])
   @@index([tenantId])
@@ -2933,6 +2957,7 @@ model Animal {
   @@index([damId])
   @@index([sireId])
   @@index([tenantId, species, primaryLineType])
+  @@index([tenantId, species, sex, networkSearchVisible])
   @@schema("public")
 }
 
@@ -2972,12 +2997,12 @@ model AnimalGenetics {
 model AnimalLoci {
   id             Int      @id @default(autoincrement())
   animalId       Int      @map("animal_id")
-  category       String   // coatColor, health, physicalTraits, etc.
-  locus          String   // E, A, TO, HYPP, etc. (normalized short codes)
+  category       String // coatColor, health, physicalTraits, etc.
+  locus          String // E, A, TO, HYPP, etc. (normalized short codes)
   locusName      String   @map("locus_name") // Extension, Agouti, Tobiano, etc.
   allele1        String?
   allele2        String?
-  genotype       String?  // Combined genotype or status (N/N, Clear, TO/to, etc.)
+  genotype       String? // Combined genotype or status (N/N, Clear, TO/to, etc.)
   networkVisible Boolean  @default(false) @map("network_visible")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
@@ -3008,7 +3033,7 @@ model AnimalOwner {
 
   // Party migration step 6H: unified party reference for co-owner (party-only)
   partyId Int
-  party   Party @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: SetNull)
+  party   Party @relation("AnimalOwnerParty", fields: [partyId], references: [id], onDelete: Cascade)
 
   // P2.2: Role clarification (defaults to CO_OWNER for migration compatibility)
   role OwnerRole @default(CO_OWNER)
@@ -3888,17 +3913,17 @@ model MktListingBreedingBooking {
  * Animal assignments for breeding booking listings
  */
 model MktBreedingBookingAnimal {
-  id        Int                      @id @default(autoincrement())
+  id        Int                       @id @default(autoincrement())
   bookingId Int
   booking   MktListingBreedingBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   animalId  Int
-  animal    Animal                   @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  animal    Animal                    @relation(fields: [animalId], references: [id], onDelete: Cascade)
 
   // Per-animal settings
-  featured       Boolean  @default(false)
-  feeOverride    Int?     // Override booking-level fee for this specific animal
-  maxBookings    Int?     // Max bookings for this specific animal
-  bookingsClosed Boolean  @default(false)
+  featured       Boolean @default(false)
+  feeOverride    Int? // Override booking-level fee for this specific animal
+  maxBookings    Int? // Max bookings for this specific animal
+  bookingsClosed Boolean @default(false)
 
   addedAt DateTime @default(now())
 
@@ -4054,6 +4079,10 @@ model BreedingPlan {
 
   // Supplement Tracking
   supplementSchedules SupplementSchedule[]
+
+  // Network Breeding Discovery
+  animalAccesses     AnimalAccess[]          @relation("AnimalAccessBreedingPlan")
+  breedingAgreements BreedingDataAgreement[] @relation("BreedingAgreementPlan")
 
   archived      Boolean   @default(false)
   archiveReason String? /// Optional reason/note provided when archiving the plan
@@ -6317,10 +6346,17 @@ model MessageThread {
   isQuarantined      Boolean  @default(false) // Auto-quarantined for manual review
   authenticationPass Boolean? // SPF/DKIM/DMARC validation result
 
+  // Network Breeding Discovery: discriminator for network conversations
+  contextType String? // "NETWORK_BREEDING_INQUIRY", "ANIMAL_ACCESS", etc.
+
   participants   MessageParticipant[]
   messages       Message[]
   autoReplyLogs  AutoReplyLog[]
   tagAssignments TagAssignment[]
+
+  // Network Breeding Discovery
+  networkBreedingInquiry   NetworkBreedingInquiry?   @relation("NetworkBreedingInquiryThread")
+  animalAccessConversation AnimalAccessConversation? @relation("AnimalAccessConversationThread")
 
   lastMessageAt DateTime?
 
@@ -7835,6 +7871,9 @@ model AnimalPrivacySettings {
   enableGeneticsSharing Boolean @default(false) // Gate for per-result visibility in Genetics tab
   enableDocumentSharing Boolean @default(false) // Gate for per-document visibility in Documents tab
   enableMediaSharing    Boolean @default(false) // Gate for per-item visibility in Media tab
+
+  // Per-protocol vaccination visibility (JSON map: { "dog.rabies": true, "dog.dhpp": false, ... })
+  vaccinationVisibility Json? @default("{}") @db.JsonB
 
   // Breeding visibility
   showBreedingHistory Boolean @default(false) // Show past matings, litter counts, offspring
@@ -11573,5 +11612,330 @@ model BreedingGroupMember {
   @@index([memberStatus])
   @@index([breedingPlanId])
   @@index([expectedBirthStart])
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Network Breeding Discovery: Enums
+ * Cross-tenant animal sharing, network search, and breeding collaboration
+ * See: docs/codebase/api/NETWORK-BREEDING-DISCOVERY-SCHEMA.md
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/// Access tier for shared animal data
+enum AnimalAccessTier {
+  BASIC // Name, photo, breed, registration, owner contact
+  GENETICS // + Panel results, genotype data
+  LINEAGE // + Pedigree (configurable depth)
+  HEALTH // + Health records, test results
+  FULL // + Documents, competition records
+
+  @@schema("public")
+}
+
+/// How the access was granted
+enum AnimalAccessSource {
+  INQUIRY // From breeding inquiry response
+  QR_SCAN // Scanned QR code at show
+  SHARE_CODE // Entered share code manually
+  BREEDING_AGREEMENT // Elevated via breeding plan agreement
+
+  @@schema("public")
+}
+
+/// Status of the animal access relationship
+enum AnimalAccessStatus {
+  ACTIVE // Currently valid
+  EXPIRED // Past expiration date
+  REVOKED // Owner revoked access
+  OWNER_DELETED // Owner deleted the animal
+
+  @@schema("public")
+}
+
+/// Status of a share code
+enum ShareCodeStatus {
+  ACTIVE // Can be redeemed
+  EXPIRED // Past expiration date
+  REVOKED // Creator revoked
+  MAX_USES_REACHED // Hit usage limit
+
+  @@schema("public")
+}
+
+/// Status of breeding data agreement
+enum BreedingAgreementStatus {
+  PENDING // Awaiting approval
+  APPROVED // Both parties agreed
+  REJECTED // Declined by owner
+  EXPIRED // Past expiration without approval
+
+  @@schema("public")
+}
+
+/// Network visibility setting for breeders
+enum NetworkVisibility {
+  VISIBLE // Show breeder name and profile
+  ANONYMOUS // Show as "A breeder"
+  HIDDEN // Don't appear in search results
+
+  @@schema("public")
+}
+
+/// Who can send breeding inquiries
+enum InquiryPermission {
+  ANYONE // Any BreederHQ user
+  VERIFIED // Verified breeders only
+  CONNECTIONS // Only existing connections
+
+  @@schema("public")
+}
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Network Breeding Discovery: Models
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/// ShareCode - Generates shareable codes for animal access
+model ShareCode {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // The code itself - human-readable format: "MAX-7X9K-BLUE"
+  code String @unique
+
+  // What's being shared (array of animal IDs)
+  animalIds Int[]
+
+  // Access configuration
+  defaultAccessTier AnimalAccessTier @default(BASIC)
+  perAnimalTiers    Json? // { "animalId": "GENETICS", ... }
+
+  // Usage limits
+  expiresAt DateTime? // Null = never expires
+  maxUses   Int? // Null = unlimited
+  useCount  Int       @default(0)
+
+  // Status
+  status    ShareCodeStatus @default(ACTIVE)
+  revokedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Relations
+  accesses AnimalAccess[]
+
+  @@index([tenantId, status])
+  @@index([code])
+  @@index([expiresAt])
+  @@schema("public")
+}
+
+/// AnimalAccess - Shadow animal relationship (cross-tenant animal sharing)
+model AnimalAccess {
+  id Int @id @default(autoincrement())
+
+  // Who owns the animal (the sharer)
+  ownerTenantId Int
+  ownerTenant   Tenant @relation("AnimalAccessOwner", fields: [ownerTenantId], references: [id], onDelete: Cascade)
+
+  // Who has access (the recipient)
+  accessorTenantId Int
+  accessorTenant   Tenant @relation("AnimalAccessAccessor", fields: [accessorTenantId], references: [id], onDelete: Cascade)
+
+  // The animal being shared (nullable if deleted)
+  animalId Int?
+  animal   Animal? @relation("AnimalAccessAnimal", fields: [animalId], references: [id], onDelete: SetNull)
+
+  // Access configuration
+  accessTier AnimalAccessTier   @default(BASIC)
+  source     AnimalAccessSource
+
+  // Share code that granted this access (for tracking)
+  shareCodeId Int?
+  shareCode   ShareCode? @relation(fields: [shareCodeId], references: [id], onDelete: SetNull)
+
+  // If locked to a specific breeding plan
+  breedingPlanId Int?
+  breedingPlan   BreedingPlan? @relation("AnimalAccessBreedingPlan", fields: [breedingPlanId], references: [id], onDelete: SetNull)
+
+  // Lifecycle
+  status    AnimalAccessStatus @default(ACTIVE)
+  expiresAt DateTime? // Null = permanent (e.g., breeding agreement)
+
+  // Snapshot data (preserved if animal deleted)
+  animalNameSnapshot    String?
+  animalSpeciesSnapshot Species?
+  animalSexSnapshot     Sex?
+
+  // Soft delete tracking
+  deletedAt DateTime? // When owner deleted their animal
+
+  // Breeding data agreements referencing this access
+  breedingAgreements BreedingDataAgreement[] @relation("BreedingAgreementAccess")
+
+  // Per-animal conversation between owner and accessor
+  conversation AnimalAccessConversation? @relation("AnimalAccessConversationAccess")
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([animalId, accessorTenantId])
+  @@index([ownerTenantId, status])
+  @@index([accessorTenantId, status])
+  @@index([animalId])
+  @@index([shareCodeId])
+  @@index([status, deletedAt])
+  @@index([expiresAt])
+  @@schema("public")
+}
+
+/// AnimalAccessConversation - Links an AnimalAccess record to a MessageThread
+/// Created lazily when either party starts a conversation about a shared animal
+model AnimalAccessConversation {
+  id Int @id @default(autoincrement())
+
+  // The animal access relationship this conversation is about
+  animalAccessId Int          @unique
+  animalAccess   AnimalAccess @relation("AnimalAccessConversationAccess", fields: [animalAccessId], references: [id], onDelete: Cascade)
+
+  // The message thread for the conversation
+  messageThreadId Int           @unique
+  messageThread   MessageThread @relation("AnimalAccessConversationThread", fields: [messageThreadId], references: [id], onDelete: Cascade)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  @@index([animalAccessId])
+  @@index([messageThreadId])
+  @@schema("public")
+}
+
+/// NetworkSearchIndex - Privacy-preserving search index (no animal identity exposed)
+/// Stores aggregated traits per tenant/species/sex for network breeding discovery search
+model NetworkSearchIndex {
+  id       Int    @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Searchable dimensions (no animal identity)
+  species Species
+  sex     Sex
+
+  // Aggregated trait availability (JSONB)
+  geneticTraits    Json // { "E": ["EE", "Ee"], "HYPP": ["NN"] }
+  physicalTraits   Json? // { "minHeight": 15, "maxHeight": 17 }
+  healthClearances Json? // { "HYPP": ["NN"], "hips": ["Excellent"] }
+
+  // Count for "N potential matches" display
+  animalCount Int @default(1)
+
+  // Index metadata
+  lastRebuiltAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, species, sex])
+  @@index([species, sex])
+  @@index([tenantId])
+  @@schema("public")
+}
+
+/// Status of a network breeding inquiry
+enum NetworkInquiryStatus {
+  PENDING // Awaiting response from recipient
+  RESPONDED // Recipient responded
+  DECLINED // Recipient declined
+
+  @@schema("public")
+}
+
+/// NetworkBreedingInquiry - Tracks breeding inquiries sent between breeders via network search
+/// Distinct from BreedingInquiry (marketplace listing inquiries)
+model NetworkBreedingInquiry {
+  id Int @id @default(autoincrement())
+
+  // Who sent the inquiry
+  senderTenantId Int
+  senderTenant   Tenant @relation("NetworkBreedingInquirySender", fields: [senderTenantId], references: [id], onDelete: Cascade)
+
+  // Who received it
+  recipientTenantId Int
+  recipientTenant   Tenant @relation("NetworkBreedingInquiryRecipient", fields: [recipientTenantId], references: [id], onDelete: Cascade)
+
+  // The search criteria that triggered this inquiry
+  searchCriteria Json // { species, sex, genetics, health, physical }
+
+  // Which animals matched (PRIVATE - only recipient sees)
+  matchingAnimalIds Int[]
+  matchedTraits     String[] // ["coat genetics", "HYPP status"]
+
+  // Custom message from sender
+  message String? @db.Text
+
+  // Lifecycle
+  status      NetworkInquiryStatus @default(PENDING)
+  respondedAt DateTime?
+
+  // Link to conversation thread (one-to-one)
+  messageThreadId Int?           @unique
+  messageThread   MessageThread? @relation("NetworkBreedingInquiryThread", fields: [messageThreadId], references: [id], onDelete: SetNull)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([senderTenantId, status])
+  @@index([recipientTenantId, status])
+  @@index([createdAt])
+  @@schema("public")
+}
+
+/// BreedingDataAgreement - Formal breeding collaboration agreement
+/// Created when a shadow animal is added to a breeding plan, requiring owner approval
+model BreedingDataAgreement {
+  id String @id @default(uuid())
+
+  // The breeding plan this agreement covers
+  breedingPlanId Int
+  breedingPlan   BreedingPlan @relation("BreedingAgreementPlan", fields: [breedingPlanId], references: [id], onDelete: Cascade)
+
+  // The animal access being elevated
+  animalAccessId Int
+  animalAccess   AnimalAccess @relation("BreedingAgreementAccess", fields: [animalAccessId], references: [id], onDelete: Restrict)
+
+  // Parties involved
+  requestingTenantId Int
+  requestingTenant   Tenant @relation("BreedingAgreementRequester", fields: [requestingTenantId], references: [id], onDelete: Cascade)
+
+  approvingTenantId Int
+  approvingTenant   Tenant @relation("BreedingAgreementApprover", fields: [approvingTenantId], references: [id], onDelete: Cascade)
+
+  // What role the animal plays in the breeding plan
+  animalRole String // "sire" or "dam"
+
+  // Agreement lifecycle
+  status      BreedingAgreementStatus @default(PENDING)
+  requestedAt DateTime                @default(now())
+  approvedAt  DateTime?
+  rejectedAt  DateTime?
+
+  // Optional messages
+  requestMessage  String? @db.Text
+  responseMessage String? @db.Text
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([breedingPlanId, animalAccessId])
+  @@index([requestingTenantId, status])
+  @@index([approvingTenantId, status])
+  @@index([status])
   @@schema("public")
 }

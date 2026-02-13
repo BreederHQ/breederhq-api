@@ -105,6 +105,7 @@ const PROD_ORIGINS = [
   "https://app.breederhq.com",
   "https://portal.breederhq.com",
   "https://marketplace.breederhq.com",
+  "https://breederhq.com", // Marketing site — public share preview
 ];
 
 // Dev-only: allow local Caddy HTTPS subdomains
@@ -339,6 +340,12 @@ app.addHook("preHandler", async (req, reply) => {
 
   // Check exemptions first
   if (isCsrfExempt(pathOnly, m)) return;
+
+  // Bearer token auth (mobile app JWT) is immune to CSRF attacks because
+  // the token must be explicitly set in JavaScript — a cross-origin form
+  // submission cannot inject a custom Authorization header.
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) return;
 
   // 1) Validate Origin header
   const originHeader = req.headers.origin as string | undefined;
@@ -612,6 +619,7 @@ import documentsRoutes from "./routes/documents.js"; // General documents listin
 import watermarkSettingsRoutes from "./routes/watermark-settings.js"; // Watermark settings
 import documentWatermarkRoutes from "./routes/document-watermark.js"; // Document download with watermarking
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
+import networkRoutes from "./routes/network.js"; // Network Breeding Discovery search
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
@@ -634,6 +642,10 @@ import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notifi
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import studVisibilityRoutes from "./routes/stud-visibility.js"; // Stud Listing Visibility Rules (P11)
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
+import { startNetworkSearchIndexJob, stopNetworkSearchIndexJob } from "./jobs/network-search-index.js"; // Network search index rebuild cron job
+import { startAnimalAccessCleanupJob, stopAnimalAccessCleanupJob } from "./jobs/animal-access-cleanup.js"; // Animal access cleanup cron job (30-day retention)
+import { startShareCodeExpirationJob, stopShareCodeExpirationJob } from "./jobs/share-code-expiration.js"; // Share code expiration cron job (hourly)
+import { startAnimalAccessExpirationJob, stopAnimalAccessExpirationJob } from "./jobs/animal-access-expiration.js"; // Animal access expiration cron job (hourly)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -664,6 +676,11 @@ import rearingCommentsRoutes from "./routes/rearing-comments.js"; // Community c
 import rearingAssessmentsRoutes from "./routes/rearing-assessments.js"; // Volhard PAT and custom assessments
 import rearingCertificatesRoutes from "./routes/rearing-certificates.js"; // Completion certificates
 import rearingImportExportRoutes from "./routes/rearing-import-export.js"; // Protocol import/export
+
+// Network Breeding Discovery
+import shareCodesRoutes from "./routes/share-codes.js"; // Share code generation & redemption
+import animalAccessRoutes from "./routes/animal-access.js"; // Shadow animal access management
+import breedingDataAgreementsRoutes from "./routes/breeding-data-agreements.js"; // Breeding data agreements
 
 // Mobile App (JWT auth & push notifications)
 import mobileAuthRoutes from "./routes/mobile-auth.js"; // Mobile login, refresh, logout
@@ -1178,6 +1195,9 @@ app.register(
     api.register(breedingAnalyticsRoutes); // /api/v1/breeding-analytics/* (Breeding Discovery - Phase 3)
     api.register(compatibilityRoutes); // /api/v1/compatibility/* (Breeding Discovery - Phase 2)
     api.register(publicBreedingDiscoveryRoutes); // /api/v1/public/breeding-* (Breeding Discovery - Phase 2)
+    api.register(shareCodesRoutes);    // /api/v1/share-codes/* (Network Breeding Discovery)
+    api.register(animalAccessRoutes);  // /api/v1/animal-access/* (Network Breeding Discovery)
+    api.register(breedingDataAgreementsRoutes); // /api/v1/breeding-agreements/* (Network Breeding Discovery)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
@@ -1209,6 +1229,7 @@ app.register(
     api.register(documentWatermarkRoutes); // /api/v1/documents/:id/download, /watermark, /access-log Document watermarking
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
+    api.register(networkRoutes);       // /api/v1/network/search Network Breeding Discovery
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
@@ -1309,16 +1330,20 @@ const v2App = app.register(
   { prefix: "/api/v2" }
 );
 
-// ---------- API v1/public: public marketplace subtree ----------
-// SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
-// All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
-//   1. Valid session cookie (bhq_s)
-//   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
-// Requests to /api/v1/public/marketplace/* now return 410 Gone.
+// ---------- API v1/public: public (no-auth) subtree ----------
+// Share code preview (public landing page for QR codes / smart links)
+import publicSharePreviewRoutes from "./routes/public-share-preview.js";
+
 app.register(
   async (api) => {
-    // Return 410 Gone for all requests to removed public marketplace routes
-    // SECURITY: No data, no DB reads, no DTO building - just a static error response
+    // Share code preview — returns non-sensitive animal data for marketing landing page
+    api.register(publicSharePreviewRoutes); // /api/v1/public/share-codes/:code/preview
+
+    // SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
+    // All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
+    //   1. Valid session cookie (bhq_s)
+    //   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
+    // Requests to /api/v1/public/marketplace/* now return 410 Gone.
     const goneResponse = {
       error: "gone",
       message: "Marketplace endpoints require authentication. Use /api/v1/marketplace/*.",
@@ -1372,6 +1397,18 @@ export async function start() {
 
     // Start rule execution cron job
     startRuleExecutionJob();
+
+    // Start network search index rebuild cron job
+    startNetworkSearchIndexJob();
+
+    // Start animal access cleanup cron job (30-day OWNER_DELETED retention)
+    startAnimalAccessCleanupJob();
+
+    // Start share code expiration cron job (hourly)
+    startShareCodeExpirationJob();
+
+    // Start animal access expiration cron job (hourly)
+    startAnimalAccessExpirationJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1385,6 +1422,10 @@ process.on("SIGTERM", async () => {
   app.log.info("SIGTERM received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  stopNetworkSearchIndexJob();
+  stopAnimalAccessCleanupJob();
+  stopShareCodeExpirationJob();
+  stopAnimalAccessExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1393,6 +1434,10 @@ process.on("SIGINT", async () => {
   app.log.info("SIGINT received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  stopNetworkSearchIndexJob();
+  stopAnimalAccessCleanupJob();
+  stopShareCodeExpirationJob();
+  stopAnimalAccessExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

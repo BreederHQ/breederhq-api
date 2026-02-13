@@ -219,6 +219,8 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       mimeType?: string;
       sizeBytes?: number;
       visibility?: string;
+      storageKey?: string;
+      cdnUrl?: string;
     };
 
     if (!body.title) return reply.code(400).send({ error: "title_required" });
@@ -238,17 +240,55 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       });
     }
 
-    // Document scope is ANIMAL for animal-linked documents
-    const createdDoc = await prisma.document.create({
-      data: {
-        tenantId, animalId, scope: "animal", title: body.title,
-        originalFileName: body.originalFileName || null,
-        mimeType: body.mimeType || null,
-        sizeBytes: body.sizeBytes || null,
-        visibility: body.visibility as any || "PRIVATE",
-        status: "PLACEHOLDER",
-      },
-    });
+    let createdDoc;
+
+    // If storageKey provided, find the document created by /media/upload-url flow
+    // and update it rather than creating a duplicate PLACEHOLDER
+    if (body.storageKey) {
+      const existingDoc = await prisma.document.findFirst({
+        where: { storageKey: body.storageKey, tenantId },
+      });
+
+      if (existingDoc) {
+        createdDoc = await prisma.document.update({
+          where: { id: existingDoc.id },
+          data: {
+            animalId,
+            title: body.title,
+            originalFileName: body.originalFileName || existingDoc.originalFileName,
+            mimeType: body.mimeType || existingDoc.mimeType,
+            sizeBytes: body.sizeBytes || existingDoc.sizeBytes,
+            visibility: body.visibility as any || existingDoc.visibility || "PRIVATE",
+            status: "READY",
+          },
+        });
+      } else {
+        createdDoc = await prisma.document.create({
+          data: {
+            tenantId, animalId, scope: "animal", title: body.title,
+            storageKey: body.storageKey,
+            url: body.cdnUrl || null,
+            originalFileName: body.originalFileName || null,
+            mimeType: body.mimeType || null,
+            sizeBytes: body.sizeBytes || null,
+            visibility: body.visibility as any || "PRIVATE",
+            status: "READY",
+          },
+        });
+      }
+    } else {
+      // No storageKey - create placeholder document (legacy flow)
+      createdDoc = await prisma.document.create({
+        data: {
+          tenantId, animalId, scope: "animal", title: body.title,
+          originalFileName: body.originalFileName || null,
+          mimeType: body.mimeType || null,
+          sizeBytes: body.sizeBytes || null,
+          visibility: body.visibility as any || "PRIVATE",
+          status: "PLACEHOLDER",
+        },
+      });
+    }
 
     let traitValue = await prisma.animalTraitValue.findUnique({
       where: { tenantId_animalId_traitDefinitionId: { tenantId, animalId, traitDefinitionId: def.id } },
@@ -268,6 +308,42 @@ const animalDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       ...createdDoc,
       linkedTraits: [{ traitKey: def.key, displayName: def.displayName, category: def.category, traitValueId: traitValue.id }],
     });
+  });
+
+  // ── Update document visibility ────────────────────────────────────
+  app.put("/animals/:animalId/documents/:documentId/visibility", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseIntStrict((req.params as { animalId: string }).animalId);
+    const documentId = parseIntStrict((req.params as { documentId: string }).documentId);
+    if (!animalId || !documentId) return reply.code(400).send({ error: "invalid_params" });
+
+    await assertAnimalInTenant(animalId, tenantId);
+
+    const body = req.body as { visibility?: string };
+    const validVisibilities = ["PRIVATE", "BUYERS", "PUBLIC"];
+    if (!body.visibility || !validVisibilities.includes(body.visibility)) {
+      return reply.code(400).send({ error: "invalid_visibility", message: "Must be PRIVATE, BUYERS, or PUBLIC" });
+    }
+
+    // Verify document belongs to this tenant and animal
+    const doc = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true, tenantId: true, animalId: true },
+    });
+
+    if (!doc || doc.tenantId !== tenantId || doc.animalId !== animalId) {
+      return reply.code(404).send({ error: "document_not_found" });
+    }
+
+    const updated = await prisma.document.update({
+      where: { id: documentId },
+      data: { visibility: body.visibility as any },
+      select: { id: true, visibility: true },
+    });
+
+    return reply.send(updated);
   });
 
   app.delete("/animals/:animalId/documents/:documentId", async (req, reply) => {

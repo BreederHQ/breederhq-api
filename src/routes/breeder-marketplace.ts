@@ -154,6 +154,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,
@@ -235,6 +236,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,
@@ -309,6 +311,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,

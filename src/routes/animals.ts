@@ -402,6 +402,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           femaleCycleLenOverrideDays: true,
           // Title display fields
           titlePrefix: true,
@@ -488,6 +489,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         createdAt: true,
         updatedAt: true,
         photoUrl: true,
+          coverImageUrl: true,
         reproductiveCycles: {
           select: { cycleStart: true },
         },
@@ -559,6 +561,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archived: true,
         createdAt: true,
         updatedAt: true,
+        photoUrl: true,
+          coverImageUrl: true,
         femaleCycleLenOverrideDays: true,
         // Parent IDs for pedigree
         sireId: true,
@@ -652,6 +656,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       organizationId: number | null;
       photoUrl: string | null;
+      coverImageUrl: string | null;
       // Lineage fields
       damId: number | null;
       sireId: number | null;
@@ -719,10 +724,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.notes = b.notes.trim() || null;
     }
 
-    // NEW: normalise photoUrl in create
+    // normalise photoUrl / coverImageUrl in create
     if (typeof b.photoUrl === "string") {
       const u = b.photoUrl.trim();
       data.photoUrl = u || null;
+    }
+    if (typeof b.coverImageUrl === "string") {
+      const u = b.coverImageUrl.trim();
+      data.coverImageUrl = u || null;
     }
 
     if (typeof b.breed === "string") {
@@ -783,6 +792,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           // Lineage
           damId: true,
           sireId: true,
@@ -857,6 +867,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       archived: boolean;
       photoUrl: string | null;
+      coverImageUrl: string | null;
       femaleCycleLenOverrideDays: number | null;
       // Valuation fields
       intendedUse: string | null;
@@ -913,6 +924,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.notes !== undefined) data.notes = b.notes;
     if (b.breed !== undefined) data.breed = b.breed;
     if (b.photoUrl !== undefined) data.photoUrl = b.photoUrl;
+    if (b.coverImageUrl !== undefined) data.coverImageUrl = b.coverImageUrl;
     if (b.canonicalBreedId !== undefined) data.canonicalBreedId = b.canonicalBreedId;
     if (b.customBreedId !== undefined) data.customBreedId = b.customBreedId;
     if (b.archived !== undefined) data.archived = !!b.archived;
@@ -1026,6 +1038,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           femaleCycleLenOverrideDays: true,
           // Valuation fields
           intendedUse: true,
@@ -1239,6 +1252,119 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id },
       data: { photoUrl: null },
       select: { photoUrl: true },
+    });
+
+    reply.send(updated);
+  });
+
+  // POST /animals/:id/cover
+  // Uploads animal cover/banner photo to S3
+  // Unlike the avatar photo, the cover is NOT resized server-side —
+  // the frontend crops to the correct dimensions (800x450 or 800x600)
+  app.post("/animals/:id/cover", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const mpReq = req as any;
+    const file = await mpReq.file();
+    if (!file) return reply.code(400).send({ error: "file_required" });
+
+    const buf = await file.toBuffer();
+
+    if (buf.length > MAX_PHOTO_SIZE) {
+      return reply.code(400).send({
+        error: "file_too_large",
+        message: "Cover photo must be less than 10MB",
+      });
+    }
+
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return reply.code(400).send({
+        error: "invalid_content_type",
+        message: "Cover photo must be JPEG, PNG, or WebP format",
+      });
+    }
+
+    // No resize — frontend already cropped to correct dimensions
+    const { storageKey, cdnUrl } = await uploadBuffer(
+      {
+        ownerType: "tenant",
+        ownerId: tenantId,
+        purpose: "animal",
+        resourceId: String(id),
+        subPath: "covers",
+      },
+      "cover.jpg",
+      buf,
+      "image/jpeg"
+    );
+
+    // Clean up old cover from S3
+    const oldAnimal = await prisma.animal.findUnique({
+      where: { id },
+      select: { coverImageUrl: true },
+    });
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { coverImageUrl: cdnUrl },
+      select: { coverImageUrl: true },
+    });
+
+    if (oldAnimal?.coverImageUrl?.includes("tenants/") || oldAnimal?.coverImageUrl?.includes("s3.")) {
+      try {
+        const urlParts = oldAnimal.coverImageUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const oldKey = urlParts.slice(keyIndex).join("/");
+          await deleteFile(oldKey);
+        }
+      } catch (e) {
+        req.log.warn({ error: e, oldUrl: oldAnimal.coverImageUrl }, "Failed to delete old cover");
+      }
+    }
+
+    reply.send({ coverImageUrl: updated.coverImageUrl, storageKey });
+  });
+
+  // DELETE /animals/:id/cover
+  app.delete("/animals/:id/cover", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const animal = await prisma.animal.findUnique({
+      where: { id },
+      select: { coverImageUrl: true },
+    });
+
+    if (animal?.coverImageUrl?.includes("tenants/") || animal?.coverImageUrl?.includes("s3.")) {
+      try {
+        const urlParts = animal.coverImageUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const storageKey = urlParts.slice(keyIndex).join("/");
+          await deleteFile(storageKey);
+        }
+      } catch (e) {
+        req.log.warn({ error: e, coverImageUrl: animal.coverImageUrl }, "Failed to delete cover from S3");
+      }
+    }
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { coverImageUrl: null },
+      select: { coverImageUrl: true },
     });
 
     reply.send(updated);
@@ -3846,6 +3972,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             species: true,
             breed: true,
             photoUrl: true,
+          coverImageUrl: true,
             birthDate: true,
           },
         },
@@ -3856,6 +3983,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             species: true,
             breed: true,
             photoUrl: true,
+          coverImageUrl: true,
             birthDate: true,
           },
         },
@@ -3960,6 +4088,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         enableGeneticsSharing: false,
         enableDocumentSharing: false,
         enableMediaSharing: false,
+        vaccinationVisibility: {},
         showBreedingHistory: false,
         showTitles: true,
         showTitleDetails: false,
@@ -4006,6 +4135,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       enableGeneticsSharing: boolean;
       enableDocumentSharing: boolean;
       enableMediaSharing: boolean;
+      // Per-protocol vaccination visibility (e.g., { "dog.rabies": true })
+      vaccinationVisibility: Record<string, boolean>;
       // Breeding
       showBreedingHistory: boolean;
       // Achievements
@@ -4033,6 +4164,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         enableGeneticsSharing: body.enableGeneticsSharing ?? false,
         enableDocumentSharing: body.enableDocumentSharing ?? false,
         enableMediaSharing: body.enableMediaSharing ?? false,
+        vaccinationVisibility: body.vaccinationVisibility ?? {},
         showBreedingHistory: body.showBreedingHistory ?? false,
         showTitles: body.showTitles ?? true,
         showTitleDetails: body.showTitleDetails ?? false,
@@ -4052,6 +4184,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ...(body.enableGeneticsSharing !== undefined && { enableGeneticsSharing: body.enableGeneticsSharing }),
         ...(body.enableDocumentSharing !== undefined && { enableDocumentSharing: body.enableDocumentSharing }),
         ...(body.enableMediaSharing !== undefined && { enableMediaSharing: body.enableMediaSharing }),
+        ...(body.vaccinationVisibility !== undefined && { vaccinationVisibility: body.vaccinationVisibility }),
         ...(body.showBreedingHistory !== undefined && { showBreedingHistory: body.showBreedingHistory }),
         ...(body.showTitles !== undefined && { showTitles: body.showTitles }),
         ...(body.showTitleDetails !== undefined && { showTitleDetails: body.showTitleDetails }),
@@ -4854,6 +4987,7 @@ async function buildGlobalPedigreeForApi(
               tenantId: true,
               name: true,
               photoUrl: true,
+          coverImageUrl: true,
               breed: true,
             },
           },
