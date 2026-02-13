@@ -21,13 +21,14 @@ async function getPresignedUploadUrl(
       filename: string;
       contentType: string;
       contentLength?: number;
-      context?: "service_listing" | "profile_photo" | "profile_banner" | "service_banner" | "breeding_animal";
+      context?: "service_listing" | "profile_photo" | "profile_banner" | "service_banner" | "breeding_animal" | "breeding_program";
       serviceId?: string; // Required for service_banner context
+      programId?: string; // Optional for breeding_program context
     };
   }>,
   reply: FastifyReply
 ) {
-  const { filename, contentType, contentLength, context = "service_listing", serviceId } = request.body;
+  const { filename, contentType, contentLength, context = "service_listing", serviceId, programId } = request.body;
 
   // Get user ID from session (marketplace auth uses different session keys)
   // Adjust based on your auth middleware
@@ -66,7 +67,7 @@ async function getPresignedUploadUrl(
   }
 
   // Validate context
-  const allowedContexts = ["service_listing", "profile_photo", "profile_banner", "service_banner", "breeding_animal"];
+  const allowedContexts = ["service_listing", "profile_photo", "profile_banner", "service_banner", "breeding_animal", "breeding_program"];
   if (!allowedContexts.includes(context)) {
     return reply.status(400).send({
       error: "invalid_context",
@@ -124,6 +125,12 @@ async function getPresignedUploadUrl(
         break;
       case "service_banner":
         subPath = `services/${serviceId}/banner`;
+        break;
+      case "breeding_animal":
+        subPath = "breeding/animals";
+        break;
+      case "breeding_program":
+        subPath = programId ? `breeding/programs/${programId}` : "breeding/programs";
         break;
       case "service_listing":
       default:

@@ -274,6 +274,7 @@ export default async function marketplaceListingsRoutes(
             metaDescription,
             keywords,
             status: "DRAFT",
+            sourceType: "PROVIDER",  // Provider-created listing
           },
         });
 
@@ -837,6 +838,11 @@ export default async function marketplaceListingsRoutes(
 
       return reply.send({
         ok: true,
+        listing: {
+          id: updated.id,
+          status: updated.status,
+          publishedAt: updated.publishedAt?.toISOString() || new Date().toISOString(),
+        },
       });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to publish listing");
@@ -891,6 +897,10 @@ export default async function marketplaceListingsRoutes(
 
       return reply.send({
         ok: true,
+        listing: {
+          id: updated.id,
+          status: updated.status,
+        },
       });
     } catch (err: any) {
       req.log?.error?.({ err, listingId }, "Failed to unpublish listing");
@@ -981,6 +991,8 @@ export default async function marketplaceListingsRoutes(
     const zip = query.zip ? String(query.zip).trim() : undefined;
     const priceMin = query.priceMin ? parseInt(query.priceMin, 10) : undefined;
     const priceMax = query.priceMax ? parseInt(query.priceMax, 10) : undefined;
+    // Tenant/breeder filter - can be tenant slug or numeric ID
+    const tenantIdParam = query.tenantId ? String(query.tenantId).trim() : undefined;
 
     // Parse sort
     const sortParam = query.sort || "-publishedAt";
@@ -1002,6 +1014,16 @@ export default async function marketplaceListingsRoutes(
       }
       if (category) where.category = category.toLowerCase();
       if (subcategory) where.subcategory = subcategory;
+      // Filter by tenant (breeder) - supports both numeric ID and slug
+      if (tenantIdParam) {
+        const isNumericTenant = /^\d+$/.test(tenantIdParam);
+        if (isNumericTenant) {
+          where.tenantId = parseInt(tenantIdParam, 10);
+        } else {
+          // Filter by tenant slug
+          where.tenant = { slug: tenantIdParam };
+        }
+      }
       if (city) where.city = { contains: city, mode: "insensitive" };
       if (state) where.state = { contains: state, mode: "insensitive" };
       if (zip) where.zip = { startsWith: zip };
@@ -1039,6 +1061,7 @@ export default async function marketplaceListingsRoutes(
                 id: true,
                 businessName: true,
                 logoUrl: true,
+                coverImageUrl: true,
                 averageRating: true,
                 totalReviews: true,
                 city: true,
@@ -1066,6 +1089,7 @@ export default async function marketplaceListingsRoutes(
               name: listing.provider.businessName,
               businessName: listing.provider.businessName,
               logoUrl: listing.provider.logoUrl,
+              coverImageUrl: listing.provider.coverImageUrl,
               averageRating: listing.provider.averageRating ? String(listing.provider.averageRating) : "0",
               totalReviews: listing.provider.totalReviews || 0,
               city: listing.provider.city,
@@ -1078,6 +1102,7 @@ export default async function marketplaceListingsRoutes(
               name: listing.tenant?.name || "Unknown Breeder",
               businessName: listing.tenant?.name || "Unknown Breeder",
               logoUrl: null,
+              coverImageUrl: null,
               averageRating: "0",
               totalReviews: 0,
               city: listing.city,

@@ -2240,6 +2240,131 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       return reply.status(status).send(payload);
     }
   });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Network Privacy Settings
+   * ───────────────────────────────────────────────────────────────────────── */
+
+  /** GET /tenants/:id/network-settings - Read network privacy settings */
+  fastify.get<{ Params: { id: string } }>("/tenants/:id/network-settings", async (req, reply) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+
+      const tenant = await prisma.tenant.findUnique({
+        where: { id },
+        select: { networkVisibility: true, inquiryPermission: true },
+      });
+      if (!tenant) return reply.status(404).send({ error: "not_found" });
+
+      // Fetch animals that have been hidden from network search
+      const hiddenAnimals = await prisma.animal.findMany({
+        where: { tenantId: id, networkSearchVisible: false },
+        select: { id: true, name: true, species: true, sex: true },
+        orderBy: { name: "asc" },
+      });
+
+      return reply.send({
+        networkVisibility: tenant.networkVisibility,
+        inquiryPermission: tenant.inquiryPermission,
+        hiddenAnimals,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** PATCH /tenants/:id/network-settings - Update network privacy settings */
+  fastify.patch<{
+    Params: { id: string };
+    Body: {
+      networkVisibility?: "VISIBLE" | "ANONYMOUS" | "HIDDEN";
+      inquiryPermission?: "ANYONE" | "VERIFIED" | "CONNECTIONS";
+    };
+  }>("/tenants/:id/network-settings", async (req, reply) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+      if (!isAdminLike(auth.role)) return reply.status(403).send({ error: "forbidden", detail: "Admin role required" });
+
+      const { networkVisibility, inquiryPermission } = req.body || {};
+
+      const validVisibility = ["VISIBLE", "ANONYMOUS", "HIDDEN"];
+      const validPermission = ["ANYONE", "VERIFIED", "CONNECTIONS"];
+
+      if (networkVisibility && !validVisibility.includes(networkVisibility)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid networkVisibility value" });
+      }
+      if (inquiryPermission && !validPermission.includes(inquiryPermission)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid inquiryPermission value" });
+      }
+
+      if (!networkVisibility && !inquiryPermission) {
+        return reply.status(400).send({ error: "bad_request", detail: "No fields to update" });
+      }
+
+      const updated = await prisma.tenant.update({
+        where: { id },
+        data: {
+          ...(networkVisibility ? { networkVisibility } : {}),
+          ...(inquiryPermission ? { inquiryPermission } : {}),
+        },
+        select: { networkVisibility: true, inquiryPermission: true },
+      });
+
+      return reply.send(updated);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  /** PATCH /tenants/:id/animals/:animalId/network-visibility - Toggle animal network visibility */
+  fastify.patch<{
+    Params: { id: string; animalId: string };
+    Body: { networkSearchVisible: boolean };
+  }>("/tenants/:id/animals/:animalId/network-visibility", async (req, reply) => {
+    try {
+      const tenantId = Number(req.params.id);
+      const animalId = Number(req.params.animalId);
+      if (!Number.isFinite(tenantId) || !Number.isFinite(animalId)) {
+        return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+      }
+
+      const auth = await requireTenantMemberOrAdmin(req, tenantId);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+
+      const { networkSearchVisible } = req.body || {};
+      if (typeof networkSearchVisible !== "boolean") {
+        return reply.status(400).send({ error: "bad_request", detail: "networkSearchVisible must be a boolean" });
+      }
+
+      // Verify animal belongs to tenant
+      const animal = await prisma.animal.findFirst({
+        where: { id: animalId, tenantId },
+        select: { id: true },
+      });
+      if (!animal) return reply.status(404).send({ error: "not_found" });
+
+      const updated = await prisma.animal.update({
+        where: { id: animalId },
+        data: { networkSearchVisible },
+        select: { id: true, name: true, species: true, sex: true, networkSearchVisible: true },
+      });
+
+      return reply.send(updated);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
 };
 
 export default tenantRoutes;

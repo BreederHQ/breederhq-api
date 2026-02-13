@@ -23,10 +23,13 @@ export function initFirebase(): boolean {
 
   // Only initialize if all required credentials are present
   if (!projectId || !clientEmail || !privateKey) {
-    console.log(
-      "Firebase not configured - push notifications disabled. " +
-        "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY to enable."
-    );
+    // Only log in production - dev doesn't need push notifications
+    if (process.env.NODE_ENV === "production") {
+      console.log(
+        "Firebase not configured - push notifications disabled. " +
+          "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY to enable."
+      );
+    }
     return false;
   }
 

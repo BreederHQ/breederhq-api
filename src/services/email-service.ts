@@ -91,7 +91,7 @@ function getDevModeRecipient(originalTo: string): { to: string; redirected: bool
 }
 
 export interface SendEmailParams {
-  tenantId: number;
+  tenantId: number | null;  // null for system/marketplace emails without tenant context
   to: string;
   subject: string;
   html?: string;
@@ -107,7 +107,7 @@ export interface SendEmailParams {
 }
 
 export interface SendTemplatedEmailParams {
-  tenantId: number;
+  tenantId: number | null;  // null for system/marketplace emails without tenant context
   to: string;
   templateId: number;
   context: Record<string, any>;
@@ -177,8 +177,8 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
   // Use custom from or default
   const fromAddress = from || DEFAULT_FROM;
 
-  // Idempotency check for invoice emails
-  if (templateKey === "invoice_issued" && relatedInvoiceId) {
+  // Idempotency check for invoice emails (only for tenant-scoped emails)
+  if (tenantId !== null && templateKey === "invoice_issued" && relatedInvoiceId) {
     const existing = await prisma.emailSendLog.findUnique({
       where: {
         tenantId_templateKey_relatedInvoiceId: {
@@ -195,8 +195,8 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     }
   }
 
-  // Validate recipient party comm preferences (marketing only)
-  if (category === "marketing") {
+  // Validate recipient party comm preferences (marketing only, requires tenant context)
+  if (tenantId !== null && category === "marketing") {
     const party = await prisma.party.findFirst({
       where: { tenantId, email: { equals: to, mode: "insensitive" } },
     });
@@ -1386,7 +1386,7 @@ The BreederHQ Team
   `.trim();
 
   return sendEmail({
-    tenantId: 0, // System-level email, no tenant context
+    tenantId: null, // System-level email, no tenant context
     to: data.ownerEmail,
     subject: `Welcome to BreederHQ - Your ${data.tenantName} Account is Ready!`,
     html,

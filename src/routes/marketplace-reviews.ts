@@ -49,10 +49,11 @@ function toReviewDTO(review: any) {
           businessName: review.provider.businessName,
         }
       : undefined,
-    listing: review.listing
+    // listing info comes from transaction relation (MarketplaceReview doesn't have direct listing relation)
+    listing: review.transaction?.listing
       ? {
-          id: review.listing.id,
-          title: review.listing.title,
+          id: review.transaction.listing.id,
+          title: review.transaction.listing.title,
         }
       : undefined,
   };
@@ -173,8 +174,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               provider: {
                 select: { id: true, businessName: true },
               },
-              listing: {
-                select: { id: true, title: true },
+              transaction: {
+                select: {
+                  listing: {
+                    select: { id: true, title: true },
+                  },
+                },
               },
             },
           });
@@ -306,8 +311,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             provider: {
               select: { id: true, businessName: true },
             },
-            listing: {
-              select: { id: true, title: true },
+            transaction: {
+              select: {
+                listing: {
+                  select: { id: true, title: true },
+                },
+              },
             },
           },
         });
@@ -392,8 +401,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               client: {
                 select: { id: true, firstName: true, lastName: true },
               },
-              listing: {
-                select: { id: true, title: true },
+              transaction: {
+                select: { id: true, listingId: true },
               },
             },
           }),
@@ -483,8 +492,12 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
               provider: {
                 select: { id: true, businessName: true },
               },
-              listing: {
-                select: { id: true, title: true },
+              transaction: {
+                select: {
+                  listing: {
+                    select: { id: true, title: true },
+                  },
+                },
               },
             },
           }),

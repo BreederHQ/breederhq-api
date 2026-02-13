@@ -4,10 +4,16 @@
 // Uses OpenStreetMap Nominatim API (free, no API key required)
 // Rate limit: 1 request per second (enforced by simple delay)
 //
+// Cache strategy:
+// - Redis when REDIS_URL is set (shared across instances)
+// - In-memory fallback for local development
+//
 // Usage:
 //   const coords = await geocodeAddress("Austin, TX");
 //   const coords = await geocodeZipCode("78701");
 //   const coords = await geocodeZipCode("78701", "US");
+
+import { Redis } from "ioredis";
 
 interface GeocodingResult {
   latitude: number;
@@ -24,10 +30,33 @@ interface NominatimResponse {
   class: string;
 }
 
-// Simple in-memory cache to avoid repeated lookups
-const geocodeCache = new Map<string, GeocodingResult>();
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const cacheTimestamps = new Map<string, number>();
+// ---------- Redis Cache (when available) ----------
+const REDIS_URL = process.env.REDIS_URL;
+const CACHE_PREFIX = "geocode:";
+const CACHE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+
+let redisClient: Redis | null = null;
+
+function getRedisClient(): Redis | null {
+  if (!REDIS_URL) return null;
+  if (!redisClient) {
+    redisClient = new Redis(REDIS_URL, {
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times: number) => Math.min(times * 100, 3000),
+      lazyConnect: true,
+    });
+    redisClient.on("error", (err: Error) => {
+      console.error("[Geocoding] Redis error:", err.message);
+    });
+  }
+  return redisClient;
+}
+
+// ---------- In-Memory Cache (fallback) ----------
+const inMemoryCache = new Map<string, GeocodingResult>();
+const inMemoryCacheTimestamps = new Map<string, number>();
+const CACHE_TTL_MS = CACHE_TTL_SECONDS * 1000;
+const MAX_MEMORY_CACHE_SIZE = 1000;
 
 // Rate limiting - Nominatim requires 1 request per second
 let lastRequestTime = 0;
@@ -55,30 +84,63 @@ function getCacheKey(query: string): string {
   return query.toLowerCase().trim();
 }
 
-function getCached(key: string): GeocodingResult | null {
-  const cached = geocodeCache.get(key);
-  const timestamp = cacheTimestamps.get(key);
+// ---------- Unified Cache Interface ----------
+
+async function getCached(key: string): Promise<GeocodingResult | null> {
+  const redis = getRedisClient();
+
+  // Try Redis first
+  if (redis) {
+    try {
+      const cached = await redis.get(CACHE_PREFIX + key);
+      if (cached) {
+        return JSON.parse(cached) as GeocodingResult;
+      }
+      return null;
+    } catch (err) {
+      console.error("[Geocoding] Redis get error:", err);
+      // Fall through to in-memory
+    }
+  }
+
+  // Fallback to in-memory
+  const cached = inMemoryCache.get(key);
+  const timestamp = inMemoryCacheTimestamps.get(key);
 
   if (cached && timestamp && (Date.now() - timestamp) < CACHE_TTL_MS) {
     return cached;
   }
 
   // Expired or not found
-  geocodeCache.delete(key);
-  cacheTimestamps.delete(key);
+  inMemoryCache.delete(key);
+  inMemoryCacheTimestamps.delete(key);
   return null;
 }
 
-function setCache(key: string, result: GeocodingResult): void {
-  geocodeCache.set(key, result);
-  cacheTimestamps.set(key, Date.now());
+async function setCache(key: string, result: GeocodingResult): Promise<void> {
+  const redis = getRedisClient();
 
-  // Simple cache size limit (1000 entries)
-  if (geocodeCache.size > 1000) {
-    const firstKey = geocodeCache.keys().next().value;
+  // Try Redis first
+  if (redis) {
+    try {
+      await redis.setex(CACHE_PREFIX + key, CACHE_TTL_SECONDS, JSON.stringify(result));
+      return;
+    } catch (err) {
+      console.error("[Geocoding] Redis set error:", err);
+      // Fall through to in-memory
+    }
+  }
+
+  // Fallback to in-memory
+  inMemoryCache.set(key, result);
+  inMemoryCacheTimestamps.set(key, Date.now());
+
+  // Simple cache size limit
+  if (inMemoryCache.size > MAX_MEMORY_CACHE_SIZE) {
+    const firstKey = inMemoryCache.keys().next().value;
     if (firstKey) {
-      geocodeCache.delete(firstKey);
-      cacheTimestamps.delete(firstKey);
+      inMemoryCache.delete(firstKey);
+      inMemoryCacheTimestamps.delete(firstKey);
     }
   }
 }
@@ -90,7 +152,7 @@ function setCache(key: string, result: GeocodingResult): void {
  */
 export async function geocodeAddress(address: string): Promise<GeocodingResult | null> {
   const cacheKey = getCacheKey(address);
-  const cached = getCached(cacheKey);
+  const cached = await getCached(cacheKey);
   if (cached) return cached;
 
   try {
@@ -117,7 +179,7 @@ export async function geocodeAddress(address: string): Promise<GeocodingResult |
       placeType: data[0].type,
     };
 
-    setCache(cacheKey, result);
+    await setCache(cacheKey, result);
     return result;
   } catch (error) {
     console.error("Geocoding error:", error);
@@ -133,7 +195,7 @@ export async function geocodeAddress(address: string): Promise<GeocodingResult |
  */
 export async function geocodeZipCode(zipCode: string, countryCode: string = "US"): Promise<GeocodingResult | null> {
   const cacheKey = getCacheKey(`zip:${zipCode}:${countryCode}`);
-  const cached = getCached(cacheKey);
+  const cached = await getCached(cacheKey);
   if (cached) return cached;
 
   try {
@@ -161,7 +223,7 @@ export async function geocodeZipCode(zipCode: string, countryCode: string = "US"
       placeType: data[0].type || "postcode",
     };
 
-    setCache(cacheKey, result);
+    await setCache(cacheKey, result);
     return result;
   } catch (error) {
     console.error("Geocoding error:", error);
@@ -202,18 +264,52 @@ export async function batchGeocode(addresses: string[]): Promise<(GeocodingResul
 
 /**
  * Clear the geocoding cache
+ * Note: Only clears in-memory cache. Redis keys expire via TTL.
  */
-export function clearGeocodeCache(): void {
-  geocodeCache.clear();
-  cacheTimestamps.clear();
+export async function clearGeocodeCache(): Promise<void> {
+  // Clear in-memory
+  inMemoryCache.clear();
+  inMemoryCacheTimestamps.clear();
+
+  // Clear Redis (scan for geocode: keys and delete)
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const keys = await redis.keys(CACHE_PREFIX + "*");
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+    } catch (err) {
+      console.error("[Geocoding] Redis clear error:", err);
+    }
+  }
 }
 
 /**
  * Get cache statistics
  */
-export function getGeocacheCacheStats(): { size: number; maxSize: number } {
+export async function getGeocacheCacheStats(): Promise<{
+  memorySize: number;
+  maxMemorySize: number;
+  redisConnected: boolean;
+  redisKeyCount?: number;
+}> {
+  const redis = getRedisClient();
+  let redisKeyCount: number | undefined;
+
+  if (redis) {
+    try {
+      const keys = await redis.keys(CACHE_PREFIX + "*");
+      redisKeyCount = keys.length;
+    } catch {
+      // Ignore errors
+    }
+  }
+
   return {
-    size: geocodeCache.size,
-    maxSize: 1000,
+    memorySize: inMemoryCache.size,
+    maxMemorySize: MAX_MEMORY_CACHE_SIZE,
+    redisConnected: redis !== null,
+    redisKeyCount,
   };
 }

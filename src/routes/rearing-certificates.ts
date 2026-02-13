@@ -68,6 +68,7 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
   // ─────────────────────────────────────────────────────────────────────────────
   // POST /rearing-assignments/:id/certificates - Generate certificate
+  // Supports certificate types: FULL_PROTOCOL (default), BREEDER_PHASE, BUYER_PHASE
   // ─────────────────────────────────────────────────────────────────────────────
   app.post("/rearing-assignments/:id/certificates", async (req, reply) => {
     try {
@@ -83,9 +84,22 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
       const body = req.body as any;
       const offspringId = idNum(body.offspringId);
+      const certificateType = trimToNull(body.certificateType) ?? "FULL_PROTOCOL";
+      const stageCompleted = idNum(body.stageCompleted);
+      const buyerName = trimToNull(body.buyerName);
+      const buyerUserId = trimToNull(body.buyerUserId);
 
       if (!offspringId) {
         return reply.code(400).send({ error: "offspring_id_required" });
+      }
+
+      // Validate certificate type
+      const validTypes = ["FULL_PROTOCOL", "BREEDER_PHASE", "BUYER_PHASE"];
+      if (!validTypes.includes(certificateType)) {
+        return reply.code(400).send({
+          error: "invalid_certificate_type",
+          validTypes,
+        });
       }
 
       // Get assignment with protocol and offspring group details
@@ -100,6 +114,10 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
               },
             },
           },
+          completions: {
+            where: { offspringId },
+            orderBy: { completedAt: "asc" },
+          },
         },
       });
 
@@ -107,41 +125,69 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         return reply.code(404).send({ error: "assignment_not_found" });
       }
 
-      // Check completion progress
-      const completionPercent =
-        assignment.totalActivities > 0
-          ? (assignment.completedActivities / assignment.totalActivities) * 100
-          : 0;
+      // For FULL_PROTOCOL, require 100% completion
+      // For BREEDER_PHASE or BUYER_PHASE, allow partial completion
+      if (certificateType === "FULL_PROTOCOL") {
+        const completionPercent =
+          assignment.totalActivities > 0
+            ? (assignment.completedActivities / assignment.totalActivities) * 100
+            : 0;
 
-      if (completionPercent < 100) {
-        return reply.code(400).send({
-          error: "incomplete_protocol",
-          message: `Protocol is ${Math.round(completionPercent)}% complete. 100% completion required for certificate.`,
-          completedActivities: assignment.completedActivities,
-          totalActivities: assignment.totalActivities,
-        });
+        if (completionPercent < 100) {
+          return reply.code(400).send({
+            error: "incomplete_protocol",
+            message: `Protocol is ${Math.round(completionPercent)}% complete. 100% completion required for full certificate.`,
+            completedActivities: assignment.completedActivities,
+            totalActivities: assignment.totalActivities,
+          });
+        }
       }
 
-      // Verify offspring belongs to the assignment's group
-      const offspring = await prisma.offspring.findFirst({
-        where: { id: offspringId, groupId: assignment.offspringGroupId, tenantId },
-      });
+      // Verify offspring - check both group-level and individual-level assignments
+      let offspring;
+      if (assignment.offspringGroupId) {
+        offspring = await prisma.offspring.findFirst({
+          where: { id: offspringId, groupId: assignment.offspringGroupId, tenantId },
+        });
+      } else if (assignment.offspringId) {
+        offspring = await prisma.offspring.findFirst({
+          where: { id: offspringId, tenantId },
+        });
+      }
 
       if (!offspring) {
         return reply.code(404).send({ error: "offspring_not_found" });
       }
 
-      // Check if certificate already exists for this offspring
+      // Check if certificate already exists for this offspring and type
       const existingCertificate = await prisma.rearingCertificate.findFirst({
-        where: { assignmentId, offspringId, isValid: true },
+        where: {
+          assignmentId,
+          offspringId,
+          certificateType: certificateType as any,
+          isValid: true,
+        },
       });
 
       if (existingCertificate) {
         return reply.code(409).send({
           error: "certificate_already_exists",
           certificateId: existingCertificate.id,
+          certificateType: existingCertificate.certificateType,
         });
       }
+
+      // Build stage data snapshot
+      const stageData = {
+        completions: assignment.completions.map((c) => ({
+          activityId: c.activityId,
+          completedAt: c.completedAt,
+          completedBy: c.completedBy,
+          notes: c.notes,
+        })),
+        totalCompletions: assignment.completions.length,
+        generatedAt: new Date().toISOString(),
+      };
 
       // Create certificate
       const certificate = await prisma.rearingCertificate.create({
@@ -152,6 +198,11 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           offspringName: offspring.name ?? `Offspring #${offspring.id}`,
           protocolName: assignment.protocol?.name ?? "Unknown Protocol",
           breederName: assignment.offspringGroup?.tenant?.name ?? "Unknown Breeder",
+          certificateType: certificateType as any,
+          stageCompleted: stageCompleted ?? (certificateType === "BREEDER_PHASE" ? 3 : null),
+          stageData,
+          buyerName,
+          buyerUserId,
           completedAt: new Date(),
         },
         include: {
@@ -268,6 +319,9 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           offspringName: certificate.offspringName,
           protocolName: certificate.protocolName,
           breederName: certificate.breederName,
+          certificateType: certificate.certificateType,
+          stageCompleted: certificate.stageCompleted,
+          buyerName: certificate.buyerName,
           completedAt: certificate.completedAt,
           issuedAt: certificate.issuedAt,
           species: certificate.offspring?.species,

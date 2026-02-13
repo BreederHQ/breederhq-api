@@ -18,15 +18,27 @@ import {
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
 
-/** Resolve tenant ID for user (defaultTenantId or first active membership) */
+/** Resolve tenant ID for user (defaultTenantId with active membership, or first active membership) */
 async function resolveTenantId(userId: string): Promise<number | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { defaultTenantId: true },
   });
 
+  // If user has a defaultTenantId, verify they have active membership to it
   if (user?.defaultTenantId) {
-    return user.defaultTenantId;
+    const defaultMembership = await prisma.tenantMembership.findFirst({
+      where: {
+        userId,
+        tenantId: user.defaultTenantId,
+        membershipStatus: "ACTIVE",
+      },
+      select: { tenantId: true },
+    });
+    if (defaultMembership) {
+      return user.defaultTenantId;
+    }
+    // defaultTenantId is invalid/no membership - fall through to find any active membership
   }
 
   // Fall back to first active membership

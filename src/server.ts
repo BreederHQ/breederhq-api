@@ -1,9 +1,15 @@
 // src/server.ts
+
+// Initialize Sentry FIRST - before any other imports
+import { initSentry, captureException, setUser, flush, Sentry } from "./lib/sentry.js";
+initSentry();
+
 import Fastify, { FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import redis from "@fastify/redis";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import prisma from "./prisma.js";
@@ -61,13 +67,25 @@ await app.register(cookie, {
   hook: "onRequest",
 });
 
+// ---------- Redis (optional, for horizontal scaling) ----------
+// When REDIS_URL is set, enables shared state across API instances for:
+// - Rate limiting (enforced across all instances)
+// - Future: WebSocket pub/sub, session store, etc.
+const REDIS_URL = process.env.REDIS_URL;
+if (REDIS_URL) {
+  await app.register(redis, { url: REDIS_URL });
+  app.log.info("Redis connected - rate limits will be shared across instances");
+} else {
+  app.log.info("Redis not configured - using in-memory rate limiting (single instance only)");
+}
+
 // ---------- Rate limit (opt-in per route) ----------
-// IMPORTANT: Uses in-memory store by default. For production with multiple API instances,
-// configure a shared store (Redis) to enforce rate limits across all instances.
+// Uses Redis store when available, falls back to in-memory for local dev.
 // See: https://github.com/fastify/fastify-rate-limit#custom-store
 await app.register(rateLimit, {
   global: false,
   ban: 2,
+  redis: app.redis, // undefined falls back to in-memory
   errorResponseBuilder: (_req, _context) => ({ error: "RATE_LIMITED" }),
 });
 
@@ -87,6 +105,7 @@ const PROD_ORIGINS = [
   "https://app.breederhq.com",
   "https://portal.breederhq.com",
   "https://marketplace.breederhq.com",
+  "https://breederhq.com", // Marketing site — public share preview
 ];
 
 // Dev-only: allow local Caddy HTTPS subdomains
@@ -129,6 +148,14 @@ await app.register(apiUsageTracking);
 // ---------- Health & Diagnostics ----------
 app.get("/healthz", async () => ({ ok: true }));
 app.get("/", async () => ({ ok: true }));
+
+// Sentry test endpoint (dev only) - throws an error to verify Sentry capture
+if (IS_DEV) {
+  app.post("/api/v1/__test-sentry-error", async () => {
+    throw new Error("Test Sentry error - this is intentional");
+  });
+}
+
 app.get("/__diag", async (req, reply) => {
   // In production, only superadmins can access diagnostics
   // Non-production allows unauthenticated access for debugging
@@ -205,6 +232,7 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/auth/login") return true;
   if (pathname === "/api/v1/auth/register") return true;
   if (pathname === "/api/v1/auth/dev-login") return true;
+  if (pathname === "/api/v1/__test-sentry-error") return true; // Dev-only Sentry test
   // Logout is NOT exempt - requires CSRF to prevent logout CSRF attacks
 
   // Mobile auth routes - use JWT tokens, not cookies, so no CSRF needed
@@ -313,6 +341,12 @@ app.addHook("preHandler", async (req, reply) => {
   // Check exemptions first
   if (isCsrfExempt(pathOnly, m)) return;
 
+  // Bearer token auth (mobile app JWT) is immune to CSRF attacks because
+  // the token must be explicitly set in JavaScript — a cross-origin form
+  // submission cannot inject a custom Authorization header.
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) return;
+
   // 1) Validate Origin header
   const originHeader = req.headers.origin as string | undefined;
   const originResult = validateOrigin(originHeader, req.hostname || "", surface);
@@ -348,6 +382,23 @@ app.addHook("preHandler", async (req, reply) => {
       detail: csrfResult.detail,
       surface,
     });
+  }
+});
+
+// ---------- Sentry: finish transaction on response ----------
+app.addHook("onResponse", async (req, reply) => {
+  const transaction = (req as any)._sentryTransaction;
+  if (transaction) {
+    // Add response status to transaction
+    transaction.setStatus(reply.statusCode >= 400 ? "internal_error" : "ok");
+    transaction.end();
+  }
+
+  // Set user context if authenticated (for subsequent errors)
+  const userId = (req as any).userId;
+  const tenantId = (req as any).tenantId;
+  if (userId) {
+    setUser({ id: userId, tenantId });
   }
 });
 
@@ -393,6 +444,14 @@ app.addHook("onRequest", async (req, reply) => {
   const surface = deriveSurface(req);
   (req as any).surface = surface;
   req.log.info({ m: req.method, url: req.url, surface }, "REQ");
+
+  // Start Sentry transaction for performance monitoring
+  const transaction = Sentry.startInactiveSpan({
+    name: `${req.method} ${req.routeOptions?.url || req.url}`,
+    op: "http.server",
+    forceTransaction: true,
+  });
+  (req as any)._sentryTransaction = transaction;
 
   // In production, reject UNKNOWN surfaces immediately (before any auth logic)
   if (surface === "UNKNOWN") {
@@ -523,6 +582,7 @@ import portalRoutes from "./routes/portal.js"; // Portal public routes (activati
 import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data surfaces
 import portalProfileRoutes from "./routes/portal-profile.js"; // Portal profile self-service
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
+import portalProtocolsRoutes from "./routes/portal-protocols.js"; // Portal training protocol continuation
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
@@ -559,12 +619,12 @@ import documentsRoutes from "./routes/documents.js"; // General documents listin
 import watermarkSettingsRoutes from "./routes/watermark-settings.js"; // Watermark settings
 import documentWatermarkRoutes from "./routes/document-watermark.js"; // Document download with watermarking
 import animalLinkingRoutes from "./routes/animal-linking.js"; // Cross-tenant animal linking
+import networkRoutes from "./routes/network.js"; // Network Breeding Discovery search
 import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - send to any email
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
-import serviceProviderRoutes from "./routes/service-provider.js"; // Service Provider portal
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
 import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
@@ -574,7 +634,7 @@ import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; 
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
-import mktBreedingServicesRoutes from "./routes/mkt-breeding-services.js"; // Breeding Services Listings (stud, mare lease, etc.)
+import mktBreedingBookingsRoutes from "./routes/mkt-breeding-bookings.js"; // Breeding Bookings Listings (stud, mare lease, etc.)
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
 import geneticPreferencesRoutes from "./routes/genetic-preferences.js"; // Genetic notification preferences & snooze
@@ -582,6 +642,10 @@ import { startNotificationScanJob, stopNotificationScanJob } from "./jobs/notifi
 import breedingProgramRulesRoutes from "./routes/breeding-program-rules.js"; // Breeding Program Rules (cascading automation)
 import studVisibilityRoutes from "./routes/stud-visibility.js"; // Stud Listing Visibility Rules (P11)
 import { startRuleExecutionJob, stopRuleExecutionJob } from "./jobs/rule-execution.js"; // Rule execution cron job
+import { startNetworkSearchIndexJob, stopNetworkSearchIndexJob } from "./jobs/network-search-index.js"; // Network search index rebuild cron job
+import { startAnimalAccessCleanupJob, stopAnimalAccessCleanupJob } from "./jobs/animal-access-cleanup.js"; // Animal access cleanup cron job (30-day retention)
+import { startShareCodeExpirationJob, stopShareCodeExpirationJob } from "./jobs/share-code-expiration.js"; // Share code expiration cron job (hourly)
+import { startAnimalAccessExpirationJob, stopAnimalAccessExpirationJob } from "./jobs/animal-access-expiration.js"; // Animal access expiration cron job (hourly)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -612,6 +676,11 @@ import rearingCommentsRoutes from "./routes/rearing-comments.js"; // Community c
 import rearingAssessmentsRoutes from "./routes/rearing-assessments.js"; // Volhard PAT and custom assessments
 import rearingCertificatesRoutes from "./routes/rearing-certificates.js"; // Completion certificates
 import rearingImportExportRoutes from "./routes/rearing-import-export.js"; // Protocol import/export
+
+// Network Breeding Discovery
+import shareCodesRoutes from "./routes/share-codes.js"; // Share code generation & redemption
+import animalAccessRoutes from "./routes/animal-access.js"; // Shadow animal access management
+import breedingDataAgreementsRoutes from "./routes/breeding-data-agreements.js"; // Breeding data agreements
 
 // Mobile App (JWT auth & push notifications)
 import mobileAuthRoutes from "./routes/mobile-auth.js"; // Mobile login, refresh, logout
@@ -658,8 +727,8 @@ app.register(
     api.register(marketplaceVerificationRoutes, { prefix: "/marketplace/verification" }); // /api/v1/marketplace/verification/* (Phone, identity, packages)
     api.register(marketplace2faRoutes, { prefix: "/marketplace/2fa" }); // /api/v1/marketplace/2fa/* (TOTP, SMS, Passkey)
     api.register(marketplaceServiceTagsRoutes, { prefix: "/marketplace/service-tags" }); // /api/v1/marketplace/service-tags/* (Service tags for provider portal)
-    api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload)
-    api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access)
+    // NOTE: marketplaceImageUploadRoutes moved to tenant-scoped subtree for proper auth (req.userId)
+    // NOTE: mediaRoutes moved to tenant-scoped subtree for proper auth (req.tenantId for platform uploads)
     api.register(marketplaceServiceDetailRoutes, { prefix: "/marketplace/services" }); // /api/v1/marketplace/services/:slugOrId (Public service detail)
     api.register(marketplaceAbuseReportsRoutes, { prefix: "/marketplace/listings" }); // /api/v1/marketplace/listings/report (Abuse reporting)
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
@@ -699,15 +768,35 @@ app.setErrorHandler((err: Error, req, reply) => {
     "Unhandled error"
   );
 
+  // Send to Sentry (skip expected errors)
   const code = (safeErr as any).code;
+  const statusCode = (safeErr as any).statusCode;
+  const isExpectedError =
+    code === "P2002" || // Duplicate key
+    code === "P2003" || // Foreign key constraint
+    statusCode === 400 || // Bad request
+    statusCode === 401 || // Unauthorized
+    statusCode === 403 || // Forbidden
+    statusCode === 404;   // Not found
+
+  if (!isExpectedError) {
+    captureException(safeErr, {
+      url: req.url,
+      method: req.method,
+      tenantId: (req as any).tenantId,
+      userId: (req as any).userId,
+      surface: (req as any).surface,
+    });
+  }
+
   if (code === "P2002") {
     return reply.status(409).send({ error: "duplicate", detail: (safeErr as any).meta?.target });
   }
   if (code === "P2003") {
     return reply.status(409).send({ error: "foreign_key_conflict" });
   }
-  if ((safeErr as any).statusCode) {
-    return reply.status((safeErr as any).statusCode).send({ error: safeErr.message });
+  if (statusCode) {
+    return reply.status(statusCode).send({ error: safeErr.message });
   }
   return reply.status(500).send({ error: "internal_error" });
 });
@@ -792,12 +881,12 @@ app.register(
         "/marketplace/animal-programs",
         "/marketplace/animals",
         "/marketplace/services",
-        "/marketplace/direct-listings",
+        "/marketplace/mkt-listing-individual-animals",
         "/api/v1/marketplace/offspring-groups",
         "/api/v1/marketplace/animal-programs",
         "/api/v1/marketplace/animals",
         "/api/v1/marketplace/services",
-        "/api/v1/marketplace/direct-listings",
+        "/api/v1/marketplace/mkt-listing-individual-animals",
       ];
 
       // Check if path matches public browse patterns (including detail pages like /animal-programs/:slug)
@@ -1084,6 +1173,8 @@ app.register(
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
     api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
     api.register(breederMarketplaceRoutes, { prefix: "/marketplace/breeder" }); // /api/v1/marketplace/breeder/* (dashboard stats)
+    api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload - moved from mixed-auth for proper userId)
+    api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access - moved from public for proper auth)
     api.register(animalsRoutes);       // /api/v1/animals/*
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
@@ -1104,6 +1195,9 @@ app.register(
     api.register(breedingAnalyticsRoutes); // /api/v1/breeding-analytics/* (Breeding Discovery - Phase 3)
     api.register(compatibilityRoutes); // /api/v1/compatibility/* (Breeding Discovery - Phase 2)
     api.register(publicBreedingDiscoveryRoutes); // /api/v1/public/breeding-* (Breeding Discovery - Phase 2)
+    api.register(shareCodesRoutes);    // /api/v1/share-codes/* (Network Breeding Discovery)
+    api.register(animalAccessRoutes);  // /api/v1/animal-access/* (Network Breeding Discovery)
+    api.register(breedingDataAgreementsRoutes); // /api/v1/breeding-agreements/* (Network Breeding Discovery)
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
@@ -1135,11 +1229,13 @@ app.register(
     api.register(documentWatermarkRoutes); // /api/v1/documents/:id/download, /watermark, /access-log Document watermarking
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
+    api.register(networkRoutes);       // /api/v1/network/search Network Breeding Discovery
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
+    api.register(portalProtocolsRoutes); // /api/v1/portal/protocols/* Portal training protocol continuation
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
     api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
 
@@ -1150,6 +1246,7 @@ app.register(
     api.register(portalProfileRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/profile/*
     api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
     api.register(portalContractsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/contracts/*
+    api.register(portalProtocolsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/protocols/*
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
@@ -1168,9 +1265,8 @@ app.register(
     api.register(marketplaceMessagesRoutes, { prefix: "/marketplace/messages" }); // /api/v1/marketplace/messages/* (buyer-to-breeder)
     api.register(marketplaceReportBreederRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-breeder (auth required)
     api.register(marketplaceReportProviderRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-provider (auth required)
-    api.register(serviceProviderRoutes); // /api/v1/provider/* Service Provider portal
     api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
-    api.register(mktBreedingServicesRoutes, { prefix: "/mkt-breeding-services" }); // /api/v1/mkt-breeding-services/* Breeding services listings (stud, mare lease, etc.)
+    api.register(mktBreedingBookingsRoutes, { prefix: "/mkt-breeding-bookings" }); // /api/v1/mkt-breeding-bookings/* Breeding bookings listings (stud, mare lease, etc.)
   },
   { prefix: "/api/v1" }
 );
@@ -1234,16 +1330,20 @@ const v2App = app.register(
   { prefix: "/api/v2" }
 );
 
-// ---------- API v1/public: public marketplace subtree ----------
-// SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
-// All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
-//   1. Valid session cookie (bhq_s)
-//   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
-// Requests to /api/v1/public/marketplace/* now return 410 Gone.
+// ---------- API v1/public: public (no-auth) subtree ----------
+// Share code preview (public landing page for QR codes / smart links)
+import publicSharePreviewRoutes from "./routes/public-share-preview.js";
+
 app.register(
   async (api) => {
-    // Return 410 Gone for all requests to removed public marketplace routes
-    // SECURITY: No data, no DB reads, no DTO building - just a static error response
+    // Share code preview — returns non-sensitive animal data for marketing landing page
+    api.register(publicSharePreviewRoutes); // /api/v1/public/share-codes/:code/preview
+
+    // SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
+    // All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
+    //   1. Valid session cookie (bhq_s)
+    //   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
+    // Requests to /api/v1/public/marketplace/* now return 410 Gone.
     const goneResponse = {
       error: "gone",
       message: "Marketplace endpoints require authentication. Use /api/v1/marketplace/*.",
@@ -1297,6 +1397,18 @@ export async function start() {
 
     // Start rule execution cron job
     startRuleExecutionJob();
+
+    // Start network search index rebuild cron job
+    startNetworkSearchIndexJob();
+
+    // Start animal access cleanup cron job (30-day OWNER_DELETED retention)
+    startAnimalAccessCleanupJob();
+
+    // Start share code expiration cron job (hourly)
+    startShareCodeExpirationJob();
+
+    // Start animal access expiration cron job (hourly)
+    startAnimalAccessExpirationJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1310,6 +1422,11 @@ process.on("SIGTERM", async () => {
   app.log.info("SIGTERM received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  stopNetworkSearchIndexJob();
+  stopAnimalAccessCleanupJob();
+  stopShareCodeExpirationJob();
+  stopAnimalAccessExpirationJob();
+  await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
 });
@@ -1317,6 +1434,11 @@ process.on("SIGINT", async () => {
   app.log.info("SIGINT received, closing");
   stopNotificationScanJob();
   stopRuleExecutionJob();
+  stopNetworkSearchIndexJob();
+  stopAnimalAccessCleanupJob();
+  stopShareCodeExpirationJob();
+  stopAnimalAccessExpirationJob();
+  await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
 });

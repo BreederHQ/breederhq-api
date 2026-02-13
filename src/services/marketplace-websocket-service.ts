@@ -1,7 +1,18 @@
 // src/services/marketplace-websocket-service.ts
 // WebSocket service for marketplace real-time messaging
+//
+// Multi-instance support:
+// - When REDIS_URL is set, messages are published to Redis pub/sub
+// - Each instance subscribes and broadcasts to its local WebSocket connections
+// - Without Redis, falls back to local-only (single instance)
 
 import type { WebSocket } from "ws";
+import {
+  isRedisPubSubEnabled,
+  publish,
+  onMessage,
+  channels,
+} from "./redis-pubsub.js";
 
 export interface MarketplaceWebSocketClient {
   ws: WebSocket;
@@ -9,11 +20,40 @@ export interface MarketplaceWebSocketClient {
   providerId?: number; // MarketplaceProvider ID (if user is a provider)
 }
 
-// Map of userId -> Set of connected clients (user can have multiple tabs/devices)
-const userClients = new Map<number, Set<MarketplaceWebSocketClient>>();
+// ---------- Local Client Registry ----------
+// Tracks WebSocket connections on THIS instance only
 
-// Map of providerId -> Set of connected clients
+const userClients = new Map<number, Set<MarketplaceWebSocketClient>>();
 const providerClients = new Map<number, Set<MarketplaceWebSocketClient>>();
+
+// ---------- Redis Pub/Sub Message Handlers ----------
+
+// Handle messages from other instances via Redis
+onMessage((channel: string, message: string) => {
+  try {
+    const data = JSON.parse(message);
+
+    // Marketplace user channel: ws:mp:user:{userId}
+    if (channel.startsWith("mp:user:")) {
+      const userId = parseInt(channel.split(":")[2], 10);
+      if (!isNaN(userId)) {
+        sendToUserLocal(userId, data.event, data.payload);
+      }
+    }
+
+    // Marketplace provider channel: ws:mp:provider:{providerId}
+    if (channel.startsWith("mp:provider:")) {
+      const providerId = parseInt(channel.split(":")[2], 10);
+      if (!isNaN(providerId)) {
+        sendToProviderLocal(providerId, data.event, data.payload);
+      }
+    }
+  } catch (err) {
+    console.error("[Marketplace WS] Error handling Redis message:", err);
+  }
+});
+
+// ---------- Client Registration ----------
 
 /**
  * Register a new marketplace WebSocket client
@@ -65,55 +105,87 @@ export function unregisterMarketplaceClient(client: MarketplaceWebSocketClient):
   console.log(`[Marketplace WS] Client unregistered: userId=${client.userId}`);
 }
 
-/**
- * Send a message to a specific user (all their connected devices)
- */
-export function sendToUser(userId: number, event: string, payload: any): void {
+// ---------- Local Send (this instance only) ----------
+
+function sendToUserLocal(userId: number, event: string, payload: unknown): number {
   const clients = userClients.get(userId);
   if (!clients || clients.size === 0) {
-    return;
+    return 0;
   }
 
   const message = JSON.stringify({ event, payload });
   let sent = 0;
 
   for (const client of clients) {
-    if (client.ws.readyState === 1) {
-      // WebSocket.OPEN
+    if (client.ws.readyState === 1) { // WebSocket.OPEN
       client.ws.send(message);
       sent++;
     }
   }
 
-  if (sent > 0) {
-    console.log(`[Marketplace WS] Sent to user ${userId}: event=${event}, devices=${sent}`);
+  return sent;
+}
+
+function sendToProviderLocal(providerId: number, event: string, payload: unknown): number {
+  const clients = providerClients.get(providerId);
+  if (!clients || clients.size === 0) {
+    return 0;
+  }
+
+  const message = JSON.stringify({ event, payload });
+  let sent = 0;
+
+  for (const client of clients) {
+    if (client.ws.readyState === 1) { // WebSocket.OPEN
+      client.ws.send(message);
+      sent++;
+    }
+  }
+
+  return sent;
+}
+
+// ---------- Public Send API (with Redis pub/sub) ----------
+
+/**
+ * Send a message to a specific user (all their connected devices, across all instances)
+ */
+export function sendToUser(userId: number, event: string, payload: unknown): void {
+  // Always send locally first
+  const localSent = sendToUserLocal(userId, event, payload);
+
+  // Publish to Redis for other instances
+  if (isRedisPubSubEnabled()) {
+    publish(channels.marketplaceUser(userId), { event, payload }).catch((err) => {
+      console.error("[Marketplace WS] Redis publish error:", err);
+    });
+  }
+
+  if (localSent > 0) {
+    console.log(`[Marketplace WS] Sent to user ${userId}: event=${event}, devices=${localSent}, redis=${isRedisPubSubEnabled()}`);
   }
 }
 
 /**
- * Send a message to a provider (all their connected devices)
+ * Send a message to a provider (all their connected devices, across all instances)
  */
-export function sendToProvider(providerId: number, event: string, payload: any): void {
-  const clients = providerClients.get(providerId);
-  if (!clients || clients.size === 0) {
-    return;
+export function sendToProvider(providerId: number, event: string, payload: unknown): void {
+  // Always send locally first
+  const localSent = sendToProviderLocal(providerId, event, payload);
+
+  // Publish to Redis for other instances
+  if (isRedisPubSubEnabled()) {
+    publish(channels.marketplaceProvider(providerId), { event, payload }).catch((err) => {
+      console.error("[Marketplace WS] Redis publish error:", err);
+    });
   }
 
-  const message = JSON.stringify({ event, payload });
-  let sent = 0;
-
-  for (const client of clients) {
-    if (client.ws.readyState === 1) {
-      // WebSocket.OPEN
-      client.ws.send(message);
-      sent++;
-    }
-  }
-
-  if (sent > 0) {
-    console.log(`[Marketplace WS] Sent to provider ${providerId}: event=${event}, devices=${sent}`);
+  if (localSent > 0) {
+    console.log(`[Marketplace WS] Sent to provider ${providerId}: event=${event}, devices=${localSent}, redis=${isRedisPubSubEnabled()}`);
   }
 }
+
+// ---------- High-Level Broadcast Functions ----------
 
 /**
  * Broadcast new message notification to transaction participants
@@ -256,6 +328,8 @@ export function broadcastBreederMessageToMarketplaceUser(
   sendToUser(marketplaceUserId, "new_message", payload);
 }
 
+// ---------- Stats ----------
+
 /**
  * Get marketplace connection stats (for debugging)
  */
@@ -263,6 +337,7 @@ export function getMarketplaceConnectionStats(): {
   users: number;
   providers: number;
   totalClients: number;
+  redisEnabled: boolean;
 } {
   let totalClients = 0;
   for (const clients of userClients.values()) {
@@ -272,5 +347,6 @@ export function getMarketplaceConnectionStats(): {
     users: userClients.size,
     providers: providerClients.size,
     totalClients,
+    redisEnabled: isRedisPubSubEnabled(),
   };
 }

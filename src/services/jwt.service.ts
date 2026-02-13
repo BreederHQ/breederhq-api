@@ -108,13 +108,34 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
     throw new Error("Invalid or expired refresh token");
   }
 
-  // Get user's default tenant for the new token
-  const tenantMembership = await prisma.tenantMembership.findFirst({
-    where: { userId: storedToken.user.id, membershipStatus: "ACTIVE" },
-    select: { tenantId: true },
-  });
+  // Determine tenant ID - verify membership exists before using defaultTenantId
+  let tenantId: number | null = null;
 
-  const tenantId = storedToken.user.defaultTenantId ?? tenantMembership?.tenantId;
+  // If user has a defaultTenantId, verify they have active membership to it
+  if (storedToken.user.defaultTenantId) {
+    const defaultMembership = await prisma.tenantMembership.findFirst({
+      where: {
+        userId: storedToken.user.id,
+        tenantId: storedToken.user.defaultTenantId,
+        membershipStatus: "ACTIVE",
+      },
+      select: { tenantId: true },
+    });
+    if (defaultMembership) {
+      tenantId = storedToken.user.defaultTenantId;
+    }
+  }
+
+  // Fall back to first active membership if defaultTenantId is invalid/missing
+  if (!tenantId) {
+    const tenantMembership = await prisma.tenantMembership.findFirst({
+      where: { userId: storedToken.user.id, membershipStatus: "ACTIVE" },
+      select: { tenantId: true },
+      orderBy: { tenantId: "asc" },
+    });
+    tenantId = tenantMembership?.tenantId ?? null;
+  }
+
   if (!tenantId) {
     throw new Error("User has no active tenant membership");
   }

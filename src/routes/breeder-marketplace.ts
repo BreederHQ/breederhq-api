@@ -154,6 +154,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,
@@ -235,6 +236,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,
@@ -309,6 +311,7 @@ export default async function breederMarketplaceRoutes(
               sex: listing.animal.sex,
               birthDate: listing.animal.birthDate?.toISOString() ?? null,
               photoUrl: listing.animal.photoUrl,
+              coverImageUrl: listing.animal.coverImageUrl,
               breed: listing.animal.breed,
             }
           : null,
@@ -973,8 +976,8 @@ export default async function breederMarketplaceRoutes(
           },
         }),
 
-        // Count breeding service listings (stud offerings, seeking, lease, arrangement)
-        prisma.mktListingBreedingService.count({
+        // Count breeding booking listings (stud offerings, seeking, lease, arrangement)
+        prisma.mktListingBreedingBooking.count({
           where: {
             tenantId,
             status: { in: ["LIVE", "DRAFT", "PAUSED"] }, // Include all non-closed listings

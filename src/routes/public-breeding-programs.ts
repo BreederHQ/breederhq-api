@@ -3,6 +3,7 @@
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
+import { getPublicCdnUrl } from "../services/media-storage.js";
 
 /* ───────── utils ───────── */
 
@@ -25,6 +26,59 @@ function errorReply(err: unknown) {
 }
 
 /* ───────── DTO transformers ───────── */
+
+// Parent summary for dam/sire display
+function toParentSummaryDTO(animal: any) {
+  if (!animal) return null;
+  return {
+    id: animal.id,
+    name: animal.name,
+    primaryImageUrl: animal.photoUrl || null,
+    breed: animal.breed || null,
+    sex: animal.sex || null,
+  };
+}
+
+// Offspring group summary
+function toOffspringGroupSummaryDTO(group: any) {
+  if (!group) return null;
+  const countBorn = group.countBorn ?? group._count?.Offspring ?? 0;
+  const countPlaced = group.countPlaced ?? 0;
+  const countReserved = group.countReserved ?? 0;
+  return {
+    id: group.id,
+    countBorn,
+    countAvailable: Math.max(0, countBorn - countPlaced - countReserved),
+    countReserved,
+    countPlaced,
+  };
+}
+
+// Linked plan summary for program detail
+function toLinkedPlanDTO(plan: any) {
+  return {
+    id: plan.id,
+    name: plan.name || plan.nickname || `Plan #${plan.id}`,
+    status: plan.status,
+    expectedBirthDate: plan.expectedBirthDate || plan.offspringGroup?.expectedBirthOn || null,
+    actualBirthDate: plan.birthDateActual || plan.offspringGroup?.actualBirthOn || null,
+    dam: toParentSummaryDTO(plan.dam),
+    sire: toParentSummaryDTO(plan.sire),
+    offspringGroup: toOffspringGroupSummaryDTO(plan.offspringGroup),
+    coverImageUrl: plan.offspringGroup?.coverImageUrl || null,
+  };
+}
+
+// Default program settings (can be overridden per-program in future)
+function getProgramSettings(program: any) {
+  return {
+    offspringDisplayMode: program.offspringDisplayMode || "curated",
+    comingSoonWeeksThreshold: program.comingSoonWeeksThreshold ?? 8,
+    showParentPhotos: program.showParentPhotos ?? true,
+    showOffspringPhotos: program.showOffspringPhotos ?? true,
+    showPricing: program.showPricing ?? true,
+  };
+}
 
 function toPublicProgramDTO(program: any) {
   // Compute stats from related data
@@ -57,10 +111,13 @@ function toPublicProgramDTO(program: any) {
   // Get tenant info for breeder details
   const breeder = program.tenant
     ? {
+        tenantId: program.tenant.id,
         name: program.tenant.name,
-        location: "", // TODO: Add location field to tenant if needed
-        yearsExperience: null, // TODO: Calculate from tenant.createdAt if needed
-        profileImageUrl: null, // TODO: Add profile image if available
+        slug: program.tenant.slug || null,
+        location: [program.tenant.city, program.tenant.region, program.tenant.country]
+          .filter(Boolean)
+          .join(", ") || null,
+        logoUrl: null, // Logo is on BreederProfile, not Tenant
       }
     : null;
 
@@ -104,6 +161,12 @@ function toPublicProgramDTO(program: any) {
       availableLitters: availableLitters.length,
       totalAvailable,
     },
+
+    // Enhanced: Linked breeding plans with dam/sire info
+    linkedPlans: activePlans.map(toLinkedPlanDTO),
+
+    // Enhanced: Program display settings
+    programSettings: getProgramSettings(program),
 
     publishedAt: program.publishedAt,
     createdAt: program.createdAt,
@@ -157,27 +220,63 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
           },
           tenant: {
             select: {
+              id: true,
               name: true,
+              slug: true,
+              city: true,
+              region: true,
+              country: true,
               createdAt: true,
             },
           },
           breedingPlans: {
+            where: {
+              status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+            },
             select: {
               id: true,
+              name: true,
+              nickname: true,
               status: true,
+              expectedBirthDate: true,
+              birthDateActual: true,
+              dam: {
+                select: {
+                  id: true,
+                  name: true,
+                  photoUrl: true,
+                  breed: true,
+                  sex: true,
+                },
+              },
+              sire: {
+                select: {
+                  id: true,
+                  name: true,
+                  photoUrl: true,
+                  breed: true,
+                  sex: true,
+                },
+              },
               offspringGroup: {
                 select: {
+                  id: true,
                   expectedBirthOn: true,
                   actualBirthOn: true,
                   countBorn: true,
                   countLive: true,
                   countPlaced: true,
+                  coverImageUrl: true,
                   _count: {
                     select: { Offspring: true },
                   },
                 },
               },
             },
+            orderBy: [
+              { expectedBirthDate: "asc" },
+              { createdAt: "desc" },
+            ],
           },
         },
       });
@@ -402,9 +501,259 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
   }
   );
 
+  /* ───────── Get Plan Detail (for drawer) ───────── */
+  app.get("/public/breeding-programs/:slug/plans/:planId", async (req, reply) => {
+    try {
+      const { slug, planId } = req.params as { slug: string; planId: string };
+      const planIdNum = parseIntStrict(planId);
+
+      if (!planIdNum) {
+        return reply.code(400).send({ error: "invalid_plan_id" });
+      }
+
+      // First verify the program exists and is live
+      const program = await prisma.mktListingBreedingProgram.findFirst({
+        where: {
+          slug,
+          status: "LIVE",
+        },
+        select: {
+          id: true,
+          tenantId: true,
+        },
+      });
+
+      if (!program) {
+        return reply.code(404).send({ error: "not_found", message: "Program not found" });
+      }
+
+      // Fetch the plan with full details
+      // Using `as any` for the result since Prisma's typed include can be complex
+      const plan = await prisma.breedingPlan.findFirst({
+        where: {
+          id: planIdNum,
+          programId: program.id,
+          status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+        },
+        include: {
+          dam: {
+            select: {
+              id: true,
+              name: true,
+              photoUrl: true,
+              breed: true,
+              sex: true,
+              birthDate: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
+              photoUrl: true,
+              breed: true,
+              sex: true,
+              birthDate: true,
+            },
+          },
+          offspringGroup: {
+            include: {
+              Offspring: {
+                where: {
+                  marketplaceListed: true,
+                },
+                select: {
+                  id: true,
+                  name: true,
+                  sex: true,
+                  status: true,
+                  collarColorName: true,
+                  collarColorHex: true,
+                  priceCents: true,
+                  Attachments: {
+                    take: 1,
+                    orderBy: { createdAt: "asc" },
+                    select: {
+                      id: true,
+                      storageKey: true,
+                      kind: true,
+                    },
+                  },
+                },
+                orderBy: { createdAt: "asc" },
+              },
+            },
+          },
+          Attachments: {
+            where: {
+              kind: { in: ["photo", "image", "media"] },
+            },
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              storageKey: true,
+              kind: true,
+              filename: true,
+            },
+          },
+        },
+      }) as any;
+
+      if (!plan) {
+        return reply.code(404).send({ error: "not_found", message: "Plan not found" });
+      }
+
+      // Build timeline events
+      const timeline: Array<{ event: string; date: string | null; completed: boolean }> = [];
+
+      if (plan.breedDateActual) {
+        timeline.push({ event: "BRED", date: plan.breedDateActual.toISOString(), completed: true });
+      }
+      if (plan.expectedBirthDate) {
+        const isBorn = !!plan.birthDateActual;
+        timeline.push({ event: "EXPECTED_BIRTH", date: plan.expectedBirthDate.toISOString(), completed: isBorn });
+      }
+      if (plan.birthDateActual) {
+        timeline.push({ event: "BORN", date: plan.birthDateActual.toISOString(), completed: true });
+      }
+
+      // Transform offspring with photo URLs
+      const offspring = (plan.offspringGroup?.Offspring || []).map((o: any) => {
+        const firstAttachment = o.Attachments?.[0];
+        return {
+          id: o.id,
+          name: o.name,
+          sex: o.sex?.toLowerCase() || null,
+          status: o.status?.toLowerCase() || "available",
+          collarColorName: o.collarColorName,
+          collarColorHex: o.collarColorHex,
+          priceCents: o.priceCents,
+          primaryImageUrl: firstAttachment?.storageKey
+            ? getPublicCdnUrl(firstAttachment.storageKey)
+            : null,
+        };
+      });
+
+      // Transform plan attachments to media URLs
+      const media = (plan.Attachments || []).map((a: any, index: number) => ({
+        id: a.id,
+        url: getPublicCdnUrl(a.storageKey),
+        thumbnailUrl: getPublicCdnUrl(a.storageKey), // Same URL for now, could add thumbnail logic
+        caption: a.filename || null,
+        sortOrder: index,
+        type: "image",
+      }));
+
+      // Build response DTO
+      const dto = {
+        id: plan.id,
+        name: plan.name || plan.nickname || `Plan #${plan.id}`,
+        status: plan.status,
+        description: plan.notes || null,
+        expectedBirthDate: plan.expectedBirthDate?.toISOString() || null,
+        actualBirthDate: plan.birthDateActual?.toISOString() || null,
+        dam: toParentSummaryDTO(plan.dam),
+        sire: toParentSummaryDTO(plan.sire),
+        timeline,
+        media,
+        offspring,
+        offspringGroup: plan.offspringGroup ? {
+          id: plan.offspringGroup.id,
+          countBorn: plan.offspringGroup.countBorn ?? 0,
+          countAvailable: Math.max(0, (plan.offspringGroup.countBorn ?? 0) - (plan.offspringGroup.countPlaced ?? 0)),
+          countPlaced: plan.offspringGroup.countPlaced ?? 0,
+        } : null,
+        // Default settings until schema supports per-program customization
+        displayMode: "curated" as const,
+        showParentPhotos: true,
+        showOffspringPhotos: true,
+        showPricing: true,
+        documents: [], // Future: Add document attachments with presigned URLs
+      };
+
+      reply.send(dto);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
   /* ───────── Join Waitlist ───────── */
-  // NOTE: For MVP, using inquiries to handle both inquiries and waitlist signups
-  // Future enhancement: Add programId to WaitlistEntry model for dedicated waitlist tracking
+  app.post(
+    "/public/breeding-programs/:slug/waitlist",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const { slug } = req.params as { slug: string };
+        const body = (req.body || {}) as any;
+
+        // Find program
+        const program = await prisma.mktListingBreedingProgram.findFirst({
+          where: {
+            slug,
+            status: "LIVE",
+            openWaitlist: true,
+          },
+          select: {
+            id: true,
+            tenantId: true,
+            name: true,
+          },
+        });
+
+        if (!program) {
+          return reply.code(404).send({
+            error: "not_found",
+            message: "Program not found or not accepting waitlist signups",
+          });
+        }
+
+        // Validate required fields
+        const name = String(body.name || "").trim();
+        const email = String(body.email || "").trim();
+
+        if (!name) {
+          return reply.code(400).send({ error: "name_required" });
+        }
+        if (!email || !email.includes("@")) {
+          return reply.code(400).send({ error: "valid_email_required" });
+        }
+
+        // Create waitlist entry via inquiry (for MVP, reusing inquiry model)
+        // In the future, this could use a dedicated WaitlistEntry model
+        const inquiry = await prisma.breedingProgramInquiry.create({
+          data: {
+            programId: program.id,
+            tenantId: program.tenantId,
+            buyerName: name,
+            buyerEmail: email,
+            buyerPhone: body.phone ? String(body.phone).trim() : null,
+            subject: `Waitlist Signup: ${program.name}`,
+            message: body.notes ? String(body.notes).trim() : "I would like to join the waitlist.",
+            interestedIn: body.interestedIn ? String(body.interestedIn).trim() : null,
+            source: "Waitlist",
+            status: "NEW",
+          },
+        });
+
+        reply.send({
+          success: true,
+          message: "You've been added to the waitlist! We'll be in touch soon.",
+          waitlistId: inquiry.id,
+        });
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        reply.status(status).send(payload);
+      }
+    }
+  );
 };
 
 export default publicBreedingProgramsRoutes;

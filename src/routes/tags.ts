@@ -146,6 +146,374 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // POST /tags/batch-lookup - Batch fetch tags for multiple entities in a single request
+  // Eliminates N+1 API calls when loading lists of entities with their tags
+  // Body: { targets: [{ breedingPlanId?: number, animalId?: number, contactId?: number, ... }] }
+  // Response: { results: { "breedingPlan:123": [...tags], "animal:456": [...tags] } }
+  app.post("/tags/batch-lookup", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const body = (req.body || {}) as {
+        targets?: Array<{
+          contactId?: number;
+          organizationId?: number;
+          animalId?: number;
+          breedingPlanId?: number;
+          offspringGroupId?: number;
+          offspringId?: number;
+          messageThreadId?: number;
+          draftId?: number;
+          buyerId?: number;
+          dealId?: number;
+        }>;
+      };
+
+      if (!Array.isArray(body.targets) || body.targets.length === 0) {
+        return reply.send({ results: {} });
+      }
+
+      // Limit batch size to prevent abuse
+      const MAX_BATCH_SIZE = 200;
+      const targets = body.targets.slice(0, MAX_BATCH_SIZE);
+
+      // Group targets by entity type for efficient batch queries
+      const breedingPlanIds: number[] = [];
+      const animalIds: number[] = [];
+      const offspringGroupIds: number[] = [];
+      const offspringIds: number[] = [];
+      const messageThreadIds: number[] = [];
+      const draftIds: number[] = [];
+      const contactIds: number[] = [];
+      const organizationIds: number[] = [];
+      const buyerIds: number[] = [];
+      const dealIds: number[] = [];
+
+      for (const target of targets) {
+        if (target.breedingPlanId != null) breedingPlanIds.push(target.breedingPlanId);
+        if (target.animalId != null) animalIds.push(target.animalId);
+        if (target.offspringGroupId != null) offspringGroupIds.push(target.offspringGroupId);
+        if (target.offspringId != null) offspringIds.push(target.offspringId);
+        if (target.messageThreadId != null) messageThreadIds.push(target.messageThreadId);
+        if (target.draftId != null) draftIds.push(target.draftId);
+        if (target.contactId != null) contactIds.push(target.contactId);
+        if (target.organizationId != null) organizationIds.push(target.organizationId);
+        if (target.buyerId != null) buyerIds.push(target.buyerId);
+        if (target.dealId != null) dealIds.push(target.dealId);
+      }
+
+      const results: Record<string, ReturnType<typeof tagDTO>[]> = {};
+
+      // Batch query for each entity type that has targets
+      // Using Promise.all for parallel execution
+
+      const queries: Promise<void>[] = [];
+
+      // Breeding Plans
+      if (breedingPlanIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              breedingPlanId: { in: breedingPlanIds },
+              tag: { tenantId }, // Ensure tenant isolation
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.breedingPlanId) {
+                const key = `breedingPlan:${a.breedingPlanId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Animals
+      if (animalIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              animalId: { in: animalIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.animalId) {
+                const key = `animal:${a.animalId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Offspring Groups
+      if (offspringGroupIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              offspringGroupId: { in: offspringGroupIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.offspringGroupId) {
+                const key = `offspringGroup:${a.offspringGroupId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Individual Offspring
+      if (offspringIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              offspringId: { in: offspringIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.offspringId) {
+                const key = `offspring:${a.offspringId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Message Threads
+      if (messageThreadIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              messageThreadId: { in: messageThreadIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.messageThreadId) {
+                const key = `messageThread:${a.messageThreadId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Drafts
+      if (draftIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              draftId: { in: draftIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.draftId) {
+                const key = `draft:${a.draftId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Contacts (Party-based)
+      if (contactIds.length > 0) {
+        queries.push(
+          (async () => {
+            // Resolve contact IDs to party IDs
+            const contacts = await prisma.contact.findMany({
+              where: { id: { in: contactIds }, tenantId },
+              select: { id: true, partyId: true },
+            });
+
+            const partyIdToContactId = new Map<number, number>();
+            const partyIds: number[] = [];
+            for (const c of contacts) {
+              if (c.partyId) {
+                partyIdToContactId.set(c.partyId, c.id);
+                partyIds.push(c.partyId);
+              }
+            }
+
+            if (partyIds.length > 0) {
+              const assignments = await prisma.tagAssignment.findMany({
+                where: {
+                  taggedPartyId: { in: partyIds },
+                  tag: { tenantId },
+                },
+                include: {
+                  tag: {
+                    select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+                  },
+                },
+              });
+
+              for (const a of assignments) {
+                if (a.taggedPartyId) {
+                  const contactId = partyIdToContactId.get(a.taggedPartyId);
+                  if (contactId) {
+                    const key = `contact:${contactId}`;
+                    if (!results[key]) results[key] = [];
+                    results[key].push(tagDTO(a.tag));
+                  }
+                }
+              }
+            }
+          })()
+        );
+      }
+
+      // Organizations (Party-based)
+      if (organizationIds.length > 0) {
+        queries.push(
+          (async () => {
+            // Resolve organization IDs to party IDs
+            const orgs = await prisma.organization.findMany({
+              where: { id: { in: organizationIds }, tenantId },
+              select: { id: true, partyId: true },
+            });
+
+            const partyIdToOrgId = new Map<number, number>();
+            const partyIds: number[] = [];
+            for (const o of orgs) {
+              if (o.partyId) {
+                partyIdToOrgId.set(o.partyId, o.id);
+                partyIds.push(o.partyId);
+              }
+            }
+
+            if (partyIds.length > 0) {
+              const assignments = await prisma.tagAssignment.findMany({
+                where: {
+                  taggedPartyId: { in: partyIds },
+                  tag: { tenantId },
+                },
+                include: {
+                  tag: {
+                    select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+                  },
+                },
+              });
+
+              for (const a of assignments) {
+                if (a.taggedPartyId) {
+                  const orgId = partyIdToOrgId.get(a.taggedPartyId);
+                  if (orgId) {
+                    const key = `organization:${orgId}`;
+                    if (!results[key]) results[key] = [];
+                    results[key].push(tagDTO(a.tag));
+                  }
+                }
+              }
+            }
+          })()
+        );
+      }
+
+      // Buyers
+      if (buyerIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              buyerId: { in: buyerIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.buyerId) {
+                const key = `buyer:${a.buyerId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Deals
+      if (dealIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              dealId: { in: dealIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.dealId) {
+                const key = `deal:${a.dealId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
+      // Execute all queries in parallel
+      await Promise.all(queries);
+
+      reply.send({ results });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
   // GET /contacts/:id/tags  → list tags assigned to a contact
   // Step 6B: Party-only reads via taggedPartyId
   app.get("/contacts/:id/tags", async (req, reply) => {

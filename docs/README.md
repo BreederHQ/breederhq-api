@@ -11,6 +11,7 @@
 
 ### Operations
 - **[AWS Secrets Manager](operations/AWS-SECRETS-MANAGER.md)** - Managing production database credentials
+- **[Sentry Setup](operations/SENTRY-SETUP.md)** - Error tracking and performance monitoring
 
 ### Architecture Decisions
 - **[ADR-0001: AWS Secrets Manager](architecture-decisions/0001-AWS-SECRETS-MANAGER.md)** - Why we use AWS for secret management
@@ -23,7 +24,8 @@
 docs/
 ├── README.md (this file)
 ├── operations/
-│   └── AWS-SECRETS-MANAGER.md          # Day-to-day secret management
+│   ├── AWS-SECRETS-MANAGER.md          # Day-to-day secret management
+│   └── SENTRY-SETUP.md                 # Error tracking and APM
 └── architecture-decisions/
     └── 0001-AWS-SECRETS-MANAGER.md     # Decision rationale
 ```
@@ -122,5 +124,5 @@ When adding new documentation:
 
 ---
 
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-09
 **Maintained By**: Engineering Team

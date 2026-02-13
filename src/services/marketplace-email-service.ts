@@ -58,7 +58,7 @@ If you didn't create this account, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Welcome to ${FROM_NAME} - Please verify your email`,
     html,
@@ -115,7 +115,7 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Reset your ${FROM_NAME} password`,
     html,
@@ -171,7 +171,7 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Verify your ${FROM_NAME} email address`,
     html,
@@ -266,7 +266,7 @@ Need help? Visit our provider resources or contact support anytime.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Welcome to ${FROM_NAME} Providers!`,
     html,
@@ -352,7 +352,7 @@ Questions about payouts? Check Stripe's documentation or contact our support tea
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Stripe Connect Setup Complete - ${FROM_NAME}`,
     html,
@@ -431,7 +431,7 @@ Until verification is complete, you may not be able to receive payouts.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Action Required: Stripe Account Verification - ${FROM_NAME}`,
     html,
@@ -518,7 +518,7 @@ View booking details: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Booking Confirmed - ${data.serviceTitle}`,
     html,
@@ -596,7 +596,7 @@ View booking: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `New Booking - ${data.serviceTitle}`,
     html,
@@ -654,7 +654,7 @@ You can track the progress and communicate with the provider: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Service Started - ${data.serviceTitle}`,
     html,
@@ -715,7 +715,7 @@ Your feedback helps other buyers make informed decisions.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Service Complete - Please Review ${data.providerBusinessName}`,
     html,
@@ -797,7 +797,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.recipientEmail,
     subject: `Booking Cancelled - ${data.serviceTitle}`,
     html,
@@ -877,7 +877,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Payment Confirmed - ${data.serviceTitle}`,
     html,
@@ -961,7 +961,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `Payment Received - ${data.serviceTitle}`,
     html,
@@ -1052,7 +1052,7 @@ View and reply: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.recipientEmail,
     subject: `New message from ${data.senderName} - ${data.serviceTitle}`,
     html,
@@ -1122,7 +1122,7 @@ View your inquiries at: ${MARKETPLACE_URL}/inquiries
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject,
     html,
@@ -1282,7 +1282,7 @@ View your waitlist requests at: ${MARKETPLACE_URL}/inquiries?tab=waitlist
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Waitlist request submitted for ${data.programName}`,
     html,
@@ -1350,7 +1350,7 @@ View details at: ${viewUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Approved! Your waitlist request at ${data.breederName}`,
     html,
@@ -1428,7 +1428,7 @@ Browse other breeders at: ${MARKETPLACE_URL}/breeders
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Update on your waitlist request at ${data.breederName}`,
     html,
@@ -1502,7 +1502,7 @@ Review at: ${adminUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: ADMIN_NOTIFICATION_EMAIL,
     subject: `[Action Required] Listing Auto-Flagged: ${data.listingTitle}`,
     html,
@@ -1587,7 +1587,7 @@ If you continue to have issues, please contact our support team.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Identity Verification Update - ${FROM_NAME}`,
     html,
@@ -1670,7 +1670,7 @@ View invoice: ${dashboardUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `Payment Failed - Invoice ${data.invoiceNumber}`,
     html,
@@ -1740,7 +1740,7 @@ This is an automated message. Please do not reply.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.toEmail,
     subject: `Undeliverable: ${data.originalSubject || "(no subject)"}`,
     html,

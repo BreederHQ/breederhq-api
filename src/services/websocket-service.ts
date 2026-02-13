@@ -1,7 +1,19 @@
 // src/services/websocket-service.ts
-// WebSocket service for real-time messaging
+// WebSocket service for real-time messaging (Platform/Portal)
+//
+// Multi-instance support:
+// - When REDIS_URL is set, messages are published to Redis pub/sub
+// - Each instance subscribes and broadcasts to its local WebSocket connections
+// - Without Redis, falls back to local-only (single instance)
 
 import type { WebSocket } from "ws";
+import {
+  initRedisPubSub,
+  isRedisPubSubEnabled,
+  publish,
+  onMessage,
+  channels,
+} from "./redis-pubsub.js";
 
 export interface WebSocketClient {
   ws: WebSocket;
@@ -13,11 +25,43 @@ export interface WebSocketClient {
 // Legacy alias for internal use
 type Client = WebSocketClient;
 
-// Map of tenantId -> Set of connected clients
-const tenantClients = new Map<number, Set<Client>>();
+// ---------- Local Client Registry ----------
+// Tracks WebSocket connections on THIS instance only
 
-// Map of partyId -> Set of connected clients (for marketplace users)
+const tenantClients = new Map<number, Set<Client>>();
 const partyClients = new Map<number, Set<Client>>();
+
+// ---------- Redis Pub/Sub Initialization ----------
+
+// Initialize Redis pub/sub and register message handlers
+initRedisPubSub();
+
+// Handle messages from other instances via Redis
+onMessage((channel: string, message: string) => {
+  try {
+    const data = JSON.parse(message);
+
+    // Tenant channel: ws:tenant:{tenantId}
+    if (channel.startsWith("tenant:")) {
+      const tenantId = parseInt(channel.split(":")[1], 10);
+      if (!isNaN(tenantId)) {
+        broadcastToTenantLocal(tenantId, data.event, data.payload);
+      }
+    }
+
+    // Party channel: ws:party:{partyId}
+    if (channel.startsWith("party:")) {
+      const partyId = parseInt(channel.split(":")[1], 10);
+      if (!isNaN(partyId)) {
+        broadcastToPartyLocal(partyId, data.event, data.payload);
+      }
+    }
+  } catch (err) {
+    console.error("[WS] Error handling Redis message:", err);
+  }
+});
+
+// ---------- Client Registration ----------
 
 /**
  * Register a new WebSocket client
@@ -67,13 +111,12 @@ export function unregisterClient(client: Client): void {
   console.log(`[WS] Client unregistered: tenant=${client.tenantId}, user=${client.userId}`);
 }
 
-/**
- * Broadcast a message to all clients in a tenant
- */
-export function broadcastToTenant(tenantId: number, event: string, payload: any): void {
+// ---------- Local Broadcast (this instance only) ----------
+
+function broadcastToTenantLocal(tenantId: number, event: string, payload: unknown): number {
   const clients = tenantClients.get(tenantId);
   if (!clients || clients.size === 0) {
-    return;
+    return 0;
   }
 
   const message = JSON.stringify({ event, payload });
@@ -86,30 +129,65 @@ export function broadcastToTenant(tenantId: number, event: string, payload: any)
     }
   }
 
-  console.log(`[WS] Broadcast to tenant ${tenantId}: event=${event}, clients=${sent}`);
+  return sent;
+}
+
+function broadcastToPartyLocal(partyId: number, event: string, payload: unknown): number {
+  const clients = partyClients.get(partyId);
+  if (!clients || clients.size === 0) {
+    return 0;
+  }
+
+  const message = JSON.stringify({ event, payload });
+  let sent = 0;
+
+  for (const client of clients) {
+    if (client.ws.readyState === 1) { // WebSocket.OPEN
+      client.ws.send(message);
+      sent++;
+    }
+  }
+
+  return sent;
+}
+
+// ---------- Public Broadcast API (with Redis pub/sub) ----------
+
+/**
+ * Broadcast a message to all clients in a tenant (across all instances)
+ */
+export function broadcastToTenant(tenantId: number, event: string, payload: unknown): void {
+  // Always broadcast locally first
+  const localSent = broadcastToTenantLocal(tenantId, event, payload);
+
+  // Publish to Redis for other instances (fire and forget)
+  if (isRedisPubSubEnabled()) {
+    publish(channels.tenant(tenantId), { event, payload }).catch((err) => {
+      console.error("[WS] Redis publish error:", err);
+    });
+  }
+
+  console.log(`[WS] Broadcast to tenant ${tenantId}: event=${event}, localClients=${localSent}, redis=${isRedisPubSubEnabled()}`);
 }
 
 /**
- * Broadcast a message to a specific party (for marketplace users)
+ * Broadcast a message to a specific party (across all instances)
  */
-export function broadcastToParty(partyId: number, event: string, payload: any): void {
-  const clients = partyClients.get(partyId);
-  if (!clients || clients.size === 0) {
-    return;
+export function broadcastToParty(partyId: number, event: string, payload: unknown): void {
+  // Always broadcast locally first
+  const localSent = broadcastToPartyLocal(partyId, event, payload);
+
+  // Publish to Redis for other instances
+  if (isRedisPubSubEnabled()) {
+    publish(channels.party(partyId), { event, payload }).catch((err) => {
+      console.error("[WS] Redis publish error:", err);
+    });
   }
 
-  const message = JSON.stringify({ event, payload });
-  let sent = 0;
-
-  for (const client of clients) {
-    if (client.ws.readyState === 1) { // WebSocket.OPEN
-      client.ws.send(message);
-      sent++;
-    }
-  }
-
-  console.log(`[WS] Broadcast to party ${partyId}: event=${event}, clients=${sent}`);
+  console.log(`[WS] Broadcast to party ${partyId}: event=${event}, localClients=${localSent}, redis=${isRedisPubSubEnabled()}`);
 }
+
+// ---------- High-Level Broadcast Functions ----------
 
 /**
  * Broadcast a new message event to relevant parties
@@ -176,10 +254,16 @@ export function broadcastNewEmail(
   broadcastToTenant(tenantId, "new_email", email);
 }
 
+// ---------- Stats ----------
+
 /**
  * Get connection stats (for debugging)
  */
-export function getConnectionStats(): { tenants: number; totalClients: number } {
+export function getConnectionStats(): {
+  tenants: number;
+  totalClients: number;
+  redisEnabled: boolean;
+} {
   let totalClients = 0;
   for (const clients of tenantClients.values()) {
     totalClients += clients.size;
@@ -187,5 +271,6 @@ export function getConnectionStats(): { tenants: number; totalClients: number } 
   return {
     tenants: tenantClients.size,
     totalClients,
+    redisEnabled: isRedisPubSubEnabled(),
   };
 }

@@ -39,6 +39,8 @@ export const TENANT_PREFIXES = {
   guaranteeNotifications: "guarantee-notifications-test",
   // Buyer CRM tests (P4)
   buyerCrm: "buyer-crm-test",
+  // Network Breeding Discovery tests
+  networkBreedingDiscovery: "network-breeding-test",
 } as const;
 
 export type TenantPrefix = (typeof TENANT_PREFIXES)[keyof typeof TENANT_PREFIXES];
@@ -112,6 +114,59 @@ export async function teardownTestTenant(
 
   // 0. Notifications (FK to tenant)
   await prisma.notification.deleteMany({ where: { tenantId } });
+
+  // Network Breeding Discovery cleanup (must come before AnimalAccess, BreedingPlan, Animal)
+
+  // BreedingDataAgreement (FK to AnimalAccess with onDelete: Restrict, and BreedingPlan)
+  await prisma.breedingDataAgreement.deleteMany({
+    where: { OR: [{ requestingTenantId: tenantId }, { approvingTenantId: tenantId }] },
+  });
+
+  // AnimalAccessConversation + associated messages (FK to AnimalAccess, MessageThread)
+  const accessConversations = await prisma.animalAccessConversation.findMany({
+    where: { animalAccess: { OR: [{ ownerTenantId: tenantId }, { accessorTenantId: tenantId }] } },
+    select: { id: true, messageThreadId: true },
+  });
+  if (accessConversations.length > 0) {
+    const threadIds = accessConversations.map(c => c.messageThreadId);
+    await prisma.animalAccessConversation.deleteMany({
+      where: { id: { in: accessConversations.map(c => c.id) } },
+    });
+    // Clean up messages and participants in those threads
+    for (const threadId of threadIds) {
+      await prisma.message.deleteMany({ where: { threadId } });
+      await prisma.messageParticipant.deleteMany({ where: { threadId } });
+      await prisma.messageThread.delete({ where: { id: threadId } }).catch(() => {});
+    }
+  }
+
+  // NetworkBreedingInquiry + associated message threads
+  const inquiries = await prisma.networkBreedingInquiry.findMany({
+    where: { OR: [{ senderTenantId: tenantId }, { recipientTenantId: tenantId }] },
+    select: { id: true, messageThreadId: true },
+  });
+  if (inquiries.length > 0) {
+    const inquiryThreadIds = inquiries.filter(i => i.messageThreadId != null).map(i => i.messageThreadId!);
+    await prisma.networkBreedingInquiry.deleteMany({
+      where: { id: { in: inquiries.map(i => i.id) } },
+    });
+    for (const threadId of inquiryThreadIds) {
+      await prisma.message.deleteMany({ where: { threadId } });
+      await prisma.messageParticipant.deleteMany({ where: { threadId } });
+      await prisma.messageThread.delete({ where: { id: threadId } }).catch(() => {});
+    }
+  }
+
+  // AnimalAccess (FK to Animal, ShareCode, Tenant)
+  await prisma.animalAccess.deleteMany({
+    where: { OR: [{ ownerTenantId: tenantId }, { accessorTenantId: tenantId }] },
+  });
+
+  // ShareCode (FK to Tenant)
+  await prisma.shareCode.deleteMany({ where: { tenantId } });
+
+  // NetworkSearchIndex (FK to Tenant)
+  await prisma.networkSearchIndex.deleteMany({ where: { tenantId } });
 
   // 0a. Deal activities (FK to Deal)
   await prisma.dealActivity.deleteMany({ where: { deal: { tenantId } } });
