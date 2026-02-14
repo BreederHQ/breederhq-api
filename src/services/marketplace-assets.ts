@@ -128,6 +128,29 @@ export function toAssetUrl(
 }
 
 // ============================================================================
+// Tenant ID Extraction from Source URL
+// ============================================================================
+
+/**
+ * Extract tenant ID from a source URL's storage key path.
+ *
+ * Supported patterns:
+ *   - https://.../.../tenants/{tenantId}/...
+ *   - https://.../.../providers/{providerId}/...   (marketplace providers)
+ *
+ * Returns null if no tenant/provider ID found.
+ */
+export function extractTenantIdFromUrl(sourceUrl: string): number | null {
+  // Match /tenants/{id}/ or /providers/{id}/ in the URL path
+  const match = sourceUrl.match(/\/(?:tenants|providers)\/(\d+)\//);
+  if (match) {
+    const id = parseInt(match[1], 10);
+    return Number.isFinite(id) ? id : null;
+  }
+  return null;
+}
+
+// ============================================================================
 // Allowed Origins for Asset Requests
 // ============================================================================
 

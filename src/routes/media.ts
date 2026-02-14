@@ -467,9 +467,11 @@ async function handleGetAccessUrl(
     }
 
     // Check if we should apply watermarking for public access
-    // Watermark if: PUBLIC visibility, accessed by non-owner, and is a public image type
+    // Watermark ONLY when explicitly requested via ?wm=1 query parameter.
+    // Listing cards use raw image URLs (no ?wm=1), detail pages use withWatermark() to add ?wm=1.
     const isOwnerAccess = parsed?.ownerType === "tenant" && parsed?.ownerId === actor.tenantId;
-    const shouldCheckWatermark = visibility === "PUBLIC" && !isOwnerAccess && isPublicImageType(decodedKey);
+    const wantWatermark = (request.query as Record<string, string>)?.wm === "1";
+    const shouldCheckWatermark = wantWatermark && visibility === "PUBLIC" && !isOwnerAccess && isPublicImageType(decodedKey);
 
     if (shouldCheckWatermark && parsed?.ownerType === "tenant" && parsed?.ownerId) {
       try {
