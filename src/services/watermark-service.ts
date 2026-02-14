@@ -59,12 +59,14 @@ export async function uploadToS3(
 ): Promise<void> {
   const s3 = getS3Client();
   const bucket = getS3Bucket();
+  // CacheControl: watermarked images are cached variants — cache aggressively
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
     })
   );
 }

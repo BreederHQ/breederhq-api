@@ -70,18 +70,34 @@ export async function populateAnimalDataFromConfig(
       if (geneticsData) {
         result.genetics = {};
 
+        // Test Results (Provider, Date, ID)
+        if (config.genetics.showTestResults !== false) {
+          if (geneticsData.testProvider) {
+            result.genetics.testProvider = geneticsData.testProvider;
+          }
+          if (geneticsData.testDate) {
+            result.genetics.testDate = geneticsData.testDate;
+          }
+          if (geneticsData.testId) {
+            result.genetics.testId = geneticsData.testId;
+          }
+        }
+
         if (config.genetics.showBreedComposition && geneticsData.breedComposition) {
           result.genetics.breedComposition = geneticsData.breedComposition;
         }
 
-        if (config.genetics.showCoatColor && geneticsData.coatColorData) {
-          const arr = geneticsData.coatColorData as any[];
-          result.genetics.coatColor = Array.isArray(arr)
-            ? arr.filter((l: any) => l.networkVisible === true && l.allele1 && l.allele2)
-            : [];
-        }
-
-        if (config.genetics.showCOI && geneticsData.coi) {
+        // Genetic Diversity (COI + MHC)
+        if (config.genetics.showGeneticDiversity !== false) {
+          if (geneticsData.coi) {
+            const coiData = geneticsData.coi as any;
+            result.genetics.coi = coiData.percentage || coiData.coefficient || null;
+          }
+          if (geneticsData.mhcDiversity) {
+            result.genetics.mhcDiversity = geneticsData.mhcDiversity;
+          }
+        } else if (config.genetics.showCOI && geneticsData.coi) {
+          // Legacy fallback: showCOI without showGeneticDiversity
           const coiData = geneticsData.coi as any;
           result.genetics.coi = coiData.percentage || coiData.coefficient || null;
         }

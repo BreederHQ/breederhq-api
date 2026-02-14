@@ -780,6 +780,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           animalId: listing.animal?.id,
           animalName: listing.animal?.name,
           animalPhotoUrl: listing.animal?.photoUrl,
+          animalCoverImageUrl: listing.coverImageUrl || null,
           animalSpecies: listing.animal?.species || null,
           animalBreed: listing.animal?.breed || null,
           animalSex: listing.animal?.sex || null,
@@ -838,6 +839,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             publishedAt: true,
             viewCount: true,
             inquiryCount: true,
+            coverImageUrl: true,
             dataDrawerConfig: true,
             animal: {
               select: {
@@ -922,6 +924,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             locationCountry: listing.locationCountry,
             publishedAt: listing.publishedAt?.toISOString() || null,
             viewCount: listing.viewCount,
+            coverImageUrl: listing.coverImageUrl || null,
           },
           breeder: {
             id: tenant.id,
@@ -2384,6 +2387,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           priceMinCents: true,
           priceMaxCents: true,
           priceModel: true,
+          coverImageUrl: true,
           locationCity: true,
           locationRegion: true,
           publishedAt: true,
@@ -2439,6 +2443,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         animalSpecies: listing.animal?.species || null,
         animalBreed: listing.animal?.breed || null,
         animalPhotoUrl: listing.animal?.photoUrl || null,
+        animalCoverImageUrl: listing.coverImageUrl || null,
         animalBirthDate: listing.animal?.birthDate?.toISOString() || null,
         programSlug: org?.programSlug || null,
         programName: org?.name || null,

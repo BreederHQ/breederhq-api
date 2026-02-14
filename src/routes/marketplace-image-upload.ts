@@ -151,10 +151,12 @@ async function getPresignedUploadUrl(
     const cdnDomain = getCdnDomain();
 
     // Create PutObject command with optional ContentLength constraint
+    // CacheControl: S3 keys contain UUIDs so URLs are immutable — cache aggressively
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: s3Key,
       ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
       ...(contentLength && { ContentLength: contentLength }),
     });
 

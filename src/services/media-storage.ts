@@ -216,6 +216,7 @@ export async function uploadBuffer(
   const bucket = getS3Bucket();
   const storageKey = generateStorageKey(context, filename);
 
+  // CacheControl: S3 keys contain UUIDs so URLs are immutable — cache aggressively
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -223,6 +224,7 @@ export async function uploadBuffer(
       Body: buffer,
       ContentType: contentType,
       ContentLength: buffer.length,
+      CacheControl: "public, max-age=31536000, immutable",
     })
   );
 
@@ -249,10 +251,12 @@ export async function generatePresignedUploadUrl(
   const bucket = getS3Bucket();
   const storageKey = generateStorageKey(context, filename);
 
+  // CacheControl: S3 keys contain UUIDs so URLs are immutable — cache aggressively
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: storageKey,
     ContentType: contentType,
+    CacheControl: "public, max-age=31536000, immutable",
     ...(contentLength && { ContentLength: contentLength }),
   });
 
