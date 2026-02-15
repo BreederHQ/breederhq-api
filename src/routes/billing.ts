@@ -646,6 +646,27 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               }
             }
 
+            // Handle listing boost payment
+            if (session.mode === "payment" && session.metadata?.type === "listing_boost") {
+              const boostId = parseInt(session.metadata.boostId || "0");
+
+              if (boostId) {
+                try {
+                  const { activateBoost } = await import("../services/listing-boost-service.js");
+                  await activateBoost(boostId, session.payment_intent as string);
+                  req.log.info(
+                    { boostId, tier: session.metadata.tier },
+                    "Listing boost activated via Stripe webhook"
+                  );
+                } catch (boostErr: any) {
+                  req.log.error(
+                    { err: boostErr, boostId },
+                    "Failed to activate listing boost"
+                  );
+                }
+              }
+            }
+
             // Handle portal invoice payment (client paying invoice via portal)
             if (session.mode === "payment" && session.metadata?.type === "portal_invoice_payment") {
               const invoiceId = parseInt(session.metadata.invoiceId || "0");
