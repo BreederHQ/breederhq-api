@@ -11,14 +11,14 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
   const NODE_ENV = process.env.NODE_ENV || "development";
 
   // LOCAL DEVELOPMENT: Return empty (use existing .env files)
-  if (NODE_ENV !== "production") {
+  if (process.env.USE_SECRETS_MANAGER !== "true") {
     console.log("✓ Development mode - using .env files");
     secretsCache = {};
     return secretsCache;
   }
 
   // PRODUCTION: Fetch database credentials from AWS Secrets Manager
-  const secretName = process.env.AWS_SECRET_NAME || "breederhq/prod";
+  const secretName = process.env.AWS_SECRET_NAME || `breederhq-api/${ NODE_ENV }`;
   const region = process.env.AWS_REGION || "us-east-2";
 
   const client = new SecretsManagerClient({

@@ -11,7 +11,7 @@ const ENV_FILE =
 dotenv.config({ path: ENV_FILE });
 
 // Fetch database secrets from AWS Secrets Manager (production only)
-if (process.env.NODE_ENV === "production") {
+if (process.env.USE_SECRETS_MANAGER === "true") {
   const dbSecrets = await getDatabaseSecrets();
   // Merge database secrets into process.env
   Object.assign(process.env, dbSecrets);
