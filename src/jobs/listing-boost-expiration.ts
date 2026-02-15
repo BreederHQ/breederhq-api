@@ -72,6 +72,7 @@ export function startListingBoostExpirationJob(): void {
     );
     console.log(`[listing-boost-expiration] Summary:`);
     console.log(`  - Expired: ${result.expiredCount}`);
+    console.log(`  - Expiry emails sent: ${result.expiryEmailsSent}`);
     console.log(`  - Warnings sent: ${result.warningsSent}`);
     console.log(`  - Auto-renewals created: ${result.autoRenewalsCreated}`);
     if (result.errors > 0) {

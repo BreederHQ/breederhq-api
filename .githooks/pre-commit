@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -e
-expected="admin@breederhq.com"
+expected="227653518+BreederHQ-Admin@users.noreply.github.com"
 author=$(git config user.email)
 [ "$author" = "$expected" ] || {
   echo "Blocked: user.email is '$author' (expected $expected)." >&2

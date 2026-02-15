@@ -38,6 +38,8 @@ import {
   sendInquiryNotificationToBreeder,
 } from "../services/marketplace-email-service.js";
 import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
+import { applyBoostRanking, trackBoostClick, trackBoostInquiry } from "../services/listing-boost-service.js";
+import type { ListingBoostTarget } from "@prisma/client";
 
 // ============================================================================
 // Security: Environment flags
@@ -436,6 +438,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         take: limit,
         orderBy: { name: "asc" },
         select: {
+          id: true,
           programSlug: true,
           name: true,
           city: true,
@@ -446,7 +449,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       prisma.organization.count({ where }),
     ]);
 
-    const items: PublicProgramSummaryDTO[] = programs.map(toPublicProgramSummaryDTO);
+    const rawItems = programs.map((p) => ({
+      id: p.id,
+      ...toPublicProgramSummaryDTO(p),
+    }));
+
+    const items = await applyBoostRanking(rawItems, "BREEDER");
 
     return reply.send({ items, total });
   });
@@ -574,7 +582,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     ]);
 
     // Transform to public DTOs
-    const items = programs.map((program) => ({
+    const rawItems = programs.map((program) => ({
       id: program.id,
       slug: program.slug,
       name: program.name,
@@ -611,6 +619,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       })),
       participantCount: program.participants.length,
     }));
+
+    const items = await applyBoostRanking(rawItems, "ANIMAL_PROGRAM");
 
     return reply.send({ items, total, limit, offset });
   });
@@ -761,7 +771,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
-      const items = listings.map((listing) => {
+      const rawItems = listings.map((listing) => {
         const org = listing.tenant?.organizations?.[0];
         return {
           id: listing.id,
@@ -793,6 +803,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         };
       });
+
+      const items = await applyBoostRanking(rawItems, "INDIVIDUAL_ANIMAL");
 
       return reply.send({ items, total, limit, offset });
     } catch (err: any) {
@@ -1818,6 +1830,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         select: { id: true },
       });
 
+      // FR-46: Track inquiry against active boost (fire-and-forget)
+      if (listingSlug && listingType === "animal") {
+        const boostListing = await resolveAnimalListing(prisma, resolved.tenantId, listingSlug);
+        if (boostListing) {
+          trackBoostInquiry("INDIVIDUAL_ANIMAL" as ListingBoostTarget, boostListing.listingId).catch(() => {});
+        }
+      }
+
       // Send email notifications (don't fail the request if emails fail)
       try {
         // Get user details for emails
@@ -2070,30 +2090,37 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       prisma.mktListingBreederService.count({ where }),
     ]);
 
+    const rawItems = items.map((listing) => {
+      return {
+        id: listing.id,
+        slug: listing.slug,
+        category: listing.category,
+        title: listing.title,
+        description: listing.description,
+        city: listing.city,
+        state: listing.state,
+        country: listing.country,
+        priceCents: listing.priceCents,
+        priceType: listing.priceType,
+        images: listing.images,
+        publishedAt: listing.publishedAt,
+        provider: listing.provider ? {
+          type: "marketplace_provider" as const,
+          id: listing.provider.id,
+          name: listing.provider.businessName,
+          averageRating: listing.provider.averageRating || 0,
+          totalReviews: listing.provider.totalReviews || 0,
+        } : null,
+      };
+    });
+
+    const boostedItems = await applyBoostRanking(
+      rawItems,
+      ["BREEDER_SERVICE", "PROVIDER_SERVICE"]
+    );
+
     return reply.send({
-      items: items.map((listing) => {
-        return {
-          id: listing.id,
-          slug: listing.slug,
-          category: listing.category,
-          title: listing.title,
-          description: listing.description,
-          city: listing.city,
-          state: listing.state,
-          country: listing.country,
-          priceCents: listing.priceCents,
-          priceType: listing.priceType,
-          images: listing.images,
-          publishedAt: listing.publishedAt,
-          provider: listing.provider ? {
-            type: "marketplace_provider" as const,
-            id: listing.provider.id,
-            name: listing.provider.businessName,
-            averageRating: listing.provider.averageRating || 0,
-            totalReviews: listing.provider.totalReviews || 0,
-          } : null,
-        };
-      }),
+      items: boostedItems,
       total,
       page,
       limit,
@@ -2235,41 +2262,45 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       prisma.offspringGroup.count({ where }),
     ]);
 
+    const rawItems = groups.map((g) => {
+      const org = g.tenant?.organizations?.[0];
+      const availableCount = g.Offspring?.length || 0;
+
+      // Get price range from offspring
+      const prices = (g.Offspring || [])
+        .map((o) => o.marketplacePriceCents || o.priceCents || g.marketplaceDefaultPriceCents)
+        .filter((p): p is number => p !== null && p !== undefined);
+
+      const minPrice = prices.length > 0 ? Math.min(...prices) : g.marketplaceDefaultPriceCents;
+      const maxPrice = prices.length > 0 ? Math.max(...prices) : g.marketplaceDefaultPriceCents;
+
+      return {
+        id: g.id,
+        listingSlug: g.listingSlug,
+        title: g.listingTitle,
+        description: g.listingDescription,
+        species: g.species,
+        breed: g.dam?.breed || g.sire?.breed || null,
+        expectedBirthOn: g.expectedBirthOn,
+        actualBirthOn: g.actualBirthOn,
+        coverImageUrl: g.coverImageUrl,
+        availableCount,
+        priceMinCents: minPrice,
+        priceMaxCents: maxPrice,
+        dam: g.dam ? { name: g.dam.name, photoUrl: g.dam.photoUrl } : null,
+        sire: g.sire ? { name: g.sire.name, photoUrl: g.sire.photoUrl } : null,
+        breeder: org ? {
+          slug: org.programSlug,
+          name: org.name,
+          location: [org.city, org.state].filter(Boolean).join(", ") || null,
+        } : null,
+      };
+    });
+
+    const boostedItems = await applyBoostRanking(rawItems, "BREEDING_LISTING");
+
     return reply.send({
-      items: groups.map((g) => {
-        const org = g.tenant?.organizations?.[0];
-        const availableCount = g.Offspring?.length || 0;
-
-        // Get price range from offspring
-        const prices = (g.Offspring || [])
-          .map((o) => o.marketplacePriceCents || o.priceCents || g.marketplaceDefaultPriceCents)
-          .filter((p): p is number => p !== null && p !== undefined);
-
-        const minPrice = prices.length > 0 ? Math.min(...prices) : g.marketplaceDefaultPriceCents;
-        const maxPrice = prices.length > 0 ? Math.max(...prices) : g.marketplaceDefaultPriceCents;
-
-        return {
-          id: g.id,
-          listingSlug: g.listingSlug,
-          title: g.listingTitle,
-          description: g.listingDescription,
-          species: g.species,
-          breed: g.dam?.breed || g.sire?.breed || null,
-          expectedBirthOn: g.expectedBirthOn,
-          actualBirthOn: g.actualBirthOn,
-          coverImageUrl: g.coverImageUrl,
-          availableCount,
-          priceMinCents: minPrice,
-          priceMaxCents: maxPrice,
-          dam: g.dam ? { name: g.dam.name, photoUrl: g.dam.photoUrl } : null,
-          sire: g.sire ? { name: g.sire.name, photoUrl: g.sire.photoUrl } : null,
-          breeder: org ? {
-            slug: org.programSlug,
-            name: org.name,
-            location: [org.city, org.state].filter(Boolean).join(", ") || null,
-          } : null,
-        };
-      }),
+      items: boostedItems,
       total,
       page,
       limit,
@@ -2422,7 +2453,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     ]);
 
     // Transform to response format
-    const items = listings.map((listing) => {
+    const rawItems = listings.map((listing) => {
       const org = listing.tenant?.organizations?.[0] || null;
       return {
         id: listing.id,
@@ -2450,6 +2481,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         breederLocation: org ? [org.city, org.state].filter(Boolean).join(", ") || null : null,
       };
     });
+
+    const items = await applyBoostRanking(rawItems, "INDIVIDUAL_ANIMAL");
 
     return reply.send({
       items,
@@ -2505,7 +2538,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       where.breedText = { contains: breed.trim(), mode: "insensitive" };
     }
 
-    const [items, total] = await prisma.$transaction([
+    const [bpItems, total] = await prisma.$transaction([
       prisma.mktListingBreedingProgram.findMany({
         where,
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
@@ -2550,32 +2583,97 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       prisma.mktListingBreedingProgram.count({ where }),
     ]);
 
+    const rawItems = bpItems.map((p) => {
+      const org = p.tenant?.organizations?.[0];
+      return {
+        id: p.id,
+        slug: p.slug,
+        name: p.name,
+        description: p.description,
+        species: p.species,
+        breedText: p.breedText,
+        acceptInquiries: p.acceptInquiries,
+        openWaitlist: p.openWaitlist,
+        acceptReservations: p.acceptReservations,
+        typicalWaitTime: p.typicalWaitTime,
+        activePlansCount: p._count.breedingPlans,
+        breeder: org ? {
+          slug: org.programSlug,
+          name: org.name,
+          location: [org.city, org.state].filter(Boolean).join(", ") || null,
+        } : null,
+      };
+    });
+
+    const boostedItems = await applyBoostRanking(rawItems, "BREEDING_PROGRAM");
+
     return reply.send({
-      items: items.map((p) => {
-        const org = p.tenant?.organizations?.[0];
-        return {
-          id: p.id,
-          slug: p.slug,
-          name: p.name,
-          description: p.description,
-          species: p.species,
-          breedText: p.breedText,
-          acceptInquiries: p.acceptInquiries,
-          openWaitlist: p.openWaitlist,
-          acceptReservations: p.acceptReservations,
-          typicalWaitTime: p.typicalWaitTime,
-          activePlansCount: p._count.breedingPlans,
-          breeder: org ? {
-            slug: org.programSlug,
-            name: org.name,
-            location: [org.city, org.state].filter(Boolean).join(", ") || null,
-          } : null,
-        };
-      }),
+      items: boostedItems,
       total,
       page,
       limit,
     });
+  });
+  // --------------------------------------------------------------------------
+  // POST /listings/:type/:id/click - Track listing click (FR-45)
+  // --------------------------------------------------------------------------
+  // Public endpoint for non-blocking click tracking via navigator.sendBeacon.
+  // Rate-limited in-memory to 1 click per IP+listing per 60 seconds.
+
+  const clickRateLimit = new Map<string, number>();
+  const CLICK_RATE_LIMIT_MS = 60_000; // 1 minute
+  const CLICK_RATE_LIMIT_CLEANUP_INTERVAL = 5 * 60_000; // Clean every 5 min
+
+  // Periodic cleanup of expired rate-limit entries
+  const clickCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, ts] of clickRateLimit) {
+      if (now - ts > CLICK_RATE_LIMIT_MS) clickRateLimit.delete(key);
+    }
+  }, CLICK_RATE_LIMIT_CLEANUP_INTERVAL);
+  // Unref so the timer doesn't keep the process alive
+  if (clickCleanupTimer.unref) clickCleanupTimer.unref();
+
+  const VALID_LISTING_TYPES = new Set<string>([
+    "INDIVIDUAL_ANIMAL",
+    "ANIMAL_PROGRAM",
+    "BREEDING_PROGRAM",
+    "BREEDER",
+    "BREEDER_SERVICE",
+    "BREEDING_LISTING",
+    "PROVIDER_SERVICE",
+  ]);
+
+  app.post<{
+    Params: { type: string; id: string };
+  }>("/listings/:type/:id/click", async (req, reply) => {
+    const { type, id } = req.params;
+    const listingId = parseInt(id, 10);
+
+    // Validate params
+    if (!VALID_LISTING_TYPES.has(type) || isNaN(listingId)) {
+      return reply.code(400).send({ error: "invalid_params" });
+    }
+
+    // Rate limit: 1 click per IP+listing per 60s
+    const ip = req.ip || "unknown";
+    const rateKey = `${ip}:${type}:${listingId}`;
+    const lastClick = clickRateLimit.get(rateKey);
+    const now = Date.now();
+
+    if (lastClick && now - lastClick < CLICK_RATE_LIMIT_MS) {
+      // Silently accept but don't count (don't reveal rate limiting to client)
+      return reply.code(204).send();
+    }
+
+    clickRateLimit.set(rateKey, now);
+
+    // Fire-and-forget: track the click asynchronously
+    trackBoostClick(type as ListingBoostTarget, listingId).catch(() => {
+      // Best-effort — silently ignore errors
+    });
+
+    return reply.code(204).send();
   });
 };
 

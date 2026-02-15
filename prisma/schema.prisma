@@ -12016,7 +12016,8 @@ model ListingBoost {
   inquiries   Int @default(0)
 
   // Notifications
-  expiryNotifiedAt DateTime? // When 3-day warning was sent
+  expiryNotifiedAt  DateTime? // When 3-day warning was sent
+  expiredNotifiedAt DateTime? // When expiry-day email was sent
 
   // Timestamps
   createdAt DateTime @default(now())

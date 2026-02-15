@@ -43,6 +43,26 @@ const FEATURED_PAGE_TYPES: Record<string, ListingBoostTarget[]> = {
 // Types
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Monetization fields populated on public listing DTOs.
+ * Mirrors the MonetizationFields interface in commerce-shared/src/api/types.ts.
+ */
+export interface MonetizationFields {
+  boosted?: boolean;
+  boostCategory?: "animals" | "breeders" | "services";
+  boostWeight?: number;
+  boostExpiresAt?: string;
+  featured?: boolean;
+  featuredWeight?: number;
+  isSponsored?: boolean;
+  sponsorshipType?:
+    | "boosted"
+    | "featured"
+    | "sponsored-card"
+    | "sponsored-content";
+  sponsorDisclosureText?: string;
+}
+
 export interface CreateBoostCheckoutParams {
   tenantId?: number;
   providerId?: number;
@@ -57,6 +77,7 @@ export interface CreateBoostCheckoutParams {
 export interface BoostExpirationResult {
   expiredCount: number;
   warningsSent: number;
+  expiryEmailsSent: number;
   autoRenewalsCreated: number;
   errors: number;
 }
@@ -466,24 +487,34 @@ export async function getAllBoosts(params: {
 // ────────────────────────────────────────────────────────────────────────────
 
 export async function getBoostStats() {
-  const [activeBoosts, totalRevenue, tierBreakdown, statusBreakdown] =
-    await Promise.all([
-      prisma.listingBoost.count({ where: { status: "ACTIVE" } }),
-      prisma.listingBoost.aggregate({
-        where: { status: { in: ["ACTIVE", "EXPIRED", "CANCELED"] } },
-        _sum: { amountCents: true },
-      }),
-      prisma.listingBoost.groupBy({
-        by: ["tier"],
-        where: { status: { in: ["ACTIVE", "EXPIRED", "CANCELED"] } },
-        _count: true,
-        _sum: { amountCents: true },
-      }),
-      prisma.listingBoost.groupBy({
-        by: ["status"],
-        _count: true,
-      }),
-    ]);
+  const [
+    activeBoosts,
+    totalRevenue,
+    tierBreakdown,
+    statusBreakdown,
+    analyticsAgg,
+  ] = await Promise.all([
+    prisma.listingBoost.count({ where: { status: "ACTIVE" } }),
+    prisma.listingBoost.aggregate({
+      where: { status: { in: ["ACTIVE", "EXPIRED", "CANCELED"] } },
+      _sum: { amountCents: true },
+    }),
+    prisma.listingBoost.groupBy({
+      by: ["tier"],
+      where: { status: { in: ["ACTIVE", "EXPIRED", "CANCELED"] } },
+      _count: true,
+      _sum: { amountCents: true },
+    }),
+    prisma.listingBoost.groupBy({
+      by: ["status"],
+      _count: true,
+    }),
+    // FR-50: Analytics aggregation for admin dashboard
+    prisma.listingBoost.aggregate({
+      where: { status: { in: ["ACTIVE", "EXPIRED", "CANCELED"] } },
+      _sum: { impressions: true, clicks: true, inquiries: true },
+    }),
+  ]);
 
   return {
     activeBoosts,
@@ -497,6 +528,11 @@ export async function getBoostStats() {
       status: s.status,
       count: s._count,
     })),
+    analytics: {
+      totalImpressions: analyticsAgg._sum.impressions ?? 0,
+      totalClicks: analyticsAgg._sum.clicks ?? 0,
+      totalInquiries: analyticsAgg._sum.inquiries ?? 0,
+    },
   };
 }
 
@@ -511,13 +547,21 @@ export async function getBoostStats() {
  * Steps:
  * 1. Expire ACTIVE boosts past their expiresAt
  * 2. Expire PAUSED boosts past their expiresAt
- * 3. Send 3-day warning emails (skip if already sent)
- * 4. Process auto-renewals for newly expired boosts
+ * 3. Send expiry-day emails for newly expired boosts (FR-24)
+ * 4. Send 3-day warning emails (skip if already sent) (FR-23)
+ * 5. Process auto-renewals for expired boosts with autoRenew=true (FR-25)
+ *
+ * Idempotency:
+ *  - Steps 1-2: updateMany only touches ACTIVE/PAUSED → once EXPIRED, won't match again
+ *  - Step 3: expiredNotifiedAt=null guard prevents duplicate expiry emails
+ *  - Step 4: expiryNotifiedAt=null guard prevents duplicate warning emails
+ *  - Step 5: autoRenew set to false after processing prevents re-processing
  */
 export async function processBoostExpirations(): Promise<BoostExpirationResult> {
   const result: BoostExpirationResult = {
     expiredCount: 0,
     warningsSent: 0,
+    expiryEmailsSent: 0,
     autoRenewalsCreated: 0,
     errors: 0,
   };
@@ -545,7 +589,36 @@ export async function processBoostExpirations(): Promise<BoostExpirationResult> 
     });
     result.expiredCount += expiredPaused.count;
 
-    // 3. Send 3-day warning emails (FR-23)
+    // 3. Send expiry-day emails for expired boosts (FR-24, BR-9)
+    //    Only targets non-autoRenew boosts — auto-renew boosts get a renewal email instead (step 5).
+    //    Idempotent: expiredNotifiedAt=null guard ensures at most one email per boost.
+    const expiredNeedingNotification = await prisma.listingBoost.findMany({
+      where: {
+        status: "EXPIRED",
+        expiredNotifiedAt: null,
+        autoRenew: false,
+      },
+    });
+
+    for (const boost of expiredNeedingNotification) {
+      try {
+        await sendBoostExpiredNotification(boost);
+        await prisma.listingBoost.update({
+          where: { id: boost.id },
+          data: { expiredNotifiedAt: now },
+        });
+        result.expiryEmailsSent++;
+      } catch (err: any) {
+        console.error(
+          `[listing-boost-expiration] Expiry email failed for boost ${boost.id}:`,
+          err.message
+        );
+        result.errors++;
+      }
+    }
+
+    // 4. Send 3-day warning emails (FR-23, BR-9)
+    //    Idempotent: expiryNotifiedAt=null guard ensures at most one warning per boost.
     const threeDaysFromNow = new Date(now);
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
 
@@ -553,7 +626,7 @@ export async function processBoostExpirations(): Promise<BoostExpirationResult> 
       where: {
         status: "ACTIVE",
         expiresAt: { lte: threeDaysFromNow, gt: now },
-        expiryNotifiedAt: null, // Idempotent: skip already-notified
+        expiryNotifiedAt: null,
       },
     });
 
@@ -574,7 +647,9 @@ export async function processBoostExpirations(): Promise<BoostExpirationResult> 
       }
     }
 
-    // 4. Process auto-renewals for expired boosts with autoRenew=true (FR-25)
+    // 5. Process auto-renewals for expired boosts with autoRenew=true (FR-25, BR-8)
+    //    Creates new PENDING boost + Stripe Checkout session, sends payment link email.
+    //    Idempotent: autoRenew set to false after processing + expiredNotifiedAt set.
     const autoRenewBoosts = await prisma.listingBoost.findMany({
       where: {
         status: "EXPIRED",
@@ -585,10 +660,11 @@ export async function processBoostExpirations(): Promise<BoostExpirationResult> 
     for (const boost of autoRenewBoosts) {
       try {
         await processAutoRenewal(boost);
-        // Disable autoRenew on expired boost to prevent re-processing
+        // Disable autoRenew + mark as notified to prevent re-processing and
+        // prevent the expiry email (step 3) from also firing on next run
         await prisma.listingBoost.update({
           where: { id: boost.id },
-          data: { autoRenew: false },
+          data: { autoRenew: false, expiredNotifiedAt: now },
         });
         result.autoRenewalsCreated++;
       } catch (err: any) {
@@ -608,6 +684,204 @@ export async function processBoostExpirations(): Promise<BoostExpirationResult> 
   }
 
   return result;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Search Ranking — boost-aware sort + 15% cap + MonetizationFields
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Boost category mapping (per Featured Carousel Page-Type in spec §14).
+ */
+const BOOST_CATEGORY_MAP: Record<
+  ListingBoostTarget,
+  "animals" | "breeders" | "services"
+> = {
+  INDIVIDUAL_ANIMAL: "animals",
+  ANIMAL_PROGRAM: "animals",
+  BREEDING_PROGRAM: "breeders",
+  BREEDER: "breeders",
+  BREEDER_SERVICE: "services",
+  BREEDING_LISTING: "services",
+  PROVIDER_SERVICE: "services",
+};
+
+/**
+ * Apply boost ranking to a page of listings.
+ *
+ * Implements the Search Ranking Algorithm (spec §14):
+ *  1. Fetch active boosts for the listing type(s) being queried
+ *  2. Sort: Featured (3.0×) → Boosted (1.5×) → Organic (1.0×); recency within each group (FR-38)
+ *  3. Enforce 15 % cap: move excess boosted listings to organic position (FR-39, BR-6)
+ *  4. Populate MonetizationFields on each item
+ *  5. Track impressions asynchronously (non-blocking, FR-44)
+ *
+ * Does NOT mutate the input array — returns a new array.
+ */
+export async function applyBoostRanking<T extends { id: number }>(
+  items: T[],
+  listingTypes: ListingBoostTarget | ListingBoostTarget[]
+): Promise<(T & MonetizationFields)[]> {
+  if (items.length === 0) return [];
+
+  const types = Array.isArray(listingTypes) ? listingTypes : [listingTypes];
+  const listingIds = items.map((item) => item.id);
+
+  // 1. Fetch active boosts for all items in this batch (single query)
+  const activeBoosts = await prisma.listingBoost.findMany({
+    where: {
+      listingType: { in: types },
+      listingId: { in: listingIds },
+      status: "ACTIVE",
+    },
+    select: {
+      id: true,
+      listingId: true,
+      tier: true,
+      weight: true,
+      expiresAt: true,
+      listingType: true,
+    },
+  });
+
+  // Short-circuit: no boosts → return items as-is (no re-sort needed)
+  if (activeBoosts.length === 0) {
+    return items as (T & MonetizationFields)[];
+  }
+
+  // 2. Build lookup map: listingId → boost info
+  const boostMap = new Map<number, (typeof activeBoosts)[0]>();
+  for (const boost of activeBoosts) {
+    boostMap.set(boost.listingId, boost);
+  }
+
+  // 3. 15 % cap (FR-39 / Business Rule #6)
+  const maxPromoted = Math.ceil(items.length * 0.15);
+
+  // 4. Partition: featured → boosted → organic  (preserving original order within each group = recency, FR-38)
+  const featured: T[] = [];
+  const boosted: T[] = [];
+  const organic: T[] = [];
+
+  for (const item of items) {
+    const boost = boostMap.get(item.id);
+    if (boost?.tier === "FEATURED") {
+      featured.push(item);
+    } else if (boost?.tier === "BOOST") {
+      boosted.push(item);
+    } else {
+      organic.push(item);
+    }
+  }
+
+  // 5. Cap: featured always takes priority, then boosted; excess demoted to organic tail
+  const allPromoted = [...featured, ...boosted];
+  const inSlot = allPromoted.slice(0, maxPromoted);
+  const demoted = allPromoted.slice(maxPromoted);
+  const sorted = [...inSlot, ...organic, ...demoted];
+
+  // Set of listing IDs that made the promoted cut
+  const promotedIds = new Set(inSlot.map((i) => i.id));
+
+  // 6. Populate MonetizationFields
+  const result: (T & MonetizationFields)[] = sorted.map((item) => {
+    const boost = boostMap.get(item.id);
+    const isPromoted = boost !== undefined && promotedIds.has(item.id);
+
+    if (isPromoted && boost) {
+      const category = BOOST_CATEGORY_MAP[boost.listingType];
+      return {
+        ...item,
+        boosted: boost.tier === "BOOST" ? true : undefined,
+        boostCategory: category,
+        boostWeight: boost.weight,
+        boostExpiresAt: boost.expiresAt?.toISOString(),
+        featured: boost.tier === "FEATURED" ? true : undefined,
+        featuredWeight:
+          boost.tier === "FEATURED" ? boost.weight : undefined,
+        isSponsored: true,
+        sponsorshipType: (boost.tier === "FEATURED"
+          ? "featured"
+          : "boosted") as "featured" | "boosted",
+        sponsorDisclosureText:
+          boost.tier === "FEATURED" ? "Featured" : "Promoted",
+      };
+    }
+
+    return { ...item } as T & MonetizationFields;
+  });
+
+  // 7. Async impression tracking (non-blocking) — FR-44 / NFR: must not block response
+  const impressionBoostIds = activeBoosts
+    .filter((b) => promotedIds.has(b.listingId))
+    .map((b) => b.id);
+
+  if (impressionBoostIds.length > 0) {
+    trackBoostImpressions(impressionBoostIds).catch(() => {
+      // Silently swallow — impression tracking is best-effort
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Increment impression counts for boosted listings (batch update).
+ * Called fire-and-forget; failures are non-critical.
+ */
+async function trackBoostImpressions(boostIds: number[]): Promise<void> {
+  if (boostIds.length === 0) return;
+  await prisma.listingBoost.updateMany({
+    where: { id: { in: boostIds } },
+    data: { impressions: { increment: 1 } },
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Analytics: Click Tracking (FR-45)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Track a click on a boosted listing.
+ * Returns true if the listing had an active boost and the click was recorded.
+ */
+export async function trackBoostClick(
+  listingType: ListingBoostTarget,
+  listingId: number
+): Promise<boolean> {
+  const result = await prisma.listingBoost.updateMany({
+    where: {
+      listingType,
+      listingId,
+      status: "ACTIVE",
+    },
+    data: { clicks: { increment: 1 } },
+  });
+  return result.count > 0;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Analytics: Inquiry Tracking (FR-46)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Track an inquiry against active boosts for a listing.
+ * Called after successful inquiry creation.
+ * Returns true if the listing had an active boost and the inquiry was counted.
+ */
+export async function trackBoostInquiry(
+  listingType: ListingBoostTarget,
+  listingId: number
+): Promise<boolean> {
+  const result = await prisma.listingBoost.updateMany({
+    where: {
+      listingType,
+      listingId,
+      status: "ACTIVE",
+    },
+    data: { inquiries: { increment: 1 } },
+  });
+  return result.count > 0;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -682,6 +956,60 @@ async function sendBoostExpiryWarning(boost: ListingBoost): Promise<void> {
     `,
     text: `Your ${tierLabel} boost is expiring on ${expiresDate}. Visit your dashboard to renew: ${platformUrl}/marketplace/boosts`,
     templateKey: "boost_expiry_warning",
+    category: "transactional",
+    metadata: { boostId: boost.id, tier: boost.tier },
+  });
+}
+
+/**
+ * Send an expiry-day notification email (FR-24).
+ * Tells the seller their boost has expired and links to dashboard for re-purchase.
+ */
+async function sendBoostExpiredNotification(boost: ListingBoost): Promise<void> {
+  const email = await resolveOwnerEmail(boost);
+  if (!email) {
+    console.warn(
+      `[listing-boost-expiration] No email found for boost ${boost.id}`
+    );
+    return;
+  }
+
+  const { sendEmail } = await import("./email-service.js");
+  const tierLabel = boost.tier === "FEATURED" ? "Featured" : "Boost";
+  const expiredDate = boost.expiresAt
+    ? boost.expiresAt.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "today";
+
+  const platformUrl =
+    process.env.PLATFORM_URL || "https://app.breederhq.com";
+
+  await sendEmail({
+    tenantId: boost.tenantId ?? null,
+    to: email,
+    subject: `Your ${tierLabel} listing boost has expired`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1f2937;">Boost Expired</h2>
+        <p>Your <strong>${tierLabel}</strong> listing boost expired on <strong>${expiredDate}</strong>.</p>
+        <p>Your listing has returned to its organic ranking position in marketplace search results.</p>
+        <p>Want to keep your listing visible? You can purchase a new boost from your dashboard at any time.</p>
+        <p style="margin-top: 16px;">
+          <a href="${platformUrl}/marketplace/boosts"
+             style="display: inline-block; padding: 10px 20px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 500;">
+            Reboost Listing
+          </a>
+        </p>
+        <p style="margin-top: 24px; color: #666; font-size: 12px;">
+          This is an automated notification from BreederHQ.
+        </p>
+      </div>
+    `,
+    text: `Your ${tierLabel} boost expired on ${expiredDate}. Your listing has returned to organic ranking. Reboost at: ${platformUrl}/marketplace/boosts`,
+    templateKey: "boost_expired",
     category: "transactional",
     metadata: { boostId: boost.id, tier: boost.tier },
   });

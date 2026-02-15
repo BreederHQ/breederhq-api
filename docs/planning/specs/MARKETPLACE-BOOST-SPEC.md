@@ -371,7 +371,7 @@ THEN the boost status changes to CANCELED immediately
 - Border style: `border border-[hsl(var(--brand-orange))]`
 - Background: `bg-[hsl(var(--brand-orange))]/10`
 - Text: `text-[hsl(var(--brand-orange))]`
-- Label: `t('marketplace:badges.boosted')`
+- Label: `t('marketplace:badges.promoted')`
 
 **Featured badge** (prominent):
 - Top-right of listing card image
@@ -487,6 +487,7 @@ The `MonetizationFields` interface in `packages/commerce-shared/src/api/types.ts
 | Q2 | Should we track boost performance against a control (same listing pre-boost)? | Product | Open |
 | Q3 | What email templates should be used for expiry notifications? | Design | Open |
 | Q4 | Should there be a "boost history" visible on the public listing page? | Product | Open |
+| Q5 | **Breeding Program boost behavior**: Breeding Programs are operationally different from other listing types — they are containers for breeding plans, offspring groups, and linked animals. When a breeder boosts/features a Breeding Program: (a) Does the boost apply to the program listing only, or should it cascade visibility to offspring within? (b) Should breeders be able to boost individual offspring within a program, given that offspring aren't independently listed but are linked via parent/child relationships? (c) How does the Featured carousel represent a Breeding Program vs. an Individual Animal — same card layout or different? (d) Should inquiry tracking count inquiries to the program or to specific offspring within? This needs design thinking before Breeding Program boosts go live. | Product | Open |
 
 ---
 

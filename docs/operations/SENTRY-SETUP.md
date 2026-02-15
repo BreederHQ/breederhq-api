@@ -4,7 +4,7 @@
 **Status**: ✅ Complete
 **Audience**: Developer
 **Difficulty**: Beginner
-**Last Verified**: 2026-02-09
+**Last Verified**: 2026-02-15
 
 ---
 
@@ -14,8 +14,19 @@ Sentry provides error tracking and performance monitoring for both the API and f
 
 - **Error tracking**: Automatic capture of unhandled exceptions with stack traces
 - **Performance monitoring**: Request timing, slow queries, bottleneck identification
+- **CPU profiling**: Node.js CPU profiling via native addon for performance insights
 - **Heat maps**: Identify which endpoints are most used and where issues occur
 - **Alerting**: Get notified when new errors occur or error rates spike
+
+### SDK Versions
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| `@sentry/node` | 10.x | Core error tracking and performance |
+| `@sentry/profiling-node` | 10.x | CPU profiling via native addon (`@sentry-internal/node-cpu-profiler`) |
+| `@sentry/react` | 10.x | Frontend (breederhq monorepo) |
+
+> **Node.js compatibility**: The `@sentry/profiling-node` package ships prebuilt native binaries. After upgrading Node.js to a new major version, verify that Sentry has a binary for the new ABI version (e.g., Node 24 = ABI 137). If the binary is missing, the server will crash at startup. Upgrade the Sentry packages to get the latest binary support.
 
 ---
 
@@ -199,7 +210,7 @@ Set up alerts in Sentry for:
 ### API
 - `src/lib/sentry.ts` - Sentry initialization and helpers
 - `src/server.ts` - Integration with Fastify error handler and hooks
-- `package.json` - Added `@sentry/node`, `@sentry/profiling-node`
+- `package.json` - `@sentry/node` (10.x), `@sentry/profiling-node` (10.x)
 
 ### Frontend
 - `apps/platform/src/main.tsx` - Sentry initialization
@@ -208,7 +219,7 @@ Set up alerts in Sentry for:
 - `apps/platform/src/components/ErrorBoundary.tsx` - Sentry capture
 - `apps/portal/src/components/ErrorBoundary.tsx` - Sentry capture
 - `packages/commerce-shared/src/components/ErrorBoundary.tsx` - Sentry capture
-- `package.json` - Added `@sentry/react`
+- `package.json` - `@sentry/react` (10.x)
 
 ---
 
@@ -247,6 +258,30 @@ Set up alerts in Sentry for:
 
 ---
 
+### Problem: Server crashes with "Cannot find module sentry_cpu_profiler-win32-x64-NNN.node"
+
+**Symptom**: Server crashes at startup with `MODULE_NOT_FOUND` for `@sentry/profiling-node` native binary
+
+**Cause**: Node.js was upgraded to a new major version whose ABI version doesn't have a prebuilt Sentry profiling binary. Each Node.js major version has a unique ABI version (e.g., Node 20 = ABI 115, Node 22 = ABI 127, Node 24 = ABI 137).
+
+**Solution**: Upgrade Sentry packages to a version that includes the binary for your Node.js ABI:
+
+```bash
+npm install @sentry/node@latest @sentry/profiling-node@latest
+```
+
+**Verify** the binary exists after upgrade:
+
+```bash
+# Check your Node.js ABI version
+node -e "console.log(process.versions.modules)"
+
+# Check available binaries (10.x stores them in @sentry-internal/node-cpu-profiler)
+ls node_modules/@sentry-internal/node-cpu-profiler/lib/sentry_cpu_profiler-*
+```
+
+---
+
 ### Problem: CSRF_FAILED when hitting test endpoint
 
 **Symptom**: POST to `/__test-sentry-error` returns 403 CSRF_FAILED
@@ -264,6 +299,7 @@ Set up alerts in Sentry for:
 - [x] Add `VITE_SENTRY_DSN` to frontend environments (Vercel) (2026-02-09)
 - [x] Install packages (`@sentry/node`, `@sentry/react`) (2026-02-09)
 - [x] Deploy and verify initialization logs (2026-02-09)
+- [x] Upgrade Sentry SDK from 8.x to 10.x for Node.js 24 compatibility (2026-02-15)
 - [ ] Set up alerting rules in Sentry dashboard (recommended)
 
 ---
@@ -278,6 +314,16 @@ Now that Sentry is configured:
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2026-02-09
-**Verified By**: Manual testing in development and production
+## Changelog
+
+| Date | Version | Changes |
+|------|---------|---------|
+| 2026-02-15 | 1.2 | Upgraded Sentry SDK 8.x → 10.x for Node.js 24 (ABI 137) support; added SDK version table, Node.js ABI troubleshooting section |
+| 2026-02-09 | 1.1 | Added troubleshooting sections, frontend DSN note |
+| 2026-02-09 | 1.0 | Initial setup documentation |
+
+---
+
+**Document Version**: 1.2
+**Last Updated**: 2026-02-15
+**Verified By**: Manual testing in development (Node.js 24.13.1)
