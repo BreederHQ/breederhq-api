@@ -15,7 +15,7 @@
 
 import Stripe from "stripe";
 import prisma from "../prisma.js";
-import { stripe } from "./stripe-service.js";
+import { getStripe } from "./stripe-service.js";
 import { canTenantAcceptStripePayments, getTenantStripeAccountId } from "./tenant-stripe-connect-service.js";
 
 // ============================================================================
@@ -56,7 +56,7 @@ async function getOrCreateConnectedCustomer(
   metadata?: Record<string, string>
 ): Promise<string> {
   // Check if customer already exists on this connected account
-  const existingCustomers = await stripe.customers.list(
+  const existingCustomers = await getStripe().customers.list(
     {
       email,
       limit: 1,
@@ -71,7 +71,7 @@ async function getOrCreateConnectedCustomer(
   }
 
   // Create new customer on connected account
-  const customer = await stripe.customers.create(
+  const customer = await getStripe().customers.create(
     {
       email,
       name,
@@ -188,7 +188,7 @@ export async function createStripeInvoiceForTenant(
   const hasAnimalContext = !!(invoice.animalId || invoice.offspringId || invoice.groupId || invoice.breedingPlanId || invoice.waitlistEntryId);
 
   // Create invoice on tenant's Stripe account (NO application_fee_amount)
-  const stripeInvoice = await stripe.invoices.create(
+  const stripeInvoice = await getStripe().invoices.create(
     {
       customer: stripeCustomerId,
       collection_method: "send_invoice",
@@ -211,7 +211,7 @@ export async function createStripeInvoiceForTenant(
   // Add line items from platform invoice
   if (invoice.LineItems && invoice.LineItems.length > 0) {
     for (const item of invoice.LineItems) {
-      await stripe.invoiceItems.create(
+      await getStripe().invoiceItems.create(
         {
           customer: stripeCustomerId,
           invoice: stripeInvoice.id,
@@ -226,7 +226,7 @@ export async function createStripeInvoiceForTenant(
     }
   } else {
     // No line items - add single item for total amount
-    await stripe.invoiceItems.create(
+    await getStripe().invoiceItems.create(
       {
         customer: stripeCustomerId,
         invoice: stripeInvoice.id,
@@ -312,7 +312,7 @@ export async function sendTenantStripeInvoice(
   }
 
   // Finalize and send the invoice via Stripe
-  const stripeInvoice = await stripe.invoices.sendInvoice(
+  const stripeInvoice = await getStripe().invoices.sendInvoice(
     invoice.stripeInvoiceId,
     {
       stripeAccount: invoice.tenant.stripeConnectAccountId,
@@ -395,7 +395,7 @@ export async function voidTenantStripeInvoice(
   }
 
   // Void the invoice in Stripe
-  await stripe.invoices.voidInvoice(invoice.stripeInvoiceId, {
+  await getStripe().invoices.voidInvoice(invoice.stripeInvoiceId, {
     stripeAccount: invoice.tenant.stripeConnectAccountId,
   });
 
@@ -467,7 +467,7 @@ export async function getTenantInvoicePdfUrl(
   }
 
   // Get fresh invoice data from Stripe
-  const stripeInvoice = await stripe.invoices.retrieve(
+  const stripeInvoice = await getStripe().invoices.retrieve(
     invoice.stripeInvoiceId,
     {
       stripeAccount: invoice.tenant.stripeConnectAccountId,
@@ -516,7 +516,7 @@ export async function getTenantInvoicePaymentUrl(
   }
 
   // Get fresh invoice data from Stripe
-  const stripeInvoice = await stripe.invoices.retrieve(
+  const stripeInvoice = await getStripe().invoices.retrieve(
     invoice.stripeInvoiceId,
     {
       stripeAccount: invoice.tenant.stripeConnectAccountId,
@@ -847,7 +847,7 @@ export async function getInvoiceStripeStatus(
   }
 
   try {
-    const stripeInvoice = await stripe.invoices.retrieve(
+    const stripeInvoice = await getStripe().invoices.retrieve(
       invoice.stripeInvoiceId,
       {
         stripeAccount: invoice.tenant.stripeConnectAccountId,

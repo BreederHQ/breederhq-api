@@ -32,7 +32,7 @@ export type ProviderPurpose = "listings" | "credentials" | "profile";
 
 export interface UploadContext {
   ownerType: OwnerType;
-  ownerId: number;
+  ownerId: number | undefined;
   purpose: TenantPurpose | ProviderPurpose;
   resourceId?: string | number; // animalId, listingId, contractId, etc.
   subPath?: string; // e.g., "photos", "documents", "logo"
