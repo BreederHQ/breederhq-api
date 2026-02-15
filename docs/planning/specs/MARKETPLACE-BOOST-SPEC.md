@@ -487,7 +487,7 @@ The `MonetizationFields` interface in `packages/commerce-shared/src/api/types.ts
 | Q2 | Should we track boost performance against a control (same listing pre-boost)? | Product | Open |
 | Q3 | What email templates should be used for expiry notifications? | Design | Open |
 | Q4 | Should there be a "boost history" visible on the public listing page? | Product | Open |
-| Q5 | **Breeding Program boost behavior**: Breeding Programs are operationally different from other listing types — they are containers for breeding plans, offspring groups, and linked animals. When a breeder boosts/features a Breeding Program: (a) Does the boost apply to the program listing only, or should it cascade visibility to offspring within? (b) Should breeders be able to boost individual offspring within a program, given that offspring aren't independently listed but are linked via parent/child relationships? (c) How does the Featured carousel represent a Breeding Program vs. an Individual Animal — same card layout or different? (d) Should inquiry tracking count inquiries to the program or to specific offspring within? This needs design thinking before Breeding Program boosts go live. | Product | Open |
+| Q5 | **Breeding Program boost behavior** — RESOLVED. See Section 14.1 below. | Product | **Resolved** |
 
 ---
 
@@ -557,6 +557,29 @@ Provider → "Boost" button → BoostListingModal (same component) → Select ti
 | Animals | INDIVIDUAL_ANIMAL, ANIMAL_PROGRAM |
 | Breeders | BREEDER, BREEDING_PROGRAM |
 | Services | BREEDER_SERVICE, BREEDING_LISTING, PROVIDER_SERVICE |
+
+### 14.1 Breeding Program Boost Behavior (Q5 Resolution)
+
+Breeding Programs are structurally different from other listing types — they are containers for breeding plans, offspring groups, and linked animals (`MktListingBreedingProgram` → `BreedingPlan` → `OffspringGroup` → `Offspring`). The following decisions were made:
+
+**Q5a: Boost scope — program listing only, no cascade.**
+Boosting a Breeding Program promotes the program card in search results and the Featured carousel. It does NOT cascade visibility to offspring within. The program is the marketplace entry point; once a buyer clicks through to the program detail page, they see all breeding plans, available offspring, pricing, and waitlist/inquiry CTAs. Offspring visibility follows naturally from the program being discovered.
+
+**Q5b: Individual offspring boosting — not supported in v1.**
+Offspring are not independently listed on the marketplace. They exist inside offspring groups inside breeding plans inside programs. There is no standalone offspring card on browse pages. A breeder who wants to promote available offspring should boost the Breeding Program that contains them. If individual offspring listings are added in the future (similar to `MktListingIndividualAnimal`), an `OFFSPRING` boost target can be added then.
+
+**Q5c: Featured carousel card — same generic card layout.**
+The `FeaturedCarousel` uses a generic card (image, title, subtitle, price). For breeding programs:
+- **title**: Program name (e.g., "Goldendoodle Program")
+- **subtitle**: Breed text + breeder name (e.g., "Goldendoodle · Happy Paws Ranch")
+- **imageUrl**: Program cover image
+- **href**: `/breeding-programs/{slug}`
+- **priceCents**: Starting price from pricing tiers (or null if pricing is hidden)
+
+No special card treatment needed — consistent with all other listing types.
+
+**Q5d: Inquiry tracking — yes, wire into both inquiry and waitlist endpoints.**
+Breeding programs have their own inquiry endpoint (`POST /public/breeding-programs/:slug/inquiries`) and waitlist endpoint (`POST /public/breeding-programs/:slug/waitlist`) in `public-breeding-programs.ts`. Both should track inquiries against active boosts since both indicate buyer intent. The `trackBoostInquiry("BREEDING_PROGRAM", programId)` call should fire on both endpoints.
 
 ### Implementation Phases
 

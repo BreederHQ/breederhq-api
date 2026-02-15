@@ -38,7 +38,7 @@ import {
   sendInquiryNotificationToBreeder,
 } from "../services/marketplace-email-service.js";
 import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
-import { applyBoostRanking, trackBoostClick, trackBoostInquiry } from "../services/listing-boost-service.js";
+import { applyBoostRanking, trackBoostClick, trackBoostInquiry, getFeaturedListings } from "../services/listing-boost-service.js";
 import type { ListingBoostTarget } from "@prisma/client";
 
 // ============================================================================
@@ -2614,6 +2614,248 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       limit,
     });
   });
+  // --------------------------------------------------------------------------
+  // GET /featured - Featured listings for carousel (FR-29..FR-35)
+  // --------------------------------------------------------------------------
+  // Returns enriched featured listing items for the FeaturedCarousel component.
+  // Resolves boost records into displayable items (title, subtitle, imageUrl, href).
+
+  app.get<{
+    Querystring: { page?: string };
+  }>("/featured", async (req, reply) => {
+    try {
+      const page = (req.query.page || "all") as string;
+      if (!["all", "animals", "breeders", "services"].includes(page)) {
+        return reply.code(400).send({ error: "invalid_page" });
+      }
+
+      const boosts = await getFeaturedListings(page);
+      if (boosts.length === 0) {
+        return reply.send({ items: [] });
+      }
+
+      // Resolve each boost into a displayable item
+      const items: Array<{
+        id: number;
+        listingType: string;
+        title: string;
+        subtitle: string | null;
+        imageUrl: string | null;
+        href: string;
+        priceCents: number | null;
+      }> = [];
+
+      for (const boost of boosts) {
+        try {
+          let item: typeof items[number] | null = null;
+
+          if (boost.listingType === "INDIVIDUAL_ANIMAL") {
+            const listing = await prisma.mktListingIndividualAnimal.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, slug: true, headline: true, title: true,
+                coverImageUrl: true, priceCents: true,
+                animal: { select: { name: true, breed: true } },
+                tenant: {
+                  select: {
+                    organizations: {
+                      where: { isPublicProgram: true }, take: 1,
+                      select: { programSlug: true, name: true },
+                    },
+                  },
+                },
+              },
+            });
+            const org = listing?.tenant?.organizations?.[0];
+            if (listing && listing.status === "LIVE" && org?.programSlug) {
+              item = {
+                id: listing.id,
+                listingType: boost.listingType,
+                title: listing.animal?.name || listing.headline || listing.title || "Animal",
+                subtitle: [listing.animal?.breed, org.name].filter(Boolean).join(" · "),
+                imageUrl: listing.coverImageUrl,
+                href: `/marketplace/breeders/${org.programSlug}/animals/${listing.slug}`,
+                priceCents: listing.priceCents,
+              };
+            }
+          } else if (boost.listingType === "BREEDING_PROGRAM") {
+            const program = await prisma.mktListingBreedingProgram.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, slug: true, name: true, breedText: true,
+                coverImageUrl: true,
+                tenant: {
+                  select: {
+                    organizations: {
+                      where: { isPublicProgram: true }, take: 1,
+                      select: { programSlug: true, name: true },
+                    },
+                  },
+                },
+              },
+            });
+            const org = program?.tenant?.organizations?.[0];
+            if (program && program.status === "LIVE" && org?.programSlug) {
+              item = {
+                id: program.id,
+                listingType: boost.listingType,
+                title: program.name,
+                subtitle: [program.breedText, org.name].filter(Boolean).join(" · "),
+                imageUrl: program.coverImageUrl,
+                href: `/breeding-programs/${program.slug}`,
+                priceCents: null, // pricingTiers is JSON, not simple cents
+              };
+            }
+          } else if (boost.listingType === "BREEDER") {
+            // BREEDER listingId = tenantId
+            const tenant = await prisma.tenant.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                organizations: {
+                  where: { isPublicProgram: true }, take: 1,
+                  select: { programSlug: true, name: true, city: true, state: true },
+                },
+              },
+            });
+            const org = tenant?.organizations?.[0];
+            if (org?.programSlug) {
+              item = {
+                id: boost.listingId,
+                listingType: boost.listingType,
+                title: org.name,
+                subtitle: [org.city, org.state].filter(Boolean).join(", ") || null,
+                imageUrl: null, // Organization has no logo field; carousel will show placeholder
+                href: `/marketplace/breeders/${org.programSlug}`,
+                priceCents: null,
+              };
+            }
+          } else if (boost.listingType === "BREEDER_SERVICE") {
+            const service = await prisma.mktListingBreederService.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, slug: true, title: true,
+                coverImageUrl: true, priceCents: true, city: true, state: true,
+                tenant: {
+                  select: {
+                    organizations: {
+                      where: { isPublicProgram: true }, take: 1,
+                      select: { name: true },
+                    },
+                  },
+                },
+              },
+            });
+            if (service && service.status === "LIVE") {
+              const orgName = service.tenant?.organizations?.[0]?.name;
+              item = {
+                id: service.id,
+                listingType: boost.listingType,
+                title: service.title,
+                subtitle: [service.city, service.state].filter(Boolean).join(", ") || orgName || null,
+                imageUrl: service.coverImageUrl,
+                href: `/marketplace/services/${service.slug}`,
+                priceCents: service.priceCents ? Number(service.priceCents) : null,
+              };
+            }
+          } else if (boost.listingType === "PROVIDER_SERVICE") {
+            // Provider services also use MktListingBreederService (with providerId set)
+            const service = await prisma.mktListingBreederService.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, slug: true, title: true,
+                coverImageUrl: true, priceCents: true, city: true, state: true,
+                provider: { select: { businessName: true } },
+              },
+            });
+            if (service && service.status === "LIVE") {
+              item = {
+                id: service.id,
+                listingType: boost.listingType,
+                title: service.title,
+                subtitle: [service.city, service.state].filter(Boolean).join(", ") || service.provider?.businessName || null,
+                imageUrl: service.coverImageUrl,
+                href: `/marketplace/services/${service.slug}`,
+                priceCents: service.priceCents ? Number(service.priceCents) : null,
+              };
+            }
+          } else if (boost.listingType === "ANIMAL_PROGRAM") {
+            const program = await prisma.mktListingAnimalProgram.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, slug: true, name: true, headline: true,
+                coverImageUrl: true,
+                tenant: {
+                  select: {
+                    organizations: {
+                      where: { isPublicProgram: true }, take: 1,
+                      select: { programSlug: true, name: true },
+                    },
+                  },
+                },
+              },
+            });
+            const org = program?.tenant?.organizations?.[0];
+            if (program && program.status === "LIVE" && org?.programSlug) {
+              item = {
+                id: program.id,
+                listingType: boost.listingType,
+                title: program.name,
+                subtitle: [program.headline, org.name].filter(Boolean).join(" · "),
+                imageUrl: program.coverImageUrl,
+                href: `/marketplace/breeders/${org.programSlug}/programs/${program.slug}`,
+                priceCents: null,
+              };
+            }
+          } else if (boost.listingType === "BREEDING_LISTING") {
+            const group = await prisma.offspringGroup.findUnique({
+              where: { id: boost.listingId },
+              select: {
+                id: true, status: true, listingSlug: true, listingTitle: true,
+                plan: {
+                  select: {
+                    program: {
+                      select: {
+                        tenant: {
+                          select: {
+                            organizations: {
+                              where: { isPublicProgram: true }, take: 1,
+                              select: { programSlug: true, name: true },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            });
+            const org = group?.plan?.program?.tenant?.organizations?.[0];
+            if (group && group.status === "LIVE" && org?.programSlug) {
+              item = {
+                id: group.id,
+                listingType: boost.listingType,
+                title: group.listingTitle || "Breeding Listing",
+                subtitle: org.name,
+                imageUrl: null,
+                href: `/marketplace/breeders/${org.programSlug}`,
+                priceCents: null,
+              };
+            }
+          }
+
+          if (item) items.push(item);
+        } catch {
+          // Skip individual resolution failures silently
+        }
+      }
+
+      return reply.send({ items });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to get featured listings");
+      return reply.code(500).send({ error: "featured_failed" });
+    }
+  });
+
   // --------------------------------------------------------------------------
   // POST /listings/:type/:id/click - Track listing click (FR-45)
   // --------------------------------------------------------------------------
