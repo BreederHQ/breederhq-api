@@ -373,6 +373,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
                     breed: true,
                     sex: true,
                     photoUrl: true,
+                    coverImageUrl: true,
                   },
                 },
               },
@@ -393,6 +394,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
           breed: assignment.animal.breed,
           sex: assignment.animal.sex,
           photoUrl: assignment.animal.photoUrl,
+          coverImageUrl: assignment.animal.coverImageUrl,
           featured: assignment.featured,
         })) || [],
       }));
@@ -436,6 +438,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
                   breed: true,
                   sex: true,
                   photoUrl: true,
+                  coverImageUrl: true,
                 },
               },
             },
@@ -460,6 +463,7 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
         breed: assignment.animal.breed,
         sex: assignment.animal.sex,
         photoUrl: assignment.animal.photoUrl,
+        coverImageUrl: assignment.animal.coverImageUrl,
         featured: assignment.featured,
         feeOverride: assignment.feeOverride != null ? Number(assignment.feeOverride) : null,
       })) || [];
