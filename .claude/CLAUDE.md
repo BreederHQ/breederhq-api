@@ -15,6 +15,8 @@
 > - ALL input MUST be validated with Zod schemas
 > - ALL list endpoints MUST be paginated
 > - No N+1 queries, no unbounded results
+> - Media: Public images via `getPublicCdnUrl()`, private files via `generatePresignedDownloadUrl()`
+> - Media: All S3 uploads MUST set `CacheControl: public, max-age=31536000, immutable`
 > - TypeScript: Zero errors policy - I will run tsc and fix all errors before finishing"
 
 This confirms the instructions are active and that Claude has read the imported documentation.
@@ -206,4 +208,4 @@ Before submitting PR:
 ---
 
 **Auto-loaded by Claude Code at session start**
-**Last Updated**: 2026-01-22 (Added TypeScript zero-errors policy)
+**Last Updated**: 2026-02-15 (Added media storage/CDN patterns, AWS infrastructure references)
