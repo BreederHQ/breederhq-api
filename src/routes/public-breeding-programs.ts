@@ -4,6 +4,8 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import prisma from "../prisma.js";
 import { getPublicCdnUrl } from "../services/media-storage.js";
+import { trackBoostInquiry } from "../services/listing-boost-service.js";
+import type { ListingBoostTarget } from "@prisma/client";
 
 /* ───────── utils ───────── */
 
@@ -488,6 +490,9 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         },
       });
 
+      // FR-46: Track inquiry against active boost (fire-and-forget)
+      trackBoostInquiry("BREEDING_PROGRAM" as ListingBoostTarget, program.id).catch(() => {});
+
       reply.send({
         id: inquiry.id,
         status: inquiry.status,
@@ -742,6 +747,9 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
             status: "NEW",
           },
         });
+
+        // FR-46: Track waitlist signup against active boost (fire-and-forget)
+        trackBoostInquiry("BREEDING_PROGRAM" as ListingBoostTarget, program.id).catch(() => {});
 
         reply.send({
           success: true,
