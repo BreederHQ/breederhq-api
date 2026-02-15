@@ -18,7 +18,7 @@ export function getStripe(): Stripe {
       throw new Error("STRIPE_SECRET_KEY environment variable is required");
     }
     _stripe = new Stripe(key, {
-      apiVersion: "2025-12-15.clover",
+      apiVersion: "2026-01-28.clover",
       typescript: true,
     });
   }

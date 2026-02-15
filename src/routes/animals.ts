@@ -181,7 +181,7 @@ function extractCycleStartDates(rec: any): string[] {
 function parseSort(sortParam?: string) {
   // allow: "createdAt", "-createdAt", "name", "-name", "updatedAt", "birthDate"
   const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate", "species"]);
-  if (!sortParam) return [{ species: "asc" }, { name: "asc" }] as const;
+  if (!sortParam) return [{ species: "asc" as const }, { name: "asc" as const }];
   const parts = String(sortParam).split(",").map(s => s.trim()).filter(Boolean);
   const orderBy: any[] = [];
   for (const p of parts) {

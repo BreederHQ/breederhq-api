@@ -24,7 +24,7 @@ import type {
 
 // Initialize Stripe (only if API key is configured)
 const stripeKey = process.env.STRIPE_SECRET_KEY;
-const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" }) : null;
+const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2026-01-28.clover" }) : null;
 
 // ---------- Token Utilities ----------
 

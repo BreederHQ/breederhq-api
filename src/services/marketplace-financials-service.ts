@@ -17,7 +17,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 let stripe: Stripe | null = null;
 if (STRIPE_SECRET_KEY) {
   stripe = new Stripe(STRIPE_SECRET_KEY, {
-    apiVersion: "2025-12-15.clover",
+    apiVersion: "2026-01-28.clover",
     typescript: true,
   });
 }
