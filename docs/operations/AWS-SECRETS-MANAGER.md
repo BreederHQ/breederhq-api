@@ -1,8 +1,9 @@
 # AWS Secrets Manager Integration
 
 **Date**: 2026-02-03
+**Updated**: 2026-02-15
 **Status**: ✅ Active (Production)
-**Environment**: Production only
+**Environment**: Any environment with `USE_SECRETS_MANAGER=true`
 **Cost**: $0.40/month per secret
 **Related**: [Setup Script](../../setup-secrets-manager.ps1)
 
@@ -10,10 +11,11 @@
 
 ## Overview
 
-BreederHQ API production database credentials are stored in AWS Secrets Manager instead of environment variables. This provides centralized secret management, audit logging, and easier rotation.
+BreederHQ API database credentials are stored in AWS Secrets Manager instead of environment variables. This provides centralized secret management, audit logging, and easier rotation.
 
-**What's in Secrets Manager**: Database connection strings (DATABASE_URL, DATABASE_DIRECT_URL)
-**What's still in Render**: All other secrets (COOKIE_SECRET, AWS S3 keys, Stripe keys, etc.)
+**Trigger**: Set `USE_SECRETS_MANAGER=true` environment variable to enable (any environment).
+**What's in Secrets Manager**: Database connection strings (DATABASE_URL, DATABASE_DIRECT_URL), COOKIE_SECRET
+**What's still in Render/EB env vars**: AWS S3 keys, Stripe keys, etc.
 
 ---
 
@@ -22,18 +24,22 @@ BreederHQ API production database credentials are stored in AWS Secrets Manager 
 ### How It Works
 
 ```
-[Render Startup]
+[Application Startup]
      ↓
-[preflight-env.js] → Skips DATABASE_URL check if AWS vars present
+[preflight-env.js] → Skips DATABASE_URL/COOKIE_SECRET check if USE_SECRETS_MANAGER=true
      ↓
-[src/prisma.ts] → Calls getDatabaseSecrets() (production only)
+[src/prisma.ts] → If USE_SECRETS_MANAGER=true, calls getDatabaseSecrets()
      ↓
 [src/config/secrets.ts] → Fetches from AWS Secrets Manager
+     │                      Default secret name: breederhq-api/${NODE_ENV}
+     │                      Override with: AWS_SECRET_NAME env var
      ↓
 [Merges into process.env]
      ↓
 [Prisma Client initialized with DATABASE_URL from AWS]
 ```
+
+> **Changed in 2026-02-15**: The trigger was changed from `NODE_ENV === "production"` to `USE_SECRETS_MANAGER === "true"`. This allows any environment (dev, staging, production) to use Secrets Manager. The default secret name was also changed from `breederhq/prod` to `breederhq-api/${NODE_ENV}` for environment-aware naming.
 
 ### Files Involved
 
@@ -51,17 +57,19 @@ BreederHQ API production database credentials are stored in AWS Secrets Manager 
 - **Policy**: `breederhq-prod-db-secrets-read`
 - **Permissions**: `secretsmanager:GetSecretValue` on `breederhq/prod` secret
 
-### Secret
-- **Name**: `breederhq/prod`
+### Secrets
+- **Naming convention**: `breederhq-api/${NODE_ENV}` (e.g., `breederhq-api/production`, `breederhq-api/dev`)
+- **Legacy name**: `breederhq/prod` (override via `AWS_SECRET_NAME` env var)
 - **Region**: `us-east-2`
 - **Type**: JSON bundle
-- **Contains**: `DATABASE_URL`, `DATABASE_DIRECT_URL`
+- **Contains**: `DATABASE_URL`, `DATABASE_DIRECT_URL`, `COOKIE_SECRET`
 
-### Environment Variables (Render)
-- `AWS_ACCESS_KEY_ID` - Access key for `breederhq-api-render-prod` IAM user
-- `AWS_SECRET_ACCESS_KEY` - Secret key for IAM user
+### Environment Variables (Render / Elastic Beanstalk)
+- `USE_SECRETS_MANAGER` - Set to `true` to enable Secrets Manager integration (**required**)
+- `AWS_ACCESS_KEY_ID` - Access key for IAM user (not needed on EB with instance roles)
+- `AWS_SECRET_ACCESS_KEY` - Secret key for IAM user (not needed on EB with instance roles)
 - `AWS_REGION` - `us-east-2`
-- `AWS_SECRET_NAME` - `breederhq/prod`
+- `AWS_SECRET_NAME` - Override default secret name (optional, defaults to `breederhq-api/${NODE_ENV}`)
 
 ---
 
@@ -300,9 +308,9 @@ aws iam attach-user-policy \
 
 ## Local Development
 
-**Local development does NOT use AWS Secrets Manager.**
+**Local development does NOT use AWS Secrets Manager by default.**
 
-In development mode (`NODE_ENV !== "production"`):
+When `USE_SECRETS_MANAGER` is not set (or not `"true"`):
 - `getDatabaseSecrets()` returns empty object
 - Application uses `DATABASE_URL` from `.env.dev` file
 - No AWS credentials needed for local development
@@ -311,9 +319,9 @@ In development mode (`NODE_ENV !== "production"`):
 
 ```bash
 # Set environment variables
-$env:NODE_ENV="production"
-$env:AWS_PROFILE="prod"  # Or use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
-$env:AWS_SECRET_NAME="breederhq/prod"
+$env:USE_SECRETS_MANAGER="true"
+$env:AWS_PROFILE="dev"  # Or use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+$env:AWS_SECRET_NAME="breederhq-api/dev"  # Or omit to use default
 $env:AWS_REGION="us-east-2"
 
 # Run server
@@ -338,10 +346,11 @@ npm run dev
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-02-03 | Initial production deployment (database credentials only) |
+| 1.1 | 2026-02-15 | Updated trigger from `NODE_ENV` to `USE_SECRETS_MANAGER=true`; updated default secret name to `breederhq-api/${NODE_ENV}`; added COOKIE_SECRET to managed secrets; documented EB compatibility |
 
 ---
 
-**Document Version**: 1.0
+**Document Version**: 1.1
 **Maintained By**: Engineering Team
 **Last Updated**: 2026-02-03
 **Next Review**: 2026-05-03 (90 days)

@@ -3,18 +3,20 @@
 **Repository**: breederhq-api
 **Purpose**: Production-ready RESTful API for BreederHQ platform
 **Stack**: Node.js, TypeScript, Prisma, PostgreSQL (NeonDB)
-**Deployment**: Render.com
+**Deployment**: Render.com / AWS Elastic Beanstalk
 
 ---
 
 ## Quick Links
 
 ### Operations
-- **[AWS Secrets Manager](operations/AWS-SECRETS-MANAGER.md)** - Managing production database credentials
+- **[AWS Secrets Manager](operations/AWS-SECRETS-MANAGER.md)** - Managing database credentials via AWS Secrets Manager
+- **[Elastic Beanstalk Deployment](operations/ELASTIC-BEANSTALK-DEPLOYMENT.md)** - Deploying to AWS Elastic Beanstalk
 - **[Sentry Setup](operations/SENTRY-SETUP.md)** - Error tracking and performance monitoring
 
 ### Architecture Decisions
 - **[ADR-0001: AWS Secrets Manager](architecture-decisions/0001-AWS-SECRETS-MANAGER.md)** - Why we use AWS for secret management
+- **[ADR-0002: Lazy Stripe Initialization](architecture-decisions/0002-LAZY-STRIPE-INITIALIZATION.md)** - Why Stripe uses lazy singleton pattern (`getStripe()`)
 
 ---
 
@@ -25,9 +27,11 @@ docs/
 ├── README.md (this file)
 ├── operations/
 │   ├── AWS-SECRETS-MANAGER.md          # Day-to-day secret management
+│   ├── ELASTIC-BEANSTALK-DEPLOYMENT.md # EB deployment guide
 │   └── SENTRY-SETUP.md                 # Error tracking and APM
 └── architecture-decisions/
-    └── 0001-AWS-SECRETS-MANAGER.md     # Decision rationale
+    ├── 0001-AWS-SECRETS-MANAGER.md     # Decision rationale
+    └── 0002-LAZY-STRIPE-INITIALIZATION.md  # Stripe lazy singleton pattern
 ```
 
 ---
@@ -38,9 +42,10 @@ docs/
 
 Production database credentials are stored in **AWS Secrets Manager**, not environment variables.
 
-- **What's in AWS**: Database connection strings (DATABASE_URL, DATABASE_DIRECT_URL)
-- **What's in Render**: Other secrets (COOKIE_SECRET, AWS S3 keys, Stripe, etc.)
-- **How it works**: Application fetches secrets from AWS at startup (production only)
+- **Trigger**: Set `USE_SECRETS_MANAGER=true` to enable (any environment)
+- **What's in AWS**: Database connection strings (DATABASE_URL, DATABASE_DIRECT_URL), COOKIE_SECRET
+- **What's in hosting env vars**: AWS S3 keys, Stripe keys, etc.
+- **How it works**: Application fetches secrets from AWS at startup when `USE_SECRETS_MANAGER=true`
 
 **See**: [AWS Secrets Manager Operations Guide](operations/AWS-SECRETS-MANAGER.md)
 
@@ -124,5 +129,5 @@ When adding new documentation:
 
 ---
 
-**Last Updated**: 2026-02-09
+**Last Updated**: 2026-02-15
 **Maintained By**: Engineering Team

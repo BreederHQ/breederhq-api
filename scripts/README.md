@@ -104,6 +104,11 @@ Debugging and inspection scripts for troubleshooting issues.
 - `check-tattooine.ts` - Check Tattooine tenant data
 - `check-tattooine-access.ts` - Check Tattooine tenant memberships
 
+### 📁 deployment/ (1 script)
+Deployment scripts for pushing the API to hosting environments.
+
+- `deploy-eb.sh` - Deploy breederhq-api to AWS Elastic Beanstalk. Usage: `bash scripts/deploy-eb.sh [env]` (default: dev). See [EB Deployment Guide](../docs/operations/ELASTIC-BEANSTALK-DEPLOYMENT.md).
+
 ### 📁 development/ (7 scripts)
 Development environment setup and utility scripts.
 
