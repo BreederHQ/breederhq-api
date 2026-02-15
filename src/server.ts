@@ -646,6 +646,9 @@ import { startNetworkSearchIndexJob, stopNetworkSearchIndexJob } from "./jobs/ne
 import { startAnimalAccessCleanupJob, stopAnimalAccessCleanupJob } from "./jobs/animal-access-cleanup.js"; // Animal access cleanup cron job (30-day retention)
 import { startShareCodeExpirationJob, stopShareCodeExpirationJob } from "./jobs/share-code-expiration.js"; // Share code expiration cron job (hourly)
 import { startAnimalAccessExpirationJob, stopAnimalAccessExpirationJob } from "./jobs/animal-access-expiration.js"; // Animal access expiration cron job (hourly)
+import { startListingBoostExpirationJob, stopListingBoostExpirationJob } from "./jobs/listing-boost-expiration.js"; // Listing boost expiration cron job (hourly)
+import listingBoostRoutes from "./routes/listing-boosts.js"; // Listing boost checkout + CRUD
+import adminBoostRoutes from "./routes/admin-boosts.js"; // Admin boost management
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1255,6 +1258,7 @@ app.register(
     api.register(adminBreederReportsRoutes); // /api/v1/admin/breeder-reports/* Admin breeder reports
     api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
     api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
+    api.register(adminBoostRoutes); // /api/v1/admin/boosts/* Admin boost management
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
@@ -1267,6 +1271,7 @@ app.register(
     api.register(marketplaceReportProviderRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/report-provider (auth required)
     api.register(breederServicesRoutes, { prefix: "/services" }); // /api/v1/services/* Breeder service listings management
     api.register(mktBreedingBookingsRoutes, { prefix: "/mkt-breeding-bookings" }); // /api/v1/mkt-breeding-bookings/* Breeding bookings listings (stud, mare lease, etc.)
+    api.register(listingBoostRoutes); // /api/v1/listing-boosts/* Listing boost checkout + management
   },
   { prefix: "/api/v1" }
 );
@@ -1409,6 +1414,9 @@ export async function start() {
 
     // Start animal access expiration cron job (hourly)
     startAnimalAccessExpirationJob();
+
+    // Start listing boost expiration cron job (hourly)
+    startListingBoostExpirationJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1426,6 +1434,7 @@ process.on("SIGTERM", async () => {
   stopAnimalAccessCleanupJob();
   stopShareCodeExpirationJob();
   stopAnimalAccessExpirationJob();
+  stopListingBoostExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1438,6 +1447,7 @@ process.on("SIGINT", async () => {
   stopAnimalAccessCleanupJob();
   stopShareCodeExpirationJob();
   stopAnimalAccessExpirationJob();
+  stopListingBoostExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

@@ -11939,3 +11939,93 @@ model BreedingDataAgreement {
   @@index([status])
   @@schema("public")
 }
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * Marketplace Listing Boost System
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
+/// Target listing type for boost (polymorphic reference)
+enum ListingBoostTarget {
+  INDIVIDUAL_ANIMAL
+  ANIMAL_PROGRAM
+  BREEDING_PROGRAM
+  BREEDER
+  BREEDER_SERVICE
+  BREEDING_LISTING
+  PROVIDER_SERVICE
+
+  @@schema("public")
+}
+
+/// Boost pricing tier
+enum BoostTier {
+  BOOST // $4.99 / 7 days / 1.5x weight
+  FEATURED // $19.99 / 30 days / 3.0x weight
+
+  @@schema("public")
+}
+
+/// Boost lifecycle status
+enum BoostStatus {
+  PENDING // Checkout created, awaiting payment
+  ACTIVE // Payment confirmed, boost live
+  PAUSED // Listing paused/closed, boost suspended
+  EXPIRED // Duration elapsed
+  CANCELED // Manually canceled (no refund)
+
+  @@schema("public")
+}
+
+/// ListingBoost - Paid promotion for marketplace listings
+/// Polymorphic design: listingType + listingId reference any of the 7 listing types
+model ListingBoost {
+  id Int @id @default(autoincrement())
+
+  // Owner identity (exactly one should be set)
+  tenantId   Int? // Breeder's tenant ID (null for providers)
+  providerId Int? // Provider's marketplace account ID (null for breeders)
+
+  // Target listing (polymorphic)
+  listingType ListingBoostTarget
+  listingId   Int
+
+  // Boost configuration
+  tier         BoostTier
+  weight       Float // 1.5 (Boost) or 3.0 (Featured)
+  durationDays Int // 7 (Boost) or 30 (Featured)
+
+  // Lifecycle
+  status   BoostStatus @default(PENDING)
+  startsAt DateTime? // Set when payment confirmed
+  expiresAt DateTime? // startsAt + durationDays
+
+  // Renewal
+  autoRenew Boolean @default(false)
+
+  // Payment
+  amountCents     Int
+  currency        String  @default("USD") @db.VarChar(3)
+  stripeSessionId String? // Stripe Checkout session ID
+  stripePaymentId String? // Stripe Payment Intent ID
+
+  // Analytics
+  impressions Int @default(0)
+  clicks      Int @default(0)
+  inquiries   Int @default(0)
+
+  // Notifications
+  expiryNotifiedAt DateTime? // When 3-day warning was sent
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([providerId])
+  @@index([listingType, listingId])
+  @@index([status, expiresAt])
+  @@index([listingType, status, tier])
+  @@schema("public")
+}
