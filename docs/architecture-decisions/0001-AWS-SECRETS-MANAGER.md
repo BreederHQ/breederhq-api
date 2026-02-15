@@ -26,11 +26,14 @@ We needed a centralized secret management solution that addresses these concerns
 We will use **AWS Secrets Manager** to store production database credentials (DATABASE_URL and DATABASE_DIRECT_URL), starting with production environment only as a proof of concept.
 
 **Implementation approach**:
-- Store secrets as JSON bundle in single secret (`breederhq/prod`)
+- Store secrets as JSON bundle (default name: `breederhq-api/${NODE_ENV}`, e.g. `breederhq-api/production`)
+- Enable via `USE_SECRETS_MANAGER=true` environment variable (any environment)
 - Fetch secrets at application startup (cached for runtime)
 - Use IAM user with minimal permissions (GetSecretValue only)
-- Keep other secrets in Render env vars for now (incremental migration)
+- Keep other secrets in hosting env vars for now (incremental migration)
 - Local development continues using `.env.dev` files
+
+> **Updated 2026-02-15**: Trigger changed from `NODE_ENV === "production"` to `USE_SECRETS_MANAGER === "true"` to support multi-environment use. Default secret name changed from `breederhq/prod` to `breederhq-api/${NODE_ENV}`.
 
 **Cost**: ~$0.45/month for production database credentials
 
@@ -244,5 +247,12 @@ If AWS Secrets Manager proves problematic:
 
 ---
 
-**ADR Version**: 1.0
+**ADR Version**: 1.1
 **Next Review**: 2026-05-03 (90 days after implementation)
+
+### Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-03 | Initial decision and implementation |
+| 1.1 | 2026-02-15 | Updated: trigger changed to `USE_SECRETS_MANAGER=true`; default secret name is now `breederhq-api/${NODE_ENV}` |
