@@ -180,8 +180,8 @@ function extractCycleStartDates(rec: any): string[] {
 
 function parseSort(sortParam?: string) {
   // allow: "createdAt", "-createdAt", "name", "-name", "updatedAt", "birthDate"
-  const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate"]);
-  if (!sortParam) return [{ createdAt: "desc" } as const];
+  const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate", "species"]);
+  if (!sortParam) return [{ species: "asc" }, { name: "asc" }] as const;
   const parts = String(sortParam).split(",").map(s => s.trim()).filter(Boolean);
   const orderBy: any[] = [];
   for (const p of parts) {
@@ -189,7 +189,7 @@ function parseSort(sortParam?: string) {
     const key = p.replace(/^-/, "");
     if (allowed.has(key)) orderBy.push({ [key]: desc ? "desc" : "asc" });
   }
-  return orderBy.length ? orderBy : [{ createdAt: "desc" }];
+  return orderBy.length ? orderBy : [{ species: "asc" }, { name: "asc" }];
 }
 
 
@@ -324,7 +324,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       includeArchived = "",
       page = "1",
       limit = "25",
-      sort = "-createdAt",
+      sort = "",
     } = (req.query || {}) as {
       q?: string;
       species?: Species | "";
@@ -1199,23 +1199,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { photoUrl: true },
     });
 
-    // Clean up old S3 photo if it was an S3 URL (not legacy local path)
+    // Send response immediately — don't block on old file cleanup
+    reply.send({ photoUrl: updated.photoUrl, storageKey });
+
+    // Fire-and-forget: clean up old S3 photo after response is sent
     if (oldAnimal?.photoUrl?.includes("tenants/") || oldAnimal?.photoUrl?.includes("s3.")) {
       try {
-        // Extract storage key from CDN URL
         const urlParts = oldAnimal.photoUrl.split("/");
         const keyIndex = urlParts.findIndex(p => p === "tenants");
         if (keyIndex >= 0) {
           const oldKey = urlParts.slice(keyIndex).join("/");
-          await deleteFile(oldKey);
+          deleteFile(oldKey).catch((e) => {
+            req.log.warn({ error: e, oldUrl: oldAnimal.photoUrl }, "Failed to delete old photo");
+          });
         }
       } catch (e) {
-        // Ignore delete failures for old photos
         req.log.warn({ error: e, oldUrl: oldAnimal.photoUrl }, "Failed to delete old photo");
       }
     }
-
-    reply.send({ photoUrl: updated.photoUrl, storageKey });
   });
 
     // DELETE /animals/:id/photo
@@ -1317,20 +1318,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { coverImageUrl: true },
     });
 
+    // Send response immediately — don't block on old file cleanup
+    reply.send({ coverImageUrl: updated.coverImageUrl, storageKey });
+
+    // Fire-and-forget: clean up old cover from S3 after response is sent
     if (oldAnimal?.coverImageUrl?.includes("tenants/") || oldAnimal?.coverImageUrl?.includes("s3.")) {
       try {
         const urlParts = oldAnimal.coverImageUrl.split("/");
         const keyIndex = urlParts.findIndex(p => p === "tenants");
         if (keyIndex >= 0) {
           const oldKey = urlParts.slice(keyIndex).join("/");
-          await deleteFile(oldKey);
+          deleteFile(oldKey).catch((e) => {
+            req.log.warn({ error: e, oldUrl: oldAnimal.coverImageUrl }, "Failed to delete old cover");
+          });
         }
       } catch (e) {
         req.log.warn({ error: e, oldUrl: oldAnimal.coverImageUrl }, "Failed to delete old cover");
       }
     }
-
-    reply.send({ coverImageUrl: updated.coverImageUrl, storageKey });
   });
 
   // DELETE /animals/:id/cover
