@@ -48,7 +48,7 @@ import {
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { randomBytes } from "node:crypto";
 import { hasAcceptedCurrentProviderTerms } from "../services/marketplace-provider-terms-service.js";
-import { writeLegacyTosAcceptance } from "../services/marketplace-legal-service.js";
+import { writeLegacyTosAcceptance, validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -83,6 +83,7 @@ export default async function marketplaceAuthRoutes(
       lastName = "",
       phone = "",
       tosAcceptance,
+      legalAcceptance,
     } = (req.body || {}) as {
       email?: string;
       password?: string;
@@ -90,6 +91,7 @@ export default async function marketplaceAuthRoutes(
       lastName?: string;
       phone?: string;
       tosAcceptance?: { version: string; effectiveDate: string; surface: string; flow: string };
+      legalAcceptance?: unknown;
     };
 
     // Validation
@@ -131,8 +133,20 @@ export default async function marketplaceAuthRoutes(
         userType: "buyer",
       });
 
-      // Record legal acceptance (if provided by frontend)
-      if (tosAcceptance && tosAcceptance.version) {
+      // Record legal acceptance (prefer new multi-document format, fall back to legacy)
+      if (legalAcceptance) {
+        try {
+          const payload = validateLegalAcceptancePayload(legalAcceptance);
+          writeLegalAcceptance(payload, req, {
+            marketplaceUserId: user.id,
+            email: email,
+          }).catch((err) => {
+            req.log?.error?.({ err, userId: user.id }, "Failed to record legal acceptance for marketplace registration");
+          });
+        } catch (err) {
+          req.log?.error?.({ err, userId: user.id }, "Invalid legal acceptance payload for marketplace registration");
+        }
+      } else if (tosAcceptance && tosAcceptance.version) {
         writeLegacyTosAcceptance(tosAcceptance, user.id, req).catch((err) => {
           req.log?.error?.({ err, userId: user.id }, "Failed to record ToS acceptance for marketplace registration");
         });

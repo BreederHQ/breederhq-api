@@ -22,6 +22,7 @@ const VALID_FLOWS = [
   "waitlist",
   "breeding_inquiry",
   "service_inquiry",
+  "listing_publish",
 ] as const;
 
 type LegalAcceptanceFlow = (typeof VALID_FLOWS)[number];

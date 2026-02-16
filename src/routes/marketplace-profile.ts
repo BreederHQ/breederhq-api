@@ -10,6 +10,10 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import { getActorId } from "../utils/session.js";
+import {
+  validateLegalAcceptancePayload,
+  writeLegalAcceptance,
+} from "../services/marketplace-legal-service.js";
 
 // ============================================================================
 // Constants
@@ -436,10 +440,13 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
     }
 
-    const publishPayload = req.body ?? {};
-    if (typeof publishPayload !== "object") {
+    const rawBody = req.body ?? {};
+    if (typeof rawBody !== "object") {
       return reply.code(400).send({ error: "invalid_payload" });
     }
+
+    // Extract legalAcceptance from payload (sent by frontend on first publish)
+    const { legalAcceptance, ...publishPayload } = rawBody as Record<string, unknown>;
 
     // Validate required fields
     const validation = validatePublishPayload(publishPayload);
@@ -448,6 +455,31 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
         error: "validation_failed",
         errors: validation.errors,
       });
+    }
+
+    // Record legal acceptance if provided (first-time publish flow)
+    if (legalAcceptance) {
+      try {
+        const payload = validateLegalAcceptancePayload(legalAcceptance);
+        const actorId = getActorId(req);
+        // Look up user email for audit trail
+        let email: string | undefined;
+        if (actorId) {
+          const user = await prisma.user.findUnique({
+            where: { id: actorId },
+            select: { email: true },
+          });
+          email = user?.email ?? undefined;
+        }
+        await writeLegalAcceptance(payload, req, {
+          email,
+          entityType: "tenant",
+          entityId: tenantId,
+        });
+      } catch (err) {
+        req.log.error({ err, tenantId }, "Failed to record legal acceptance on publish");
+        // Don't block publish if legal logging fails — record the error
+      }
     }
 
     // Strip address fields from published data for privacy
