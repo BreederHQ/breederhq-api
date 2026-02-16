@@ -448,7 +448,30 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           case "checkout.session.completed": {
             const session = event.data.object as any;
 
-            // Handle subscription checkout
+            // Handle service listing subscription checkout
+            if (
+              session.mode === "subscription" &&
+              session.metadata?.type === "service_listing_subscription"
+            ) {
+              const subscriptionId = session.subscription as string;
+              try {
+                const { handleListingSubscriptionActivated } = await import(
+                  "../services/listing-payment-service.js"
+                );
+                await handleListingSubscriptionActivated(subscriptionId, session.metadata);
+                req.log.info(
+                  { subscriptionId, listingId: session.metadata.listingId },
+                  "Service listing subscription activated from checkout"
+                );
+              } catch (err: any) {
+                req.log.error(
+                  { err, subscriptionId },
+                  "Failed to activate service listing subscription"
+                );
+              }
+            }
+
+            // Handle platform subscription checkout
             if (session.mode === "subscription" && session.subscription) {
               await syncSubscriptionFromStripe(session.subscription);
               req.log.info(
@@ -785,6 +808,38 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           case "customer.subscription.created":
           case "customer.subscription.updated": {
             const subscription = event.data.object as any;
+
+            // Handle service listing subscription updates
+            if (subscription.metadata?.type === "service_listing_subscription") {
+              try {
+                if (subscription.status === "active") {
+                  const { handleListingSubscriptionRenewed } = await import(
+                    "../services/listing-payment-service.js"
+                  );
+                  await handleListingSubscriptionRenewed(subscription.id);
+                  req.log.info(
+                    { subscriptionId: subscription.id },
+                    "Service listing subscription renewed/updated"
+                  );
+                } else if (subscription.status === "past_due") {
+                  const { handleListingSubscriptionEnded } = await import(
+                    "../services/listing-payment-service.js"
+                  );
+                  await handleListingSubscriptionEnded(subscription.id, "past_due");
+                  req.log.warn(
+                    { subscriptionId: subscription.id },
+                    "Service listing subscription past due"
+                  );
+                }
+              } catch (err: any) {
+                req.log.error(
+                  { err, subscriptionId: subscription.id },
+                  "Failed to handle service listing subscription update"
+                );
+              }
+            }
+
+            // Handle platform subscription sync
             await syncSubscriptionFromStripe(subscription.id);
             req.log.info({ subscriptionId: subscription.id }, "Subscription synced");
             break;
@@ -792,6 +847,33 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           case "customer.subscription.deleted": {
             const subscription = event.data.object as any;
+
+            // Handle service listing subscription deletion — pause the listing
+            if (subscription.metadata?.type === "service_listing_subscription") {
+              try {
+                const { handleListingSubscriptionEnded } = await import(
+                  "../services/listing-payment-service.js"
+                );
+                await handleListingSubscriptionEnded(subscription.id, "canceled");
+
+                // Pause the listing immediately when subscription is fully deleted
+                await prisma.mktListingBreederService.updateMany({
+                  where: { stripeSubscriptionId: subscription.id } as any,
+                  data: { status: "PAUSED", pausedAt: new Date() } as any,
+                });
+                req.log.info(
+                  { subscriptionId: subscription.id },
+                  "Service listing subscription deleted, listing paused"
+                );
+              } catch (err: any) {
+                req.log.error(
+                  { err, subscriptionId: subscription.id },
+                  "Failed to handle service listing subscription deletion"
+                );
+              }
+            }
+
+            // Handle platform subscription deletion
             const dbSubscription = await prisma.subscription.findFirst({
               where: { stripeSubscriptionId: subscription.id },
               include: { product: true },
@@ -825,6 +907,27 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           case "invoice.payment_succeeded": {
             const invoice = event.data.object as any;
             if (invoice.subscription) {
+              // Handle service listing subscription renewal
+              const subMeta = invoice.subscription_details?.metadata;
+              if (subMeta?.type === "service_listing_subscription") {
+                try {
+                  const { handleListingSubscriptionRenewed } = await import(
+                    "../services/listing-payment-service.js"
+                  );
+                  await handleListingSubscriptionRenewed(invoice.subscription);
+                  req.log.info(
+                    { subscriptionId: invoice.subscription },
+                    "Service listing subscription invoice paid"
+                  );
+                } catch (err: any) {
+                  req.log.error(
+                    { err, subscriptionId: invoice.subscription },
+                    "Failed to handle service listing invoice payment"
+                  );
+                }
+              }
+
+              // Handle platform subscription sync
               await syncSubscriptionFromStripe(invoice.subscription);
 
               // Send renewal email (skip for first invoice)
@@ -860,6 +963,27 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           case "invoice.payment_failed": {
             const invoice = event.data.object as any;
             if (invoice.subscription) {
+              // Handle service listing subscription payment failure
+              const subMeta = invoice.subscription_details?.metadata;
+              if (subMeta?.type === "service_listing_subscription") {
+                try {
+                  const { handleListingSubscriptionEnded } = await import(
+                    "../services/listing-payment-service.js"
+                  );
+                  await handleListingSubscriptionEnded(invoice.subscription, "past_due");
+                  req.log.warn(
+                    { subscriptionId: invoice.subscription },
+                    "Service listing subscription payment failed"
+                  );
+                } catch (err: any) {
+                  req.log.error(
+                    { err, subscriptionId: invoice.subscription },
+                    "Failed to handle service listing payment failure"
+                  );
+                }
+              }
+
+              // Handle platform subscription payment failure
               const dbSubscription = await prisma.subscription.findFirst({
                 where: { stripeSubscriptionId: invoice.subscription },
                 include: { product: true },

@@ -25,6 +25,11 @@ import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { requireProvider } from "../middleware/marketplace-provider-auth.js";
 import prisma from "../prisma.js";
 import { geocodeZipCode, geocodeAddress } from "../services/geocoding-service.js";
+import {
+  requiresPayment,
+  shouldMarkAsFounding,
+  getListingPaymentSettings,
+} from "../services/listing-payment-service.js";
 
 // Valid listing categories
 const VALID_CATEGORIES = [
@@ -828,11 +833,28 @@ export default async function marketplaceListingsRoutes(
     }
 
     try {
+      // Check if payment is required
+      const paymentCheck = await requiresPayment(listingId, provider.id, listing.tenantId);
+
+      if (paymentCheck.required) {
+        const settings = await getListingPaymentSettings();
+        return reply.code(402).send({
+          error: "payment_required",
+          message: "A subscription is required to publish this listing.",
+          checkoutUrl: `/api/v1/service-listings/${listingId}/checkout`,
+          listingFeeCents: settings.listingFeeCents,
+        });
+      }
+
+      // Payment not required — publish and mark founding status
+      const isFounding = await shouldMarkAsFounding();
+
       const updated = await prisma.mktListingBreederService.update({
         where: { id: listingId },
         data: {
           status: "LIVE",
           publishedAt: new Date(),
+          ...(isFounding ? { isFounding: true } : {}),
         },
       });
 

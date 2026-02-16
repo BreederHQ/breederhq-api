@@ -41,6 +41,8 @@ export const TENANT_PREFIXES = {
   buyerCrm: "buyer-crm-test",
   // Network Breeding Discovery tests
   networkBreedingDiscovery: "network-breeding-test",
+  // Listing Boost tests
+  listingBoost: "listing-boost-test",
 } as const;
 
 export type TenantPrefix = (typeof TENANT_PREFIXES)[keyof typeof TENANT_PREFIXES];
@@ -190,6 +192,9 @@ export async function teardownTestTenant(
   await prisma.animalOwner.deleteMany({
     where: { animal: { tenantId } },
   });
+
+  // 3b. Listing boosts (FK to tenant via tenantId)
+  await prisma.listingBoost.deleteMany({ where: { tenantId } });
 
   // 4. Individual animal listings (FK to Animal)
   await prisma.mktListingIndividualAnimal.deleteMany({ where: { tenantId } });
