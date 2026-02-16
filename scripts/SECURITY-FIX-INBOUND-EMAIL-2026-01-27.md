@@ -44,10 +44,7 @@ This caused confusion when debugging, as local queries showed different data tha
 - Ran population script against the actual production database
 - Documented that `NODE_ENV=production` does NOT change the database connection
 
-**Production DATABASE_URL**:
-```
-postgresql://bhq_app:npg_zi23xLvUqQau@ep-dark-breeze-ael53qjx-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
-```
+**Production DATABASE_URL**: Stored in AWS Secrets Manager (never commit credentials to source control).
 
 ---
 
