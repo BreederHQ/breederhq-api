@@ -53,6 +53,10 @@ prisma/migrations.bak/
 tmp/route-backups/
 prisma/schema.backup.prisma
 
+# Dbmate schema dump (auto-generated, can be regenerated from DB)
+# Commit this file if you want schema diffs in git history
+# db/schema.sql
+
 cookies.txt
 .env.proto
 *.cookies.txt
