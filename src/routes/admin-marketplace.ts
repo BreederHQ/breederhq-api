@@ -16,6 +16,11 @@ import {
   type MarketplaceAbuseSettings,
 } from "../services/marketplace-flag.js";
 import { getUserBlockHistory } from "../services/marketplace-block.js";
+import type { MarketplaceListingPaymentSettings } from "../services/listing-payment-service.js";
+import {
+  getListingPaymentSettings,
+  updateListingPaymentSettings,
+} from "../services/listing-payment-service.js";
 
 // ============================================================================
 // Helpers
@@ -50,6 +55,67 @@ async function requireSuperAdmin(req: any, reply: any): Promise<string | null> {
 // ============================================================================
 
 const adminMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // --------------------------------------------------------------------------
+  // GET /admin/marketplace/metrics
+  // Get marketplace overview metrics for admin dashboard
+  // --------------------------------------------------------------------------
+  app.get("/admin/marketplace/metrics", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      // Calculate date 30 days ago for "recent" counts
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const [
+        totalUsers,
+        totalProviders,
+        totalProviderListings,
+        totalBreedingListings,
+        totalAnimalListings,
+        termsAcceptedCount,
+        recentSignups,
+        recentProviders,
+      ] = await Promise.all([
+        // Total marketplace users
+        prisma.marketplaceUser.count(),
+        // Total service providers
+        prisma.marketplaceProvider.count(),
+        // Total breeder service listings (from marketplace providers and breeders)
+        prisma.mktListingBreederService.count({ where: { deletedAt: null } }),
+        // Total breeding booking listings (no deletedAt field on this model)
+        prisma.mktListingBreedingBooking.count(),
+        // Total individual animal listings (no deletedAt field on this model)
+        prisma.mktListingIndividualAnimal.count(),
+        // Total provider terms acceptances
+        prisma.marketplaceProviderTermsAcceptance.count(),
+        // Recent signups (last 30 days)
+        prisma.marketplaceUser.count({
+          where: { createdAt: { gte: thirtyDaysAgo } },
+        }),
+        // Recent providers (last 30 days)
+        prisma.marketplaceProvider.count({
+          where: { createdAt: { gte: thirtyDaysAgo } },
+        }),
+      ]);
+
+      return reply.send({
+        totalUsers,
+        totalProviders,
+        totalProviderListings,
+        totalBreedingListings,
+        totalAnimalListings,
+        termsAcceptedCount,
+        recentSignups,
+        recentProviders,
+      });
+    } catch (err: any) {
+      console.error("[admin/marketplace/metrics] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
   // --------------------------------------------------------------------------
   // GET /admin/marketplace/flagged-users
   // Get paginated list of flagged/suspended marketplace users
@@ -312,6 +378,269 @@ const adminMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       return reply.send(settings);
     } catch (err: any) {
       console.error("[admin/platform-settings/marketplace-abuse] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  // ==========================================================================
+  // Listing Payment Settings
+  // ==========================================================================
+
+  // --------------------------------------------------------------------------
+  // GET /admin/marketplace-listing-payment-settings
+  // Get current listing payment configuration
+  // --------------------------------------------------------------------------
+  app.get("/admin/marketplace-listing-payment-settings", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const settings = await getListingPaymentSettings();
+      return reply.send(settings);
+    } catch (err: any) {
+      console.error("[admin/marketplace-listing-payment-settings GET] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // PUT /admin/marketplace-listing-payment-settings
+  // Update listing payment configuration
+  // --------------------------------------------------------------------------
+  app.put<{
+    Body: Partial<MarketplaceListingPaymentSettings>;
+  }>("/admin/marketplace-listing-payment-settings", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const updates = req.body ?? {};
+
+      // Validate listingFeeCents
+      if (updates.listingFeeCents !== undefined) {
+        if (typeof updates.listingFeeCents !== "number" || updates.listingFeeCents < 0) {
+          return reply.code(400).send({
+            error: "invalid_fee",
+            message: "listingFeeCents must be a non-negative number",
+          });
+        }
+      }
+
+      // Validate listingDurationDays
+      if (updates.listingDurationDays !== undefined) {
+        if (typeof updates.listingDurationDays !== "number" || updates.listingDurationDays < 1) {
+          return reply.code(400).send({
+            error: "invalid_duration",
+            message: "listingDurationDays must be a positive number",
+          });
+        }
+      }
+
+      // Validate date strings if provided
+      if (updates.foundingFreeUntil !== undefined && updates.foundingFreeUntil !== null) {
+        const d = new Date(updates.foundingFreeUntil);
+        if (isNaN(d.getTime())) {
+          return reply.code(400).send({
+            error: "invalid_date",
+            message: "foundingFreeUntil must be a valid ISO date string",
+          });
+        }
+      }
+
+      if (updates.foundingWindowEnd !== undefined && updates.foundingWindowEnd !== null) {
+        const d = new Date(updates.foundingWindowEnd);
+        if (isNaN(d.getTime())) {
+          return reply.code(400).send({
+            error: "invalid_date",
+            message: "foundingWindowEnd must be a valid ISO date string",
+          });
+        }
+      }
+
+      // Validate featuredUpgradeFeeCents
+      if (updates.featuredUpgradeFeeCents !== undefined) {
+        if (typeof updates.featuredUpgradeFeeCents !== "number" || updates.featuredUpgradeFeeCents < 0) {
+          return reply.code(400).send({
+            error: "invalid_fee",
+            message: "featuredUpgradeFeeCents must be a non-negative number",
+          });
+        }
+      }
+
+      const settings = await updateListingPaymentSettings(updates);
+      return reply.send(settings);
+    } catch (err: any) {
+      console.error("[admin/marketplace-listing-payment-settings PUT] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /admin/marketplace-listing-payments/enable
+  // "Flip the switch" — enable listing payments and set founding dates
+  // --------------------------------------------------------------------------
+  app.post<{
+    Body: {
+      foundingFreeUntil?: string;
+      foundingWindowEnd?: string;
+    };
+  }>("/admin/marketplace-listing-payments/enable", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const current = await getListingPaymentSettings();
+
+      if (current.enabled) {
+        return reply.code(409).send({
+          error: "already_enabled",
+          message: "Listing payments are already enabled",
+        });
+      }
+
+      // Validate stripePriceId is configured before enabling
+      if (!current.stripePriceId) {
+        return reply.code(400).send({
+          error: "missing_stripe_config",
+          message: "stripePriceId must be configured before enabling payments",
+        });
+      }
+
+      const now = new Date();
+      const { foundingFreeUntil, foundingWindowEnd } = req.body ?? {};
+
+      // Default: founding free for 12 months, founding window for 30 days
+      const freeUntil = foundingFreeUntil
+        ? new Date(foundingFreeUntil)
+        : new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+      const windowEnd = foundingWindowEnd
+        ? new Date(foundingWindowEnd)
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      if (isNaN(freeUntil.getTime())) {
+        return reply.code(400).send({
+          error: "invalid_date",
+          message: "foundingFreeUntil must be a valid ISO date string",
+        });
+      }
+      if (isNaN(windowEnd.getTime())) {
+        return reply.code(400).send({
+          error: "invalid_date",
+          message: "foundingWindowEnd must be a valid ISO date string",
+        });
+      }
+
+      const settings = await updateListingPaymentSettings({
+        enabled: true,
+        foundingFreeUntil: freeUntil.toISOString(),
+        foundingWindowEnd: windowEnd.toISOString(),
+      });
+
+      return reply.send({
+        settings,
+        message: "Listing payments enabled. Founding providers are free until " + freeUntil.toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[admin/marketplace-listing-payments/enable] Error:", err);
+      return reply.code(500).send({ error: "internal_error", detail: err?.message });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /admin/marketplace-listing-payment-metrics
+  // Dashboard metrics for listing payments
+  // --------------------------------------------------------------------------
+  app.get("/admin/marketplace-listing-payment-metrics", async (req, reply) => {
+    const actorId = await requireSuperAdmin(req, reply);
+    if (!actorId) return;
+
+    try {
+      const settings = await getListingPaymentSettings();
+
+      const now = new Date();
+      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      const [
+        totalActiveSubscriptions,
+        totalFoundingProviders,
+        totalLiveListings,
+        pastDueListings,
+        cancelingListings,
+        foundingListingsExpiringSoon,
+      ] = await Promise.all([
+        // Active paid subscriptions
+        prisma.mktListingBreederService.count({
+          where: {
+            stripeSubscriptionStatus: "active",
+            deletedAt: null,
+          } as any,
+        }),
+
+        // Founding providers still on free period
+        prisma.mktListingBreederService.count({
+          where: {
+            isFounding: true,
+            stripeSubscriptionId: null,
+            status: "LIVE",
+            deletedAt: null,
+          } as any,
+        }),
+
+        // Total live listings
+        prisma.mktListingBreederService.count({
+          where: {
+            status: "LIVE",
+            deletedAt: null,
+          },
+        }),
+
+        // Past due listings
+        prisma.mktListingBreederService.count({
+          where: {
+            stripeSubscriptionStatus: "past_due",
+            deletedAt: null,
+          } as any,
+        }),
+
+        // Canceling listings (will expire at period end)
+        prisma.mktListingBreederService.count({
+          where: {
+            stripeSubscriptionStatus: "canceling",
+            deletedAt: null,
+          } as any,
+        }),
+
+        // Founding listings that will need payment in next 30 days
+        settings.foundingFreeUntil && new Date(settings.foundingFreeUntil) <= thirtyDaysFromNow
+          ? prisma.mktListingBreederService.count({
+              where: {
+                isFounding: true,
+                stripeSubscriptionId: null,
+                status: "LIVE",
+                deletedAt: null,
+              } as any,
+            })
+          : Promise.resolve(0),
+      ]);
+
+      // MRR = active subscriptions × fee
+      const mrrCents = totalActiveSubscriptions * settings.listingFeeCents;
+
+      return reply.send({
+        totalActiveSubscriptions,
+        mrrCents,
+        mrrFormatted: `$${(mrrCents / 100).toFixed(2)}`,
+        totalFoundingProviders,
+        totalLiveListings,
+        pastDueListings,
+        cancelingListings,
+        foundingListingsExpiringSoon,
+        paymentsEnabled: settings.enabled,
+        listingFeeCents: settings.listingFeeCents,
+        foundingFreeUntil: settings.foundingFreeUntil,
+      });
+    } catch (err: any) {
+      console.error("[admin/marketplace-listing-payment-metrics] Error:", err);
       return reply.code(500).send({ error: "internal_error", detail: err?.message });
     }
   });

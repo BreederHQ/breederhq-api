@@ -59,12 +59,14 @@ export async function uploadToS3(
 ): Promise<void> {
   const s3 = getS3Client();
   const bucket = getS3Bucket();
+  // CacheControl: watermarked images are cached variants — cache aggressively
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
     })
   );
 }
@@ -526,6 +528,25 @@ function escapeXml(str: string): string {
 export function isImageMimeType(mimeType: string | null): boolean {
   const imageTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
   return mimeType ? imageTypes.includes(mimeType) : false;
+}
+
+/**
+ * Get image dimensions from S3 without loading the full image into memory.
+ * Uses Sharp's metadata extraction which only reads the header.
+ */
+export async function getImageDimensionsFromS3(
+  storageKey: string
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const buffer = await fetchFromS3(storageKey);
+    const metadata = await sharp(buffer).metadata();
+    return {
+      width: metadata.width || 0,
+      height: metadata.height || 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

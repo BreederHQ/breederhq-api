@@ -58,7 +58,7 @@ If you didn't create this account, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Welcome to ${FROM_NAME} - Please verify your email`,
     html,
@@ -115,7 +115,7 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Reset your ${FROM_NAME} password`,
     html,
@@ -171,12 +171,67 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Verify your ${FROM_NAME} email address`,
     html,
     text,
     templateKey: "marketplace_email_verify",
+    category: "transactional",
+  });
+}
+
+/**
+ * Send a 6-digit email verification code (inline verification flow)
+ */
+export async function sendEmailVerificationCodeEmail(data: {
+  email: string;
+  firstName: string | null;
+  code: string;
+}): Promise<void> {
+  const userName = data.firstName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1f2937;">Your Verification Code</h2>
+      <p>Hi ${userName},</p>
+      <p>Use the code below to verify your email address on ${FROM_NAME}.</p>
+      <div style="text-align: center; margin: 32px 0;">
+        <span style="display: inline-block; font-size: 36px; font-weight: 700; letter-spacing: 8px; padding: 16px 32px; background: #f3f4f6; border-radius: 8px; color: #1f2937;">
+          ${data.code}
+        </span>
+      </div>
+      <p style="color: #6b7280; font-size: 14px;">This code will expire in 10 minutes.</p>
+      <p style="color: #6b7280; font-size: 14px;">If you didn't request this code, you can safely ignore this email.</p>
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        — The ${FROM_NAME} Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+Your Verification Code
+
+Hi ${userName},
+
+Use the code below to verify your email address on ${FROM_NAME}.
+
+${data.code}
+
+This code will expire in 10 minutes.
+
+If you didn't request this code, you can safely ignore this email.
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: null,
+    to: data.email,
+    subject: `${data.code} is your ${FROM_NAME} verification code`,
+    html,
+    text,
+    templateKey: "marketplace_email_verification_code",
     category: "transactional",
   });
 }
@@ -266,7 +321,7 @@ Need help? Visit our provider resources or contact support anytime.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Welcome to ${FROM_NAME} Providers!`,
     html,
@@ -352,7 +407,7 @@ Questions about payouts? Check Stripe's documentation or contact our support tea
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Stripe Connect Setup Complete - ${FROM_NAME}`,
     html,
@@ -431,7 +486,7 @@ Until verification is complete, you may not be able to receive payouts.
   `.trim();
 
   await sendEmail({
-    tenantId: 0, // System email
+    tenantId: null,  // Marketplace/system email - no tenant context // System email
     to: data.email,
     subject: `Action Required: Stripe Account Verification - ${FROM_NAME}`,
     html,
@@ -518,7 +573,7 @@ View booking details: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Booking Confirmed - ${data.serviceTitle}`,
     html,
@@ -596,7 +651,7 @@ View booking: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `New Booking - ${data.serviceTitle}`,
     html,
@@ -654,7 +709,7 @@ You can track the progress and communicate with the provider: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Service Started - ${data.serviceTitle}`,
     html,
@@ -715,7 +770,7 @@ Your feedback helps other buyers make informed decisions.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Service Complete - Please Review ${data.providerBusinessName}`,
     html,
@@ -797,7 +852,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.recipientEmail,
     subject: `Booking Cancelled - ${data.serviceTitle}`,
     html,
@@ -877,7 +932,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.buyerEmail,
     subject: `Payment Confirmed - ${data.serviceTitle}`,
     html,
@@ -961,7 +1016,7 @@ View transaction: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `Payment Received - ${data.serviceTitle}`,
     html,
@@ -1052,7 +1107,7 @@ View and reply: ${transactionUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.recipientEmail,
     subject: `New message from ${data.senderName} - ${data.serviceTitle}`,
     html,
@@ -1122,7 +1177,7 @@ View your inquiries at: ${MARKETPLACE_URL}/inquiries
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject,
     html,
@@ -1282,7 +1337,7 @@ View your waitlist requests at: ${MARKETPLACE_URL}/inquiries?tab=waitlist
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Waitlist request submitted for ${data.programName}`,
     html,
@@ -1350,7 +1405,7 @@ View details at: ${viewUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Approved! Your waitlist request at ${data.breederName}`,
     html,
@@ -1428,7 +1483,7 @@ Browse other breeders at: ${MARKETPLACE_URL}/breeders
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.userEmail,
     subject: `Update on your waitlist request at ${data.breederName}`,
     html,
@@ -1502,7 +1557,7 @@ Review at: ${adminUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: ADMIN_NOTIFICATION_EMAIL,
     subject: `[Action Required] Listing Auto-Flagged: ${data.listingTitle}`,
     html,
@@ -1587,7 +1642,7 @@ If you continue to have issues, please contact our support team.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Identity Verification Update - ${FROM_NAME}`,
     html,
@@ -1670,7 +1725,7 @@ View invoice: ${dashboardUrl}
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.providerEmail,
     subject: `Payment Failed - Invoice ${data.invoiceNumber}`,
     html,
@@ -1740,7 +1795,7 @@ This is an automated message. Please do not reply.
   `.trim();
 
   await sendEmail({
-    tenantId: 0,
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.toEmail,
     subject: `Undeliverable: ${data.originalSubject || "(no subject)"}`,
     html,

@@ -1,6 +1,7 @@
 // src/routes/rearing-assignments.ts
 // Rearing Protocols API - Protocol assignments to offspring groups
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
@@ -28,6 +29,22 @@ function errorReply(err: unknown) {
   console.error("[rearing-assignments]", msg);
   return { status: 500, payload: { error: "internal_error", message: msg } };
 }
+
+// Map frontend string IDs to benchmark protocol names in the database
+const BENCHMARK_STRING_ID_TO_NAME: Record<string, string> = {
+  benchmark_ens: "Early Neurological Stimulation (ENS)",
+  benchmark_esi: "Early Scent Introduction (ESI)",
+  benchmark_rule_of_7s: "Rule of 7s Socialization",
+  benchmark_handling: "Handling Protocol",
+  benchmark_sound: "Sound Desensitization",
+  benchmark_crate: "Crate Training Introduction",
+  benchmark_cat_socialization: "Kitten Socialization Program",
+  benchmark_cat_litter: "Litter Training Basics",
+  benchmark_horse_imprint: "Foal Imprinting Protocol",
+  benchmark_horse_halter: "Halter Training Basics",
+  benchmark_goat_handling: "Kid Handling Protocol",
+  benchmark_goat_bottle: "Bottle Feeding Protocol",
+};
 
 // Include protocol details in assignment response
 const assignmentInclude = {
@@ -110,10 +127,32 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       }
 
       const body = req.body as any;
-      const protocolId = idNum(body.protocolId);
+      // Support both camelCase (protocolId) and snake_case (protocol_id)
+      const rawProtocolId = body.protocolId ?? body.protocol_id;
 
-      if (!protocolId) {
+      if (!rawProtocolId) {
         return reply.code(400).send({ error: "protocol_id_required" });
+      }
+
+      // Handle both numeric IDs (custom protocols) and string IDs (benchmark protocols)
+      let protocolId: number | null = null;
+      let benchmarkStringId: string | null = null;
+
+      if (typeof rawProtocolId === "number") {
+        protocolId = rawProtocolId > 0 ? rawProtocolId : null;
+      } else if (typeof rawProtocolId === "string") {
+        // Try to parse as number first
+        const numId = parseInt(rawProtocolId, 10);
+        if (!isNaN(numId) && numId > 0) {
+          protocolId = numId;
+        } else {
+          // It's a string ID (benchmark protocol like "benchmark_rule_of_7s")
+          benchmarkStringId = rawProtocolId;
+        }
+      }
+
+      if (!protocolId && !benchmarkStringId) {
+        return reply.code(400).send({ error: "invalid_protocol_id" });
       }
 
       // Verify group belongs to tenant
@@ -126,14 +165,31 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       }
 
       // Get protocol (own or benchmark)
-      const protocol = await prisma.rearingProtocol.findFirst({
-        where: {
-          id: protocolId,
+      // For benchmark protocols, we look up by name using the string ID mapping
+      // For custom protocols, we look up by numeric ID
+      let protocolWhere;
+      if (benchmarkStringId) {
+        const benchmarkName = BENCHMARK_STRING_ID_TO_NAME[benchmarkStringId];
+        if (!benchmarkName) {
+          return reply.code(400).send({ error: "unknown_benchmark_protocol" });
+        }
+        protocolWhere = {
+          name: benchmarkName,
+          isBenchmark: true,
+          tenantId: null,
+        };
+      } else {
+        protocolWhere = {
+          id: protocolId!,
           OR: [
             { tenantId, deletedAt: null },
             { isBenchmark: true, tenantId: null },
           ],
-        },
+        };
+      }
+
+      const protocol = await prisma.rearingProtocol.findFirst({
+        where: protocolWhere,
         include: {
           stages: {
             orderBy: { order: "asc" },
@@ -150,9 +206,9 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "protocol_not_found" });
       }
 
-      // Check for existing assignment
+      // Check for existing assignment (use protocol.id which is always the numeric id)
       const existingAssignment = await prisma.rearingProtocolAssignment.findFirst({
-        where: { offspringGroupId: groupId, protocolId },
+        where: { offspringGroupId: groupId, protocolId: protocol.id },
       });
 
       if (existingAssignment) {
@@ -170,19 +226,22 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         // Increment usage count for non-benchmarks
         if (!protocol.isBenchmark) {
           await tx.rearingProtocol.update({
-            where: { id: protocolId },
+            where: { id: protocol.id },
             data: { usageCount: { increment: 1 } },
           });
         }
+
+        // Support both camelCase and snake_case for startDate
+        const startDateRaw = body.startDate ?? body.start_date;
 
         return tx.rearingProtocolAssignment.create({
           data: {
             tenantId,
             offspringGroupId: groupId,
-            protocolId,
+            protocolId: protocol.id,
             protocolVersion: protocol.version,
             protocolSnapshot: protocol as any, // Store full protocol JSON
-            startDate: body.startDate ? new Date(body.startDate) : new Date(),
+            startDate: startDateRaw ? new Date(startDateRaw) : new Date(),
             status: "ACTIVE",
             totalActivities,
             notes: trimToNull(body.notes),
@@ -323,6 +382,217 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       });
 
       return reply.send(updated);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /rearing-assignments/:id/handoff - Hand off protocol to buyer (Client Portal)
+  // Used when a puppy is placed and the buyer continues Stages 4-8 via Portal
+  // ─────────────────────────────────────────────────────────────────────────────
+  app.post("/rearing-assignments/:id/handoff", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const userId = (req as any).userId as string;
+      const id = idNum((req.params as any).id);
+
+      if (!tenantId) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+      if (!id) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      const body = req.body as any;
+      const offspringId = idNum(body.offspringId);
+      const buyerUserId = trimToNull(body.buyerUserId);
+      const handoffFromStage = idNum(body.handoffFromStage) ?? 3; // Default to stage 3
+      const handoffNotes = trimToNull(body.notes);
+      const generateCertificate = body.generateCertificate !== false; // Default true
+
+      if (!offspringId) {
+        return reply.code(400).send({ error: "offspring_id_required" });
+      }
+
+      // Get assignment with completions and protocol
+      const assignment = await prisma.rearingProtocolAssignment.findFirst({
+        where: { id, tenantId },
+        include: {
+          protocol: {
+            include: {
+              stages: {
+                orderBy: { order: "asc" },
+                include: {
+                  activities: {
+                    orderBy: { order: "asc" },
+                  },
+                },
+              },
+            },
+          },
+          offspringGroup: {
+            include: {
+              tenant: {
+                select: { name: true },
+              },
+            },
+          },
+          completions: {
+            where: { offspringId },
+            orderBy: { completedAt: "asc" },
+          },
+        },
+      });
+
+      if (!assignment) {
+        return reply.code(404).send({ error: "assignment_not_found" });
+      }
+
+      // Check if already handed off
+      if (assignment.handoffToUserId) {
+        return reply.code(409).send({
+          error: "already_handed_off",
+          handoffAt: assignment.handoffAt,
+          handoffToUserId: assignment.handoffToUserId,
+        });
+      }
+
+      // Verify offspring belongs to the assignment's group
+      const offspring = await prisma.offspring.findFirst({
+        where: { id: offspringId, groupId: assignment.offspringGroupId!, tenantId },
+        include: {
+          buyerParty: {
+            include: {
+              portalInvites: {
+                where: { usedAt: { not: null } },
+                select: { userId: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "offspring_not_found" });
+      }
+
+      // Determine buyer user ID
+      let resolvedBuyerUserId = buyerUserId;
+      if (!resolvedBuyerUserId && offspring.buyerParty?.portalInvites?.length) {
+        // Get the user ID from accepted portal invite
+        resolvedBuyerUserId = offspring.buyerParty.portalInvites[0].userId ?? null;
+      }
+
+      if (!resolvedBuyerUserId) {
+        return reply.code(400).send({
+          error: "buyer_user_required",
+          message: "No buyer user found. Ensure the buyer has accepted their portal invite, or provide buyerUserId.",
+        });
+      }
+
+      // Build progress snapshot
+      const completionsByActivity: Record<string, any> = {};
+      for (const completion of assignment.completions) {
+        completionsByActivity[completion.activityId] = {
+          completedAt: completion.completedAt,
+          completedBy: completion.completedBy,
+          notes: completion.notes,
+        };
+      }
+
+      const handoffSnapshot = {
+        handoffAt: new Date().toISOString(),
+        breederPhaseComplete: true,
+        stagesCompleted: handoffFromStage,
+        completions: completionsByActivity,
+        protocol: {
+          id: assignment.protocol?.id,
+          name: assignment.protocol?.name,
+          version: assignment.protocolVersion,
+        },
+      };
+
+      // Create handoff in transaction
+      const result = await prisma.$transaction(async (tx) => {
+        // Create individual offspring assignment for portal continuation
+        const offspringAssignment = await tx.rearingProtocolAssignment.create({
+          data: {
+            tenantId,
+            offspringId,
+            protocolId: assignment.protocolId,
+            protocolVersion: assignment.protocolVersion,
+            protocolSnapshot: assignment.protocolSnapshot ?? Prisma.DbNull,
+            startDate: assignment.startDate,
+            status: "ACTIVE",
+            totalActivities: assignment.totalActivities,
+            completedActivities: assignment.completions.length,
+            handoffToUserId: resolvedBuyerUserId,
+            handoffAt: new Date(),
+            handoffFromStage,
+            handoffByUserId: userId,
+            handoffNotes,
+            handoffSnapshot,
+          },
+        });
+
+        // Copy completions to the new offspring-level assignment
+        if (assignment.completions.length > 0) {
+          await tx.activityCompletion.createMany({
+            data: assignment.completions.map((c) => ({
+              tenantId,
+              assignmentId: offspringAssignment.id,
+              activityId: c.activityId,
+              scope: c.scope,
+              offspringId: c.offspringId,
+              completedAt: c.completedAt,
+              completedBy: c.completedBy,
+              checklistItemKey: c.checklistItemKey,
+              notes: c.notes,
+            })),
+          });
+        }
+
+        // Generate breeder phase certificate if requested
+        let certificate = null;
+        if (generateCertificate) {
+          certificate = await tx.rearingCertificate.create({
+            data: {
+              tenantId,
+              assignmentId: offspringAssignment.id,
+              offspringId,
+              offspringName: offspring.name ?? `Offspring #${offspring.id}`,
+              protocolName: assignment.protocol?.name ?? "Unknown Protocol",
+              breederName: assignment.offspringGroup?.tenant?.name ?? "Unknown Breeder",
+              certificateType: "BREEDER_PHASE",
+              stageCompleted: handoffFromStage,
+              stageData: handoffSnapshot,
+              completedAt: new Date(),
+            },
+          });
+        }
+
+        return { offspringAssignment, certificate };
+      });
+
+      return reply.code(201).send({
+        success: true,
+        handoff: {
+          assignmentId: result.offspringAssignment.id,
+          offspringId,
+          buyerUserId: resolvedBuyerUserId,
+          handoffAt: result.offspringAssignment.handoffAt,
+          handoffFromStage,
+        },
+        certificate: result.certificate
+          ? {
+              id: result.certificate.id,
+              certificateType: result.certificate.certificateType,
+              stageCompleted: result.certificate.stageCompleted,
+            }
+          : null,
+      });
     } catch (err) {
       const { status, payload } = errorReply(err);
       return reply.status(status).send(payload);

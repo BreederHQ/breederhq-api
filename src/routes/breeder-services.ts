@@ -4,6 +4,11 @@
 
 import type { FastifyInstance } from "fastify";
 import prisma from "../prisma.js";
+import {
+  requiresPayment,
+  shouldMarkAsFounding,
+  getListingPaymentSettings,
+} from "../services/listing-payment-service.js";
 
 async function assertTenant(req: any, reply: any): Promise<number | null> {
   const tenantId = Number(req.tenantId);
@@ -75,13 +80,21 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
           availability: true,
           createdAt: true,
           updatedAt: true,
-        },
+          // Payment / subscription fields (Phase 4)
+          stripeSubscriptionStatus: true,
+          currentPeriodEnd: true,
+          isFounding: true,
+        } as any,
       });
 
       // Convert BigInt fields to numbers for JSON serialization
-      const serializedServices = services.map((s) => ({
+      const serializedServices = services.map((s: any) => ({
         ...s,
         priceCents: s.priceCents != null ? Number(s.priceCents) : null,
+        // Normalize payment fields for the frontend
+        stripeSubscriptionStatus: s.stripeSubscriptionStatus ?? null,
+        currentPeriodEnd: s.currentPeriodEnd?.toISOString?.() ?? s.currentPeriodEnd ?? null,
+        isFounding: s.isFounding ?? false,
       }));
 
       return reply.send({
@@ -291,7 +304,7 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
 
   /**
    * POST /api/v1/services/:id/publish
-   * Publish a service listing
+   * Publish a service listing (with payment gate)
    */
   app.post<{
     Params: {
@@ -310,23 +323,43 @@ export default async function breederServicesRoutes(app: FastifyInstance) {
     }
 
     try {
-      const service = await prisma.mktListingBreederService.updateMany({
-        where: {
-          id: serviceId,
-          tenantId,
-          sourceType: "BREEDER",
-        },
-        data: {
-          status: "LIVE",
-        },
+      // Verify listing exists and belongs to this tenant
+      const existing = await prisma.mktListingBreederService.findFirst({
+        where: { id: serviceId, tenantId, sourceType: "BREEDER" },
+        select: { id: true },
       });
 
-      if (service.count === 0) {
+      if (!existing) {
         return reply.code(404).send({
           error: "not_found",
           message: "Service not found",
         });
       }
+
+      // Check if payment is required
+      const paymentCheck = await requiresPayment(serviceId, null, tenantId);
+
+      if (paymentCheck.required) {
+        const settings = await getListingPaymentSettings();
+        return reply.code(402).send({
+          error: "payment_required",
+          message: "A subscription is required to publish this listing.",
+          checkoutUrl: `/api/v1/service-listings/${serviceId}/checkout`,
+          listingFeeCents: settings.listingFeeCents,
+        });
+      }
+
+      // Payment not required — publish and mark founding status
+      const isFounding = await shouldMarkAsFounding();
+
+      await prisma.mktListingBreederService.updateMany({
+        where: { id: serviceId, tenantId, sourceType: "BREEDER" },
+        data: {
+          status: "LIVE",
+          publishedAt: new Date(),
+          ...(isFounding ? { isFounding: true } : {}),
+        } as any,
+      });
 
       return reply.send({ ok: true });
     } catch (error) {

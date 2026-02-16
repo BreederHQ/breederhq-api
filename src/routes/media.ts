@@ -17,6 +17,14 @@ import {
   type TenantPurpose,
   type ProviderPurpose,
 } from "../services/media-storage.js";
+import {
+  getPublicImageWatermarkUrl,
+  isPublicImageType,
+} from "../services/public-image-watermark-service.js";
+import {
+  trackMediaAccess,
+  determineActorType,
+} from "../services/media-access-tracker.js";
 import type { DocVisibility, DocStatus } from "@prisma/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +45,7 @@ interface UploadUrlRequest {
       }
     | {
         type: "tenant";
-        tenantId: number;
+        tenantId?: number; // Optional - falls back to actor.tenantId from auth middleware
         purpose: TenantPurpose;
         resourceId?: string;
         subPath?: string;
@@ -189,7 +197,7 @@ async function handleUploadUrl(
   }
 
   // Validate content type for this purpose
-  const typeValidation = validateContentType(contentType, context.purpose);
+  const typeValidation = validateContentType(contentType, context.purpose, context.subPath);
   if (!typeValidation.valid) {
     return reply.status(400).send({
       error: "invalid_content_type",
@@ -231,19 +239,24 @@ async function handleUploadUrl(
         message: "Tenant authentication required",
       });
     }
-    if (actor.tenantId !== context.tenantId) {
+    // Use actor.tenantId from auth middleware if context.tenantId not provided
+    // (useMediaUpload hook doesn't send it, which is fine - auth middleware validates session)
+    const effectiveTenantId = context.tenantId ?? actor.tenantId;
+    if (actor.tenantId !== effectiveTenantId) {
       return reply.status(403).send({
         error: "forbidden",
         message: "You can only upload to your own tenant account",
       });
     }
+    // Update context with effective tenant ID for downstream use
+    context.tenantId = effectiveTenantId;
   }
 
   try {
     // Build upload context
     const uploadContext: UploadContext = {
       ownerType: context.type as OwnerType,
-      ownerId: context.type === "provider" ? context.providerId : context.tenantId,
+      ownerId: context.type === "provider" ? context.providerId : context.tenantId!,
       purpose: context.purpose,
       resourceId: context.resourceId,
       subPath: context.subPath,
@@ -261,7 +274,7 @@ async function handleUploadUrl(
     if (context.type === "tenant") {
       await prisma.document.create({
         data: {
-          tenantId: context.tenantId,
+          tenantId: context.tenantId!,
           scope: mapPurposeToScope(context.purpose),
           kind: "generic",
           title: filename,
@@ -453,13 +466,81 @@ async function handleGetAccessUrl(
       });
     }
 
-    // Return appropriate URL
+    // Check if we should apply watermarking for public access
+    // Watermark ONLY when explicitly requested via ?wm=1 query parameter.
+    // Listing cards use raw image URLs (no ?wm=1), detail pages use withWatermark() to add ?wm=1.
+    const isOwnerAccess = parsed?.ownerType === "tenant" && parsed?.ownerId === actor.tenantId;
+    const wantWatermark = (request.query as Record<string, string>)?.wm === "1";
+    const shouldCheckWatermark = wantWatermark && visibility === "PUBLIC" && !isOwnerAccess && isPublicImageType(decodedKey);
+
+    if (shouldCheckWatermark && parsed?.ownerType === "tenant" && parsed?.ownerId) {
+      try {
+        const watermarkResult = await getPublicImageWatermarkUrl(
+          parsed.ownerId,
+          decodedKey,
+          document?.mimeType
+        );
+
+        if (watermarkResult.shouldWatermark && watermarkResult.presignedUrl) {
+          // Track public watermarked image access (fire-and-forget)
+          if (parsed?.ownerType === "tenant" && parsed?.ownerId) {
+            trackMediaAccess(request, {
+              tenantId: parsed.ownerId,
+              documentId: document?.id,
+              storageKey: decodedKey,
+              actorType: determineActorType(
+                actor.tenantId,
+                parsed.ownerId,
+                actor.marketplaceUserId,
+                null
+              ),
+              userId: actor.userId ?? undefined,
+              marketplaceUserId: actor.marketplaceUserId ?? undefined,
+              accessType: "VIEW",
+              watermarked: true,
+              watermarkHash: watermarkResult.watermarkedKey,
+            });
+          }
+
+          return reply.send({
+            url: watermarkResult.presignedUrl,
+            visibility,
+            expiresIn: 3600,
+            watermarked: true,
+          });
+        }
+      } catch (err) {
+        request.log.warn({ err, storageKey: decodedKey }, "Failed to apply public image watermark, falling back to original");
+      }
+    }
+
+    // Return appropriate URL (original, non-watermarked)
     if (visibility === "PUBLIC") {
+      // Track public image access (fire-and-forget)
+      if (parsed?.ownerType === "tenant" && parsed?.ownerId && !isOwnerAccess) {
+        trackMediaAccess(request, {
+          tenantId: parsed.ownerId,
+          documentId: document?.id,
+          storageKey: decodedKey,
+          actorType: determineActorType(
+            actor.tenantId,
+            parsed.ownerId,
+            actor.marketplaceUserId,
+            null
+          ),
+          userId: actor.userId ?? undefined,
+          marketplaceUserId: actor.marketplaceUserId ?? undefined,
+          accessType: "VIEW",
+          watermarked: false,
+        });
+      }
+
       // Direct CDN URL for public files
       return reply.send({
         url: getPublicCdnUrl(decodedKey),
         visibility,
         expiresIn: null, // Public URLs don't expire
+        watermarked: false,
       });
     } else {
       // Presigned URL for private files
@@ -468,6 +549,7 @@ async function handleGetAccessUrl(
         url: result.url,
         visibility,
         expiresIn: result.expiresIn,
+        watermarked: false,
       });
     }
   } catch (error) {

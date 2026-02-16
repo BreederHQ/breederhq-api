@@ -25,6 +25,8 @@ import {
   updateLastLogin,
   createEmailVerificationToken,
   verifyEmailToken,
+  createEmailVerificationCode,
+  verifyEmailCode,
   createPasswordResetToken,
   verifyPasswordResetToken,
   resetPassword,
@@ -34,6 +36,7 @@ import {
 import {
   sendMarketplaceWelcomeEmail,
   sendMarketplacePasswordResetEmail,
+  sendEmailVerificationCodeEmail,
 } from "../services/marketplace-email-service.js";
 import {
   setSessionCookies,
@@ -44,6 +47,8 @@ import {
 } from "../utils/session.js";
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { randomBytes } from "node:crypto";
+import { hasAcceptedCurrentProviderTerms } from "../services/marketplace-provider-terms-service.js";
+import { writeLegacyTosAcceptance } from "../services/marketplace-legal-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -77,12 +82,14 @@ export default async function marketplaceAuthRoutes(
       firstName = "",
       lastName = "",
       phone = "",
+      tosAcceptance,
     } = (req.body || {}) as {
       email?: string;
       password?: string;
       firstName?: string;
       lastName?: string;
       phone?: string;
+      tosAcceptance?: { version: string; effectiveDate: string; surface: string; flow: string };
     };
 
     // Validation
@@ -123,6 +130,13 @@ export default async function marketplaceAuthRoutes(
         phone: phone.trim() || undefined,
         userType: "buyer",
       });
+
+      // Record legal acceptance (if provided by frontend)
+      if (tosAcceptance && tosAcceptance.version) {
+        writeLegacyTosAcceptance(tosAcceptance, user.id, req).catch((err) => {
+          req.log?.error?.({ err, userId: user.id }, "Failed to record ToS acceptance for marketplace registration");
+        });
+      }
 
       // Create email verification token
       const { raw } = await createEmailVerificationToken(user.id, user.email);
@@ -426,6 +440,64 @@ export default async function marketplaceAuthRoutes(
     });
   });
 
+  /* ───────────────────────── Send Verification Code (6-digit) ───────────────────────── */
+
+  app.post("/send-verification-code", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 3, timeWindow: "5 minutes" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+
+    const user = await findMarketplaceUserById(userId);
+    if (!user) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    if (user.emailVerified) {
+      return reply.code(400).send({
+        error: "already_verified",
+        message: "Your email is already verified.",
+      });
+    }
+
+    // Generate 6-digit code and store hash
+    const code = await createEmailVerificationCode(userId);
+
+    // Send the code by email
+    sendEmailVerificationCodeEmail({
+      email: user.email,
+      firstName: user.firstName,
+      code,
+    }).catch((err) => {
+      req.log?.error?.({ err, email: user.email }, "Failed to send verification code email");
+    });
+
+    return reply.send({ ok: true, message: "Verification code sent to your email." });
+  });
+
+  /* ───────────────────────── Verify Email Code (6-digit) ───────────────────────── */
+
+  app.post("/verify-email-code", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 5, timeWindow: "5 minutes" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { code = "" } = (req.body || {}) as { code?: string };
+
+    const trimmed = String(code).trim();
+    if (!trimmed || trimmed.length !== 6) {
+      return reply.code(400).send({ error: "invalid_code", message: "Please enter a valid 6-digit code." });
+    }
+
+    const verified = await verifyEmailCode(userId, trimmed);
+
+    if (!verified) {
+      return reply.code(400).send({ error: "invalid_or_expired_code", message: "Invalid or expired code. Please try again." });
+    }
+
+    return reply.send({ ok: true, emailVerified: true });
+  });
+
   /* ───────────────────────── Forgot Password ───────────────────────── */
 
   app.post("/forgot-password", {
@@ -721,6 +793,26 @@ export default async function marketplaceAuthRoutes(
       const randomPassword = randomBytes(32).toString("base64");
       const passwordHash = await bcrypt.hash(randomPassword, 12);
 
+      // Check if they're a breeder (has tenant with active subscription) before creation
+      const tenantMembershipForCreate = await prisma.tenantMembership.findFirst({
+        where: { userId: platformUserId },
+        include: {
+          tenant: {
+            include: {
+              subscriptions: {
+                where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                take: 1,
+              },
+            },
+          },
+        },
+      });
+
+      const isBreederAtCreate = !!(
+        tenantMembershipForCreate?.tenant?.subscriptions &&
+        tenantMembershipForCreate.tenant.subscriptions.length > 0
+      );
+
       marketplaceUser = await prisma.marketplaceUser.create({
         data: {
           email,
@@ -730,7 +822,7 @@ export default async function marketplaceAuthRoutes(
           userType: "buyer", // Default to buyer, can be upgraded later
           status: "active",
           emailVerified: true, // Platform users already verified their email
-          // tenantId can be set later if they have a breeder account
+          tenantId: isBreederAtCreate ? tenantMembershipForCreate!.tenant.id : null,
         },
       });
 
@@ -738,6 +830,8 @@ export default async function marketplaceAuthRoutes(
         platformUserId,
         marketplaceUserId: marketplaceUser.id,
         email,
+        isBreeder: isBreederAtCreate,
+        tenantId: marketplaceUser.tenantId,
       }, "Created MarketplaceUser via SSO from platform");
     }
 
@@ -840,6 +934,7 @@ export default async function marketplaceAuthRoutes(
           let breederTenant = null;
 
           if (user.tenantId) {
+            // User already linked to tenant - check subscription status
             const tenant = await prisma.tenant.findUnique({
               where: { id: user.tenantId },
               include: {
@@ -858,13 +953,58 @@ export default async function marketplaceAuthRoutes(
             if (isBreeder && tenant) {
               breederTenant = { id: tenant.id, name: tenant.name };
             }
+          } else {
+            // User not linked - check if they're a platform breeder and auto-link
+            const platformUser = await prisma.user.findFirst({
+              where: { email: user.email },
+              select: { id: true },
+            });
+
+            if (platformUser) {
+              const tenantMembership = await prisma.tenantMembership.findFirst({
+                where: { userId: platformUser.id },
+                include: {
+                  tenant: {
+                    include: {
+                      subscriptions: {
+                        where: { status: { in: ["ACTIVE", "TRIAL"] } },
+                        take: 1,
+                      },
+                    },
+                  },
+                },
+              });
+
+              if (
+                tenantMembership?.tenant?.subscriptions &&
+                tenantMembership.tenant.subscriptions.length > 0
+              ) {
+                // Auto-link marketplace user to their tenant
+                await prisma.marketplaceUser.update({
+                  where: { id: user.id },
+                  data: { tenantId: tenantMembership.tenant.id },
+                });
+
+                isBreeder = true;
+                breederTenant = {
+                  id: tenantMembership.tenant.id,
+                  name: tenantMembership.tenant.name,
+                };
+              }
+            }
           }
+
+          // Check provider status and terms acceptance
+          const isProvider = user.userType === "provider";
+          const hasAcceptedProviderTerms = await hasAcceptedCurrentProviderTerms(user.id);
 
           return reply.send({
             hasMarketplaceSession: true,
             hasPlatformSession: false, // Don't check if already logged in
             isBreeder,
             breederTenant,
+            isProvider,
+            hasAcceptedProviderTerms,
             user: {
               id: user.id,
               email: user.email,
@@ -921,6 +1061,8 @@ export default async function marketplaceAuthRoutes(
             id: tenantMembership.tenant.id,
             name: tenantMembership.tenant.name,
           } : null,
+          isProvider: false,
+          hasAcceptedProviderTerms: false,
           platformUser: {
             email: platformUser.email,
             firstName: platformUser.firstName,
@@ -935,6 +1077,8 @@ export default async function marketplaceAuthRoutes(
       hasPlatformSession: false,
       isBreeder: false,
       breederTenant: null,
+      isProvider: false,
+      hasAcceptedProviderTerms: false,
     });
   });
 }

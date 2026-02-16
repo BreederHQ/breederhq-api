@@ -319,6 +319,63 @@ export async function verifyEmailToken(rawToken: string): Promise<MarketplaceUse
   return updated as MarketplaceUser;
 }
 
+/**
+ * Create a 6-digit email verification code (for inline verification flows).
+ * Stores SHA256 hash in the existing emailVerifyToken field, 10-minute expiry.
+ */
+export async function createEmailVerificationCode(userId: number): Promise<string> {
+  // Generate 6-digit code: 100000–999999
+  const code = String(100000 + (randomBytes(4).readUInt32BE(0) % 900000));
+  const hash = sha256b64url(code);
+  const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await prisma.marketplaceUser.update({
+    where: { id: userId },
+    data: {
+      emailVerifyToken: hash,
+      emailVerifyExpires: expires,
+    },
+  });
+
+  return code;
+}
+
+/**
+ * Verify a 6-digit email code and mark email as verified.
+ */
+export async function verifyEmailCode(userId: number, code: string): Promise<boolean> {
+  const hash = sha256b64url(code);
+
+  const user = await prisma.marketplaceUser.findUnique({
+    where: { id: userId },
+    select: {
+      emailVerifyToken: true,
+      emailVerifyExpires: true,
+    },
+  });
+
+  if (!user || !user.emailVerifyToken || !user.emailVerifyExpires) {
+    return false;
+  }
+
+  // Check if token matches and hasn't expired
+  if (user.emailVerifyToken !== hash || user.emailVerifyExpires < new Date()) {
+    return false;
+  }
+
+  // Mark as verified, clear token
+  await prisma.marketplaceUser.update({
+    where: { id: userId },
+    data: {
+      emailVerified: true,
+      emailVerifyToken: null,
+      emailVerifyExpires: null,
+    },
+  });
+
+  return true;
+}
+
 // ---------- Password Reset ----------
 
 /**

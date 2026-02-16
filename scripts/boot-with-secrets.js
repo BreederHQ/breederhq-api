@@ -10,9 +10,8 @@
  *
  * Flow:
  *   1. Fetch all secrets from AWS Secrets Manager
- *   2. Run dbmate migrations (using DATABASE_DIRECT_URL for non-pooled connection)
- *   3. Run preflight environment checks
- *   4. Start the application server
+ *   2. Run preflight environment checks
+ *   3. Start the application server
  *
  * Required env vars (set in hosting platform):
  *   - AWS_SECRET_NAME (e.g., breederhq-api/prod-prototype)
@@ -59,29 +58,7 @@ async function main() {
   // Secrets override Render env vars where both exist.
   const mergedEnv = { ...process.env, ...secrets };
 
-  // ── Step 2: Run database migrations ─────────────────────────────────
-  // dbmate needs a DIRECT (non-pooled) connection URL for migrations.
-  const migrationUrl = secrets.DATABASE_DIRECT_URL || secrets.DATABASE_URL;
-
-  if (!migrationUrl) {
-    console.error("❌ No DATABASE_DIRECT_URL or DATABASE_URL found in secrets");
-    process.exit(1);
-  }
-
-  console.log("🗄️  Running database migrations...");
-  try {
-    execSync("npx dbmate --migrations-dir db/migrations migrate", {
-      stdio: "inherit",
-      // Override DATABASE_URL with the DIRECT url for dbmate
-      env: { ...mergedEnv, DATABASE_URL: migrationUrl },
-    });
-    console.log("✓ Migrations complete");
-  } catch {
-    console.error("❌ Migration failed");
-    process.exit(1);
-  }
-
-  // ── Step 3: Run preflight environment checks ───────────────────────
+  // ── Step 2: Run preflight environment checks ───────────────────────
   console.log("🔍 Running preflight checks...");
   try {
     execSync("node scripts/development/preflight-env.js", {
@@ -93,7 +70,7 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Step 4: Start the server ────────────────────────────────────────
+  // ── Step 3: Start the server ────────────────────────────────────────
   console.log("🚀 Starting server...");
   const server = spawn("node", ["dist/server.js"], {
     stdio: "inherit",

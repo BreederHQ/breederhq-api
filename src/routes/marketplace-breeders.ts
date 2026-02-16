@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
+import { applyBoostRanking } from "../services/listing-boost-service.js";
 
 // ============================================================================
 // Constants
@@ -90,6 +91,10 @@ interface PublishedBreederResponse {
   businessName: string;
   bio: string | null;
   logoAssetId: string | null;
+  /** Direct logo URL from commerce editor (fallback when logoAssetId not available) */
+  logoUrl: string | null;
+  /** Banner/cover image URL from commerce editor */
+  bannerImageUrl: string | null;
   publicLocationMode: string | null;
   location: {
     city: string | null;
@@ -105,12 +110,15 @@ interface PublishedBreederResponse {
   breeds: Array<{ name: string; species: string | null }>;
   programs: Array<{
     name: string;
+    slug: string | null;
     description: string | null;
     acceptInquiries: boolean;
     openWaitlist: boolean;
     comingSoon: boolean;
     /** Asset IDs for photos/media attached to this program */
     mediaAssetIds: string[];
+    /** Cover image URL from the breeding program database record */
+    coverImageUrl: string | null;
   }>;
   standardsAndCredentials: StandardsAndCredentials | null;
   placementPolicies: PlacementPolicies | null;
@@ -156,6 +164,7 @@ interface ReviewSummary {
  * Includes both formatted location and raw fields for filtering/display flexibility.
  */
 interface BreederSummary {
+  id: number;
   tenantSlug: string;
   businessName: string;
   // Formatted location string based on publicLocationMode
@@ -167,6 +176,8 @@ interface BreederSummary {
   zip: string | null;
   breeds: Array<{ name: string; species: string | null }>;
   logoAssetId: string | null;
+  /** Direct logo URL from commerce editor (fallback when logoAssetId not available) */
+  logoUrl: string | null;
 
   // === ENHANCED FIELDS ===
 
@@ -271,19 +282,21 @@ function extractBreeds(published: Record<string, unknown>): Array<{ name: string
 /**
  * Extract listed programs from published data
  * @param published The published profile data
- * @param livePrograms Optional set of program names that are currently LIVE in the database
- *                     If provided, only programs matching these names will be included
+ * @param liveProgramsMap Optional map of lowercase program names -> database program data
+ *                        If provided, only programs in the map will be included, and coverImageUrl will be merged
  */
 function extractPrograms(
   published: Record<string, unknown>,
-  livePrograms?: Set<string>
+  liveProgramsMap?: Map<string, { name: string; slug: string | null; coverImageUrl: string | null; showCoverImage: boolean }>
 ): Array<{
   name: string;
+  slug: string | null;
   description: string | null;
   acceptInquiries: boolean;
   openWaitlist: boolean;
   comingSoon: boolean;
   mediaAssetIds: string[];
+  coverImageUrl: string | null;
 }> {
   if (!Array.isArray(published.listedPrograms)) return [];
 
@@ -294,18 +307,24 @@ function extractPrograms(
       const name = safeString(prog.name);
       if (!name) return null;
 
-      // If we have a set of live programs, filter out any not in the set
-      if (livePrograms && !livePrograms.has(name.toLowerCase())) {
+      // If we have a map of live programs, filter out any not in the map
+      const dbProgram = liveProgramsMap?.get(name.toLowerCase());
+      if (liveProgramsMap && !dbProgram) {
         return null;
       }
 
+      // Get coverImageUrl from database if available and showCoverImage is true
+      const coverImageUrl = dbProgram?.showCoverImage !== false ? (dbProgram?.coverImageUrl ?? null) : null;
+
       return {
         name,
+        slug: dbProgram?.slug ?? null,
         description: safeString(prog.description),
         acceptInquiries: safeBool(prog.acceptInquiries),
         openWaitlist: safeBool(prog.openWaitlist),
         comingSoon: safeBool(prog.comingSoon),
         mediaAssetIds: safeStringArray(prog.mediaAssetIds),
+        coverImageUrl,
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -629,7 +648,9 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const zip = includeLocation && address ? safeString(address.zip) : null;
 
       // Check if business identity (logo) should be shown
-      const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+      // showBusinessIdentity defaults to true, showLogo defaults to true if not set
+      const showBusinessIdentity = published.showBusinessIdentity !== false;
+      const showLogo = showBusinessIdentity && published.showLogo !== false;
 
       // Extract breeds for this breeder
       const breeds = extractBreeds(published);
@@ -715,6 +736,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       }
 
       const summary: BreederSummary = {
+        id: tenantId,
         tenantSlug,
         businessName,
         location: buildLocationDisplay(published.address, publicLocationMode),
@@ -723,7 +745,8 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         state,
         zip,
         breeds,
-        logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
+        logoAssetId: showLogo ? safeString(published.logoAssetId) : null,
+        logoUrl: showLogo ? safeString(published.logoUrl) : null,
         // Enhanced fields
         yearsInBusiness,
         placementCount,
@@ -761,8 +784,11 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       .slice(offset, offset + limit)
       .map((item) => item.summary);
 
+    // Apply boost ranking (populates MonetizationFields on items with active boosts)
+    const items = await applyBoostRanking(paginatedItems, "BREEDER");
+
     const response: BreedersListResponse = {
-      items: paginatedItems,
+      items,
       total,
     };
 
@@ -832,7 +858,8 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     }
 
     // Check visibility toggles
-    const showBusinessIdentity = safeBool(published.showBusinessIdentity);
+    // showBusinessIdentity defaults to true if not explicitly set (matching Commerce behavior)
+    const showBusinessIdentity = published.showBusinessIdentity !== false;
 
     // Fetch LIVE breeding programs from the database to filter the JSON list
     // Programs in the JSON that don't have a corresponding LIVE database record should be hidden
@@ -843,11 +870,21 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       },
       select: {
         name: true,
+        slug: true,
+        coverImageUrl: true,
+        showCoverImage: true,
       },
     });
 
-    // Create a set of lowercase names for case-insensitive matching
-    const liveProgramNames = new Set(liveDbPrograms.map((p) => p.name.toLowerCase()));
+    // Create a map of lowercase names -> program data for merging coverImageUrl
+    const liveProgramsMap = new Map(
+      liveDbPrograms.map((p) => [p.name.toLowerCase(), p])
+    );
+
+    // Check visibility toggles for logo and banner
+    // showLogo and showBanner default to true if not set (matching Commerce behavior)
+    const showLogo = showBusinessIdentity && published.showLogo !== false;
+    const showBanner = showBusinessIdentity && published.showBanner !== false;
 
     // Build response with only public-safe fields
     const response: PublishedBreederResponse = {
@@ -855,7 +892,9 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       businessName, // Always shown (required for discovery)
       // Only include bio/logo if showBusinessIdentity is true
       bio: showBusinessIdentity ? safeString(published.bio) : null,
-      logoAssetId: showBusinessIdentity ? safeString(published.logoAssetId) : null,
+      logoAssetId: showLogo ? safeString(published.logoAssetId) : null,
+      logoUrl: showLogo ? safeString(published.logoUrl) : null,
+      bannerImageUrl: showBanner ? safeString(published.bannerImageUrl) : null,
       publicLocationMode: safeString(published.publicLocationMode),
       location: sanitizeLocation(published.address),
       // Only include website/socials if show toggles are true
@@ -865,7 +904,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         facebook: safeBool(published.showFacebook) ? safeString(published.facebook) : null,
       },
       breeds: extractBreeds(published),
-      programs: extractPrograms(published, liveProgramNames),
+      programs: extractPrograms(published, liveProgramsMap),
       standardsAndCredentials: extractStandardsAndCredentials(published),
       placementPolicies: extractPlacementPolicies(published),
       publishedAt: profileData.publishedAt ?? null,

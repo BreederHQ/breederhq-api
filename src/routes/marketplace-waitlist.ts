@@ -15,9 +15,10 @@ import prisma from "../prisma.js";
 import { parseVerifiedSession } from "../utils/session.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
-import { stripe } from "../services/stripe-service.js";
+import { getStripe } from "../services/stripe-service.js";
 import { sendWaitlistSignupNotificationEmail } from "../services/email-service.js";
 import { sendWaitlistConfirmationToUser } from "../services/marketplace-email-service.js";
+import { validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 // ============================================================================
 // Constants
@@ -46,6 +47,8 @@ interface WaitlistRequestBody {
     pagePath?: string;
     programSlug?: string;
   };
+  // Legal acceptance payload for audit trail
+  legalAcceptance?: unknown;
 }
 
 interface WaitlistRequestResponse {
@@ -61,8 +64,7 @@ interface WaitlistRequestResponse {
  * Build notes field content from marketplace user info
  */
 function buildNotesFromMarketplaceRequest(
-  body: WaitlistRequestBody,
-  userId: string
+  body: WaitlistRequestBody
 ): string {
   const lines: string[] = [
     `[Marketplace Waitlist Request]`,
@@ -73,7 +75,7 @@ function buildNotesFromMarketplaceRequest(
     lines.push(``, `Message from applicant:`, body.message);
   }
 
-  lines.push(``, `User ID: ${userId}`, `Submitted: ${new Date().toISOString()}`);
+  lines.push(``, `Submitted: ${new Date().toISOString()}`);
 
   return lines.join("\n");
 }
@@ -155,9 +157,15 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     }
 
     // 1b) Verify email is verified before allowing waitlist signup
-    const user = await prisma.user.findUnique({
-      where: { id: sess.userId },
-      select: { emailVerifiedAt: true },
+    // Marketplace users have integer IDs stored in MarketplaceUser table
+    const marketplaceUserId = parseInt(sess.userId, 10);
+    if (!Number.isFinite(marketplaceUserId) || marketplaceUserId <= 0) {
+      return reply.code(401).send({ error: "invalid_session" });
+    }
+
+    const user = await prisma.marketplaceUser.findUnique({
+      where: { id: marketplaceUserId },
+      select: { emailVerified: true },
     });
 
     if (!user) {
@@ -167,7 +175,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       });
     }
 
-    if (!user.emailVerifiedAt) {
+    if (!user.emailVerified) {
       return reply.code(403).send({
         error: "email_verification_required",
         message: "Please verify your email address before joining waitlists.",
@@ -273,7 +281,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     });
 
     // 7) Create waitlist entry with INQUIRY status (shows in Pending tab)
-    const notes = buildNotesFromMarketplaceRequest(body, sess.userId);
+    const notes = buildNotesFromMarketplaceRequest(body);
 
     const entry = await prisma.waitlistEntry.create({
       data: {
@@ -343,6 +351,23 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       }
     }
 
+    // 8b) Record legal acceptance (ToS + buyer terms + privacy policy)
+    if (body.legalAcceptance) {
+      try {
+        const payload = validateLegalAcceptancePayload(body.legalAcceptance);
+        writeLegalAcceptance(payload, req, {
+          marketplaceUserId: marketplaceUserId,
+          email: body.email,
+          entityType: "waitlist_entry",
+          entityId: entry.id,
+        }).catch((err) => {
+          console.error("Failed to record legal acceptance for waitlist:", err);
+        });
+      } catch (err) {
+        console.error("Invalid legal acceptance payload for waitlist:", err);
+      }
+    }
+
     // 9) Send email notification to breeder about the new waitlist signup
     try {
       await sendWaitlistSignupNotificationEmail(tenant.id, {
@@ -398,10 +423,13 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
     try {
       // 2) Get user's email to find their parties across all tenants
-      const user = await prisma.user.findUnique({
-        where: { id: sess.userId },
-        select: { email: true },
-      });
+      const mktUserId = parseInt(sess.userId, 10);
+      const user = Number.isFinite(mktUserId) && mktUserId > 0
+        ? await prisma.marketplaceUser.findUnique({
+            where: { id: mktUserId },
+            select: { email: true },
+          })
+        : null;
 
       if (!user?.email) {
         return reply.send({ requests: [] });
@@ -556,10 +584,13 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
 
     try {
       // 2) Get user's email to verify they have access to this invoice
-      const user = await prisma.user.findUnique({
-        where: { id: sess.userId },
-        select: { email: true },
-      });
+      const mktUserId = parseInt(sess.userId, 10);
+      const user = Number.isFinite(mktUserId) && mktUserId > 0
+        ? await prisma.marketplaceUser.findUnique({
+            where: { id: mktUserId },
+            select: { email: true },
+          })
+        : null;
 
       if (!user?.email) {
         return reply.code(403).send({ error: "no_email" });
@@ -681,7 +712,7 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         },
       };
 
-      const session = await stripe.checkout.sessions.create(checkoutConfig);
+      const session = await getStripe().checkout.sessions.create(checkoutConfig);
 
       if (!session.url) {
         return reply.code(500).send({ error: "checkout_session_failed" });

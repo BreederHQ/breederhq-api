@@ -14,7 +14,15 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import sharp from "sharp";
 import prisma from "../prisma.js";
-import { resolveAssetId, isAllowedOrigin } from "../services/marketplace-assets.js";
+import { resolveAssetId, isAllowedOrigin, extractTenantIdFromUrl } from "../services/marketplace-assets.js";
+import type { WatermarkSettings, WatermarkOptions } from "../types/watermark.js";
+import { DEFAULT_PUBLIC_IMAGE_SETTINGS } from "../types/watermark.js";
+import {
+  applyWatermarkToBuffer,
+  fetchFromS3,
+  resolveTemplateVars,
+} from "../services/watermark-service.js";
+import { detectImageType } from "../services/public-image-watermark-service.js";
 
 // ============================================================================
 // Constants
@@ -219,6 +227,117 @@ async function processImage(
 }
 
 // ============================================================================
+// Watermark Application
+// ============================================================================
+
+/**
+ * Apply breeder-defined watermark to a processed image buffer.
+ *
+ * Fetches the tenant's watermark settings and applies them to the image.
+ * Returns the original buffer unchanged if:
+ *   - Tenant has no watermark settings or watermarking is disabled
+ *   - Public image watermarking is disabled for the detected image type
+ *   - The tenant/settings cannot be resolved
+ *
+ * IMPORTANT: This uses the BREEDER's configured settings, not defaults.
+ */
+async function applyBreederWatermark(
+  buffer: Buffer,
+  sourceUrl: string,
+  req: FastifyRequest
+): Promise<Buffer> {
+  // 1. Extract tenant ID from the source URL
+  const tenantId = extractTenantIdFromUrl(sourceUrl);
+  if (!tenantId) {
+    req.log.debug("Watermark skipped: no tenant ID in source URL");
+    return buffer;
+  }
+
+  // 2. Fetch tenant watermark settings
+  let tenant: { watermarkSettings: unknown; name: string | null } | null;
+  try {
+    tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { watermarkSettings: true, name: true },
+    });
+  } catch (err) {
+    req.log.warn({ tenantId }, "Watermark skipped: failed to fetch tenant");
+    return buffer;
+  }
+
+  if (!tenant) {
+    req.log.debug({ tenantId }, "Watermark skipped: tenant not found");
+    return buffer;
+  }
+
+  const settings = tenant.watermarkSettings as WatermarkSettings | null;
+
+  // 3. Check if watermarking is globally enabled
+  if (!settings?.enabled) {
+    req.log.debug({ tenantId }, "Watermark skipped: watermarking disabled for tenant");
+    return buffer;
+  }
+
+  // 4. Check public image watermark settings
+  const publicSettings = settings.publicImages || DEFAULT_PUBLIC_IMAGE_SETTINGS;
+  if (!publicSettings.enabled) {
+    req.log.debug({ tenantId }, "Watermark skipped: public image watermarking disabled");
+    return buffer;
+  }
+
+  // 5. Detect image type from the URL path and check if it's enabled
+  //    Extract the storage key portion from the full URL
+  const urlPath = new URL(sourceUrl).pathname;
+  const imageType = detectImageType(urlPath);
+  if (imageType && !publicSettings.imageTypes[imageType]) {
+    req.log.debug({ tenantId, imageType }, "Watermark skipped: image type not enabled");
+    return buffer;
+  }
+
+  // 6. Build watermark options from the breeder's settings
+  const imageWatermarkSettings = publicSettings.overrideSettings
+    ? { ...settings.imageWatermark, ...publicSettings.overrideSettings }
+    : settings.imageWatermark;
+
+  const businessName = tenant.name || "Business";
+  const resolvedText = resolveTemplateVars(imageWatermarkSettings.text, businessName);
+
+  // 7. Load logo if needed
+  let logoBuffer: Buffer | undefined;
+  if (
+    (imageWatermarkSettings.type === "logo" || imageWatermarkSettings.type === "both") &&
+    imageWatermarkSettings.logoStorageKey
+  ) {
+    try {
+      logoBuffer = await fetchFromS3(imageWatermarkSettings.logoStorageKey);
+    } catch (err) {
+      req.log.warn({ tenantId }, "Watermark: failed to load logo, proceeding with text only");
+    }
+  }
+
+  // 8. Apply watermark
+  const options: WatermarkOptions = {
+    type: imageWatermarkSettings.type,
+    text: resolvedText,
+    logoBuffer,
+    position: imageWatermarkSettings.position,
+    positions: imageWatermarkSettings.positions,
+    opacity: imageWatermarkSettings.opacity,
+    size: imageWatermarkSettings.size,
+    pattern: imageWatermarkSettings.pattern || "positions",
+  };
+
+  try {
+    const result = await applyWatermarkToBuffer(buffer, options, logoBuffer);
+    req.log.info({ tenantId }, "Watermark applied to marketplace asset");
+    return result.buffer;
+  } catch (err: any) {
+    req.log.error({ tenantId, error: err.message }, "Watermark application failed, returning original");
+    return buffer;
+  }
+}
+
+// ============================================================================
 // Routes
 // ============================================================================
 
@@ -226,7 +345,7 @@ const marketplaceAssetsRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   // --------------------------------------------------------------------------
   // GET /assets/:assetId - Serve authenticated, processed image
   // --------------------------------------------------------------------------
-  app.get<{ Params: { assetId: string } }>(
+  app.get<{ Params: { assetId: string }; Querystring: { wm?: string } }>(
     "/assets/:assetId",
     {
       config: {
@@ -270,10 +389,16 @@ const marketplaceAssetsRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         const sourceBuffer = await fetchSourceImage(resolved.sourceUrl);
 
         // Process image (strip EXIF, resize)
-        const { buffer, contentType } = await processImage(sourceBuffer);
+        const { buffer: processedBuffer, contentType } = await processImage(sourceBuffer);
 
-        // Set security headers
-        reply.header("Cache-Control", "private, max-age=300");
+        // Apply breeder-defined watermark if requested via ?wm=1
+        const wantWatermark = req.query.wm === "1";
+        const buffer = wantWatermark
+          ? await applyBreederWatermark(processedBuffer, resolved.sourceUrl, req)
+          : processedBuffer;
+
+        // Set security headers (shorter cache for watermarked to respect settings changes)
+        reply.header("Cache-Control", wantWatermark ? "private, max-age=120" : "private, max-age=300");
         reply.header("Content-Security-Policy", "default-src 'none'");
         reply.header("X-Content-Type-Options", "nosniff");
         reply.header("Content-Disposition", "inline");

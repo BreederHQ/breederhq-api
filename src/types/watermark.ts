@@ -37,10 +37,60 @@ export type PdfWatermarkSettings = {
   opacity: number;
 };
 
+// ─────────────────────────────────────────────────────────────
+// Public Image Watermarking Types
+// ─────────────────────────────────────────────────────────────
+
+export type PublicImageSizeThreshold = "none" | "small" | "medium" | "large";
+
+export type PublicImageType =
+  | "animalProfile"
+  | "breedingProgramCover"
+  | "breedingProgramGallery"
+  | "offspringGroupCover"
+  | "serviceListingBanner"
+  | "serviceGallery"
+  | "breederBanner"
+  | "breederLogo";
+
+export type PublicImageTypes = {
+  animalProfile: boolean;
+  breedingProgramCover: boolean;
+  breedingProgramGallery: boolean;
+  offspringGroupCover: boolean;
+  serviceListingBanner: boolean;
+  serviceGallery: boolean;
+  breederBanner: boolean;
+  breederLogo: boolean;
+};
+
+export type PublicImageWatermarkSettings = {
+  enabled: boolean;
+  imageTypes: PublicImageTypes;
+  minSizeToWatermark: PublicImageSizeThreshold;
+  overrideSettings?: Partial<ImageWatermarkSettings>;
+};
+
+export const DEFAULT_PUBLIC_IMAGE_SETTINGS: PublicImageWatermarkSettings = {
+  enabled: false,
+  imageTypes: {
+    animalProfile: true,
+    breedingProgramCover: true,
+    breedingProgramGallery: true,
+    offspringGroupCover: true,
+    serviceListingBanner: false,
+    serviceGallery: false,
+    breederBanner: false,
+    breederLogo: false,
+  },
+  minSizeToWatermark: "medium",
+};
+
 export type WatermarkSettings = {
   enabled: boolean;
   imageWatermark: ImageWatermarkSettings;
   pdfWatermark: PdfWatermarkSettings;
+  publicImages?: PublicImageWatermarkSettings;
 };
 
 export type MediaAccessType = "VIEW" | "DOWNLOAD" | "SHARE";

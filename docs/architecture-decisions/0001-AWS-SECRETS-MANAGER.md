@@ -1,7 +1,7 @@
-# ADR-0001: Use AWS Secrets Manager for Database Credentials
+# ADR-0001: Use AWS Secrets Manager for Application Secrets
 
 **Date**: 2026-02-03
-**Status**: ✅ Accepted (Implemented in Production)
+**Status**: ✅ Accepted (Phase 2 Complete — All Secrets, Multi-Environment)
 **Deciders**: Engineering Team
 **Related**: [AWS Secrets Manager Operations Guide](../operations/AWS-SECRETS-MANAGER.md)
 
@@ -23,16 +23,22 @@ We needed a centralized secret management solution that addresses these concerns
 
 ## Decision
 
-We will use **AWS Secrets Manager** to store production database credentials (DATABASE_URL and DATABASE_DIRECT_URL), starting with production environment only as a proof of concept.
+We will use **AWS Secrets Manager** to store ALL application secrets (database, API keys, JWT secrets, etc.) across all environments.
 
 **Implementation approach**:
-- Store secrets as JSON bundle in single secret (`breederhq/prod`)
-- Fetch secrets at application startup (cached for runtime)
-- Use IAM user with minimal permissions (GetSecretValue only)
-- Keep other secrets in Render env vars for now (incremental migration)
+- Store secrets as JSON bundle with 16 keys per secret
+- Secret naming: `breederhq-api/{environment}` (production, dev, alpha, bravo)
+- Enable via `USE_SECRETS_MANAGER=true` environment variable (any environment)
+- Override secret name with `AWS_SECRET_NAME` env var
+- Fetch secrets at application startup via `getAppSecrets()` (cached for runtime)
+- Two AWS accounts: prod account for production, dev account for dev/alpha/bravo
+- Separate IAM policies per account (prod-only, dev-all)
 - Local development continues using `.env.dev` files
 
-**Cost**: ~$0.45/month for production database credentials
+> **Updated 2026-02-15**: Trigger changed from `NODE_ENV === "production"` to `USE_SECRETS_MANAGER === "true"`.
+> **Updated 2026-02-16**: Phase 2 complete — expanded from 3 keys (DB only) to 16 keys (all secrets). New NeonDB projects (breederhq-production + breederhq-development). Separate IAM policies per AWS account. Function renamed `getDatabaseSecrets` → `getAppSecrets`.
+
+**Cost**: ~$1.80/month for 4 secrets (production, dev, alpha, bravo)
 
 ---
 
@@ -177,15 +183,18 @@ We will use **AWS Secrets Manager** to store production database credentials (DA
 
 ### Rollout Strategy
 
-**Phase 1: Proof of Concept (✅ Complete)**
-- Production database credentials only
-- Manual setup with PowerShell scripts
+**Phase 1: Proof of Concept (✅ Complete — 2026-02-03)**
+- Production database credentials only (3 keys)
+- Single secret in prod AWS account
 - Emergency fallback to env vars
 
-**Phase 2: Expansion (Future)**
-- Add remaining secrets (COOKIE_SECRET, AWS S3 keys, Stripe, Resend)
-- Create dev/sandbox/staging secrets
-- Developer workflow for local access
+**Phase 2: Full Secret Management (✅ Complete — 2026-02-16)**
+- All secrets stored in Secrets Manager (16 keys per environment)
+- Four environments: production, dev, alpha, bravo
+- Two NeonDB projects: breederhq-production, breederhq-development (3 branches)
+- Separate IAM policies: `breederhq-api-prod-secrets-read` (prod account), `breederhq-api-dev-secrets-read` (dev account)
+- Function renamed `getDatabaseSecrets` → `getAppSecrets`
+- SM region separated from S3 region via `AWS_SECRETS_MANAGER_REGION`
 
 **Phase 3: Automation (Future)**
 - Automatic credential rotation
@@ -244,5 +253,13 @@ If AWS Secrets Manager proves problematic:
 
 ---
 
-**ADR Version**: 1.0
-**Next Review**: 2026-05-03 (90 days after implementation)
+**ADR Version**: 2.0
+**Next Review**: 2026-05-16 (90 days after Phase 2)
+
+### Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-03 | Initial decision and implementation |
+| 1.1 | 2026-02-15 | Updated: trigger changed to `USE_SECRETS_MANAGER=true`; default secret name is now `breederhq-api/${NODE_ENV}` |
+| 2.0 | 2026-02-16 | Phase 2 complete: expanded to 16 keys, 4 environments, 2 AWS accounts, separate IAM policies, new NeonDB projects |

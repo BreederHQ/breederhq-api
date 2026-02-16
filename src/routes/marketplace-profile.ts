@@ -480,6 +480,122 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
   });
 
   // --------------------------------------------------------------------------
+  // GET /profile/slug - Get current tenant marketplace URL slug
+  // --------------------------------------------------------------------------
+  app.get("/profile/slug", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.code(400).send({
+        error: "tenant_required",
+        message: "X-Tenant-Id header required for profile endpoints",
+      });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { slug: true },
+    });
+
+    return reply.send({
+      slug: tenant?.slug ?? null,
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // PUT /profile/slug - Update tenant marketplace URL slug
+  // --------------------------------------------------------------------------
+  app.put<{ Body: { slug: string } }>("/profile/slug", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.code(400).send({
+        error: "tenant_required",
+        message: "X-Tenant-Id header required for profile endpoints",
+      });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    if (!isAdminLike(gate.role)) {
+      return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
+    }
+
+    const { slug: rawSlug } = req.body ?? {};
+
+    if (!rawSlug || typeof rawSlug !== "string") {
+      return reply.code(400).send({
+        error: "invalid_slug",
+        message: "Slug is required",
+      });
+    }
+
+    // Normalize slug: lowercase, trim, replace invalid chars
+    const slug = rawSlug
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .substring(0, 50);
+
+    // Validate minimum length
+    if (slug.length < 3) {
+      return reply.code(400).send({
+        error: "invalid_slug",
+        message: "Slug must be at least 3 characters",
+      });
+    }
+
+    // Validate format (alphanumeric and hyphens only)
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+      return reply.code(400).send({
+        error: "invalid_slug",
+        message: "Slug can only contain lowercase letters, numbers, and hyphens",
+      });
+    }
+
+    // Check uniqueness (exclude current tenant)
+    const existing = await prisma.tenant.findFirst({
+      where: {
+        slug,
+        id: { not: tenantId },
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return reply.code(409).send({
+        error: "slug_taken",
+        message: "This URL is already taken by another breeder",
+      });
+    }
+
+    // Update the tenant slug
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { slug },
+    });
+
+    return reply.send({
+      ok: true,
+      slug,
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // POST /profile/sync-programs - Sync breeding programs from profile to database
   // --------------------------------------------------------------------------
   app.post("/profile/sync-programs", async (req, reply) => {

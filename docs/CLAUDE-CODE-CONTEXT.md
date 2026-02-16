@@ -560,11 +560,142 @@ await prisma.contact.findMany({ where: { tenantId } });
 
 ---
 
+## Media Storage & CDN (AWS S3 + CloudFront)
+
+### Architecture
+
+- **Uploads**: S3 presigned PUT URLs (direct browser-to-S3, 15-minute expiry)
+- **Public images**: CloudFront CDN URLs (marketplace images, profile banners, logos)
+- **Private files**: S3 presigned GET URLs (health records, contracts — 1-hour expiry)
+- **S3 bucket**: Private (no public access) — CloudFront accesses via Origin Access Control (OAC)
+
+### Required Environment Variables
+
+```bash
+AWS_ACCESS_KEY_ID=<iam-user-access-key>
+AWS_SECRET_ACCESS_KEY=<iam-user-secret-key>
+AWS_REGION=us-east-1
+S3_BUCKET=breederhq-assets-dev    # or alpha, beta, prod
+CDN_DOMAIN=d15tdn3qa9of1k.cloudfront.net  # environment-specific CloudFront domain
+```
+
+**Per-environment CDN domains:**
+
+| Environment | `S3_BUCKET` | `CDN_DOMAIN` |
+|-------------|-------------|--------------|
+| Dev | `breederhq-assets-dev` | `d15tdn3qa9of1k.cloudfront.net` |
+| Alpha | `breederhq-assets-alpha` | `dty58167apber.cloudfront.net` |
+| Beta | `breederhq-assets-beta` | `d13auit2pzjx4r.cloudfront.net` |
+| Prod | `breederhq-assets-prod` | `d21ngqll2l9ylo.cloudfront.net` |
+
+### Key Services
+
+All media operations go through `src/services/media-storage.ts`:
+
+```typescript
+import {
+  generatePresignedUploadUrl,  // Browser → S3 upload
+  generatePresignedDownloadUrl, // Private file access (time-limited)
+  getPublicCdnUrl,              // Public image access (CloudFront CDN)
+  uploadBuffer,                 // Server-side upload (watermarking, etc.)
+  deleteFile,                   // Remove from S3
+  validateContentType,          // Check allowed MIME types
+  validateFileSize,             // Check size limits
+} from "../services/media-storage.js";
+```
+
+### Public vs Private File Access
+
+```typescript
+// ✅ CORRECT - Public images (marketplace, profiles): use CDN URL
+const cdnUrl = getPublicCdnUrl(media.storageKey);
+// → https://d15tdn3qa9of1k.cloudfront.net/tenants/4/profile/logo/abc.jpg
+
+// ✅ CORRECT - Private files (health records, contracts): use presigned URL
+const { url } = await generatePresignedDownloadUrl(media.storageKey, 3600);
+// → https://breederhq-assets-dev.s3.us-east-1.amazonaws.com/...?X-Amz-Signature=...
+
+// ❌ WRONG - Don't use presigned URLs for public images (slow, expires)
+// ❌ WRONG - Don't use CDN URLs for private files (accessible by anyone)
+```
+
+### Cache-Control Headers (MANDATORY)
+
+**All uploads MUST set `Cache-Control: public, max-age=31536000, immutable`.**
+
+This is already handled by `media-storage.ts` functions, but if you write a new `PutObjectCommand`:
+
+```typescript
+// ✅ CORRECT - Cache-Control set
+new PutObjectCommand({
+  Bucket: bucket,
+  Key: storageKey,
+  Body: buffer,
+  ContentType: contentType,
+  CacheControl: "public, max-age=31536000, immutable", // REQUIRED
+});
+
+// ❌ WRONG - Missing Cache-Control (CDN won't cache properly)
+new PutObjectCommand({
+  Bucket: bucket,
+  Key: storageKey,
+  Body: buffer,
+  ContentType: contentType,
+});
+```
+
+**Why `immutable` is safe:** Every S3 key contains a UUID — when a file is replaced, a new key is generated. Old URLs are never reused.
+
+### Upload Flow (Frontend → S3)
+
+```
+1. Frontend calls POST /api/v1/media/upload-url
+2. API generates presigned PUT URL + storageKey + cdnUrl
+3. Frontend uploads directly to S3 via presigned URL
+4. Frontend calls POST /api/v1/media/:id/confirm
+5. API marks Media record as READY
+```
+
+### File Size Limits
+
+| Type | Max Size |
+|------|----------|
+| Images | 10 MB |
+| Documents | 50 MB |
+
+### Storage Key Patterns
+
+```
+tenants/{tenantId}/animal/{animalId}/photos/{uuid}.jpg
+tenants/{tenantId}/profile/logo/{uuid}.jpg
+tenants/{tenantId}/services/{listingId}/{uuid}.jpg
+providers/{providerId}/listings/{listingId}/{uuid}.jpg
+temp/{ownerType}/{ownerId}/{sessionId}/{uuid}.jpg  (auto-expires 24hrs)
+```
+
+### Self-Check for Media Endpoints
+
+- [ ] Am I using `getPublicCdnUrl()` for public images?
+- [ ] Am I using `generatePresignedDownloadUrl()` for private files?
+- [ ] Does my `PutObjectCommand` include `CacheControl` header?
+- [ ] Am I using `media-storage.ts` helpers (not raw S3 commands)?
+
+**Full infrastructure details:** See `breederhq/docs/operations/infrastructure/AWS-ENVIRONMENT-INVENTORY.md`
+
+---
+
 ## Related Documentation
 
 ### Essential Reading:
 - **Prisma Schema**: `prisma/schema.prisma`
 - **API Endpoint Docs**: `docs/api/` (in breederhq repo)
+- **Media Storage Service**: `src/services/media-storage.ts`
+- **S3 Client Config**: `src/services/s3-client.ts`
+
+### Infrastructure:
+- **AWS Environment Inventory**: `breederhq/docs/operations/infrastructure/AWS-ENVIRONMENT-INVENTORY.md`
+- **S3 Architecture**: `breederhq/docs/operations/infrastructure/S3-PRESIGNED-URL-ARCHITECTURE.md`
+- **Secrets Manager**: `breederhq/docs/operations/infrastructure/AWS-SECRETS-MANAGER.md`
 
 ### Frontend Context:
 - **Frontend patterns**: `breederhq/docs/CLAUDE-CODE-CONTEXT.md`
