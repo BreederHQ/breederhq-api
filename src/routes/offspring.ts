@@ -3009,6 +3009,33 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.send({ ok: true, unlinked: wid });
   });
 
+  /* ===== ATTACHMENTS: LIST ===== */
+  app.get("/offspring/:id/attachments", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const id = Number((req.params as any).id);
+
+    const G = await prisma.offspringGroup.findFirst({ where: { id, tenantId } });
+    if (!G) return reply.code(404).send({ error: "group not found" });
+
+    const attachments = await prisma.attachment.findMany({
+      where: { offspringGroupId: id, tenantId },
+      include: {
+        attachmentParty: {
+          select: { id: true, type: true, name: true },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    reply.send(
+      attachments.map((att: any) => ({
+        ...att,
+        attachmentPartyId: att.attachmentPartyId,
+        partyName: att.attachmentParty?.name ?? null,
+      })),
+    );
+  });
+
   /* ===== ATTACHMENTS: CREATE ===== */
   app.post("/offspring/:id/attachments", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;

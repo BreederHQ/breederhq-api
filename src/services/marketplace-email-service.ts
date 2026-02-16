@@ -182,6 +182,61 @@ If you didn't request this, you can safely ignore this email.
 }
 
 /**
+ * Send a 6-digit email verification code (inline verification flow)
+ */
+export async function sendEmailVerificationCodeEmail(data: {
+  email: string;
+  firstName: string | null;
+  code: string;
+}): Promise<void> {
+  const userName = data.firstName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1f2937;">Your Verification Code</h2>
+      <p>Hi ${userName},</p>
+      <p>Use the code below to verify your email address on ${FROM_NAME}.</p>
+      <div style="text-align: center; margin: 32px 0;">
+        <span style="display: inline-block; font-size: 36px; font-weight: 700; letter-spacing: 8px; padding: 16px 32px; background: #f3f4f6; border-radius: 8px; color: #1f2937;">
+          ${data.code}
+        </span>
+      </div>
+      <p style="color: #6b7280; font-size: 14px;">This code will expire in 10 minutes.</p>
+      <p style="color: #6b7280; font-size: 14px;">If you didn't request this code, you can safely ignore this email.</p>
+      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
+        — The ${FROM_NAME} Team
+      </p>
+    </div>
+  `;
+
+  const text = `
+Your Verification Code
+
+Hi ${userName},
+
+Use the code below to verify your email address on ${FROM_NAME}.
+
+${data.code}
+
+This code will expire in 10 minutes.
+
+If you didn't request this code, you can safely ignore this email.
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: null,
+    to: data.email,
+    subject: `${data.code} is your ${FROM_NAME} verification code`,
+    html,
+    text,
+    templateKey: "marketplace_email_verification_code",
+    category: "transactional",
+  });
+}
+
+/**
  * Send provider welcome email
  */
 export async function sendProviderWelcomeEmail(data: {

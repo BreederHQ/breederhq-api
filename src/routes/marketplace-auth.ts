@@ -25,6 +25,8 @@ import {
   updateLastLogin,
   createEmailVerificationToken,
   verifyEmailToken,
+  createEmailVerificationCode,
+  verifyEmailCode,
   createPasswordResetToken,
   verifyPasswordResetToken,
   resetPassword,
@@ -34,6 +36,7 @@ import {
 import {
   sendMarketplaceWelcomeEmail,
   sendMarketplacePasswordResetEmail,
+  sendEmailVerificationCodeEmail,
 } from "../services/marketplace-email-service.js";
 import {
   setSessionCookies,
@@ -425,6 +428,64 @@ export default async function marketplaceAuthRoutes(
       ok: true,
       message: "Verification email sent. Please check your inbox."
     });
+  });
+
+  /* ───────────────────────── Send Verification Code (6-digit) ───────────────────────── */
+
+  app.post("/send-verification-code", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 3, timeWindow: "5 minutes" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+
+    const user = await findMarketplaceUserById(userId);
+    if (!user) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    if (user.emailVerified) {
+      return reply.code(400).send({
+        error: "already_verified",
+        message: "Your email is already verified.",
+      });
+    }
+
+    // Generate 6-digit code and store hash
+    const code = await createEmailVerificationCode(userId);
+
+    // Send the code by email
+    sendEmailVerificationCodeEmail({
+      email: user.email,
+      firstName: user.firstName,
+      code,
+    }).catch((err) => {
+      req.log?.error?.({ err, email: user.email }, "Failed to send verification code email");
+    });
+
+    return reply.send({ ok: true, message: "Verification code sent to your email." });
+  });
+
+  /* ───────────────────────── Verify Email Code (6-digit) ───────────────────────── */
+
+  app.post("/verify-email-code", {
+    preHandler: requireMarketplaceAuth,
+    config: { rateLimit: { max: 5, timeWindow: "5 minutes" } },
+  }, async (req, reply) => {
+    const userId = req.marketplaceUserId!;
+    const { code = "" } = (req.body || {}) as { code?: string };
+
+    const trimmed = String(code).trim();
+    if (!trimmed || trimmed.length !== 6) {
+      return reply.code(400).send({ error: "invalid_code", message: "Please enter a valid 6-digit code." });
+    }
+
+    const verified = await verifyEmailCode(userId, trimmed);
+
+    if (!verified) {
+      return reply.code(400).send({ error: "invalid_or_expired_code", message: "Invalid or expired code. Please try again." });
+    }
+
+    return reply.send({ ok: true, emailVerified: true });
   });
 
   /* ───────────────────────── Forgot Password ───────────────────────── */

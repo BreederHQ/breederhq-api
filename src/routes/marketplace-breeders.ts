@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { isBlocked } from "../services/marketplace-block.js";
 import { isUserSuspended } from "../services/marketplace-flag.js";
+import { applyBoostRanking } from "../services/listing-boost-service.js";
 
 // ============================================================================
 // Constants
@@ -163,6 +164,7 @@ interface ReviewSummary {
  * Includes both formatted location and raw fields for filtering/display flexibility.
  */
 interface BreederSummary {
+  id: number;
   tenantSlug: string;
   businessName: string;
   // Formatted location string based on publicLocationMode
@@ -734,6 +736,7 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       }
 
       const summary: BreederSummary = {
+        id: tenantId,
         tenantSlug,
         businessName,
         location: buildLocationDisplay(published.address, publicLocationMode),
@@ -781,8 +784,11 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       .slice(offset, offset + limit)
       .map((item) => item.summary);
 
+    // Apply boost ranking (populates MonetizationFields on items with active boosts)
+    const items = await applyBoostRanking(paginatedItems, "BREEDER");
+
     const response: BreedersListResponse = {
-      items: paginatedItems,
+      items,
       total,
     };
 

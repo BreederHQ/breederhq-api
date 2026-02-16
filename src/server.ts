@@ -1353,7 +1353,105 @@ app.register(
     // All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:
     //   1. Valid session cookie (bhq_s)
     //   2. Marketplace entitlement (MARKETPLACE_ACCESS or STAFF membership)
-    // Requests to /api/v1/public/marketplace/* now return 410 Gone.
+    //
+    // EXCEPTION: /marketplace/featured is public — the FeaturedCarousel must render for
+    // unauthenticated visitors on the marketplace homepage (FR-29..FR-35).
+    // This endpoint returns only boost record metadata (no PII, no pricing details).
+
+    // Public featured listings for carousel (no auth required)
+    api.get<{ Querystring: { page?: string } }>("/marketplace/featured", async (req, reply) => {
+      try {
+        const { getFeaturedListings } = await import("./services/listing-boost-service.js");
+        const page = (req.query.page || "all") as string;
+        if (!["all", "animals", "breeders", "services"].includes(page)) {
+          return reply.code(400).send({ error: "invalid_page" });
+        }
+
+        const boosts = await getFeaturedListings(page);
+        if (boosts.length === 0) {
+          return reply.send({ items: [] });
+        }
+
+        // Resolve each boost into a displayable item (same logic as authenticated /featured)
+        const { default: prisma } = await import("./prisma.js");
+        const items: Array<{
+          id: number;
+          listingType: string;
+          title: string;
+          subtitle: string | null;
+          imageUrl: string | null;
+          href: string;
+          priceCents: number | null;
+        }> = [];
+
+        for (const boost of boosts) {
+          try {
+            let item: typeof items[number] | null = null;
+
+            if (boost.listingType === "INDIVIDUAL_ANIMAL") {
+              const listing = await prisma.mktListingIndividualAnimal.findUnique({
+                where: { id: boost.listingId },
+              });
+              if (listing) {
+                item = {
+                  id: listing.id,
+                  listingType: boost.listingType,
+                  title: listing.title || listing.headline || "Animal Listing",
+                  subtitle: null,
+                  imageUrl: listing.coverImageUrl || null,
+                  href: `/listings/${listing.slug}`,
+                  priceCents: listing.priceCents,
+                };
+              }
+            } else if (boost.listingType === "BREEDER") {
+              const tenant = await prisma.tenant.findUnique({
+                where: { id: boost.listingId },
+                select: { id: true, name: true, slug: true, city: true, region: true },
+              });
+              if (tenant) {
+                item = {
+                  id: tenant.id,
+                  listingType: boost.listingType,
+                  title: tenant.name,
+                  subtitle: [tenant.city, tenant.region].filter(Boolean).join(", ") || null,
+                  imageUrl: null,
+                  href: `/breeders/${tenant.slug}`,
+                  priceCents: null,
+                };
+              }
+            } else if (boost.listingType === "ANIMAL_PROGRAM") {
+              const program = await prisma.mktListingAnimalProgram.findUnique({
+                where: { id: boost.listingId },
+                select: { id: true, name: true, slug: true, headline: true, coverImageUrl: true, defaultPriceCents: true },
+              });
+              if (program) {
+                item = {
+                  id: program.id,
+                  listingType: boost.listingType,
+                  title: program.name || "Animal Program",
+                  subtitle: program.headline || null,
+                  imageUrl: program.coverImageUrl || null,
+                  href: `/animal-programs/${program.slug}`,
+                  priceCents: program.defaultPriceCents,
+                };
+              }
+            }
+            // Other listing types can be added as needed
+
+            if (item) items.push(item);
+          } catch {
+            // Skip unresolvable boosts
+          }
+        }
+
+        return reply.send({ items });
+      } catch (err: any) {
+        req.log?.error?.({ err }, "Failed to get public featured listings");
+        return reply.code(500).send({ error: "featured_failed" });
+      }
+    });
+
+    // Remaining marketplace routes return 410 Gone
     const goneResponse = {
       error: "gone",
       message: "Marketplace endpoints require authentication. Use /api/v1/marketplace/*.",
