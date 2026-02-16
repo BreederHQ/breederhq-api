@@ -19,6 +19,7 @@ build/
 .env.test
 .env.test.*
 .env.production.local
+.env.prod
 .env.prod.migrate
 
 # Env templates (commit these)
