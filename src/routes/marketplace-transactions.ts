@@ -31,6 +31,7 @@ import {
   sendCancellationEmail,
 } from "../services/marketplace-email-service.js";
 import prisma from "../prisma.js";
+import { validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 /**
  * Parse paging parameters from query
@@ -125,6 +126,7 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
       const body = req.body as {
         serviceListingId?: number;
         buyerNotes?: string;
+        legalAcceptance?: unknown;
       };
 
       // Validate required fields
@@ -173,6 +175,23 @@ export default async function marketplaceTransactionsRoutes(app: FastifyInstance
           serviceListingId: body.serviceListingId,
           buyerNotes: body.buyerNotes,
         });
+
+        // Record legal acceptance (buyer terms + transaction terms)
+        if (body.legalAcceptance) {
+          try {
+            const payload = validateLegalAcceptancePayload(body.legalAcceptance);
+            writeLegalAcceptance(payload, req, {
+              marketplaceUserId: userId,
+              entityType: "transaction",
+              entityId: Number(transaction.id),
+            }).catch((err) => {
+              console.error("Failed to record legal acceptance for transaction:", err);
+            });
+          } catch (err) {
+            // Log validation failure but don't block the transaction
+            console.error("Invalid legal acceptance payload for transaction:", err);
+          }
+        }
 
         // Send confirmation emails to buyer and provider
         const totalAmount = `$${(Number(transaction.totalCents) / 100).toFixed(2)}`;

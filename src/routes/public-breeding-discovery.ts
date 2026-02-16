@@ -9,6 +9,7 @@ import {
   sendInquiryNotificationToBreeder,
 } from "../services/marketplace-email-service.js";
 import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
+import { validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -217,12 +218,14 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
         });
       }
 
-      const parsed = publicBreedingInquirySchema.safeParse(req.body);
+      const rawBody = req.body as Record<string, unknown>;
+      const parsed = publicBreedingInquirySchema.safeParse(rawBody);
       if (!parsed.success) {
         return reply.code(400).send({ error: "validation_error", details: parsed.error.flatten() });
       }
 
       const data = parsed.data;
+      const legalAcceptance = rawBody.legalAcceptance;
 
       const inquiry = await prisma.$transaction(async (tx) => {
         const created = await tx.breedingInquiry.create({
@@ -251,6 +254,22 @@ const publicBreedingDiscoveryRoutes: FastifyPluginAsync = async (app: FastifyIns
 
         return created;
       });
+
+      // Record legal acceptance (ToS + privacy policy)
+      if (legalAcceptance) {
+        try {
+          const payload = validateLegalAcceptancePayload(legalAcceptance);
+          writeLegalAcceptance(payload, req, {
+            email: data.inquirerEmail,
+            entityType: "breeding_inquiry",
+            entityId: inquiry.id,
+          }).catch((err) => {
+            console.error("Failed to record legal acceptance for breeding inquiry:", err);
+          });
+        } catch (err) {
+          console.error("Invalid legal acceptance payload for breeding inquiry:", err);
+        }
+      }
 
       // Send email notifications (non-blocking)
       const breederEmail = listing.inquiryEmail || listing.tenant?.primaryEmail;

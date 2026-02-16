@@ -18,6 +18,7 @@ import { isUserSuspended } from "../services/marketplace-flag.js";
 import { getStripe } from "../services/stripe-service.js";
 import { sendWaitlistSignupNotificationEmail } from "../services/email-service.js";
 import { sendWaitlistConfirmationToUser } from "../services/marketplace-email-service.js";
+import { validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 // ============================================================================
 // Constants
@@ -46,6 +47,8 @@ interface WaitlistRequestBody {
     pagePath?: string;
     programSlug?: string;
   };
+  // Legal acceptance payload for audit trail
+  legalAcceptance?: unknown;
 }
 
 interface WaitlistRequestResponse {
@@ -345,6 +348,23 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       } catch (e) {
         // Log but don't fail the waitlist request if messaging fails
         console.error("Failed to create message thread for waitlist request:", e);
+      }
+    }
+
+    // 8b) Record legal acceptance (ToS + buyer terms + privacy policy)
+    if (body.legalAcceptance) {
+      try {
+        const payload = validateLegalAcceptancePayload(body.legalAcceptance);
+        writeLegalAcceptance(payload, req, {
+          marketplaceUserId: marketplaceUserId,
+          email: body.email,
+          entityType: "waitlist_entry",
+          entityId: entry.id,
+        }).catch((err) => {
+          console.error("Failed to record legal acceptance for waitlist:", err);
+        });
+      } catch (err) {
+        console.error("Invalid legal acceptance payload for waitlist:", err);
       }
     }
 

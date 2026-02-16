@@ -48,6 +48,7 @@ import {
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { randomBytes } from "node:crypto";
 import { hasAcceptedCurrentProviderTerms } from "../services/marketplace-provider-terms-service.js";
+import { writeLegacyTosAcceptance } from "../services/marketplace-legal-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -81,12 +82,14 @@ export default async function marketplaceAuthRoutes(
       firstName = "",
       lastName = "",
       phone = "",
+      tosAcceptance,
     } = (req.body || {}) as {
       email?: string;
       password?: string;
       firstName?: string;
       lastName?: string;
       phone?: string;
+      tosAcceptance?: { version: string; effectiveDate: string; surface: string; flow: string };
     };
 
     // Validation
@@ -127,6 +130,13 @@ export default async function marketplaceAuthRoutes(
         phone: phone.trim() || undefined,
         userType: "buyer",
       });
+
+      // Record legal acceptance (if provided by frontend)
+      if (tosAcceptance && tosAcceptance.version) {
+        writeLegacyTosAcceptance(tosAcceptance, user.id, req).catch((err) => {
+          req.log?.error?.({ err, userId: user.id }, "Failed to record ToS acceptance for marketplace registration");
+        });
+      }
 
       // Create email verification token
       const { raw } = await createEmailVerificationToken(user.id, user.email);

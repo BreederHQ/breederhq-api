@@ -8439,6 +8439,7 @@ model MarketplaceUser {
   // Relations
   provider                 MarketplaceProvider?
   providerTermsAcceptances MarketplaceProviderTermsAcceptance[] @relation("ProviderTermsAcceptances")
+  legalAcceptances         MarketplaceLegalAcceptance[]          @relation("LegalAcceptances")
   sentMessages             MarketplaceMessage[]
   clientThreads            MarketplaceMessageThread[]           @relation("ClientThreads")
   clientTransactions       MarketplaceTransaction[]             @relation("ClientTransactions")
@@ -8624,6 +8625,53 @@ model MarketplaceProviderTermsAcceptance {
   @@index([version])
   @@index([acceptedAt])
   @@map("provider_terms_acceptance")
+  @@schema("marketplace")
+}
+
+/**
+ * MarketplaceLegalAcceptance - Records legal document acceptance across all
+ * marketplace flows (registration, booking, waitlist, inquiries).
+ * Supports both authenticated (marketplaceUserId) and anonymous (email) users.
+ * Server-side timestamp ensures audit integrity (B-08 compliance).
+ */
+model MarketplaceLegalAcceptance {
+  id Int @id @default(autoincrement())
+
+  /// Authenticated marketplace user (null for anonymous flows like inquiries)
+  marketplaceUserId Int? @map("marketplace_user_id")
+  marketplaceUser   MarketplaceUser? @relation("LegalAcceptances", fields: [marketplaceUserId], references: [id], onDelete: SetNull)
+
+  /// For anonymous flows (inquiry, waitlist) — email of the person accepting
+  email String? @db.VarChar(255)
+
+  /// JSON array of documents accepted: [{ "document": "tos", "version": "1.0" }, ...]
+  documentsAccepted Json @map("documents_accepted")
+
+  /// Server-stamped timestamp for audit integrity
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+
+  /// IP address at time of acceptance (IPv6 compatible)
+  ipAddress String? @map("ip_address") @db.VarChar(45)
+
+  /// User agent string at time of acceptance
+  userAgent String? @map("user_agent") @db.Text
+
+  /// Which app surface the acceptance occurred on
+  surface String @db.VarChar(32) // "marketplace"
+
+  /// Which user flow triggered the acceptance
+  flow String @db.VarChar(64) // "register", "booking", "waitlist", "breeding_inquiry", "service_inquiry"
+
+  /// Optional reference to the entity created by this action
+  entityType String? @map("entity_type") @db.VarChar(32) // "transaction", "waitlist_entry", "breeding_inquiry"
+  entityId   Int?    @map("entity_id")
+
+  @@index([marketplaceUserId])
+  @@index([email])
+  @@index([flow])
+  @@index([entityType, entityId])
+  @@index([acceptedAt])
+  @@map("legal_acceptances")
   @@schema("marketplace")
 }
 
