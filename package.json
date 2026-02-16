@@ -13,7 +13,7 @@
     "dev:stripe": "echo \"ℹ️  Starting with Stripe billing enabled (requires STRIPE_SECRET_KEY in .env.dev)\" && npm run dev",
     "build": "node --max-old-space-size=4096 ./node_modules/typescript/lib/tsc.js -p .",
     "start": "node scripts/development/preflight-env.js && node dist/server.js",
-    "start:render": "npx dbmate --migrations-dir db/migrations migrate && node scripts/development/preflight-env.js && node dist/server.js",
+    "start:render": "node scripts/boot-with-secrets.js",
     "test": "npx dotenv -e .env.dev -- tsx tests/run-tests.ts",
     "test:contracts": "npx dotenv -e .env.dev -- tsx --test tests/party-api-contracts.test.ts",
     "test:regression": "npx dotenv -e .env.dev -- tsx --test tests/party-migration-regression.test.ts",
