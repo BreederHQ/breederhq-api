@@ -634,6 +634,7 @@ import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; 
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
+import listingPaymentsRoutes from "./routes/listing-payments.js"; // Listing payment config (pricing transparency)
 import mktBreedingBookingsRoutes from "./routes/mkt-breeding-bookings.js"; // Breeding Bookings Listings (stud, mare lease, etc.)
 import marketplaceBreedsRoutes from "./routes/marketplace-breeds.js"; // Marketplace breeds search (public, canonical only)
 import notificationsRoutes from "./routes/notifications.js"; // Health & breeding notifications (persistent)
@@ -647,6 +648,7 @@ import { startAnimalAccessCleanupJob, stopAnimalAccessCleanupJob } from "./jobs/
 import { startShareCodeExpirationJob, stopShareCodeExpirationJob } from "./jobs/share-code-expiration.js"; // Share code expiration cron job (hourly)
 import { startAnimalAccessExpirationJob, stopAnimalAccessExpirationJob } from "./jobs/animal-access-expiration.js"; // Animal access expiration cron job (hourly)
 import { startListingBoostExpirationJob, stopListingBoostExpirationJob } from "./jobs/listing-boost-expiration.js"; // Listing boost expiration cron job (hourly)
+import { startServiceListingExpirationJob, stopServiceListingExpirationJob } from "./jobs/expire-service-listings.js"; // Service listing payment expiration cron job (daily)
 import listingBoostRoutes from "./routes/listing-boosts.js"; // Listing boost checkout + CRUD
 import adminBoostRoutes from "./routes/admin-boosts.js"; // Admin boost management
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
@@ -687,6 +689,7 @@ import breedingDataAgreementsRoutes from "./routes/breeding-data-agreements.js";
 
 // Mobile App (JWT auth & push notifications)
 import mobileAuthRoutes from "./routes/mobile-auth.js"; // Mobile login, refresh, logout
+import mobileProviderRoutes from "./routes/mobile-provider.js"; // Mobile provider dashboard, listings, messages
 import devicesRoutes from "./routes/devices.js"; // Device registration for push notifications
 import { initFirebase } from "./services/push.service.js"; // Firebase Cloud Messaging
 
@@ -737,11 +740,13 @@ app.register(
     api.register(marketplaceIdentityVerificationRoutes, { prefix: "/marketplace/identity" }); // /api/v1/marketplace/identity/* (Stripe Identity verification)
     api.register(marketplaceAdminModerationRoutes, { prefix: "/marketplace/admin" }); // /api/v1/marketplace/admin/* (Admin moderation queue)
     api.register(marketplaceBreedsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/breeds/* (Public breeds search)
+    api.register(listingPaymentsRoutes); // /api/v1/service-listing-payment-config (Listing payment pricing config)
     // NOTE: rearingCertificatesRoutes moved to tenant-authenticated section (line ~1021)
     // TODO: Split into separate public/private plugins if /verify endpoint needs to be public
 
     // Mobile App (JWT-based authentication for native mobile clients)
     api.register(mobileAuthRoutes, { prefix: "/auth" }); // /api/v1/auth/mobile-login, /refresh, /mobile-logout
+    api.register(mobileProviderRoutes, { prefix: "/mobile/provider" }); // /api/v1/mobile/provider/* (provider dashboard, listings, messages)
     api.register(devicesRoutes, { prefix: "/devices" }); // /api/v1/devices/* (push notification registration)
 
     // Marketplace routes moved to authenticated subtree for entitlement-gated access
@@ -1417,6 +1422,9 @@ export async function start() {
 
     // Start listing boost expiration cron job (hourly)
     startListingBoostExpirationJob();
+
+    // Start service listing payment expiration cron job (daily)
+    startServiceListingExpirationJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1435,6 +1443,7 @@ process.on("SIGTERM", async () => {
   stopShareCodeExpirationJob();
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
+  stopServiceListingExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1448,6 +1457,7 @@ process.on("SIGINT", async () => {
   stopShareCodeExpirationJob();
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
+  stopServiceListingExpirationJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

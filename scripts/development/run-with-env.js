@@ -465,7 +465,10 @@ async function main() {
   console.log(`Running: ${command} ${commandArgs.join(' ')}\n`);
 
   // Spawn the command with merged environment
-  const child = spawn(command, commandArgs, {
+  // Join command + args into a single string to avoid DEP0190 warning
+  // (Node 24 warns when shell: true is used with a separate args array)
+  const fullCmd = [command, ...commandArgs].join(' ');
+  const child = spawn(fullCmd, {
     stdio: 'inherit',
     shell: true,
     env: mergedEnv,
