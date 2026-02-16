@@ -207,5 +207,46 @@ Before submitting PR:
 
 ---
 
+## PostgreSQL Enum Migrations (CRITICAL - DO NOT BREAK)
+
+**PostgreSQL cannot use a new enum value in the same transaction that added it.**
+
+Prisma's shadow database runs each migration file inside a single transaction. This means `ALTER TYPE ... ADD VALUE 'X'` followed by `UPDATE ... SET col = 'X'` in the same migration **will always fail**.
+
+### FORBIDDEN Pattern
+
+```sql
+-- ❌ WILL FAIL in Prisma migrate (shadow DB runs in one transaction)
+ALTER TYPE "MyEnum" ADD VALUE 'NEW_VAL';
+UPDATE "MyTable" SET "col" = 'NEW_VAL' WHERE "col" = 'OLD_VAL';  -- ERROR: unsafe use of new value
+```
+
+### REQUIRED Pattern (text-conversion approach)
+
+```sql
+-- ✅ CORRECT - works in a single transaction
+-- 1. Create new enum with desired values
+CREATE TYPE "MyEnum_new" AS ENUM ('NEW_VAL', 'OTHER_VAL');
+
+-- 2. Convert column to text
+ALTER TABLE "MyTable" ALTER COLUMN "col" TYPE text USING ("col"::text);
+
+-- 3. Remap old values to new values (safe - it's just text now)
+UPDATE "MyTable" SET "col" = 'NEW_VAL' WHERE "col" = 'OLD_VAL';
+
+-- 4. Cast to new enum
+ALTER TABLE "MyTable" ALTER COLUMN "col" TYPE "MyEnum_new" USING ("col"::"MyEnum_new");
+
+-- 5. Drop old, rename new
+DROP TYPE "MyEnum";
+ALTER TYPE "MyEnum_new" RENAME TO "MyEnum";
+```
+
+### When is ADD VALUE safe?
+
+Only when **no other statement in the migration references the new value** — i.e., you're purely adding a new option with no data migration. Even then, prefer the text-conversion approach for consistency.
+
+---
+
 **Auto-loaded by Claude Code at session start**
 **Last Updated**: 2026-02-15 (Added media storage/CDN patterns, AWS infrastructure references)
