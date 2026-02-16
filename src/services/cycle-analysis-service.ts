@@ -288,11 +288,19 @@ function calculateCycleLengthFromHistory(
     return { days: speciesDefault, source: "BIOLOGY" };
   }
 
-  // Use median to avoid outliers
-  const sortedIntervals = [...intervals].sort((a, b) => a - b);
-  const median = sortedIntervals[Math.floor(sortedIntervals.length / 2)];
+  // Use last 3 intervals (most recent) and weighted average with species default.
+  // This matches the frontend effectiveCycleLen.ts algorithm so both UI
+  // ("Current cycle length") and backend predictions agree.
+  //   n >= 3 → 100% observed
+  //   n == 2 →  67% observed, 33% species default
+  //   n == 1 →  50% observed, 50% species default
+  const recent = intervals.slice(-3);
+  const n = recent.length;
+  const observed = Math.round(recent.reduce((sum, v) => sum + v, 0) / n);
+  const wObs = n >= 3 ? 1 : n === 2 ? 0.67 : 0.50;
+  const weighted = Math.round(observed * wObs + speciesDefault * (1 - wObs));
 
-  return { days: Math.round(median), source: "HISTORY" };
+  return { days: weighted, source: "HISTORY" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -10,11 +10,11 @@
  * All endpoints require tenant context via X-Tenant-Id header.
  *
  * Direct Listing Endpoints:
- *   GET    /direct-listings              - List direct listings
- *   GET    /direct-listings/:id          - Get single direct listing
- *   POST   /direct-listings              - Create/update direct listing
- *   PATCH  /direct-listings/:id/status   - Update listing status
- *   DELETE /direct-listings/:id          - Delete direct listing
+ *   GET    /mkt-listing-individual-animals              - List direct listings
+ *   GET    /mkt-listing-individual-animals/:id          - Get single direct listing
+ *   POST   /mkt-listing-individual-animals              - Create/update direct listing
+ *   PATCH  /mkt-listing-individual-animals/:id/status   - Update listing status
+ *   DELETE /mkt-listing-individual-animals/:id          - Delete direct listing
  *
  * Animal Program Endpoints:
  *   GET    /animal-programs                                              - List animal programs
@@ -29,6 +29,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import { MarketplaceListingStatus, BreedingGuaranteeType } from "@prisma/client";
 import prisma from "../prisma.js";
+import { populateAnimalDataFromConfig } from "../services/animal-listing-data.service.js";
 
 // ============================================================================
 // Helpers
@@ -88,7 +89,7 @@ export default async function marketplaceV2Routes(
   _opts: FastifyPluginOptions
 ) {
   /**
-   * GET /direct-listings - List breeder's direct animal listings
+   * GET /mkt-listing-individual-animals - List breeder's direct animal listings
    */
   app.get<{
     Querystring: {
@@ -97,7 +98,7 @@ export default async function marketplaceV2Routes(
       page?: string;
       limit?: string;
     };
-  }>("/direct-listings", async (req, reply) => {
+  }>("/mkt-listing-individual-animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -151,11 +152,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * GET /direct-listings/:id - Get single direct listing
+   * GET /mkt-listing-individual-animals/:id - Get single direct listing
    */
   app.get<{
     Params: { id: string };
-  }>("/direct-listings/:id", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -194,7 +195,7 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * POST /direct-listings - Create or update direct listing
+   * POST /mkt-listing-individual-animals - Create or update direct listing
    */
   app.post<{
     Body: {
@@ -208,6 +209,7 @@ export default async function marketplaceV2Routes(
       title?: string;
       summary?: string;
       description?: string;
+      coverImageUrl?: string;
       dataDrawerConfig: any;
       listingContent?: any;
       priceModel: string;
@@ -231,7 +233,7 @@ export default async function marketplaceV2Routes(
       healthCertRequired?: boolean;
       requiredTests?: string[];
     };
-  }>("/direct-listings", async (req, reply) => {
+  }>("/mkt-listing-individual-animals", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -346,12 +348,12 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * PATCH /direct-listings/:id/status - Update listing status
+   * PATCH /mkt-listing-individual-animals/:id/status - Update listing status
    */
   app.patch<{
     Params: { id: string };
     Body: { status: string };
-  }>("/direct-listings/:id/status", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/status", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -379,11 +381,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * DELETE /direct-listings/:id - Delete direct listing
+   * DELETE /mkt-listing-individual-animals/:id - Delete direct listing
    */
   app.delete<{
     Params: { id: string };
-  }>("/direct-listings/:id", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -405,11 +407,11 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * GET /direct-listings/:id/availability - Get stud service availability (P1 Sprint)
+   * GET /mkt-listing-individual-animals/:id/availability - Get stud service availability (P1 Sprint)
    */
   app.get<{
     Params: { id: string };
-  }>("/direct-listings/:id/availability", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/availability", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -453,12 +455,12 @@ export default async function marketplaceV2Routes(
   });
 
   /**
-   * POST /direct-listings/:id/book - Book a stud service slot (P1 Sprint)
+   * POST /mkt-listing-individual-animals/:id/book - Book a stud service slot (P1 Sprint)
    * Atomically increments bookingsReceived count
    */
   app.post<{
     Params: { id: string };
-  }>("/direct-listings/:id/book", async (req, reply) => {
+  }>("/mkt-listing-individual-animals/:id/book", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -738,12 +740,17 @@ export default async function marketplaceV2Routes(
     }
 
     try {
-      // Extract fields that need type casting
-      const { defaultGuaranteeType, seasonStart, seasonEnd, ...restFields } = rest;
+      // Extract fields that need type casting or transformation
+      const { defaultGuaranteeType, seasonStart, seasonEnd, published, ...restFields } = rest;
 
       const data = {
         tenantId,
         ...restFields,
+        // Transform 'published' boolean to status/publishedAt fields
+        ...(published !== undefined && {
+          status: published ? "LIVE" : "DRAFT",
+          publishedAt: published ? new Date() : null,
+        }),
         // Cast date strings to Date objects
         ...(seasonStart !== undefined && { seasonStart: seasonStart ? new Date(seasonStart) : null }),
         ...(seasonEnd !== undefined && { seasonEnd: seasonEnd ? new Date(seasonEnd) : null }),
@@ -1489,9 +1496,10 @@ export default async function marketplaceV2Routes(
 
       const privacy = animal.privacySettings || defaultPrivacy;
 
-      // Get trait definition IDs that support history and are networkVisible
+      // Get trait definition IDs that support history (all traits, not just visible)
+      // History is needed for HealthView to render correctly regardless of visibility state
       const historyTraitDefinitionIds = animal.AnimalTraitValue
-        .filter((t) => t.networkVisible === true && t.traitDefinition.supportsHistory)
+        .filter((t) => t.traitDefinition.supportsHistory)
         .map((t) => t.traitDefinitionId);
 
       // Fetch history entries for traits that support it
@@ -1523,22 +1531,25 @@ export default async function marketplaceV2Routes(
         historyByTraitDefId.set(entry.traitDefinitionId, existing);
       }
 
-      // Filter health traits to ones marked as public (networkVisible)
-      // The Health tab "Public" toggle controls networkVisible, not marketplaceVisible
+      // Return ALL health traits with their networkVisible values
+      // This matches how Animals HealthTab works - HealthView needs full data to show toggle states
       const healthTraits = animal.AnimalTraitValue
-        .filter((t) => t.networkVisible === true)
         .map((t) => {
           const traitHistory = historyByTraitDefId.get(t.traitDefinitionId) || [];
           return {
             id: t.id,
+            traitKey: t.traitDefinition.key,
             key: t.traitDefinition.key,
             displayName: t.traitDefinition.displayName,
             category: t.traitDefinition.category,
             valueType: t.traitDefinition.valueType,
+            enumValues: t.traitDefinition.enumValues,
             value: t.valueBoolean ?? t.valueText ?? t.valueNumber ?? t.valueDate ?? t.valueJson,
             status: t.status,
             performedAt: t.performedAt,
             verified: t.verified,
+            networkVisible: t.networkVisible,
+            marketplaceVisible: t.marketplaceVisible,
             supportsHistory: t.traitDefinition.supportsHistory,
             history: t.traitDefinition.supportsHistory ? traitHistory.map((h) => ({
               id: h.id,
@@ -1606,6 +1617,47 @@ export default async function marketplaceV2Routes(
         isPublic: c.isPublic,
       }));
 
+      // Calculate genetics category stats
+      const calculateCategoryStats = (lociArray: any[] | null) => {
+        if (!lociArray || !Array.isArray(lociArray) || lociArray.length === 0) {
+          return null;
+        }
+
+        // Count loci with actual data (allele1, allele2, or genotype populated)
+        const provided = lociArray.filter((locus: any) => {
+          return (
+            (locus.allele1 && locus.allele1.trim()) ||
+            (locus.allele2 && locus.allele2.trim()) ||
+            (locus.genotype && locus.genotype.trim() && locus.genotype !== "?/?")
+          );
+        }).length;
+
+        // Count loci that have data AND are marked as public
+        const publicCount = lociArray.filter((locus: any) => {
+          const hasData =
+            (locus.allele1 && locus.allele1.trim()) ||
+            (locus.allele2 && locus.allele2.trim()) ||
+            (locus.genotype && locus.genotype.trim() && locus.genotype !== "?/?");
+          return hasData && locus.networkVisible === true;
+        }).length;
+
+        return {
+          available: lociArray.length, // Total loci in the array
+          provided, // Loci with actual genetic data
+          public: publicCount, // Loci with data that are marked as public
+        };
+      };
+
+      const categoryStats = animal.genetics
+        ? {
+            coatColor: calculateCategoryStats(animal.genetics.coatColorData as any[] | null),
+            healthGenetics: calculateCategoryStats(animal.genetics.healthGeneticsData as any[] | null),
+            coatType: calculateCategoryStats(animal.genetics.coatTypeData as any[] | null),
+            physicalTraits: calculateCategoryStats(animal.genetics.physicalTraitsData as any[] | null),
+            eyeColor: calculateCategoryStats(animal.genetics.eyeColorData as any[] | null),
+          }
+        : null;
+
       // Build response
       const response = {
         animal: {
@@ -1616,6 +1668,7 @@ export default async function marketplaceV2Routes(
           sex: animal.sex,
           birthDate: animal.birthDate,
           photoUrl: animal.photoUrl,
+          coverImageUrl: animal.coverImageUrl,
         },
         privacySettings: privacy,
         // Registrations
@@ -1640,14 +1693,21 @@ export default async function marketplaceV2Routes(
                 id: animal.genetics.id,
                 testProvider: animal.genetics.testProvider,
                 testDate: animal.genetics.testDate,
+                species: animal.species, // Added for loci lookup
                 breedComposition: animal.genetics.breedComposition,
-                coatColorData: animal.genetics.coatColorData,
-                healthGeneticsData: animal.genetics.healthGeneticsData,
-                coatTypeData: animal.genetics.coatTypeData,
-                physicalTraitsData: animal.genetics.physicalTraitsData,
-                eyeColorData: animal.genetics.eyeColorData,
+                coatColorData: animal.genetics.coatColorData as any[] | null,
+                healthGeneticsData: animal.genetics.healthGeneticsData as any[] | null,
+                coatTypeData: animal.genetics.coatTypeData as any[] | null,
+                physicalTraitsData: animal.genetics.physicalTraitsData as any[] | null,
+                eyeColorData: animal.genetics.eyeColorData as any[] | null,
+                // Frontend expects these but DB doesn't have them yet - return null
+                performanceGeneticsData: null,
+                temperamentGeneticsData: null,
+                breedSpecificMarkersData: null,
                 coi: animal.genetics.coi,
                 predictedAdultWeight: animal.genetics.predictedAdultWeight,
+                // Category statistics for privacy UI
+                categoryStats: categoryStats || {},
               }
             : null,
         },
@@ -2575,6 +2635,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
           animalId: listing.animal?.id,
           animalName: listing.animal?.name,
           animalPhotoUrl: listing.animal?.photoUrl,
+          animalCoverImageUrl: listing.animal?.coverImageUrl || null,
           animalSpecies: listing.animal?.species || null,
           animalBreed: listing.animal?.breed || null,
           animalSex: listing.animal?.sex || null,
@@ -2716,6 +2777,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             locationCity: listing.locationCity,
             locationRegion: listing.locationRegion,
             locationCountry: listing.locationCountry,
+            coverImageUrl: listing.coverImageUrl || null,
             publishedAt: listing.publishedAt,
             viewCount: listing.viewCount,
           },
@@ -2736,6 +2798,7 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
             sex: animal.sex,
             birthDate: privacy?.showFullDob ? animal.birthDate : null,
             photoUrl: privacy?.showPhoto ? animal.photoUrl : null,
+            coverImageUrl: privacy?.showPhoto ? animal.coverImageUrl : null,
           },
           data: {} as any,
         };
@@ -2877,6 +2940,17 @@ function generateTrendData(days: number, totalValue: number): Array<{ date: stri
               offspringCount,
             };
           }
+        }
+
+        // Populate structured animalData using shared service (for ListingDataSections)
+        if (config && animal.id) {
+          response.animalData = await populateAnimalDataFromConfig(
+            animal.id,
+            listing.tenantId,
+            config,
+            privacy
+          );
+          response.dataDrawerConfig = config;
         }
 
         // Update view count (async, don't wait)

@@ -11,7 +11,7 @@
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
-import { stripe } from "./stripe-service.js";
+import { getStripe } from "./stripe-service.js";
 
 // ============================================================================
 // Types
@@ -87,7 +87,7 @@ async function getOrCreateConnectedCustomer(
   metadata?: Record<string, string>
 ): Promise<string> {
   // Check if customer already exists on this connected account
-  const existingCustomers = await stripe.customers.list(
+  const existingCustomers = await getStripe().customers.list(
     {
       email,
       limit: 1,
@@ -102,7 +102,7 @@ async function getOrCreateConnectedCustomer(
   }
 
   // Create new customer on connected account
-  const customer = await stripe.customers.create(
+  const customer = await getStripe().customers.create(
     {
       email,
       name,
@@ -214,7 +214,7 @@ export async function createStripeInvoice(
   );
 
   // Create invoice on provider's Stripe account (NO application_fee_amount)
-  const stripeInvoice = await stripe.invoices.create(
+  const stripeInvoice = await getStripe().invoices.create(
     {
       customer: stripeCustomerId,
       collection_method: "send_invoice",
@@ -234,7 +234,7 @@ export async function createStripeInvoice(
   );
 
   // Add line item
-  await stripe.invoiceItems.create(
+  await getStripe().invoiceItems.create(
     {
       customer: stripeCustomerId,
       invoice: stripeInvoice.id,
@@ -389,7 +389,7 @@ export async function sendInvoice(
   }
 
   // Finalize and send the invoice via Stripe
-  const stripeInvoice = await stripe.invoices.sendInvoice(
+  const stripeInvoice = await getStripe().invoices.sendInvoice(
     invoice.stripeInvoiceId,
     {
       stripeAccount: invoice.provider.stripeConnectAccountId,
@@ -485,7 +485,7 @@ export async function voidInvoice(
   }
 
   // Void the invoice in Stripe
-  await stripe.invoices.voidInvoice(invoice.stripeInvoiceId, {
+  await getStripe().invoices.voidInvoice(invoice.stripeInvoiceId, {
     stripeAccount: invoice.provider.stripeConnectAccountId,
   });
 
@@ -637,7 +637,7 @@ export async function getInvoicePdfUrl(
   }
 
   // Get fresh invoice data from Stripe
-  const stripeInvoice = await stripe.invoices.retrieve(
+  const stripeInvoice = await getStripe().invoices.retrieve(
     invoice.stripeInvoiceId,
     {
       stripeAccount: invoice.provider.stripeConnectAccountId,

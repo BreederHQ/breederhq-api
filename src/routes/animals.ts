@@ -180,8 +180,8 @@ function extractCycleStartDates(rec: any): string[] {
 
 function parseSort(sortParam?: string) {
   // allow: "createdAt", "-createdAt", "name", "-name", "updatedAt", "birthDate"
-  const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate"]);
-  if (!sortParam) return [{ createdAt: "desc" } as const];
+  const allowed = new Set(["createdAt", "updatedAt", "name", "birthDate", "species"]);
+  if (!sortParam) return [{ species: "asc" as const }, { name: "asc" as const }];
   const parts = String(sortParam).split(",").map(s => s.trim()).filter(Boolean);
   const orderBy: any[] = [];
   for (const p of parts) {
@@ -189,7 +189,7 @@ function parseSort(sortParam?: string) {
     const key = p.replace(/^-/, "");
     if (allowed.has(key)) orderBy.push({ [key]: desc ? "desc" : "asc" });
   }
-  return orderBy.length ? orderBy : [{ createdAt: "desc" }];
+  return orderBy.length ? orderBy : [{ species: "asc" }, { name: "asc" }];
 }
 
 
@@ -324,7 +324,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       includeArchived = "",
       page = "1",
       limit = "25",
-      sort = "-createdAt",
+      sort = "",
     } = (req.query || {}) as {
       q?: string;
       species?: Species | "";
@@ -402,6 +402,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           femaleCycleLenOverrideDays: true,
           // Title display fields
           titlePrefix: true,
@@ -488,6 +489,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         createdAt: true,
         updatedAt: true,
         photoUrl: true,
+          coverImageUrl: true,
         reproductiveCycles: {
           select: { cycleStart: true },
         },
@@ -559,6 +561,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archived: true,
         createdAt: true,
         updatedAt: true,
+        photoUrl: true,
+          coverImageUrl: true,
         femaleCycleLenOverrideDays: true,
         // Parent IDs for pedigree
         sireId: true,
@@ -572,6 +576,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         forSale: true,
         inSyndication: true,
         isLeased: true,
+        // Livestock identification fields (sheep, goat, cattle, pig)
+        earTagNumber: true,
+        earTagRfidNumber: true,
+        tattooNumber: true,
+        brandMark: true,
+        scrapieTagNumber: true,
         // Marketplace program participants (conditional)
         ...(wantProgramParticipants && {
           programParticipants: {
@@ -646,6 +656,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       organizationId: number | null;
       photoUrl: string | null;
+      coverImageUrl: string | null;
       // Lineage fields
       damId: number | null;
       sireId: number | null;
@@ -656,7 +667,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const name = String(b.name || "").trim();
     if (!name) return reply.code(400).send({ error: "name_required" });
-    if (!b.species || !["DOG", "CAT", "HORSE"].includes(b.species)) {
+    const validSpecies = ["DOG", "CAT", "HORSE", "SHEEP", "GOAT", "CATTLE", "PIG", "RABBIT"];
+    if (!b.species || !validSpecies.includes(b.species)) {
       return reply.code(400).send({ error: "species_required" });
     }
     if (!b.sex || !["FEMALE", "MALE"].includes(b.sex)) {
@@ -712,10 +724,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.notes = b.notes.trim() || null;
     }
 
-    // NEW: normalise photoUrl in create
+    // normalise photoUrl / coverImageUrl in create
     if (typeof b.photoUrl === "string") {
       const u = b.photoUrl.trim();
       data.photoUrl = u || null;
+    }
+    if (typeof b.coverImageUrl === "string") {
+      const u = b.coverImageUrl.trim();
+      data.coverImageUrl = u || null;
     }
 
     if (typeof b.breed === "string") {
@@ -776,6 +792,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           // Lineage
           damId: true,
           sireId: true,
@@ -850,6 +867,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       customBreedId: number | null;
       archived: boolean;
       photoUrl: string | null;
+      coverImageUrl: string | null;
       femaleCycleLenOverrideDays: number | null;
       // Valuation fields
       intendedUse: string | null;
@@ -860,6 +878,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       forSale: boolean;
       inSyndication: boolean;
       isLeased: boolean;
+      // Livestock identification fields
+      earTagNumber: string | null;
+      earTagRfidNumber: string | null;
+      tattooNumber: string | null;
+      brandMark: string | null;
+      scrapieTagNumber: string | null;
     }>;
 
 
@@ -900,6 +924,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.notes !== undefined) data.notes = b.notes;
     if (b.breed !== undefined) data.breed = b.breed;
     if (b.photoUrl !== undefined) data.photoUrl = b.photoUrl;
+    if (b.coverImageUrl !== undefined) data.coverImageUrl = b.coverImageUrl;
     if (b.canonicalBreedId !== undefined) data.canonicalBreedId = b.canonicalBreedId;
     if (b.customBreedId !== undefined) data.customBreedId = b.customBreedId;
     if (b.archived !== undefined) data.archived = !!b.archived;
@@ -983,6 +1008,13 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.inSyndication !== undefined) data.inSyndication = !!b.inSyndication;
     if (b.isLeased !== undefined) data.isLeased = !!b.isLeased;
 
+    // Livestock identification fields
+    if (b.earTagNumber !== undefined) data.earTagNumber = b.earTagNumber;
+    if (b.earTagRfidNumber !== undefined) data.earTagRfidNumber = b.earTagRfidNumber;
+    if (b.tattooNumber !== undefined) data.tattooNumber = b.tattooNumber;
+    if (b.brandMark !== undefined) data.brandMark = b.brandMark;
+    if (b.scrapieTagNumber !== undefined) data.scrapieTagNumber = b.scrapieTagNumber;
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -1006,6 +1038,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: true,
           updatedAt: true,
           photoUrl: true,
+          coverImageUrl: true,
           femaleCycleLenOverrideDays: true,
           // Valuation fields
           intendedUse: true,
@@ -1016,6 +1049,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           forSale: true,
           inSyndication: true,
           isLeased: true,
+          // Livestock identification fields
+          earTagNumber: true,
+          earTagRfidNumber: true,
+          tattooNumber: true,
+          brandMark: true,
+          scrapieTagNumber: true,
         },
       });
       reply.send(updated);
@@ -1160,23 +1199,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { photoUrl: true },
     });
 
-    // Clean up old S3 photo if it was an S3 URL (not legacy local path)
+    // Send response immediately — don't block on old file cleanup
+    reply.send({ photoUrl: updated.photoUrl, storageKey });
+
+    // Fire-and-forget: clean up old S3 photo after response is sent
     if (oldAnimal?.photoUrl?.includes("tenants/") || oldAnimal?.photoUrl?.includes("s3.")) {
       try {
-        // Extract storage key from CDN URL
         const urlParts = oldAnimal.photoUrl.split("/");
         const keyIndex = urlParts.findIndex(p => p === "tenants");
         if (keyIndex >= 0) {
           const oldKey = urlParts.slice(keyIndex).join("/");
-          await deleteFile(oldKey);
+          deleteFile(oldKey).catch((e) => {
+            req.log.warn({ error: e, oldUrl: oldAnimal.photoUrl }, "Failed to delete old photo");
+          });
         }
       } catch (e) {
-        // Ignore delete failures for old photos
         req.log.warn({ error: e, oldUrl: oldAnimal.photoUrl }, "Failed to delete old photo");
       }
     }
-
-    reply.send({ photoUrl: updated.photoUrl, storageKey });
   });
 
     // DELETE /animals/:id/photo
@@ -1213,6 +1253,123 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id },
       data: { photoUrl: null },
       select: { photoUrl: true },
+    });
+
+    reply.send(updated);
+  });
+
+  // POST /animals/:id/cover
+  // Uploads animal cover/banner photo to S3
+  // Unlike the avatar photo, the cover is NOT resized server-side —
+  // the frontend crops to the correct dimensions (800x450 or 800x600)
+  app.post("/animals/:id/cover", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const mpReq = req as any;
+    const file = await mpReq.file();
+    if (!file) return reply.code(400).send({ error: "file_required" });
+
+    const buf = await file.toBuffer();
+
+    if (buf.length > MAX_PHOTO_SIZE) {
+      return reply.code(400).send({
+        error: "file_too_large",
+        message: "Cover photo must be less than 10MB",
+      });
+    }
+
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return reply.code(400).send({
+        error: "invalid_content_type",
+        message: "Cover photo must be JPEG, PNG, or WebP format",
+      });
+    }
+
+    // No resize — frontend already cropped to correct dimensions
+    const { storageKey, cdnUrl } = await uploadBuffer(
+      {
+        ownerType: "tenant",
+        ownerId: tenantId,
+        purpose: "animal",
+        resourceId: String(id),
+        subPath: "covers",
+      },
+      "cover.jpg",
+      buf,
+      "image/jpeg"
+    );
+
+    // Clean up old cover from S3
+    const oldAnimal = await prisma.animal.findUnique({
+      where: { id },
+      select: { coverImageUrl: true },
+    });
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { coverImageUrl: cdnUrl },
+      select: { coverImageUrl: true },
+    });
+
+    // Send response immediately — don't block on old file cleanup
+    reply.send({ coverImageUrl: updated.coverImageUrl, storageKey });
+
+    // Fire-and-forget: clean up old cover from S3 after response is sent
+    if (oldAnimal?.coverImageUrl?.includes("tenants/") || oldAnimal?.coverImageUrl?.includes("s3.")) {
+      try {
+        const urlParts = oldAnimal.coverImageUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const oldKey = urlParts.slice(keyIndex).join("/");
+          deleteFile(oldKey).catch((e) => {
+            req.log.warn({ error: e, oldUrl: oldAnimal.coverImageUrl }, "Failed to delete old cover");
+          });
+        }
+      } catch (e) {
+        req.log.warn({ error: e, oldUrl: oldAnimal.coverImageUrl }, "Failed to delete old cover");
+      }
+    }
+  });
+
+  // DELETE /animals/:id/cover
+  app.delete("/animals/:id/cover", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const id = parseIntStrict((req.params as { id: string }).id);
+    if (!id) return reply.code(400).send({ error: "id_invalid" });
+
+    await assertAnimalInTenant(id, tenantId);
+
+    const animal = await prisma.animal.findUnique({
+      where: { id },
+      select: { coverImageUrl: true },
+    });
+
+    if (animal?.coverImageUrl?.includes("tenants/") || animal?.coverImageUrl?.includes("s3.")) {
+      try {
+        const urlParts = animal.coverImageUrl.split("/");
+        const keyIndex = urlParts.findIndex(p => p === "tenants");
+        if (keyIndex >= 0) {
+          const storageKey = urlParts.slice(keyIndex).join("/");
+          await deleteFile(storageKey);
+        }
+      } catch (e) {
+        req.log.warn({ error: e, coverImageUrl: animal.coverImageUrl }, "Failed to delete cover from S3");
+      }
+    }
+
+    const updated = await prisma.animal.update({
+      where: { id },
+      data: { coverImageUrl: null },
+      select: { coverImageUrl: true },
     });
 
     reply.send(updated);
@@ -2287,8 +2444,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         healthGeneticsData: true,
         coatTypeData: true,
         physicalTraitsData: true,
+        performanceData: true,
+        temperamentData: true,
         eyeColorData: true,
         otherTraitsData: true,
+        breedComposition: true,
+        coi: true,
+        mhcDiversity: true,
+        lineage: true,
+        predictedAdultWeight: true,
+        lifeStage: true,
       },
     });
 
@@ -2301,8 +2466,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         health: [],
         coatType: [],
         physicalTraits: [],
+        performance: [],
+        temperament: [],
         eyeColor: [],
         otherTraits: [],
+        breedComposition: [],
       });
     }
 
@@ -2314,8 +2482,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       health: genetics.healthGeneticsData || [],
       coatType: genetics.coatTypeData || [],
       physicalTraits: genetics.physicalTraitsData || [],
+      performance: genetics.performanceData || [],
+      temperament: genetics.temperamentData || [],
       eyeColor: genetics.eyeColorData || [],
       otherTraits: genetics.otherTraitsData || [],
+      breedComposition: genetics.breedComposition || [],
+      coi: genetics.coi || null,
+      mhcDiversity: genetics.mhcDiversity || null,
+      lineage: genetics.lineage || null,
+      predictedAdultWeight: genetics.predictedAdultWeight || null,
+      lifeStage: genetics.lifeStage || null,
     });
   });
 
@@ -2327,18 +2503,48 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(animalId, tenantId);
 
+    // Get animal species for code normalization
+    const animal = await prisma.animal.findUnique({
+      where: { id: animalId },
+      select: { species: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
     const body = req.body as any;
+
+    // Import normalizer
+    const { normalizeGeneticData } = await import("../utils/genetics-code-normalizer.js");
+
+    // Normalize genetic data to ensure consistent locus codes
+    const normalizedBody = normalizeGeneticData({
+      coatColor: body.coatColorData || body.coatColor || [],
+      coatType: body.coatTypeData || body.coatType || [],
+      physicalTraits: body.physicalTraitsData || body.physicalTraits || [],
+      performance: body.performanceData || body.performance || [],
+      temperament: body.temperamentData || body.temperament || [],
+      eyeColor: body.eyeColorData || body.eyeColor || [],
+      health: body.healthGeneticsData || body.health || [],
+      otherTraits: body.otherTraitsData || body.otherTraits || [],
+    }, animal.species || 'DOG');
 
     const data = {
       testProvider: body.testProvider || null,
       testDate: body.testDate ? new Date(body.testDate) : null,
       testId: body.testId || null,
-      coatColorData: body.coatColor || [],
-      healthGeneticsData: body.health || [],
-      coatTypeData: body.coatType || [],
-      physicalTraitsData: body.physicalTraits || [],
-      eyeColorData: body.eyeColor || [],
-      otherTraitsData: body.otherTraits || [],
+      coatColorData: normalizedBody.coatColor,
+      healthGeneticsData: normalizedBody.health,
+      coatTypeData: normalizedBody.coatType,
+      physicalTraitsData: normalizedBody.physicalTraits,
+      performanceData: normalizedBody.performance,
+      temperamentData: normalizedBody.temperament,
+      eyeColorData: normalizedBody.eyeColor,
+      otherTraitsData: normalizedBody.otherTraits,
+      breedComposition: body.breedComposition || [],
+      coi: body.coi || null,
+      mhcDiversity: body.mhcDiversity || null,
+      lineage: body.lineage || null,
+      predictedAdultWeight: body.predictedAdultWeight || null,
+      lifeStage: body.lifeStage || null,
     };
 
     const genetics = await prisma.animalGenetics.upsert({
@@ -2350,6 +2556,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       update: data,
     });
 
+    // Note: animal_loci table is automatically synced via database trigger
+    // No manual sync needed - database handles it on INSERT/UPDATE
+
     reply.send({
       testProvider: genetics.testProvider,
       testDate: genetics.testDate,
@@ -2358,8 +2567,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       health: genetics.healthGeneticsData || [],
       coatType: genetics.coatTypeData || [],
       physicalTraits: genetics.physicalTraitsData || [],
+      performance: genetics.performanceData || [],
+      temperament: genetics.temperamentData || [],
       eyeColor: genetics.eyeColorData || [],
       otherTraits: genetics.otherTraitsData || [],
+      breedComposition: genetics.breedComposition || [],
+      coi: genetics.coi || null,
+      mhcDiversity: genetics.mhcDiversity || null,
+      lineage: genetics.lineage || null,
+      predictedAdultWeight: genetics.predictedAdultWeight || null,
+      lifeStage: genetics.lifeStage || null,
     });
   });
 
@@ -2815,6 +3032,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const dbFormat = toDatabaseFormat(parseResult.genetics);
 
+    // Get animal species for code normalization
+    const animal = await prisma.animal.findUnique({
+      where: { id: animalId },
+      select: { species: true },
+    });
+    if (!animal) return reply.code(404).send({ error: "animal_not_found" });
+
+    // Normalize imported genetic data to ensure consistent locus codes
+    const { normalizeGeneticData } = await import("../utils/genetics-code-normalizer.js");
+    const normalizedDbFormat = normalizeGeneticData({
+      coatColor: dbFormat.coatColorData || [],
+      coatType: dbFormat.coatTypeData || [],
+      physicalTraits: dbFormat.physicalTraitsData || [],
+      eyeColor: dbFormat.eyeColorData || [],
+      health: dbFormat.healthGeneticsData || [],
+      otherTraits: dbFormat.otherTraitsData || [],
+    }, animal.species || 'DOG');
+
     // Get existing genetics if merge strategy
     let existingGenetics = null;
     if (mergeStrategy === "merge") {
@@ -2841,8 +3076,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       testProvider: provider.name,
       testDate: body.testDate ? new Date(body.testDate) : new Date(),
       testId: body.testId || null,
-      coatColorData: mergeArrays(existingGenetics?.coatColorData as any, dbFormat.coatColorData),
-      healthGeneticsData: mergeArrays(existingGenetics?.healthGeneticsData as any, dbFormat.healthGeneticsData),
+      coatColorData: mergeArrays(existingGenetics?.coatColorData as any, normalizedDbFormat.coatColor),
+      healthGeneticsData: mergeArrays(existingGenetics?.healthGeneticsData as any, normalizedDbFormat.health),
       coatTypeData: mergeArrays(existingGenetics?.coatTypeData as any, dbFormat.coatTypeData),
       physicalTraitsData: mergeArrays(existingGenetics?.physicalTraitsData as any, dbFormat.physicalTraitsData),
       eyeColorData: mergeArrays(existingGenetics?.eyeColorData as any, dbFormat.eyeColorData),
@@ -2857,6 +3092,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
       update: data,
     });
+
+    // Note: animal_loci table is automatically synced via database trigger
+    // No manual sync needed - database handles it on INSERT/UPDATE
 
     reply.send({
       success: true,
@@ -3196,6 +3434,322 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  /**
+   * GET /animals/export/nsip
+   * Export sheep data in Pedigree Master-compatible format for NSIP submission
+   * Query params:
+   *   - birthDateFrom: ISO date string (filter offspring born after this date)
+   *   - birthDateTo: ISO date string (filter offspring born before this date)
+   *   - includeWeights: boolean (include birth/weaning/post-weaning weights)
+   *   - includeParentage: boolean (include sire/dam registration numbers)
+   */
+  app.get("/animals/export/nsip", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const q = req.query as {
+      birthDateFrom?: string;
+      birthDateTo?: string;
+      includeWeights?: string;
+      includeParentage?: string;
+    };
+
+    try {
+      const includeWeights = q.includeWeights !== "false";
+      const includeParentage = q.includeParentage !== "false";
+
+      // Build date filters
+      const dateFilters: { gte?: Date; lte?: Date } = {};
+      if (q.birthDateFrom) {
+        dateFilters.gte = new Date(q.birthDateFrom);
+      }
+      if (q.birthDateTo) {
+        dateFilters.lte = new Date(q.birthDateTo);
+      }
+
+      // Fetch sheep offspring with related data
+      const offspring = await prisma.offspring.findMany({
+        where: {
+          tenantId,
+          group: {
+            species: "SHEEP",
+          },
+          bornAt: Object.keys(dateFilters).length > 0 ? dateFilters : undefined,
+        },
+        include: {
+          group: {
+            select: {
+              species: true,
+            },
+          },
+          promotedAnimal: {
+            select: {
+              id: true,
+              name: true,
+              sex: true,
+              breed: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
+              registryIds: {
+                select: {
+                  identifier: true,
+                  registry: {
+                    select: { name: true },
+                  },
+                },
+              },
+              scrapieTagNumber: true,
+            },
+          },
+          NeonatalCareEntries: includeWeights
+            ? {
+                select: {
+                  weightOz: true,
+                  recordedAt: true,
+                },
+                orderBy: { recordedAt: "asc" },
+              }
+            : undefined,
+        },
+        orderBy: { bornAt: "asc" },
+      });
+
+      if (offspring.length === 0) {
+        return reply.code(404).send({
+          error: "no_data",
+          message: "No sheep offspring found for the specified date range",
+        });
+      }
+
+      // Helper to get primary registration number
+      const getRegistrationNumber = (registryIds: Array<{ identifier: string; registry: { name: string } }>) => {
+        // Prefer NSIP or ASI registry, then first available
+        const nsipReg = registryIds.find((r) => r.registry.name.toLowerCase().includes("nsip"));
+        if (nsipReg) return nsipReg.identifier;
+
+        const asiReg = registryIds.find((r) => r.registry.name.toLowerCase().includes("asi"));
+        if (asiReg) return asiReg.identifier;
+
+        return registryIds[0]?.identifier || "";
+      };
+
+      // Helper to get weaning weight (weight at 60-90 days)
+      const getWeaningWeight = (
+        birthDate: Date,
+        entries: Array<{ weightOz: any; recordedAt: Date }>
+      ): number | null => {
+        const targetDays = [90, 75, 60]; // Prefer 90-day, then 75, then 60
+        for (const days of targetDays) {
+          const targetDate = new Date(birthDate);
+          targetDate.setDate(targetDate.getDate() + days);
+
+          // Find entry closest to target date (within 7 days)
+          const closest = entries.find((e) => {
+            const entryDate = new Date(e.recordedAt);
+            const diffDays = Math.abs((entryDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
+            return diffDays <= 7;
+          });
+
+          if (closest && closest.weightOz) {
+            // Convert oz to lbs
+            return Number(closest.weightOz) / 16;
+          }
+        }
+        return null;
+      };
+
+      // Helper to get post-weaning weight (weight at 120+ days)
+      const getPostWeaningWeight = (
+        birthDate: Date,
+        entries: Array<{ weightOz: any; recordedAt: Date }>
+      ): number | null => {
+        const targetDate = new Date(birthDate);
+        targetDate.setDate(targetDate.getDate() + 120);
+
+        // Find entry closest to 120 days or later
+        const postWeaningEntries = entries.filter((e) => {
+          const entryDate = new Date(e.recordedAt);
+          return entryDate >= targetDate;
+        });
+
+        if (postWeaningEntries.length > 0 && postWeaningEntries[0].weightOz) {
+          return Number(postWeaningEntries[0].weightOz) / 16;
+        }
+        return null;
+      };
+
+      // Count siblings for birth type
+      const siblingCounts = new Map<number, number>();
+      for (const o of offspring) {
+        const damId = o.damId;
+        const birthDateStr = o.bornAt?.toISOString().split("T")[0];
+        const key = `${damId}-${birthDateStr}`;
+        siblingCounts.set(o.id, (siblingCounts.get(o.id) || 0) + 1);
+      }
+
+      // Group by dam+birth date for sibling count
+      const damBirthGroups = new Map<string, number[]>();
+      for (const o of offspring) {
+        const key = `${o.damId}-${o.bornAt?.toISOString().split("T")[0]}`;
+        if (!damBirthGroups.has(key)) {
+          damBirthGroups.set(key, []);
+        }
+        damBirthGroups.get(key)!.push(o.id);
+      }
+
+      // Build tab-delimited rows (Pedigree Master format)
+      const rows: string[][] = [];
+
+      // Header row
+      const headers = [
+        "Animal_ID",
+        "Birth_Date",
+        "Sex",
+        "Breed",
+        "Birth_Type",
+        "Rear_Type",
+      ];
+
+      if (includeWeights) {
+        headers.push("Birth_Wt_Lb", "Wean_Wt_Lb", "Post_Wean_Wt_Lb");
+      }
+
+      if (includeParentage) {
+        headers.push("Sire_ID", "Dam_ID");
+      }
+
+      rows.push(headers);
+
+      // Data rows
+      for (const o of offspring) {
+        const animal = o.promotedAnimal;
+        const dam = o.dam;
+        const sire = o.sire;
+
+        // Determine animal ID (prefer scrapie tag, then registration, then internal ID)
+        // If offspring is promoted to Animal, use animal data; otherwise use offspring data
+        const animalId =
+          animal?.scrapieTagNumber ||
+          (animal?.registryIds ? getRegistrationNumber(animal.registryIds as any) : "") ||
+          o.name ||
+          String(animal?.id || o.id);
+
+        // Birth date
+        const birthDate = o.bornAt ? new Date(o.bornAt).toISOString().split("T")[0] : "";
+
+        // Sex (M/F for Pedigree Master) - use offspring sex if no promoted animal
+        const sex = (animal?.sex || o.sex) === "MALE" ? "M" : (animal?.sex || o.sex) === "FEMALE" ? "F" : "";
+
+        // Breed - use offspring breed if no promoted animal
+        const breed = animal?.breed || o.breed || "";
+
+        // Birth type (1=single, 2=twin, 3=triplet, etc.)
+        const damBirthKey = `${o.damId}-${o.bornAt?.toISOString().split("T")[0]}`;
+        const siblingCount = damBirthGroups.get(damBirthKey)?.length || 1;
+        const birthType = String(siblingCount);
+
+        // Rear type (assume same as birth type unless orphaned)
+        const rearType = birthType;
+
+        const row = [animalId, birthDate, sex, breed, birthType, rearType];
+
+        if (includeWeights) {
+          // Birth weight (convert oz to lbs if stored in oz)
+          let birthWt = "";
+          if (o.birthWeight) {
+            birthWt = o.birthWeight.toFixed(1);
+          } else if (o.birthWeightOz) {
+            birthWt = (Number(o.birthWeightOz) / 16).toFixed(1);
+          }
+
+          // Weaning weight
+          let weanWt = "";
+          if (o.bornAt && o.NeonatalCareEntries && o.NeonatalCareEntries.length > 0) {
+            const ww = getWeaningWeight(new Date(o.bornAt), o.NeonatalCareEntries as any);
+            if (ww !== null) {
+              weanWt = ww.toFixed(1);
+            }
+          }
+
+          // Post-weaning weight
+          let postWeanWt = "";
+          if (o.bornAt && o.NeonatalCareEntries && o.NeonatalCareEntries.length > 0) {
+            const pww = getPostWeaningWeight(new Date(o.bornAt), o.NeonatalCareEntries as any);
+            if (pww !== null) {
+              postWeanWt = pww.toFixed(1);
+            }
+          }
+
+          row.push(birthWt, weanWt, postWeanWt);
+        }
+
+        if (includeParentage) {
+          // Sire ID
+          const sireId =
+            sire?.scrapieTagNumber ||
+            (sire?.registryIds ? getRegistrationNumber(sire.registryIds as any) : "") ||
+            String(sire?.id || "");
+
+          // Dam ID
+          const damId =
+            dam?.scrapieTagNumber ||
+            (dam?.registryIds ? getRegistrationNumber(dam.registryIds as any) : "") ||
+            String(dam?.id || "");
+
+          row.push(sireId, damId);
+        }
+
+        rows.push(row);
+      }
+
+      // Generate tab-delimited content (Pedigree Master format)
+      const content = rows.map((row) => row.join("\t")).join("\n");
+
+      // Generate filename with date
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `nsip-export-${today}.txt`;
+
+      reply
+        .header("Content-Type", "text/tab-separated-values")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(content);
+    } catch (error) {
+      console.error("NSIP export error:", error);
+      return reply.code(500).send({
+        error: "export_failed",
+        message: (error as Error).message,
+      });
+    }
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // Lineage / Pedigree endpoints
   // ──────────────────────────────────────────────────────────────────────────
@@ -3423,6 +3977,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             species: true,
             breed: true,
             photoUrl: true,
+          coverImageUrl: true,
             birthDate: true,
           },
         },
@@ -3433,6 +3988,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             species: true,
             breed: true,
             photoUrl: true,
+          coverImageUrl: true,
             birthDate: true,
           },
         },
@@ -3537,6 +4093,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         enableGeneticsSharing: false,
         enableDocumentSharing: false,
         enableMediaSharing: false,
+        vaccinationVisibility: {},
         showBreedingHistory: false,
         showTitles: true,
         showTitleDetails: false,
@@ -3583,6 +4140,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       enableGeneticsSharing: boolean;
       enableDocumentSharing: boolean;
       enableMediaSharing: boolean;
+      // Per-protocol vaccination visibility (e.g., { "dog.rabies": true })
+      vaccinationVisibility: Record<string, boolean>;
       // Breeding
       showBreedingHistory: boolean;
       // Achievements
@@ -3610,6 +4169,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         enableGeneticsSharing: body.enableGeneticsSharing ?? false,
         enableDocumentSharing: body.enableDocumentSharing ?? false,
         enableMediaSharing: body.enableMediaSharing ?? false,
+        vaccinationVisibility: body.vaccinationVisibility ?? {},
         showBreedingHistory: body.showBreedingHistory ?? false,
         showTitles: body.showTitles ?? true,
         showTitleDetails: body.showTitleDetails ?? false,
@@ -3629,6 +4189,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ...(body.enableGeneticsSharing !== undefined && { enableGeneticsSharing: body.enableGeneticsSharing }),
         ...(body.enableDocumentSharing !== undefined && { enableDocumentSharing: body.enableDocumentSharing }),
         ...(body.enableMediaSharing !== undefined && { enableMediaSharing: body.enableMediaSharing }),
+        ...(body.vaccinationVisibility !== undefined && { vaccinationVisibility: body.vaccinationVisibility }),
         ...(body.showBreedingHistory !== undefined && { showBreedingHistory: body.showBreedingHistory }),
         ...(body.showTitles !== undefined && { showTitles: body.showTitles }),
         ...(body.showTitleDetails !== undefined && { showTitleDetails: body.showTitleDetails }),
@@ -4431,6 +4992,7 @@ async function buildGlobalPedigreeForApi(
               tenantId: true,
               name: true,
               photoUrl: true,
+          coverImageUrl: true,
               breed: true,
             },
           },

@@ -1113,6 +1113,397 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "complete_task_failed" });
     }
   });
+
+  /**
+   * GET /api/v1/dashboard/protocol-progress
+   * Rearing protocol progress across active litters (Dog-specific widget)
+   */
+  app.get("/dashboard/protocol-progress", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const today = startOfDay(new Date());
+      const todayEnd = endOfDay(new Date());
+
+      // Get active protocol assignments with their groups and protocols
+      const assignments = await prisma.rearingProtocolAssignment.findMany({
+        where: {
+          tenantId,
+          status: "ACTIVE",
+        },
+        include: {
+          offspringGroup: {
+            select: {
+              id: true,
+              name: true,
+              actualBirthOn: true,
+              species: true,
+              _count: { select: { Offspring: true } },
+            },
+          },
+          protocol: {
+            select: {
+              id: true,
+              name: true,
+              stages: {
+                orderBy: { order: "asc" },
+                select: {
+                  id: true,
+                  name: true,
+                  ageStartDays: true,
+                  ageEndDays: true,
+                  order: true,
+                  activities: {
+                    orderBy: { order: "asc" },
+                    select: {
+                      id: true,
+                      name: true,
+                      frequency: true,
+                      isRequired: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          completions: {
+            select: {
+              id: true,
+              activityId: true,
+              completedAt: true,
+            },
+          },
+        },
+        orderBy: { startDate: "desc" },
+        take: 10,
+      });
+
+      // Calculate current stage and progress for each assignment
+      const protocols = assignments.map((assignment) => {
+        const group = assignment.offspringGroup;
+        if (!group) return null;
+        const birthDate = group.actualBirthOn;
+        const ageInDays = birthDate
+          ? Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+
+        // Find current stage based on age
+        const stages = assignment.protocol.stages || [];
+        const currentStage = stages.find(
+          (s) => ageInDays >= s.ageStartDays && ageInDays <= s.ageEndDays
+        ) || stages[0];
+
+        // Calculate total activities and completed
+        const totalActivities = stages.reduce(
+          (sum, stage) => sum + (stage.activities?.length || 0),
+          0
+        );
+        const completedActivities = assignment.completions?.length || 0;
+        const progress = totalActivities > 0
+          ? Math.round((completedActivities / totalActivities) * 100)
+          : 0;
+
+        // Find activities due today (in current stage, not completed today)
+        const completedToday = new Set(
+          assignment.completions
+            ?.filter((c) => {
+              const completedDate = new Date(c.completedAt);
+              return completedDate >= today && completedDate <= todayEnd;
+            })
+            .map((c) => c.activityId)
+        );
+
+        const activitiesDueToday = (currentStage?.activities || [])
+          .filter((a) => !completedToday.has(a.id))
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            isRequired: a.isRequired,
+          }));
+
+        return {
+          id: assignment.id,
+          protocolId: assignment.protocol.id,
+          protocolName: assignment.protocol.name,
+          groupId: group.id,
+          groupName: group.name || `Litter ${group.id}`,
+          species: group.species,
+          offspringCount: group._count?.Offspring || 0,
+          ageInDays,
+          currentStage: currentStage
+            ? {
+                id: currentStage.id,
+                name: currentStage.name,
+                order: currentStage.order,
+                totalStages: stages.length,
+              }
+            : null,
+          progress,
+          completedActivities,
+          totalActivities,
+          activitiesDueToday,
+          startDate: assignment.startDate.toISOString(),
+        };
+      }).filter((p): p is NonNullable<typeof p> => p !== null);
+
+      // Calculate summary stats
+      const totalActiveProtocols = protocols.length;
+      const avgProgress = protocols.length > 0
+        ? Math.round(protocols.reduce((sum, p) => sum + p.progress, 0) / protocols.length)
+        : 0;
+      const totalDueToday = protocols.reduce((sum, p) => sum + p.activitiesDueToday.length, 0);
+
+      return reply.send({
+        protocols,
+        summary: {
+          totalActiveProtocols,
+          avgProgress,
+          totalDueToday,
+        },
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get protocol progress");
+      return reply.code(500).send({ error: "get_protocol_progress_failed" });
+    }
+  });
+
+  /**
+   * GET /api/v1/dashboard/gun-dog-aptitude
+   * Gun dog aptitude test results with placement recommendations (Dog-specific widget)
+   */
+  app.get("/dashboard/gun-dog-aptitude", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      // Get assessment results - look for gun dog aptitude assessments
+      // These could be CUSTOM type with gun dog scores or a dedicated assessment type
+      const assessments = await prisma.assessmentResult.findMany({
+        where: {
+          tenantId,
+          // Look for assessments with gun dog aptitude indicators in scores
+          OR: [
+            { assessmentType: "CUSTOM" },
+            { assessmentType: "VOLHARD_PAT" }, // Volhard can indicate gun dog potential
+          ],
+        },
+        include: {
+          offspring: {
+            select: {
+              id: true,
+              name: true,
+              sex: true,
+              status: true,
+              placementState: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true,
+                  species: true,
+                },
+              },
+            },
+          },
+          assignment: {
+            select: {
+              id: true,
+              protocol: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { assessedAt: "desc" },
+        take: 50,
+      });
+
+      // Filter to only dog species and process scores
+      const dogAssessments = assessments.filter(
+        (a) => a.offspring?.group?.species === "DOG"
+      );
+
+      // Calculate placement recommendation based on scores
+      const calculatePlacement = (scores: any): string => {
+        if (!scores || typeof scores !== "object") return "UNKNOWN";
+
+        // Check for gun dog specific scores
+        const gunDogFields = [
+          "birdDrive",
+          "retrievingInstinct",
+          "waterWillingness",
+          "pointingInstinct",
+          "searchPattern",
+          "boldness",
+          "trainability",
+        ];
+
+        const hasGunDogScores = gunDogFields.some((f) => scores[f] !== undefined);
+
+        if (hasGunDogScores) {
+          // Calculate average of gun dog scores (1-5 scale typically)
+          const gunDogValues = gunDogFields
+            .map((f) => scores[f])
+            .filter((v) => typeof v === "number");
+
+          if (gunDogValues.length === 0) return "UNKNOWN";
+
+          const avg = gunDogValues.reduce((a, b) => a + b, 0) / gunDogValues.length;
+
+          if (avg >= 4.5) return "COMPETITION";
+          if (avg >= 3.5) return "HUNTING";
+          if (avg >= 2.5) return "PET_ACTIVE";
+          return "PET_COMPANION";
+        }
+
+        // Fall back to Volhard PAT interpretation for gun dog potential
+        const volhardFields = [
+          "socialAttraction",
+          "following",
+          "restraint",
+          "socialDominance",
+          "elevationDominance",
+          "retrieving",
+          "touchSensitivity",
+          "soundSensitivity",
+          "sightSensitivity",
+          "stability",
+        ];
+
+        const hasVolhardScores = volhardFields.some((f) => scores[f] !== undefined);
+
+        if (hasVolhardScores) {
+          // For gun dogs: high retrieving, moderate stability, good sound tolerance
+          const retrieving = scores.retrieving || 3;
+          const stability = scores.stability || 3;
+          const soundSensitivity = scores.soundSensitivity || 3;
+
+          // Lower scores in Volhard = better (1-2 is ideal for most traits)
+          // Except for retrieving where 1 is best (eager retriever)
+          if (retrieving <= 2 && stability <= 3 && soundSensitivity <= 3) {
+            return "HUNTING";
+          }
+          if (retrieving <= 3 && stability <= 4) {
+            return "PET_ACTIVE";
+          }
+          return "PET_COMPANION";
+        }
+
+        return "UNKNOWN";
+      };
+
+      // Process assessments into results
+      const results = dogAssessments.map((assessment) => {
+        const scores = assessment.scores as any;
+        const placement = calculatePlacement(scores);
+
+        // Calculate an overall score (0-100)
+        let overallScore = 50;
+        if (scores && typeof scores === "object") {
+          const allValues = Object.values(scores).filter(
+            (v) => typeof v === "number"
+          ) as number[];
+          if (allValues.length > 0) {
+            // Normalize to 0-100 scale (assuming 1-5 or 1-6 input)
+            const avg = allValues.reduce((a, b) => a + b, 0) / allValues.length;
+            const maxScore = Math.max(...allValues) > 5 ? 6 : 5;
+            overallScore = Math.round((avg / maxScore) * 100);
+          }
+        }
+
+        return {
+          id: assessment.id,
+          offspringId: assessment.offspring?.id,
+          offspringName: assessment.offspring?.name || "Unknown",
+          sex: assessment.offspring?.sex,
+          groupId: assessment.offspring?.group?.id,
+          groupName: assessment.offspring?.group?.name,
+          assessedAt: assessment.assessedAt.toISOString(),
+          assessmentType: assessment.assessmentType,
+          scores,
+          overallScore,
+          placement,
+          placementState: assessment.offspring?.placementState,
+          status: assessment.offspring?.status,
+        };
+      });
+
+      // Get offspring awaiting assessment (in active groups with dog protocols, no assessment yet)
+      const offspringWithoutAssessment = await prisma.offspring.findMany({
+        where: {
+          tenantId,
+          species: "DOG",
+          group: {
+            placementCompletedAt: null,
+          },
+          rearingAssessments: { none: {} },
+        },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              actualBirthOn: true,
+            },
+          },
+        },
+        take: 20,
+      });
+
+      const awaitingAssessment = offspringWithoutAssessment.map((o) => ({
+        id: o.id,
+        name: o.name || `Offspring ${o.id}`,
+        sex: o.sex,
+        groupId: o.group.id,
+        groupName: o.group.name,
+        ageInDays: o.group.actualBirthOn
+          ? Math.floor(
+              (Date.now() - new Date(o.group.actualBirthOn).getTime()) /
+                (1000 * 60 * 60 * 24)
+            )
+          : null,
+      }));
+
+      // Calculate placement distribution
+      const placementCounts: Record<string, number> = {
+        COMPETITION: 0,
+        HUNTING: 0,
+        PET_ACTIVE: 0,
+        PET_COMPANION: 0,
+        UNKNOWN: 0,
+      };
+
+      for (const r of results) {
+        placementCounts[r.placement] = (placementCounts[r.placement] || 0) + 1;
+      }
+
+      // Get top performers (highest overall scores)
+      const topPerformers = [...results]
+        .sort((a, b) => b.overallScore - a.overallScore)
+        .slice(0, 5);
+
+      return reply.send({
+        results,
+        awaitingAssessment,
+        summary: {
+          totalAssessed: results.length,
+          awaitingCount: awaitingAssessment.length,
+          placementDistribution: placementCounts,
+        },
+        topPerformers,
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get gun dog aptitude data");
+      return reply.code(500).send({ error: "get_gun_dog_aptitude_failed" });
+    }
+  });
 };
 
 export default dashboardRoutes;

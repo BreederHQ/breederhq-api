@@ -7,17 +7,23 @@
 import Stripe from "stripe";
 import prisma from "../prisma.js";
 
-// Initialize Stripe
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+// Lazy-initialized Stripe client — secrets may not be in process.env at
+// module-evaluation time (they are loaded async from Secrets Manager).
+let _stripe: Stripe | null = null;
 
-if (!STRIPE_SECRET_KEY) {
-  throw new Error("STRIPE_SECRET_KEY environment variable is required");
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+      throw new Error("STRIPE_SECRET_KEY environment variable is required");
+    }
+    _stripe = new Stripe(key, {
+      apiVersion: "2026-01-28.clover",
+      typescript: true,
+    });
+  }
+  return _stripe;
 }
-
-export const stripe = new Stripe(STRIPE_SECRET_KEY, {
-  apiVersion: "2025-12-15.clover",
-  typescript: true,
-});
 
 /**
  * Get or create a Stripe customer for a tenant
@@ -43,7 +49,7 @@ export async function getOrCreateStripeCustomer(
   }
 
   // Create new Stripe customer
-  const customer = await stripe.customers.create({
+  const customer = await getStripe().customers.create({
     email,
     name,
     metadata: {
@@ -126,7 +132,7 @@ export async function createCheckoutSession(
   );
 
   // Create checkout session
-  const session = await stripe.checkout.sessions.create({
+  const session = await getStripe().checkout.sessions.create({
     customer: customerId,
     mode: "subscription",
     line_items: [
@@ -176,7 +182,7 @@ export async function createCustomerPortalSession(
     throw new Error("No Stripe customer found for this tenant");
   }
 
-  const session = await stripe.billingPortal.sessions.create({
+  const session = await getStripe().billingPortal.sessions.create({
     customer: tenant.stripeCustomerId,
     return_url: returnUrl,
   });
@@ -232,11 +238,11 @@ export async function addSubscriptionAddOn(
   }
 
   // Add the item to the Stripe subscription
-  const stripeSubscription = await stripe.subscriptions.retrieve(
+  const stripeSubscription = await getStripe().subscriptions.retrieve(
     subscription.stripeSubscriptionId
   );
 
-  await stripe.subscriptionItems.create({
+  await getStripe().subscriptionItems.create({
     subscription: stripeSubscription.id,
     price: addOnProduct.stripePriceId,
     quantity: 1,
@@ -276,7 +282,7 @@ export async function cancelSubscription(
 
   if (cancelAtPeriodEnd) {
     // Schedule cancellation at period end
-    await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+    await getStripe().subscriptions.update(subscription.stripeSubscriptionId, {
       cancel_at_period_end: true,
     });
 
@@ -290,7 +296,7 @@ export async function cancelSubscription(
     });
   } else {
     // Cancel immediately
-    await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+    await getStripe().subscriptions.cancel(subscription.stripeSubscriptionId);
 
     // Update local record
     await prisma.subscription.update({
@@ -313,7 +319,7 @@ export async function cancelSubscription(
 export async function syncSubscriptionFromStripe(
   stripeSubscriptionId: string
 ): Promise<void> {
-  const stripeSubscription = await stripe.subscriptions.retrieve(
+  const stripeSubscription = await getStripe().subscriptions.retrieve(
     stripeSubscriptionId,
     { expand: ["items.data.price.product"] }
   ) as any;

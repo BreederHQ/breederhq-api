@@ -2,7 +2,22 @@ import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-sec
 
 let secretsCache: Record<string, string> | null = null;
 
-export async function getDatabaseSecrets(): Promise<Record<string, string>> {
+/**
+ * Fetch ALL application secrets from AWS Secrets Manager.
+ *
+ * The secret JSON contains: DATABASE_URL, DATABASE_DIRECT_URL, COOKIE_SECRET,
+ * RESEND_API_KEY, RESEND_WEBHOOK_SECRET, INBOUND_EMAIL_HMAC_SECRET,
+ * STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, AWS_ACCESS_KEY_ID,
+ * AWS_SECRET_ACCESS_KEY, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, SENTRY_DSN,
+ * FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY.
+ *
+ * Secret naming convention:
+ *   - Production (prod AWS account): breederhq-api/production
+ *   - Dev/Alpha/Bravo (dev AWS account): breederhq-api/{dev,alpha,bravo}
+ *
+ * Set AWS_SECRET_NAME env var to override the default name.
+ */
+export async function getAppSecrets(): Promise<Record<string, string>> {
   // Return cached if already loaded
   if (secretsCache) {
     return secretsCache;
@@ -11,23 +26,24 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
   const NODE_ENV = process.env.NODE_ENV || "development";
 
   // LOCAL DEVELOPMENT: Return empty (use existing .env files)
-  if (NODE_ENV !== "production") {
+  if (process.env.USE_SECRETS_MANAGER !== "true") {
     console.log("✓ Development mode - using .env files");
     secretsCache = {};
     return secretsCache;
   }
 
-  // PRODUCTION: Fetch database credentials from AWS Secrets Manager
-  const secretName = process.env.AWS_SECRET_NAME || "breederhq/prod";
-  const region = process.env.AWS_REGION || "us-east-2";
+  // DEPLOYED: Fetch all secrets from AWS Secrets Manager
+  const secretName = process.env.AWS_SECRET_NAME || `breederhq-api/${NODE_ENV}`;
+  const region = process.env.AWS_SECRETS_MANAGER_REGION || "us-east-2";
 
   const client = new SecretsManagerClient({
     region,
-    // Uses AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from Render env vars
+    // On EB: uses instance role credentials automatically
+    // On Render/other: uses AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY from env vars
   });
 
   try {
-    console.log(`Fetching database secrets from AWS Secrets Manager: ${secretName}`);
+    console.log(`Fetching app secrets from AWS Secrets Manager: ${secretName}`);
 
     const response = await client.send(
       new GetSecretValueCommand({ SecretId: secretName })
@@ -39,11 +55,12 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
 
     secretsCache = JSON.parse(response.SecretString) as Record<string, string>;
 
-    console.log("✓ Database secrets loaded from AWS Secrets Manager");
+    const keyCount = Object.keys(secretsCache).length;
+    console.log(`✓ ${keyCount} secrets loaded from AWS Secrets Manager`);
     return secretsCache;
 
   } catch (error) {
-    console.error("❌ Failed to load database secrets from AWS Secrets Manager:", error);
+    console.error("❌ Failed to load secrets from AWS Secrets Manager:", error);
 
     // Emergency fallback: use DATABASE_URL from env vars if present
     if (process.env.EMERGENCY_MODE === "true" && process.env.DATABASE_URL) {
@@ -55,6 +72,9 @@ export async function getDatabaseSecrets(): Promise<Record<string, string>> {
       return secretsCache;
     }
 
-    throw new Error("Database secret initialization failed - cannot start application");
+    throw new Error("Secret initialization failed - cannot start application");
   }
 }
+
+/** @deprecated Use getAppSecrets() instead */
+export const getDatabaseSecrets = getAppSecrets;

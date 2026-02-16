@@ -1,8 +1,8 @@
 # Data Import/Export API Documentation
 
 **Status**: ✅ Production Ready
-**Version**: 1.0.0
-**Date**: 2026-01-21
+**Version**: 1.1.0
+**Date**: 2026-02-10
 
 ## Overview
 
@@ -322,6 +322,79 @@ ID,Name,Species,Sex,Birth Date,Age,Microchip,Breed,Dam Name,Sire Name,Status,Reg
 - `401 Unauthorized` - Not authenticated
 - `403 Forbidden` - No access to tenant
 - `500 Internal Server Error` - Export failed
+
+---
+
+### 5. Export for NSIP (Sheep Performance Data)
+
+**Endpoint**: `GET /api/animals/export/nsip`
+
+**Description**: Exports sheep performance data in Pedigree Master-compatible format for NSIP (National Sheep Improvement Program) submission.
+
+**Authentication**: Required (session cookie)
+
+**Query Parameters**:
+- `birthDateFrom` (string, optional) - Filter offspring born after this date (ISO 8601 format)
+- `birthDateTo` (string, optional) - Filter offspring born before this date (ISO 8601 format)
+- `includeWeights` (boolean, optional, default: true) - Include birth, weaning, and post-weaning weights
+- `includeParentage` (boolean, optional, default: true) - Include sire and dam IDs
+
+**Response**:
+- **Content-Type**: `text/tab-separated-values`
+- **Filename**: `nsip-export-YYYY-MM-DD.txt`
+
+**Exported Columns**:
+| Column | Description | Always Included |
+|--------|-------------|-----------------|
+| Animal_ID | Scrapie tag, registration number, or internal ID | Yes |
+| Birth_Date | Date of birth (YYYY-MM-DD) | Yes |
+| Sex | M or F | Yes |
+| Breed | Breed name | Yes |
+| Birth_Type | Number of siblings (1=single, 2=twin, 3=triplet) | Yes |
+| Rear_Type | Rearing type (same as birth type unless orphaned) | Yes |
+| Birth_Wt_Lb | Birth weight in pounds | If includeWeights=true |
+| Wean_Wt_Lb | Weaning weight (60-90 days) in pounds | If includeWeights=true |
+| Post_Wean_Wt_Lb | Post-weaning weight (120+ days) in pounds | If includeWeights=true |
+| Sire_ID | Sire's scrapie tag, registration number, or internal ID | If includeParentage=true |
+| Dam_ID | Dam's scrapie tag, registration number, or internal ID | If includeParentage=true |
+
+**Example**:
+```http
+GET /api/animals/export/nsip?birthDateFrom=2025-10-01&birthDateTo=2026-05-31 HTTP/1.1
+Host: api.breederhq.com
+Cookie: session=...
+
+HTTP/1.1 200 OK
+Content-Type: text/tab-separated-values
+Content-Disposition: attachment; filename="nsip-export-2026-02-10.txt"
+
+Animal_ID	Birth_Date	Sex	Breed	Birth_Type	Rear_Type	Birth_Wt_Lb	Wean_Wt_Lb	Post_Wean_Wt_Lb	Sire_ID	Dam_ID
+US123456789	2025-11-15	F	Katahdin	2	2	8.5	45.2		US987654321	US456789123
+US123456790	2025-11-15	M	Katahdin	2	2	9.1	48.6		US987654321	US456789123
+```
+
+**Animal ID Priority**:
+1. Scrapie tag number (USDA compliance)
+2. NSIP/ASI registry number
+3. First available registry number
+4. Internal animal ID
+
+**Weaning Weight Calculation**:
+- Looks for weight recorded at 60, 75, or 90 days (±7 days tolerance)
+- Converts from ounces to pounds if stored in ounces
+
+**Status Codes**:
+- `200 OK` - Export completed successfully
+- `401 Unauthorized` - Not authenticated
+- `403 Forbidden` - No access to tenant
+- `404 Not Found` - No sheep offspring found for the specified date range
+- `500 Internal Server Error` - Export failed
+
+**Notes**:
+- Only exports SHEEP species offspring
+- Data sourced from Offspring records and NeonatalCareEntries
+- Compatible with Pedigree Master software import format
+- Birth type calculated from siblings born on same date to same dam
 
 ---
 
@@ -759,6 +832,14 @@ Name,Species,Sex,Birth Date,Microchip,Breed,Dam Name,Sire Name,Registry Name,Reg
 
 ## Changelog
 
+### v1.1.0 (2026-02-10)
+- ✅ Added NSIP export endpoint (`GET /api/animals/export/nsip`)
+- ✅ Pedigree Master-compatible tab-delimited format
+- ✅ Date range filtering for lambing seasons
+- ✅ Optional weight data (birth, weaning, post-weaning)
+- ✅ Optional parentage data (sire/dam IDs)
+- ✅ Birth type calculation from sibling count
+
 ### v1.0.0 (2026-01-21)
 - ✅ Initial release
 - ✅ CSV import with preview
@@ -778,6 +859,6 @@ For issues or questions:
 
 ---
 
-**Document Version**: 1.0.0
-**Last Updated**: 2026-01-21
+**Document Version**: 1.1.0
+**Last Updated**: 2026-02-10
 **Author**: BreederHQ Engineering Team

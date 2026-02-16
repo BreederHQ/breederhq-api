@@ -3,17 +3,20 @@
 **Repository**: breederhq-api
 **Purpose**: Production-ready RESTful API for BreederHQ platform
 **Stack**: Node.js, TypeScript, Prisma, PostgreSQL (NeonDB)
-**Deployment**: Render.com
+**Deployment**: Render.com / AWS Elastic Beanstalk
 
 ---
 
 ## Quick Links
 
 ### Operations
-- **[AWS Secrets Manager](operations/AWS-SECRETS-MANAGER.md)** - Managing production database credentials
+- **[AWS Secrets Manager](operations/AWS-SECRETS-MANAGER.md)** - Managing all application secrets via AWS Secrets Manager (16 keys, 4 environments)
+- **[Elastic Beanstalk Deployment](operations/ELASTIC-BEANSTALK-DEPLOYMENT.md)** - Deploying to AWS Elastic Beanstalk
+- **[Sentry Setup](operations/SENTRY-SETUP.md)** - Error tracking and performance monitoring
 
 ### Architecture Decisions
 - **[ADR-0001: AWS Secrets Manager](architecture-decisions/0001-AWS-SECRETS-MANAGER.md)** - Why we use AWS for secret management
+- **[ADR-0002: Lazy Stripe Initialization](architecture-decisions/0002-LAZY-STRIPE-INITIALIZATION.md)** - Why Stripe uses lazy singleton pattern (`getStripe()`)
 
 ---
 
@@ -23,9 +26,12 @@
 docs/
 ├── README.md (this file)
 ├── operations/
-│   └── AWS-SECRETS-MANAGER.md          # Day-to-day secret management
+│   ├── AWS-SECRETS-MANAGER.md          # Day-to-day secret management
+│   ├── ELASTIC-BEANSTALK-DEPLOYMENT.md # EB deployment guide
+│   └── SENTRY-SETUP.md                 # Error tracking and APM
 └── architecture-decisions/
-    └── 0001-AWS-SECRETS-MANAGER.md     # Decision rationale
+    ├── 0001-AWS-SECRETS-MANAGER.md     # Decision rationale
+    └── 0002-LAZY-STRIPE-INITIALIZATION.md  # Stripe lazy singleton pattern
 ```
 
 ---
@@ -34,11 +40,13 @@ docs/
 
 ### Secret Management
 
-Production database credentials are stored in **AWS Secrets Manager**, not environment variables.
+ALL application secrets are stored in **AWS Secrets Manager** across two AWS accounts (prod + dev).
 
-- **What's in AWS**: Database connection strings (DATABASE_URL, DATABASE_DIRECT_URL)
-- **What's in Render**: Other secrets (COOKIE_SECRET, AWS S3 keys, Stripe, etc.)
-- **How it works**: Application fetches secrets from AWS at startup (production only)
+- **Trigger**: Set `USE_SECRETS_MANAGER=true` to enable (any environment)
+- **What's in AWS**: 16 keys per environment (database, Stripe, Resend, JWT, S3, Firebase, Sentry)
+- **Environments**: production (prod account), dev/alpha/bravo (dev account)
+- **NeonDB Projects**: breederhq-production, breederhq-development (3 branches)
+- **How it works**: `getAppSecrets()` fetches all secrets at startup, merges into `process.env`
 
 **See**: [AWS Secrets Manager Operations Guide](operations/AWS-SECRETS-MANAGER.md)
 
@@ -58,39 +66,26 @@ cp .env.example .env.dev
 
 ## Common Tasks
 
-### Update Production Database Credentials
+### Update a Secret Value
 
 ```bash
-# Update secret in AWS
-aws secretsmanager update-secret \
-  --secret-id breederhq/prod \
-  --secret-string '{"DATABASE_URL":"...","DATABASE_DIRECT_URL":"..."}' \
-  --profile prod \
-  --region us-east-2
-
-# Restart Render service to pick up new credentials
+# See full guide for updating individual keys within a secret
 ```
 
-**Full guide**: [AWS Secrets Manager - Update Database Credentials](operations/AWS-SECRETS-MANAGER.md#update-database-credentials)
+**Full guide**: [AWS Secrets Manager - Update a Single Key](operations/AWS-SECRETS-MANAGER.md#update-a-single-key-in-a-secret)
+
+### Update Database Connection Strings
+
+**Full guide**: [AWS Secrets Manager - Update Database Connection Strings](operations/AWS-SECRETS-MANAGER.md#update-database-connection-strings)
 
 ### Rotate IAM Access Keys
-
-```bash
-# Use helper script
-./get-render-credentials.ps1
-
-# Or manually:
-aws iam create-access-key \
-  --user-name breederhq-api-render-prod \
-  --profile prod
-```
 
 **Full guide**: [AWS Secrets Manager - Rotate IAM Access Keys](operations/AWS-SECRETS-MANAGER.md#rotate-iam-access-keys)
 
 ### Troubleshooting Production Issues
 
-1. Check Render logs for secret fetch status
-2. Verify AWS credentials in Render env vars
+1. Check deployment logs for secret fetch status (`✓ 16 secrets loaded`)
+2. Verify AWS credentials / instance role
 3. Test AWS access with CLI
 
 **Full guide**: [AWS Secrets Manager - Troubleshooting](operations/AWS-SECRETS-MANAGER.md#troubleshooting)
@@ -122,5 +117,5 @@ When adding new documentation:
 
 ---
 
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-16
 **Maintained By**: Engineering Team

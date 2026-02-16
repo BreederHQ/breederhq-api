@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
-import { stripe } from "../services/stripe-service.js";
+import { getStripe } from "../services/stripe-service.js";
 
 const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
@@ -1024,7 +1024,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         };
       }
 
-      const session = await stripe.checkout.sessions.create(sessionParams);
+      const session = await getStripe().checkout.sessions.create(sessionParams);
 
       req.log?.info?.(
         { invoiceId, sessionId: session.id, amountDue },

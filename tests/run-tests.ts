@@ -50,6 +50,8 @@ async function runTests() {
     path.join(__dirname, "animal-public-listing.test.ts"),
     path.join(__dirname, "invoice-buyer-enforcement.test.ts"),
     path.join(__dirname, "trait-definitions-contract.test.ts"),
+    path.join(__dirname, "integration", "network-breeding-discovery.test.ts"),
+    path.join(__dirname, "integration", "listing-boost.test.ts"),
   ];
 
   // Defensive check: reject any Jest files before running
