@@ -120,37 +120,17 @@ Development environment setup and utility scripts.
 - `scheduling-reminders.ts` - Send reminder emails 24 hours before appointments
 - `set-tattooine-default.ts` - Set Tattooine as admin user's default tenant
 
-### 📁 migrations/ (18 scripts + v2 subdirectory)
-Database migration management and validation scripts.
+### 📁 migrations/ (empty — cleaned up 2026-02-17)
+All Prisma Migrate-era scripts were removed after the transition to dbmate (2026-02-16).
+Database migrations are now managed by dbmate. See `db/migrations/` for migration files.
 
-**Migration Management:**
-- `audit-migrations.mjs` - Audit migration files and database state
-- `check-migration-checksum.js` - Check migration file checksum
-- `check-migration-integrity.mjs` - Check migration file integrity
-- `check-migrations.js` - Check recent migrations from database
-- `find-migration-diff.js` - Find differences in migration file
-- `fix-all-migration-checksums.js` - Fix all migration checksums
-- `fix-migration-checksum.js` - Fix specific migration checksum
-- `prisma-apply-latest-migration-dev.mjs` - Apply latest migration to dev
-- `validate-migration-order.mjs` - Validate migration dependency ordering
-
-**Prisma Guards:**
-- `prisma-guard.js` - Enforces safe database operations (v1 + v2 support)
-- `prisma-guard-v2.js` - Enforces v2-only database access (blocks v1)
-- `v1-blocked.js` - Blocks legacy v1 database commands
-
-**Production Migration:**
-- `prisma-migrate-diff-prod.mjs` - Generate migration SQL by diffing prod
-- `prod-align-diff.mjs` - Generate SQL diff from prod to schema
-- `prod-align-verify.mjs` - Verify prod database matches schema
-
-**Testing:**
-- `test-migration-system.sh` - Test migration system
-- `test-shadow-db.js` - Shadow database readiness check
-- `verify-migration-readiness.js` - Verify migration readiness
-
-**v2 Subdirectory:**
-Contains v2-specific migration workflow scripts.
+**Migration workflow:**
+```bash
+npm run db:new <name>        # Create new migration file in db/migrations/
+# Edit the SQL file
+npm run db:dev:sync          # Apply migration + sync Prisma schema + regenerate client
+npm run db:prod:deploy       # Apply pending migrations to production
+```
 
 ### 📁 seeding/ (6 scripts + 2 subdirectories)
 Data seeding scripts for development and testing.

@@ -22,6 +22,18 @@ import { requireMarketplaceAuth as authMiddleware } from "../middleware/marketpl
 import { broadcastNewMessage } from "../services/websocket-service.js";
 
 /**
+ * Create a proper Error with statusCode for Fastify error handling.
+ * Plain objects thrown to Fastify are logged as "[object Object]".
+ */
+function httpError(statusCode: number, error: string, detail?: string): Error & { statusCode: number; error: string; detail?: string } {
+  const err = new Error(error) as Error & { statusCode: number; error: string; detail?: string };
+  err.statusCode = statusCode;
+  err.error = error;
+  if (detail) err.detail = detail;
+  return err;
+}
+
+/**
  * Get user info for messaging context.
  * For marketplace users, userId is a string integer (e.g. "160") from MarketplaceUser table.
  */
@@ -30,7 +42,7 @@ async function getUserInfo(userId: string): Promise<{ id: string; email: string;
   const marketplaceUserId = parseInt(userId, 10);
 
   if (!Number.isFinite(marketplaceUserId) || marketplaceUserId <= 0) {
-    throw { statusCode: 401, error: "unauthorized", detail: "invalid_user_id" };
+    throw httpError(401, "unauthorized", "invalid_user_id");
   }
 
   const user = await prisma.marketplaceUser.findUnique({
@@ -39,7 +51,7 @@ async function getUserInfo(userId: string): Promise<{ id: string; email: string;
   });
 
   if (!user) {
-    throw { statusCode: 401, error: "unauthorized", detail: "user_not_found" };
+    throw httpError(401, "unauthorized", "user_not_found");
   }
 
   return {
@@ -95,7 +107,7 @@ async function getOrCreateUserPartyInTenant(
 function requireMarketplaceAuth(req: any): string {
   const userId = req.marketplaceUserId;
   if (!userId) {
-    throw { statusCode: 401, error: "unauthorized", detail: "no_session" };
+    throw httpError(401, "unauthorized", "no_session");
   }
   return String(userId);
 }
@@ -212,7 +224,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
       } catch (err: any) {
-        if (err.statusCode) throw err;
+        if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
         return reply.code(500).send({ error: "internal_error", detail: err.message });
       }
     }
@@ -286,7 +298,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ threads: threadsWithUnread });
     } catch (err: any) {
-      if (err.statusCode) throw err;
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
@@ -340,7 +352,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ thread });
     } catch (err: any) {
-      if (err.statusCode) throw err;
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
@@ -391,7 +403,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         return reply.send({ ok: true, message: "Thread marked as read" });
       } catch (err: any) {
-        if (err.statusCode) throw err;
+        if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
         return reply.code(500).send({ error: "internal_error", detail: err.message });
       }
     }
@@ -543,7 +555,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ ok: true, thread });
     } catch (err: any) {
-      if (err.statusCode) throw err;
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
@@ -664,7 +676,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ ok: true, message });
     } catch (err: any) {
-      if (err.statusCode) throw err;
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.error || err.message, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });

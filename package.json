@@ -31,7 +31,6 @@
     "db:dev:sync": "npm run db:dev:up && npm run db:pull && npm run prisma:validate && npm run db:gen",
     "db:dev:dump": "npx dbmate --env-file .env.dev.migrate --migrations-dir db/migrations dump",
     "db:dev:deploy": "node scripts/development/run-with-env.js .env.dev.migrate npx dbmate --migrations-dir db/migrations migrate",
-    "db:dev:validate": "node scripts/development/run-with-env.js .env.dev.migrate tsx scripts/migrations/v2/validate-post-import.ts",
     "db:dev:seed:users": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-test-users.ts",
     "db:dev:seed:traits": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:dev:seed:tattooine": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx prisma/seed/seed-tattooine-contacts.ts",
