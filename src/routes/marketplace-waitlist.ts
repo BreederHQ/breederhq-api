@@ -550,9 +550,9 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
             ? {
                 id: depositInvoice.id,
                 status: depositInvoice.status,
-                totalCents: depositInvoice.amountCents,
-                paidCents: depositInvoice.amountCents - depositInvoice.balanceCents,
-                balanceCents: depositInvoice.balanceCents,
+                totalCents: Number(depositInvoice.amountCents),
+                paidCents: Number(depositInvoice.amountCents) - Number(depositInvoice.balanceCents),
+                balanceCents: Number(depositInvoice.balanceCents),
                 dueAt: depositInvoice.dueAt,
               }
             : null,

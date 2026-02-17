@@ -61,14 +61,14 @@ function serializeEntry(w: any) {
   const depositInvoice = w.depositInvoice;
   let invoiceSummary = null;
   if (depositInvoice) {
-    const paidCents = depositInvoice.amountCents - depositInvoice.balanceCents;
+    const paidCents = Number(depositInvoice.amountCents) - Number(depositInvoice.balanceCents);
     invoiceSummary = {
       id: depositInvoice.id,
       invoiceNumber: depositInvoice.invoiceNumber ?? null,
       status: depositInvoice.status?.toUpperCase() ?? "DRAFT",
-      totalCents: depositInvoice.amountCents,
+      totalCents: Number(depositInvoice.amountCents),
       paidCents,
-      balanceCents: depositInvoice.balanceCents,
+      balanceCents: Number(depositInvoice.balanceCents),
       dueAt: depositInvoice.dueAt?.toISOString() ?? null,
       issuedAt: depositInvoice.issuedAt?.toISOString() ?? null,
     };
@@ -238,7 +238,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       where: { tenantId, litterId: null, ...statusFilter, ...(validSpecies ? { speciesPref: validSpecies } : null) },
     });
 
-    reply.send({ items: rows.map(serializeEntry), total });
+    reply.send({ items: rows.map(serializeEntry), total: Number(total) });
   });
 
   /**
@@ -1315,9 +1315,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       id: result.id,
       invoiceNumber: result.invoiceNumber,
       status: result.status?.toUpperCase() ?? "ISSUED",
-      totalCents: result.amountCents,
+      totalCents: Number(result.amountCents),
       paidCents: 0,
-      balanceCents: result.balanceCents,
+      balanceCents: Number(result.balanceCents),
       dueAt: result.dueAt?.toISOString() ?? null,
       issuedAt: result.issuedAt?.toISOString() ?? null,
     };
@@ -1329,7 +1329,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       try {
         const emailContent = renderInvoiceEmail({
           invoiceNumber: result.invoiceNumber,
-          amountCents: result.amountCents,
+          amountCents: Number(result.amountCents),
           currency: "USD",
           dueAt: result.dueAt,
           clientName: entry.clientParty?.name || "Valued Customer",

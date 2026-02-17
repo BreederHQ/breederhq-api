@@ -80,11 +80,16 @@ function validateMigrationOrdering(migrationsDir) {
   return violations;
 }
 
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+
+// Extract flags before positional args
+const quietMode = rawArgs.includes('--quiet');
+const args = rawArgs.filter(a => a !== '--quiet');
 
 if (args.length < 2) {
-  console.error('Usage: node scripts/run-with-env.js <env-file> <command> [args...]');
+  console.error('Usage: node scripts/run-with-env.js [--quiet] <env-file> <command> [args...]');
   console.error('Example: node scripts/run-with-env.js .env.dev.migrate npx dbmate --migrations-dir db/migrations migrate');
+  console.error('  --quiet  Filter Prisma introspection noise (@map warnings, enrichment lists)');
   process.exit(1);
 }
 
@@ -344,21 +349,101 @@ async function main() {
   // Join command + args into a single string to avoid DEP0190 warning
   // (Node 24 warns when shell: true is used with a separate args array)
   const fullCmd = [command, ...commandArgs].join(' ');
-  const child = spawn(fullCmd, {
-    stdio: 'inherit',
-    shell: true,
-    env: mergedEnv,
-    cwd: process.cwd()
-  });
 
-  child.on('exit', (code) => {
-    process.exit(code || 0);
-  });
+  if (quietMode) {
+    // Capture output and filter Prisma introspection noise
+    const child = spawn(fullCmd, {
+      stdio: ['inherit', 'pipe', 'pipe'],
+      shell: true,
+      env: mergedEnv,
+      cwd: process.cwd()
+    });
 
-  child.on('error', (err) => {
-    console.error(`\n❌ Failed to start command: ${err.message}`);
-    process.exit(1);
-  });
+    // Lines/blocks to filter from Prisma db pull output
+    const NOISE_PATTERNS = [
+      /^\s*-\s*Model:\s*"\w+",\s*field:\s*"\w+"$/,       // @map field enrichment lines
+      /^These fields were enriched with.*$/,                // @map header
+      /^These models were enriched with.*$/,                // @@map header
+      /^\s*-\s*"\w+"$/,                                     // @@map model list items
+      /^These constraints are not supported.*$/,            // check constraint warnings
+      /^\s*-\s*Model:\s*"\w+",\s*constraint:\s*"\w+"$/,    // check constraint items
+      /^These objects have comments defined.*$/,            // database comment warnings
+      /^\s*-\s*Type:\s*"\w+",\s*name:\s*"\w+\.\w+"$/,     // comment items
+      /^Run prisma generate to generate Prisma Client\.$/,  // redundant hint (we run it next)
+      /^Tip:.*$/,                                           // Prisma tips/ads
+      /^\s*$/,                                              // blank lines in warning blocks
+    ];
+
+    let inWarningBlock = false;
+
+    function filterLine(line) {
+      // Detect start of a warning block (*** WARNING ***)
+      if (line.includes('*** WARNING ***')) {
+        inWarningBlock = true;
+        return false;
+      }
+      // End warning block when we hit a non-noise, non-blank line
+      if (inWarningBlock) {
+        const isNoise = NOISE_PATTERNS.some(p => p.test(line));
+        if (!isNoise && line.trim().length > 0) {
+          inWarningBlock = false;
+          return true; // Show this line, it's real content after the block
+        }
+        return false; // Still in warning block, filter it
+      }
+      // Outside warning block, filter individual noise lines
+      return !NOISE_PATTERNS.some(p => p.test(line));
+    }
+
+    let stdoutBuf = '';
+    child.stdout.on('data', (data) => {
+      stdoutBuf += data.toString();
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop(); // keep incomplete last line in buffer
+      for (const line of lines) {
+        if (filterLine(line)) process.stdout.write(line + '\n');
+      }
+    });
+
+    let stderrBuf = '';
+    child.stderr.on('data', (data) => {
+      stderrBuf += data.toString();
+      const lines = stderrBuf.split('\n');
+      stderrBuf = lines.pop();
+      for (const line of lines) {
+        if (filterLine(line)) process.stderr.write(line + '\n');
+      }
+    });
+
+    child.on('exit', (code) => {
+      // Flush remaining buffers
+      if (stdoutBuf.trim() && filterLine(stdoutBuf)) process.stdout.write(stdoutBuf + '\n');
+      if (stderrBuf.trim() && filterLine(stderrBuf)) process.stderr.write(stderrBuf + '\n');
+      process.exit(code || 0);
+    });
+
+    child.on('error', (err) => {
+      console.error(`\n❌ Failed to start command: ${err.message}`);
+      process.exit(1);
+    });
+  } else {
+    // Normal mode: pass through all output
+    const child = spawn(fullCmd, {
+      stdio: 'inherit',
+      shell: true,
+      env: mergedEnv,
+      cwd: process.cwd()
+    });
+
+    child.on('exit', (code) => {
+      process.exit(code || 0);
+    });
+
+    child.on('error', (err) => {
+      console.error(`\n❌ Failed to start command: ${err.message}`);
+      process.exit(1);
+    });
+  }
 }
 
 main();

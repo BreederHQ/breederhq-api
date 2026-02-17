@@ -1,5 +1,6 @@
 // src/routes/messages.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
 import { autoProvisionPortalAccessForDM, sendNewMessageNotification } from "../services/portal-provisioning-service.js";
@@ -273,34 +274,31 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         orderBy: { updatedAt: "desc" },
       });
 
-      // Calculate unread count efficiently
-      const threadsWithUnread = await Promise.all(
-        threads.map(async (t) => {
-          const participant = participantRecords.find((p) => p.threadId === t.id);
-          const lastReadAt = participant?.lastReadAt;
+      // Batch unread counts in a single query (avoids N+1)
+      const unreadCounts = await prisma.$queryRaw<
+        Array<{ threadId: number; unreadCount: number }>
+      >`
+        SELECT
+          m."threadId",
+          COUNT(*)::int AS "unreadCount"
+        FROM "Message" m
+        INNER JOIN "MessageParticipant" mp
+          ON mp."threadId" = m."threadId"
+          AND mp."partyId" = ${currentUserPartyId}
+        WHERE m."threadId" IN (${Prisma.join(threadIds)})
+          AND m."senderPartyId" IS DISTINCT FROM ${currentUserPartyId}
+          AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+        GROUP BY m."threadId"
+      `;
 
-          // Count messages created after lastReadAt, excluding sender's own messages
-          const unreadCount = lastReadAt
-            ? await prisma.message.count({
-                where: {
-                  threadId: t.id,
-                  createdAt: { gt: lastReadAt },
-                  senderPartyId: { not: currentUserPartyId },
-                },
-              })
-            : await prisma.message.count({
-                where: {
-                  threadId: t.id,
-                  senderPartyId: { not: currentUserPartyId },
-                },
-              });
-
-          return {
-            ...t,
-            unreadCount,
-          };
-        })
+      const unreadMap = new Map(
+        unreadCounts.map((r) => [r.threadId, r.unreadCount])
       );
+
+      const threadsWithUnread = threads.map((t) => ({
+        ...t,
+        unreadCount: unreadMap.get(t.id) ?? 0,
+      }));
 
       return reply.send({ threads: threadsWithUnread });
     } catch (err: any) {

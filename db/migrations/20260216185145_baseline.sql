@@ -25,7 +25,7 @@ SET row_security = off;
 -- Name: marketplace; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA marketplace;
+CREATE SCHEMA IF NOT EXISTS marketplace;
 
 
 --
@@ -39,7 +39,7 @@ CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 -- Name: EXTENSION citext; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings';
+-- COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings';
 
 
 --
@@ -53,7 +53,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 -- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+-- COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
 
 
 --
@@ -67,7 +67,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 -- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+-- COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
@@ -81,7 +81,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
 -- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
+-- COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
 
 
 --
@@ -27397,7 +27397,7 @@ ALTER TABLE ONLY public.refresh_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dbmate
+-- (removed: \unrestrict is a psql meta-command, not valid SQL)
 
 
 --

@@ -27412,3 +27412,5 @@ ALTER TABLE ONLY public.refresh_tokens
 -- Dbmate schema migrations
 --
 
+INSERT INTO public.schema_migrations (version) VALUES
+    ('20260216185145');

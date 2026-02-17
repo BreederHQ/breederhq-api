@@ -83,8 +83,8 @@ function invoiceDTO(inv: any) {
     animalId: inv.animalId,
     breedingPlanId: inv.breedingPlanId,
     clientPartyId: inv.clientPartyId,
-    amountCents: inv.amountCents,
-    balanceCents: inv.balanceCents,
+    amountCents: Number(inv.amountCents),
+    balanceCents: Number(inv.balanceCents),
     currency: inv.currency,
     status: inv.status,
     category: inv.category,
@@ -176,7 +176,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
           _sum: { amountCents: true },
         });
-        expensesMtdCents = expensesMtdResult._sum.amountCents || 0;
+        expensesMtdCents = Number(expensesMtdResult._sum.amountCents || 0);
       }
 
       // Deposits outstanding (invoices with category DEPOSIT or MIXED, not void, with balance > 0)
@@ -189,11 +189,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
         _sum: { balanceCents: true },
       });
-      const depositsOutstandingCents = depositsResult._sum.balanceCents || 0;
+      const depositsOutstandingCents = Number(depositsResult._sum.balanceCents || 0);
 
       return reply.code(200).send({
-        outstandingTotalCents: outstandingResult._sum.balanceCents || 0,
-        invoicedMtdCents: invoicedMtdResult._sum.amountCents || 0,
+        outstandingTotalCents: Number(outstandingResult._sum.balanceCents || 0),
+        invoicedMtdCents: Number(invoicedMtdResult._sum.amountCents || 0),
         collectedMtdCents,
         expensesMtdCents,
         depositsOutstandingCents,

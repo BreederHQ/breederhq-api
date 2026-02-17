@@ -30,19 +30,27 @@ function errorReply(err: unknown) {
   return { status: 500, payload: { error: "internal_error", message: msg } };
 }
 
-// Map frontend string IDs to benchmark protocol names in the database
+// Map frontend string IDs to benchmark protocol names in the database.
+// IMPORTANT: These names MUST exactly match what the seed script inserts
+// (seed-rearing-benchmarks.ts) and the frontend config (rearing-protocols.config.ts).
 const BENCHMARK_STRING_ID_TO_NAME: Record<string, string> = {
+  // Dogs
   benchmark_ens: "Early Neurological Stimulation (ENS)",
   benchmark_esi: "Early Scent Introduction (ESI)",
   benchmark_rule_of_7s: "Rule of 7s Socialization",
-  benchmark_handling: "Handling Protocol",
+  benchmark_handling: "Handling Habituation",
   benchmark_sound: "Sound Desensitization",
-  benchmark_crate: "Crate Training Introduction",
-  benchmark_cat_socialization: "Kitten Socialization Program",
-  benchmark_cat_litter: "Litter Training Basics",
-  benchmark_horse_imprint: "Foal Imprinting Protocol",
-  benchmark_horse_halter: "Halter Training Basics",
-  benchmark_goat_handling: "Kid Handling Protocol",
+  benchmark_crate: "Crate Introduction",
+  benchmark_gun_conditioning: "Gun Conditioning for Hunting Dogs",
+  benchmark_kvs_gundog: "BreederHQ Gun Dog Development Protocol",
+  // Cats
+  benchmark_cat_socialization: "Kitten Socialization",
+  benchmark_cat_litter: "Litter Training",
+  // Horses
+  benchmark_horse_imprint: "Foal Imprint Training",
+  benchmark_horse_halter: "Early Halter Training",
+  // Goats/Sheep
+  benchmark_goat_handling: "Kid/Lamb Handling",
   benchmark_goat_bottle: "Bottle Feeding Protocol",
 };
 

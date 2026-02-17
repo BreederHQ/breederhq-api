@@ -4,6 +4,17 @@
 import { initSentry, captureException, setUser, flush, Sentry } from "./lib/sentry.js";
 initSentry();
 
+// Global BigInt serialization support.
+// Prisma returns BigInt for BigInt columns (e.g. Invoice.amountCents);
+// JSON.stringify cannot serialize BigInt natively and throws
+// "TypeError: Do not know how to serialize a BigInt".
+// This polyfill converts BigInt to Number when safe, or to string for
+// values exceeding Number.MAX_SAFE_INTEGER.
+(BigInt.prototype as any).toJSON = function () {
+  const n = Number(this);
+  return Number.isSafeInteger(n) ? n : this.toString();
+};
+
 import Fastify, { FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
