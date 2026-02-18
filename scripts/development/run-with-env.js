@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, join } from 'path';
 import { createInterface } from 'readline';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 // ═══════════════════════════════════════════════════════════════════════
 // Migration Ordering Validator (dbmate format)
@@ -138,16 +139,60 @@ function parseEnvFile(filePath) {
   return env;
 }
 
-// Load environment from file
+// Load environment from file (credentials or SM config pointer)
 const fileEnv = parseEnvFile(envPath);
-
-// Merge with process.env (file values override)
-const mergedEnv = { ...process.env, ...fileEnv };
 
 // Sensitive keys to redact in any logging
 const SENSITIVE_KEYS = ['DATABASE_URL', 'DATABASE_DIRECT_URL'];
 
 const fullCommand = [command, ...commandArgs].join(' ').toLowerCase();
+
+// ═══════════════════════════════════════════════════════════════════════
+// SM Credentials Fetcher
+// When the env file contains AWS_SECRET_NAME (instead of raw DATABASE_URL),
+// fetch secrets from AWS Secrets Manager and remap for migration context:
+//   DATABASE_URL = SM.DATABASE_DIRECT_URL  (direct, non-pooler — required for DDL)
+//   DATABASE_DIRECT_URL = SM.DATABASE_DIRECT_URL  (kept for Prisma)
+// ═══════════════════════════════════════════════════════════════════════
+
+async function fetchSmSecrets(config) {
+  const { AWS_SECRET_NAME, AWS_PROFILE, AWS_SECRETS_MANAGER_REGION = 'us-east-2' } = config;
+
+  if (AWS_PROFILE) process.env.AWS_PROFILE = AWS_PROFILE;
+
+  const client = new SecretsManagerClient({ region: AWS_SECRETS_MANAGER_REGION });
+
+  try {
+    const response = await client.send(new GetSecretValueCommand({ SecretId: AWS_SECRET_NAME }));
+    if (!response.SecretString) throw new Error('Secret value is empty');
+    return JSON.parse(response.SecretString);
+  } catch (error) {
+    console.error(`\n❌ Failed to fetch secrets from AWS Secrets Manager (${AWS_SECRET_NAME})`);
+    console.error(`   ${error.message}`);
+    console.error(`\n   Make sure your AWS profile is configured: aws configure --profile ${AWS_PROFILE || 'default'}`);
+    process.exit(1);
+  }
+}
+
+async function buildMergedEnv() {
+  // If the env file has AWS_SECRET_NAME, fetch from SM (thin config pointer pattern)
+  if (fileEnv.AWS_SECRET_NAME) {
+    console.log(`\n🔐 run-with-env: Fetching secrets from SM: ${fileEnv.AWS_SECRET_NAME}`);
+    const secrets = await fetchSmSecrets(fileEnv);
+
+    // Remap: migrations need DATABASE_URL = direct (non-pooler) connection
+    // SM stores this in DATABASE_DIRECT_URL (runtime DATABASE_URL is pooled)
+    if (secrets.DATABASE_DIRECT_URL) {
+      secrets.DATABASE_URL = secrets.DATABASE_DIRECT_URL;
+    }
+
+    console.log(`   ✓ ${Object.keys(secrets).length} secrets loaded (DATABASE_URL → direct endpoint)`);
+    return { ...process.env, ...fileEnv, ...secrets };
+  }
+
+  // Legacy: env file contains raw credentials
+  return { ...process.env, ...fileEnv };
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // GUARDRAILS: Prevent common misconfigurations
@@ -179,33 +224,6 @@ const isDbmateCommand = fullCommand.includes('dbmate');
 const isMigrateCommand = isDbmateCommand ||
   fullCommand.includes('migrate') ||
   commandArgs.some(arg => arg === 'migrate' || arg.includes('migrate'));
-
-// Check for pooler URL when running migrations
-if (isMigrateCommand) {
-  const dbUrl = mergedEnv.DATABASE_URL || '';
-
-  if (dbUrl.includes('-pooler')) {
-    console.error(`
-═══════════════════════════════════════════════════════════════════════
-❌ BLOCKED: Pooler URL Detected for Migration
-═══════════════════════════════════════════════════════════════════════
-
-DATABASE_URL contains '-pooler'. Database migrations require a direct
-connection (not pooled). Pooled connections through PgBouncer do not
-support the transaction modes required for DDL operations.
-
-ACTIONS:
-  Set DATABASE_URL to use the direct (non-pooler) endpoint in ${envFile}
-
-EXAMPLE:
-  DATABASE_URL=postgresql://user:pass@host.neon.tech/db
-                                      ^^^^ no -pooler
-
-═══════════════════════════════════════════════════════════════════════
-`);
-    process.exit(1);
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════
 // GUARDRAIL: Validate migration ordering before running migrations
@@ -324,6 +342,35 @@ This will modify the database schema. Please confirm you want to proceed.
 
 // Main execution
 async function main() {
+  // Build merged env (may fetch from SM)
+  const mergedEnv = await buildMergedEnv();
+
+  // Validate pooler URL for migration commands (must be direct connection)
+  if (isMigrateCommand) {
+    const dbUrl = mergedEnv.DATABASE_URL || '';
+    if (dbUrl.includes('-pooler')) {
+      console.error(`
+═══════════════════════════════════════════════════════════════════════
+❌ BLOCKED: Pooler URL Detected for Migration
+═══════════════════════════════════════════════════════════════════════
+
+DATABASE_URL contains '-pooler'. Database migrations require a direct
+connection (not pooled). Pooled connections through PgBouncer do not
+support the transaction modes required for DDL operations.
+
+ACTIONS:
+  Set DATABASE_URL to use the direct (non-pooler) endpoint in ${envFile}
+
+EXAMPLE:
+  DATABASE_URL=postgresql://user:pass@host.neon.tech/db
+                                      ^^^^ no -pooler
+
+═══════════════════════════════════════════════════════════════════════
+`);
+      process.exit(1);
+    }
+  }
+
   // Require confirmation for destructive commands
   if (isDestructiveCommand) {
     await requireHumanConfirmation();

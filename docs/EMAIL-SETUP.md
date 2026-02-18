@@ -342,8 +342,160 @@ Free tier is sufficient for development and small production use.
 
 ---
 
+## Creating Email Templates
+
+All transactional emails must use the shared layout system in `src/services/email-layout.ts`. **Do not write raw HTML.** The layout system provides dark-theme design tokens, brand consistency, and reusable components.
+
+### Basic Structure
+
+```typescript
+import {
+  wrapEmailLayout,
+  emailGreeting,
+  emailParagraph,
+  emailButton,
+  emailFootnote,
+} from "./email-layout.js";
+
+const html = wrapEmailLayout({
+  title: "Your Email Title",        // shown in the header below the logo
+  footerOrgName: orgName,           // personalizes "Sent by X via BreederHQ"
+  body: [
+    emailGreeting(partyName),
+    emailParagraph("Your message here."),
+    emailButton("Call to Action", activationUrl),
+    emailFootnote("Didn't expect this? You can safely ignore this email."),
+  ].join("\n"),
+});
+```
+
+### `wrapEmailLayout(options)` — Main Wrapper
+
+Renders the full email shell: orange accent bar → logo + title header → body → branded footer.
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `title` | `string` | Yes | Heading shown below the logo |
+| `body` | `string` | Yes | HTML body content (use component helpers below) |
+| `footerOrgName` | `string` | No | Org name in footer. Defaults to `"BreederHQ"` |
+| `showLogo` | `boolean` | No | Whether to show the logo. Defaults to `true` |
+
+### Component Helpers
+
+#### `emailGreeting(name)` — Greeting line
+```typescript
+emailGreeting("Gavin Darklighter")
+// → Hello Gavin Darklighter,
+```
+
+#### `emailParagraph(html)` — Body paragraph
+```typescript
+emailParagraph(`Welcome to <strong>BreederHQ</strong>.`)
+// Muted body text (#a3a3a3), 15px, 1.6 line-height
+```
+
+#### `emailAccent(text)` — Orange emphasis
+```typescript
+emailParagraph(`${emailAccent("Darklighter Ranch")} has invited you...`)
+// Inline orange (#f97316) bold text — compose inside emailParagraph
+```
+
+#### `emailButton(text, href, color?)` — CTA button
+```typescript
+emailButton("Activate Your Account", url)           // orange (default)
+emailButton("View Invoice", url, "green")
+emailButton("Cancel Booking", url, "red")
+emailButton("Learn More", url, "blue")
+emailButton("Dismiss", url, "gray")
+```
+Available colors: `orange` | `green` | `red` | `blue` | `gray`
+
+#### `emailFeatureList(items)` — Orange-checkmark feature list
+```typescript
+emailFeatureList([
+  "View and sign agreements & contracts",
+  "Track your waitlist & reservations",
+  "Make secure payments online",
+])
+// Dark cards with orange ✓ marks — use for benefit lists on invite/welcome emails
+```
+
+#### `emailBulletList(items)` — Simple bulleted list
+```typescript
+emailBulletList(["Item one", "Item two", "Item three"])
+// Standard bullet list — lighter than emailFeatureList
+```
+
+#### `emailDetailRows(rows)` — Key/value detail table
+```typescript
+emailDetailRows([
+  { label: "Invoice #", value: "INV-1042" },
+  { label: "Amount Due", value: "$350.00" },
+  { label: "Due Date", value: "March 1, 2026" },
+])
+// Dark table with muted labels and white values
+```
+
+#### `emailInfoCard(content, options?)` — Callout card
+```typescript
+emailInfoCard(`<p style="color: #d4d4d4; margin: 0;">Link expires in 3 days.</p>`)
+emailInfoCard(`<p style="color: #d4d4d4; margin: 0;">Action required.</p>`, { borderColor: "orange" })
+// borderColor options: "orange" | "green" | "red" | "blue" | "yellow" | "gray"
+```
+
+#### `emailHeading(text)` — Section heading
+```typescript
+emailHeading("What's Included")
+// White, 16px, 600 weight — use to break up longer emails
+```
+
+#### `emailFootnote(text)` — Muted footer note
+```typescript
+emailFootnote("Didn't expect this? You can safely ignore this email.")
+// Centered, muted (#737373), 13px — always include at bottom of email
+```
+
+#### `emailCodeBlock(code)` — Verification code display
+```typescript
+emailCodeBlock("847291")
+// Large centered code in a dark box — use for OTPs and verification codes
+```
+
+### Design Tokens
+
+| Token | Value | Used For |
+|-------|-------|----------|
+| Page background | `#0a0a0a` | Outer wrapper |
+| Card background | `#171717` | Info cards, detail tables |
+| Border | `#262626` | Dividers, card borders |
+| Heading text | `#ffffff` | Titles, strong values |
+| Body text | `#e5e5e5` | Greeting names |
+| Muted text | `#a3a3a3` | Paragraphs, labels |
+| Subtle text | `#737373` | Footnotes, footer |
+| Brand orange | `#f97316 → #ea580c` | Buttons, accents, checkmarks |
+
+### Template Checklist
+
+When creating a new email template:
+
+- [ ] Use `wrapEmailLayout()` — no raw HTML
+- [ ] Set `footerOrgName` from a `prisma.tenant.findUnique()` lookup if tenant-specific
+- [ ] Include `emailFootnote()` at the bottom
+- [ ] Use `emailButton()` for all CTAs (not raw `<a>` tags)
+- [ ] Pass the result to `sendEmail()` with an appropriate `templateKey` and `category`
+- [ ] Also write a plain-text version for the `text` field
+
+### Reference Implementations
+
+- `src/routes/portal-access.ts` — `sendInviteEmail()` (portal invite with feature list)
+- `src/services/email-templates.ts` — booking and invoice templates (detail rows, buttons)
+- `src/services/email-service.ts` — contract and billing notification templates
+
+---
+
 ## Related Files
 
+- `src/services/email-layout.ts` - Shared dark-theme layout components (use this for all templates)
 - `src/services/email-service.ts` - Core email sending logic
 - `src/services/email-templates.ts` - HTML email templates
 - `src/services/comm-prefs-service.ts` - Communication preferences

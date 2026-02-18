@@ -325,6 +325,22 @@ import {
 } from "../services/neonatal-care-service.js";
 import { checkArchiveReadiness } from "../services/archive-validation-service.js";
 import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detection.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/* ───────────────────────── audit helper ───────────────────────── */
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+    requestId: req.id,
+  };
+}
 
 /* ───────────────────────── tenant resolution (plugin-scoped) ───────────────────────── */
 
@@ -1314,6 +1330,20 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         carrierRisk = await checkBreedingPlanCarrierRisk(prisma, created.id, tenantId, userId, true);
       }
 
+      // Audit trail + activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("BREEDING_PLAN", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: created.id,
+        kind: "plan_created",
+        category: "system",
+        title: `Breeding plan created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       reply.code(201).send({
         ...created,
         carrierWarnings: carrierRisk?.warnings ?? [],
@@ -1925,6 +1955,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const sireChanged = data.sireId !== undefined;
       const statusChanged = data.status !== undefined;
 
+      // Snapshot full row before update for audit trail
+      const beforeSnap = await prisma.breedingPlan.findFirst({ where: { id, tenantId } });
+
       const updated = await prisma.breedingPlan.update({ where: { id }, data });
 
       // Sync animal breeding statuses if dam, sire, or plan status changed
@@ -2105,6 +2138,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if ((damChanged || sireChanged) && updated.damId && updated.sireId) {
         const userId = (req as any).user?.id ?? null;
         carrierRisk = await checkBreedingPlanCarrierRisk(prisma, updated.id, tenantId, userId, true);
+      }
+
+      // Audit trail (fire-and-forget)
+      if (beforeSnap) {
+        auditUpdate("BREEDING_PLAN", id, beforeSnap as any, updated as any, auditCtx(req, tenantId));
       }
 
       reply.send({
@@ -3881,6 +3919,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update usage snapshot after deleting (decreases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
+      // Audit trail (fire-and-forget)
+      auditDelete("BREEDING_PLAN", id, auditCtx(req, tenantId));
 
       reply.send({ ok: true });
     } catch (err) {

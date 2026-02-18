@@ -19,27 +19,22 @@ npm run dev:stripe
 
 ## Environment Configuration
 
-### Required for Basic Development
-Located in `.env.dev`:
+### Secrets (AWS Secrets Manager)
+
+All secrets (DATABASE_URL, COOKIE_SECRET, RESEND_API_KEY, STRIPE keys, JWT secrets, etc.) are fetched from AWS Secrets Manager at startup. No need to manually configure them locally.
+
+**Prerequisite** (one-time): `aws configure --profile dev` — get credentials from team lead.
+
+`.env.dev` is committed to the repo — it contains only non-secret config (PORT, feature flags, S3 bucket name, etc.) and the SM pointer (`AWS_SECRET_NAME=breederhq-api/dev-prototype`). No credentials live in it.
+
+See [AWS Secrets Manager docs](docs/operations/AWS-SECRETS-MANAGER.md) for details.
+
+### Local-Only Config (in `.env.dev`)
 ```bash
-DATABASE_URL=...
-COOKIE_SECRET=...
+PORT=6001
 APP_URL=http://localhost:5173
-```
-
-### Optional - Email Notifications (Resend)
-```bash
-RESEND_API_KEY=your_key_here
-RESEND_FROM_EMAIL=noreply@breederhq.com
-RESEND_FROM_NAME=BreederHQ
-```
-
-### Optional - Stripe Billing
-Get test keys from: https://dashboard.stripe.com/test/apikeys
-
-```bash
-STRIPE_SECRET_KEY=sk_test_your_key_here
-STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
+MARKETPLACE_PUBLIC_ENABLED=true
+S3_BUCKET=breederhq-assets-dev
 ```
 
 ## Features by Configuration

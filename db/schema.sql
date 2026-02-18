@@ -2883,7 +2883,6 @@ BEGIN
     ('coatColor', 'coatColorData'),
     ('coatType', 'coatTypeData'),
     ('physicalTraits', 'physicalTraitsData'),
-    ('performance', 'performanceData'),
     ('eyeColor', 'eyeColorData'),
     ('health', 'healthGeneticsData'),
     ('otherTraits', 'otherTraitsData')
@@ -2895,7 +2894,6 @@ BEGIN
         WHEN 'coatColorData' THEN NEW."coatColorData"
         WHEN 'coatTypeData' THEN NEW."coatTypeData"
         WHEN 'physicalTraitsData' THEN NEW."physicalTraitsData"
-        WHEN 'performanceData' THEN NEW."performanceData"
         WHEN 'eyeColorData' THEN NEW."eyeColorData"
         WHEN 'healthGeneticsData' THEN NEW."healthGeneticsData"
         WHEN 'otherTraitsData' THEN NEW."otherTraitsData"
@@ -3056,6 +3054,45 @@ CREATE SEQUENCE marketplace.abuse_reports_id_seq
 --
 
 ALTER SEQUENCE marketplace.abuse_reports_id_seq OWNED BY marketplace.abuse_reports.id;
+
+
+--
+-- Name: international_waitlist; Type: TABLE; Schema: marketplace; Owner: -
+--
+
+CREATE TABLE marketplace.international_waitlist (
+    id integer NOT NULL,
+    email character varying(255) NOT NULL,
+    first_name character varying(100),
+    last_name character varying(100),
+    country character varying(2) NOT NULL,
+    country_name character varying(100),
+    source character varying(50) DEFAULT 'registration_gate'::character varying NOT NULL,
+    notes text,
+    notified_at timestamp without time zone,
+    created_at timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: international_waitlist_id_seq; Type: SEQUENCE; Schema: marketplace; Owner: -
+--
+
+CREATE SEQUENCE marketplace.international_waitlist_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: international_waitlist_id_seq; Type: SEQUENCE OWNED BY; Schema: marketplace; Owner: -
+--
+
+ALTER SEQUENCE marketplace.international_waitlist_id_seq OWNED BY marketplace.international_waitlist.id;
 
 
 --
@@ -8553,9 +8590,9 @@ CREATE TABLE public."MareReproductiveHistory" (
     "riskFactors" text[],
     notes text,
     "lastUpdatedFromPlanId" integer,
+    "lastUpdatedFromBreedYear" integer,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "lastUpdatedFromBreedYear" integer,
     "isBarren" boolean DEFAULT false NOT NULL
 );
 
@@ -12571,6 +12608,102 @@ ALTER SEQUENCE public.direct_animal_listing_id_seq OWNED BY public.mkt_listing_i
 
 
 --
+-- Name: entity_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_activity (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "entityType" character varying(50) NOT NULL,
+    "entityId" integer NOT NULL,
+    kind character varying(50) NOT NULL,
+    category character varying(30) DEFAULT 'system'::character varying NOT NULL,
+    title character varying(500) NOT NULL,
+    description text,
+    metadata jsonb,
+    "actorId" character varying(64),
+    "actorName" character varying(200),
+    "createdAt" timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE entity_activity; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.entity_activity IS 'Narrative activity timeline. All tiers. For entities without dedicated activity tables.';
+
+
+--
+-- Name: entity_activity_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.entity_activity_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: entity_activity_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.entity_activity_id_seq OWNED BY public.entity_activity.id;
+
+
+--
+-- Name: entity_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_audit_log (
+    id bigint NOT NULL,
+    "tenantId" integer NOT NULL,
+    "entityType" character varying(50) NOT NULL,
+    "entityId" integer NOT NULL,
+    action character varying(20) NOT NULL,
+    "fieldName" character varying(100),
+    "oldValue" text,
+    "newValue" text,
+    "changedBy" character varying(64) NOT NULL,
+    "changedByName" character varying(200),
+    "changeSource" character varying(30) DEFAULT 'PLATFORM'::character varying NOT NULL,
+    ip character varying(45),
+    "requestId" character varying(64),
+    metadata jsonb,
+    "createdAt" timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE entity_audit_log; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.entity_audit_log IS 'Field-level change audit trail for compliance. Enterprise tier only.';
+
+
+--
+-- Name: entity_audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.entity_audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: entity_audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.entity_audit_log_id_seq OWNED BY public.entity_audit_log.id;
+
+
+--
 -- Name: mkt_breeding_booking_animal; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12714,7 +12847,7 @@ ALTER SEQUENCE public.refresh_tokens_id_seq OWNED BY public.refresh_tokens.id;
 --
 
 CREATE TABLE public.schema_migrations (
-    version character varying NOT NULL
+    version character varying(255) NOT NULL
 );
 
 
@@ -12723,6 +12856,13 @@ CREATE TABLE public.schema_migrations (
 --
 
 ALTER TABLE ONLY marketplace.abuse_reports ALTER COLUMN id SET DEFAULT nextval('marketplace.abuse_reports_id_seq'::regclass);
+
+
+--
+-- Name: international_waitlist id; Type: DEFAULT; Schema: marketplace; Owner: -
+--
+
+ALTER TABLE ONLY marketplace.international_waitlist ALTER COLUMN id SET DEFAULT nextval('marketplace.international_waitlist_id_seq'::regclass);
 
 
 --
@@ -14175,6 +14315,20 @@ ALTER TABLE ONLY public.devices ALTER COLUMN id SET DEFAULT nextval('public.devi
 
 
 --
+-- Name: entity_activity id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_activity ALTER COLUMN id SET DEFAULT nextval('public.entity_activity_id_seq'::regclass);
+
+
+--
+-- Name: entity_audit_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_audit_log ALTER COLUMN id SET DEFAULT nextval('public.entity_audit_log_id_seq'::regclass);
+
+
+--
 -- Name: mkt_breeding_booking_animal id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -14222,6 +14376,14 @@ ALTER TABLE ONLY public.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('publ
 
 ALTER TABLE ONLY marketplace.abuse_reports
     ADD CONSTRAINT abuse_reports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: international_waitlist international_waitlist_pkey; Type: CONSTRAINT; Schema: marketplace; Owner: -
+--
+
+ALTER TABLE ONLY marketplace.international_waitlist
+    ADD CONSTRAINT international_waitlist_pkey PRIMARY KEY (id);
 
 
 --
@@ -16017,6 +16179,22 @@ ALTER TABLE ONLY public.devices
 
 
 --
+-- Name: entity_activity entity_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_activity
+    ADD CONSTRAINT entity_activity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: entity_audit_log entity_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_audit_log
+    ADD CONSTRAINT entity_audit_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: mkt_breeding_booking_animal mkt_breeding_booking_animal_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16091,6 +16269,27 @@ CREATE INDEX abuse_reports_listing_id_idx ON marketplace.abuse_reports USING btr
 --
 
 CREATE INDEX abuse_reports_status_idx ON marketplace.abuse_reports USING btree (status);
+
+
+--
+-- Name: idx_intl_waitlist_country; Type: INDEX; Schema: marketplace; Owner: -
+--
+
+CREATE INDEX idx_intl_waitlist_country ON marketplace.international_waitlist USING btree (country);
+
+
+--
+-- Name: idx_intl_waitlist_email_country; Type: INDEX; Schema: marketplace; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_intl_waitlist_email_country ON marketplace.international_waitlist USING btree (email, country);
+
+
+--
+-- Name: idx_intl_waitlist_notified_at; Type: INDEX; Schema: marketplace; Owner: -
+--
+
+CREATE INDEX idx_intl_waitlist_notified_at ON marketplace.international_waitlist USING btree (notified_at);
 
 
 --
@@ -22786,6 +22985,41 @@ CREATE INDEX "devices_userId_idx" ON public.devices USING btree ("userId");
 
 
 --
+-- Name: idx_ea_tenant_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ea_tenant_created ON public.entity_activity USING btree ("tenantId", "createdAt" DESC);
+
+
+--
+-- Name: idx_ea_tenant_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ea_tenant_entity ON public.entity_activity USING btree ("tenantId", "entityType", "entityId", "createdAt" DESC);
+
+
+--
+-- Name: idx_eal_changed_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_eal_changed_by ON public.entity_audit_log USING btree ("changedBy", "createdAt" DESC);
+
+
+--
+-- Name: idx_eal_tenant_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_eal_tenant_created ON public.entity_audit_log USING btree ("tenantId", "createdAt" DESC);
+
+
+--
+-- Name: idx_eal_tenant_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_eal_tenant_entity ON public.entity_audit_log USING btree ("tenantId", "entityType", "entityId", "createdAt" DESC);
+
+
+--
 -- Name: mkt_breeding_booking_animal_animalId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27413,4 +27647,8 @@ ALTER TABLE ONLY public.refresh_tokens
 --
 
 INSERT INTO public.schema_migrations (version) VALUES
-    ('20260216185145');
+    ('20260216185145'),
+    ('20260218141720'),
+    ('20260218150809'),
+    ('20260218154311'),
+    ('20260218160406');

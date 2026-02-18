@@ -467,6 +467,39 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
     }
   });
 
+  // POST /organizations/:id/compliance-reset
+  // Resets compliance status for a specific channel (EMAIL or SMS).
+  // Used by admins to re-opt-in an organization after an unsubscribe.
+  app.post("/organizations/:id/compliance-reset", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = req.body as { channel?: string } | null;
+      const channel = body?.channel?.toUpperCase();
+      if (channel !== "EMAIL" && channel !== "SMS") {
+        return reply.code(400).send({ error: "invalid_channel", message: "Channel must be EMAIL or SMS" });
+      }
+
+      const org = await getOrgInTenant(id, tenantId);
+      if (!org.partyId) throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+
+      const updated = await CommPrefsService.updateCommPreferences(
+        org.partyId,
+        [{ channel: channel as "EMAIL" | "SMS", compliance: "SUBSCRIBED", complianceSource: "admin_reset" }],
+        undefined,
+        "admin_compliance_reset"
+      );
+
+      reply.send({ ok: true, commPreferences: updated });
+    } catch (e: any) {
+      const { status, payload } = errorReply(e);
+      reply.status(status).send(payload);
+    }
+  });
+
   // DELETE /organizations/:id  (hard delete; tenant enforced; FK-safe)
   app.delete("/organizations/:id", async (req, reply) => {
     try {

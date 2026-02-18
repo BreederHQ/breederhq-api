@@ -14,6 +14,19 @@ import {
   type Sex,
 } from "@prisma/client";
 import prismaClient from "../prisma.js";
+import { auditCreate, auditUpdate, auditDelete, auditArchive, auditRestore, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -1526,6 +1539,26 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ? await prisma.offspringGroup.update({ where: { id: existing.id }, data: payload as any })
       : await prisma.offspringGroup.create({ data: payload as any });
 
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      if (!existing) {
+        auditCreate("LITTER", created.id, created as any, ctx);
+        logEntityActivity({
+          tenantId,
+          entityType: "LITTER",
+          entityId: created.id,
+          kind: "litter_created",
+          category: "event",
+          title: "Litter/group created",
+          actorId: ctx.userId,
+          actorName: ctx.userName,
+        });
+      } else {
+        auditUpdate("LITTER", created.id, existing as any, created as any, ctx);
+      }
+    }
+
     // return detail payload
     const fresh = await prisma.offspringGroup.findFirst({
       where: { id: created.id, tenantId },
@@ -1754,6 +1787,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Audit trail (fire-and-forget, fail-open) — G is the before-snapshot
+    if (G && refreshed) {
+      auditUpdate("LITTER", id, G as any, refreshed as any, auditCtx(req, tenantId));
+    }
+
     const [animals, waitlist, attachments, buyers, offspring] = await Promise.all([
       prisma.animal.findMany({
         where: { offspringGroupId: id, tenantId },
@@ -1956,6 +1994,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       await tx.offspringGroup.delete({ where: { id } });
     });
 
+    // Audit trail (fire-and-forget, fail-open)
+    auditDelete("LITTER", id, auditCtx(req, tenantId));
+
     reply.send({ ok: true, id });
   });
 
@@ -1977,6 +2018,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data: { archivedAt: new Date() },
     });
 
+    // Audit trail (fire-and-forget, fail-open)
+    auditArchive("LITTER", id, auditCtx(req, tenantId));
+
     reply.send({ ok: true, id, archivedAt: updated.archivedAt });
   });
 
@@ -1997,6 +2041,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id },
       data: { archivedAt: null },
     });
+
+    // Audit trail (fire-and-forget, fail-open)
+    auditRestore("LITTER", id, auditCtx(req, tenantId));
 
     reply.send({ ok: true, id, archivedAt: null });
   });
@@ -2202,6 +2249,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       },
     });
+
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("OFFSPRING", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: created.id,
+        kind: "offspring_created",
+        category: "event",
+        title: `Offspring "${created.name || "unnamed"}" created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
 
     // Trigger rule execution for new offspring
     triggerOnOffspringCreated(created.id, tenantId).catch(err =>
@@ -2619,6 +2682,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(500).send({ error: "database_error" });
     }
 
+    // Audit trail (fire-and-forget, fail-open) — existing is the before-snapshot
+    if (existing) {
+      auditUpdate("OFFSPRING", id, existing as any, updated as any, auditCtx(req, tenantId));
+    }
+
     // Trigger rule execution for updated offspring
     const changedFields = Object.keys(data);
     triggerOnOffspringUpdated(id, tenantId, changedFields).catch(err =>
@@ -2720,6 +2788,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Safe to delete - offspring is fresh with no business data
     await prisma.offspring.delete({ where: { id } });
+
+    // Audit trail (fire-and-forget, fail-open)
+    auditDelete("OFFSPRING", id, auditCtx(req, tenantId));
+
     reply.send({ ok: true, deleted: id });
   });
 
@@ -2749,6 +2821,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archiveReason: reason || null,
       },
     });
+
+    // Audit trail (fire-and-forget, fail-open)
+    auditArchive("OFFSPRING", id, auditCtx(req, tenantId));
 
     reply.send({ ok: true, archived });
   });
@@ -2781,6 +2856,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archiveReason: null,
       },
     });
+
+    // Audit trail (fire-and-forget, fail-open)
+    auditRestore("OFFSPRING", id, auditCtx(req, tenantId));
 
     reply.send({ ok: true, restored });
   });

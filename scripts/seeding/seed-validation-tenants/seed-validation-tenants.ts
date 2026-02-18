@@ -1,7 +1,7 @@
 // scripts/seed-validation-tenants/seed-validation-tenants.ts
 // Main orchestrator script for seeding validation testing tenants.
 //
-// Creates 4 themed tenants with:
+// Creates 5 themed tenants with:
 // - 1 owner/admin user each with predictable passwords
 // - 5 contacts without portal access
 // - Multiple species with up to 4 animals each, 6 generations of lineage
@@ -167,7 +167,7 @@ async function seedTenant(
     throw new Error(`Tenant definition not found for slug: ${tenantSlug}`);
   }
 
-  const envSlug = getEnvSlug(tenantSlug, env);
+  const envSlug = definition.fixedSlug ?? getEnvSlug(tenantSlug, env);
   const envName = getEnvName(definition.theme.name, env);
 
   // Check if tenant already exists
@@ -254,14 +254,14 @@ async function seedUser(
   tenantSlug: string,
   tenantId: number,
   env: Environment,
-  tenantUsers: Record<string, { emailBase: string; firstName: string; lastName: string; password: string; isSuperAdmin: boolean }>
+  tenantUsers: Record<string, { emailBase: string; fixedEmail?: string; firstName: string; lastName: string; password: string; isSuperAdmin: boolean }>
 ): Promise<string> {
   const userDef = tenantUsers[tenantSlug];
   if (!userDef) {
     throw new Error(`User definition not found for tenant: ${tenantSlug}`);
   }
 
-  const envEmail = getEnvEmail(userDef.emailBase, env);
+  const envEmail = userDef.fixedEmail ?? getEnvEmail(userDef.emailBase, env);
 
   // Check if user already exists
   let user = await prisma.user.findUnique({
@@ -328,11 +328,10 @@ async function seedOrganizations(
   const orgIdMap = new Map<string, number>();
 
   for (const orgDef of orgDefs) {
-    const envEmail = getEnvEmail(orgDef.emailBase, env);
+    const envEmail = orgDef.fixedEmail ?? getEnvEmail(orgDef.emailBase, env);
     const envName = getEnvName(orgDef.name, env);
-    const envProgramSlug = orgDef.programSlug
-      ? getEnvSlug(orgDef.programSlug, env)
-      : undefined;
+    const envProgramSlug = orgDef.fixedProgramSlug
+      ?? (orgDef.programSlug ? getEnvSlug(orgDef.programSlug, env) : undefined);
 
     // Check if organization already exists (by name or by programSlug)
     let org = await prisma.organization.findFirst({
@@ -409,8 +408,8 @@ async function seedContacts(
   const contactDefs = tenantContacts[tenantSlug] || [];
 
   for (const contactDef of contactDefs) {
-    const envEmail = getEnvEmail(contactDef.emailBase, env);
-    const displayName = `${contactDef.firstName} ${contactDef.lastName}`;
+    const envEmail = contactDef.fixedEmail ?? getEnvEmail(contactDef.emailBase, env);
+    const displayName = contactDef.displayName ?? `${contactDef.firstName} ${contactDef.lastName}`;
 
     // Check if contact already exists
     let contact = await prisma.contact.findFirst({
@@ -4267,6 +4266,18 @@ async function main() {
     console.log('\n  [User]');
     const ownerUserId = await seedUser(tenantDef.slug, tenantId, env, tenantUsers);
     stats.users++;
+
+    // Set primaryEmail on tenant from owner's email (if not already set)
+    const ownerForEmail = await prisma.user.findUnique({ where: { id: ownerUserId }, select: { email: true } });
+    if (ownerForEmail?.email) {
+      const updated = await prisma.tenant.updateMany({
+        where: { id: tenantId, primaryEmail: null },
+        data: { primaryEmail: ownerForEmail.email },
+      });
+      if (updated.count > 0) {
+        console.log(`    + Set tenant primaryEmail: ${ownerForEmail.email}`);
+      }
+    }
 
     // 3. Create organizations
     console.log('\n  [Organizations]');

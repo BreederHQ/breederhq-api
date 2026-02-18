@@ -4,29 +4,32 @@ Fastify + Prisma + TypeScript, ready for Neon on Render.
 
 ## Quick Start
 
-1. Copy environment template:
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Configure AWS CLI dev profile (one-time setup):
+   ```bash
+   aws configure --profile dev
+   # Access Key ID: (get from team lead)
+   # Secret Access Key: (get from team lead)
+   # Region: us-east-2
+   ```
+
+3. Copy environment template:
    ```bash
    cp .env.example .env.dev
    ```
-
-2. Generate required secrets:
-   ```bash
-   # Generate COOKIE_SECRET (required)
-   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-   ```
-
-3. Add to `.env.dev`:
-   ```
-   COOKIE_SECRET=<your-generated-secret>
-   DATABASE_URL=<your-neon-pooler-url>
-   ```
+   The default `.env.dev` has `USE_SECRETS_MANAGER=true` — all secrets (DB, Stripe, Resend, JWT, etc.) are fetched from AWS Secrets Manager at startup. Fallback values in `.env.dev` are used by test scripts.
 
 4. Start dev server:
    ```bash
    npm run dev
    ```
+   If your SSO token has expired, the browser will open automatically for re-authentication.
 
-See [COOKIE_SECRET_SETUP.md](docs/runbooks/COOKIE_SECRET_SETUP.md) for detailed security setup.
+See [AWS Secrets Manager](docs/operations/AWS-SECRETS-MANAGER.md) for full details.
 
 ## Documentation
 

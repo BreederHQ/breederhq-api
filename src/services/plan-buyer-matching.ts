@@ -111,12 +111,13 @@ export async function findPossibleMatches(
     return [];
   }
 
-  // Get approved waitlist entries (not already assigned to this plan)
-  const existingPlanBuyers = await prisma.breedingPlanBuyer.findMany({
-    where: { planId },
+  // Get approved waitlist entries (not already assigned/matched to this plan)
+  // Only exclude confirmed stages — POSSIBLE_MATCH entries need to be re-evaluated
+  const confirmedPlanBuyers = await prisma.breedingPlanBuyer.findMany({
+    where: { planId, stage: { notIn: ["POSSIBLE_MATCH"] } },
     select: { waitlistEntryId: true },
   });
-  const excludeIds = existingPlanBuyers
+  const excludeIds = confirmedPlanBuyers
     .filter((b) => b.waitlistEntryId !== null)
     .map((b) => b.waitlistEntryId as number);
 
@@ -136,10 +137,19 @@ export async function findPossibleMatches(
 
   const matches: MatchResult[] = [];
 
+  // Reasons that indicate a meaningful preference overlap (not just species)
+  const MEANINGFUL_REASONS: MatchReason[] = [
+    "PROGRAM_MATCH",
+    "BREED_MATCH",
+    "SIRE_PREFERENCE",
+    "DAM_PREFERENCE",
+  ];
+
   for (const entry of waitlist) {
     const result = calculateMatch(entry, plan);
-    // Only include if there's some relevance (score > 0)
-    if (result.score > 0) {
+    // Require at least one meaningful match reason — species-only is too generic
+    const hasMeaningful = result.reasons.some((r) => MEANINGFUL_REASONS.includes(r));
+    if (hasMeaningful && result.score > 0) {
       matches.push(result);
     }
   }
@@ -231,17 +241,20 @@ export async function refreshMatchingPlansForEntry(
     include: { program: true },
   });
 
-  if (!entry?.programId) return;
+  if (!entry) return;
 
-  // Find all active plans under this program
-  const plans = await prisma.breedingPlan.findMany({
-    where: {
-      tenantId,
-      programId: entry.programId,
-      status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
-      deletedAt: null,
-    },
-  });
+  // Build plan filter: scope to program if the entry has one,
+  // otherwise match against ALL active plans for the tenant (parking-lot entries)
+  const planWhere: any = {
+    tenantId,
+    status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+    deletedAt: null,
+  };
+  if (entry.programId) {
+    planWhere.programId = entry.programId;
+  }
+
+  const plans = await prisma.breedingPlan.findMany({ where: planWhere });
 
   // Refresh matches for each plan
   for (const plan of plans) {

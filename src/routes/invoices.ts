@@ -17,6 +17,19 @@ import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
 import { activeOnly } from "../utils/query-helpers.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 /* ───────────────────────── errors ───────────────────────── */
 
@@ -360,6 +373,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Store idempotency key
       await storeIdempotencyKey(prisma, tenantId, idempotencyKey, requestHash, result);
 
+      // Audit trail & activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("INVOICE", result.id, result as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "INVOICE",
+        entityId: result.id,
+        kind: "invoice_created",
+        category: "financial",
+        title: "Invoice created",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.code(201).send(result);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -551,6 +578,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const updated = await prisma.invoice.findUnique({ where: { id } });
 
+      // Audit trail (fire-and-forget)
+      if (beforeUpdate && updated) {
+        auditUpdate("INVOICE", id, beforeUpdate as any, updated as any, auditCtx(req, tenantId));
+      }
+
       // If status changed to "issued", send email
       if (body.status === "issued" && beforeUpdate.status !== "issued") {
         const clientEmail = beforeUpdate.clientParty?.email;
@@ -606,6 +638,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (invoice.count === 0) return reply.code(404).send({ error: "not_found" });
 
       const updated = await prisma.invoice.findUnique({ where: { id } });
+
+      // Audit trail & activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditDelete("INVOICE", id, ctx, { reason: "voided" });
+      logEntityActivity({
+        tenantId,
+        entityType: "INVOICE",
+        entityId: id,
+        kind: "invoice_voided",
+        category: "financial",
+        title: "Invoice voided",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.code(200).send(invoiceDTO(updated));
     } catch (err) {
       const { status, payload } = errorReply(err);

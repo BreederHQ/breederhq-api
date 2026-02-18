@@ -4,6 +4,8 @@
 
 import type { FastifyInstance } from "fastify";
 import prisma from "../prisma.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
 
 // Type definitions (matches Prisma schema enums)
 // NOTE: After running migration, these can be imported from @prisma/client
@@ -110,6 +112,17 @@ interface SemenUsageResponse {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -415,6 +428,20 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
       },
     });
 
+    // Audit trail & activity log (fire-and-forget)
+    const ctx = auditCtx(req, tenantId);
+    auditCreate("SEMEN_INVENTORY", inventory.id, inventory as any, ctx);
+    logEntityActivity({
+      tenantId,
+      entityType: "SEMEN_INVENTORY",
+      entityId: inventory.id,
+      kind: "semen_inventory_created",
+      category: "event",
+      title: "Semen inventory record created",
+      actorId: ctx.userId,
+      actorName: ctx.userName,
+    });
+
     return reply.code(201).send(toInventoryResponse(inventory));
   });
 
@@ -484,6 +511,11 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
       },
     });
 
+    // Audit trail (fire-and-forget)
+    if (existing) {
+      auditUpdate("SEMEN_INVENTORY", id, existing as any, inventory as any, auditCtx(req, tenantId));
+    }
+
     return reply.send(toInventoryResponse(inventory));
   });
 
@@ -525,6 +557,9 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
       where: { id },
       data: { archivedAt: new Date() },
     });
+
+    // Audit trail (fire-and-forget)
+    auditDelete("SEMEN_INVENTORY", id, auditCtx(req, tenantId));
 
     return reply.code(204).send();
   });
@@ -649,6 +684,20 @@ export default async function semenInventoryRoutes(app: FastifyInstance) {
       });
 
       return { usage, updatedInventory };
+    });
+
+    // Activity log (fire-and-forget)
+    const dispenseCtx = auditCtx(req, tenantId);
+    logEntityActivity({
+      tenantId,
+      entityType: "SEMEN_INVENTORY",
+      entityId: id,
+      kind: "semen_dispensed",
+      category: "event",
+      title: "Semen units dispensed",
+      actorId: dispenseCtx.userId,
+      actorName: dispenseCtx.userName,
+      metadata: { unitsDispensed: dosesUsed },
     });
 
     return reply.send({

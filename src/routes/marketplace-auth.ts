@@ -73,6 +73,10 @@ export default async function marketplaceAuthRoutes(
 ) {
   /* ───────────────────────── Register ───────────────────────── */
 
+  // Countries currently supported for registration. Expand this list as
+  // payment processing, legal, and locale support is added per region.
+  const ALLOWED_REGISTRATION_COUNTRIES = ["US"] as const;
+
   app.post("/register", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
@@ -82,6 +86,7 @@ export default async function marketplaceAuthRoutes(
       firstName = "",
       lastName = "",
       phone = "",
+      country = "US",
       tosAcceptance,
       legalAcceptance,
     } = (req.body || {}) as {
@@ -90,6 +95,7 @@ export default async function marketplaceAuthRoutes(
       firstName?: string;
       lastName?: string;
       phone?: string;
+      country?: string;
       tosAcceptance?: { version: string; effectiveDate: string; surface: string; flow: string };
       legalAcceptance?: unknown;
     };
@@ -99,6 +105,7 @@ export default async function marketplaceAuthRoutes(
     const p = String(password);
     const fn = String(firstName).trim();
     const ln = String(lastName).trim();
+    const c = String(country || "US").trim().toUpperCase();
 
     if (!e) {
       return reply.code(400).send({ error: "email_required" });
@@ -116,6 +123,15 @@ export default async function marketplaceAuthRoutes(
       return reply.code(400).send({ error: "last_name_required" });
     }
 
+    // Country gate: registration is currently US-only
+    if (!(ALLOWED_REGISTRATION_COUNTRIES as readonly string[]).includes(c)) {
+      return reply.code(403).send({
+        error: "country_not_supported",
+        message: "Registration is currently available in the United States only.",
+        country: c,
+      });
+    }
+
     // Check if user already exists
     const existing = await findMarketplaceUserByEmail(e);
     if (existing) {
@@ -130,6 +146,7 @@ export default async function marketplaceAuthRoutes(
         firstName: fn,
         lastName: ln,
         phone: phone.trim() || undefined,
+        country: c,
         userType: "buyer",
       });
 

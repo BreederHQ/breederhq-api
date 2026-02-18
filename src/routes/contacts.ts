@@ -12,6 +12,8 @@ import {
 import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import { activeOnly } from "../utils/query-helpers.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
 
 /**
  * Contact schema alignment
@@ -159,34 +161,25 @@ function resolveOrganizationName(organization: any, includeArchived: boolean) {
   return organization.party.name ?? null;
 }
 
-async function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
+/** Convert comm prefs array to keyed object for frontend */
+function formatCommPrefs(prefs: import("../services/comm-prefs-service.js").CommPreferenceRead[]): Record<string, any> {
+  const commPreferences: Record<string, any> = {};
+  for (const pref of prefs) {
+    const channel = pref.channel.toLowerCase();
+    commPreferences[channel] = pref.preference;
+    if (channel === 'email' || channel === 'sms') {
+      commPreferences[`${channel}Compliance`] = pref.compliance;
+      commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
+      commPreferences[`${channel}ComplianceSource`] = pref.complianceSource;
+    }
+  }
+  return commPreferences;
+}
+
+function toContactRow(row: any, options: { includeArchivedOrg?: boolean; commPrefs?: Record<string, any> | null } = {}) {
   const { organization, party, ...rest } = row;
   const hasParty = !!party;
   const includeArchivedOrg = options.includeArchivedOrg ?? true;
-
-  // Fetch communication preferences if we have a partyId
-  let commPreferences: any = null;
-  if (row.partyId) {
-    try {
-      const prefs = await CommPrefsService.getCommPreferences(row.partyId);
-      // Convert array to object keyed by channel for easier frontend access
-      commPreferences = {};
-      for (const pref of prefs) {
-        const channel = pref.channel.toLowerCase();
-        // Store the full preference level (ALLOW, NOT_PREFERRED, NEVER)
-        commPreferences[channel] = pref.preference;
-        // Always include compliance fields for EMAIL and SMS (even if null)
-        if (channel === 'email' || channel === 'sms') {
-          commPreferences[`${channel}Compliance`] = pref.compliance;
-          commPreferences[`${channel}ComplianceSetAt`] = pref.complianceSetAt;
-          commPreferences[`${channel}ComplianceSource`] = pref.complianceSource;
-        }
-      }
-    } catch (err) {
-      // If preferences fetch fails, continue without them
-      console.error('Failed to fetch comm preferences:', err);
-    }
-  }
 
   return {
     ...rest,
@@ -201,8 +194,22 @@ async function toContactResponse(row: any, options: { includeArchivedOrg?: boole
     zip: hasParty ? party.postalCode : rest.zip,
     country: hasParty ? party.country : rest.country,
     organizationName: resolveOrganizationName(organization, includeArchivedOrg),
-    commPrefs: commPreferences,
+    commPrefs: options.commPrefs ?? null,
   };
+}
+
+/** Single-row variant that fetches comm prefs individually (for detail/update endpoints) */
+async function toContactResponse(row: any, options: { includeArchivedOrg?: boolean } = {}) {
+  let commPrefs: Record<string, any> | null = null;
+  if (row.partyId) {
+    try {
+      const prefs = await CommPrefsService.getCommPreferences(row.partyId);
+      commPrefs = formatCommPrefs(prefs);
+    } catch (err) {
+      console.error('Failed to fetch comm preferences:', err);
+    }
+  }
+  return toContactRow(row, { includeArchivedOrg: options.includeArchivedOrg, commPrefs });
 }
 
 function errorReply(err: any) {
@@ -229,6 +236,18 @@ function errorReply(err: any) {
 const ensureAuth = (_req: any) => {
   // if (!(_req as any).user) throw { status: 401, message: "unauthorized" };
 };
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+    requestId: req.id,
+  };
+}
 
 /* ───────────────────────── routes ───────────────────────── */
 
@@ -325,7 +344,19 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
       ]);
 
-      const items = await Promise.all(rows.map((row) => toContactResponse(row)));
+      // Batch-fetch comm preferences in a single query (avoids N+1)
+      const partyIds = rows.map((r) => r.partyId).filter((id): id is number => id != null && id > 0);
+      let prefsMap = new Map<number, import("../services/comm-prefs-service.js").CommPreferenceRead[]>();
+      try {
+        prefsMap = await CommPrefsService.getCommPreferencesBatch(partyIds);
+      } catch (err) {
+        req.log?.warn?.(err as any, "Failed to batch-fetch comm preferences");
+      }
+
+      const items = rows.map((row) => {
+        const prefs = row.partyId ? prefsMap.get(row.partyId) : undefined;
+        return toContactRow(row, { commPrefs: prefs ? formatCommPrefs(prefs) : null });
+      });
 
       return reply.send({ items, total, page, limit });
     } catch (err) {
@@ -521,6 +552,20 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update usage snapshot after successful creation
       await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
+
+      // Audit trail + activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("CONTACT", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "CONTACT",
+        entityId: created.id,
+        kind: "contact_created",
+        category: "system",
+        title: `Contact created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
 
       return reply.code(201).send(created);
     } catch (err) {
@@ -850,6 +895,11 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
+      // Audit trail (fire-and-forget) — existing snapshot captured before update
+      if (existing) {
+        auditUpdate("CONTACT", contactId, existing as any, updatedDb as any, auditCtx(req, tenantId));
+      }
+
       return reply.send(await toContactResponse(updatedDb));
     } catch (err: any) {
       req.log.error({ err }, "contacts.patch failed");
@@ -963,6 +1013,46 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // POST /contacts/:id/compliance-reset
+  // Resets compliance status for a specific channel (EMAIL or SMS).
+  // Used by admins to re-opt-in a contact after an unsubscribe.
+  app.post("/contacts/:id/compliance-reset", async (req, reply) => {
+    try {
+      ensureAuth(req);
+
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = req.body as { channel?: string } | null;
+      const channel = body?.channel?.toUpperCase();
+      if (channel !== "EMAIL" && channel !== "SMS") {
+        return reply.code(400).send({ error: "invalid_channel", message: "Channel must be EMAIL or SMS" });
+      }
+
+      const contact = await prisma.contact.findFirst({
+        where: activeOnly({ id, tenantId }),
+        select: { id: true, partyId: true },
+      });
+      if (!contact) return reply.code(404).send({ error: "not_found" });
+      if (contact.partyId == null) return reply.code(409).send({ error: "contact_missing_party" });
+
+      const updated = await CommPrefsService.updateCommPreferences(
+        contact.partyId,
+        [{ channel: channel as "EMAIL" | "SMS", compliance: "SUBSCRIBED", complianceSource: "admin_reset" }],
+        undefined,
+        "admin_compliance_reset"
+      );
+
+      return reply.send({ ok: true, commPreferences: updated });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
   // GET /contacts/:id/audit  (stub until wired to real audit log)
   app.get("/contacts/:id/audit", async (_req, reply) => {
     return reply.send([] as any[]);
@@ -992,6 +1082,53 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     return reply.send(org ? [org] : []);
   });
 
+  /**
+   * Check all linked data that would block contact deletion.
+   * Shared between GET /contacts/:id/can-delete and DELETE /contacts/:id.
+   */
+  async function checkContactBlockers(partyId: number, tenantId: number) {
+    const blockers: Record<string, boolean> = {};
+    const details: Record<string, number> = {};
+
+    const [
+      animalCount, invoiceCount, paymentCount, waitlistCount, portalAccessCount,
+      documentCount, messageCount, contractPartyCount, offspringContractCount,
+      planPartyCount, planBuyerCount, expenseCount, buyerRecord, breedingAttemptCount,
+    ] = await Promise.all([
+      prisma.animalOwner.count({ where: { partyId } }),
+      prisma.invoice.count({ where: { clientPartyId: partyId, tenantId } }),
+      prisma.payment.count({ where: { tenantId, invoice: { clientPartyId: partyId } } }),
+      prisma.waitlistEntry.count({ where: { clientPartyId: partyId, tenantId } }),
+      prisma.portalAccess.count({ where: { partyId, tenantId } }),
+      prisma.attachment.count({ where: { attachmentPartyId: partyId, tenantId } }),
+      prisma.message.count({ where: { senderPartyId: partyId } }),
+      prisma.contractParty.count({ where: { partyId, tenantId } }),
+      prisma.offspringContract.count({ where: { buyerPartyId: partyId, tenantId } }),
+      prisma.planParty.count({ where: { partyId, tenantId } }),
+      prisma.breedingPlanBuyer.count({ where: { partyId, tenantId } }),
+      prisma.expense.count({ where: { vendorPartyId: partyId, tenantId } }),
+      prisma.buyer.findUnique({ where: { partyId }, select: { id: true } }),
+      prisma.breedingAttempt.count({ where: { studOwnerPartyId: partyId, tenantId } }),
+    ]);
+
+    if (animalCount > 0) { blockers.hasAnimals = true; details.animalCount = animalCount; }
+    if (invoiceCount > 0) { blockers.hasInvoices = true; details.invoiceCount = invoiceCount; }
+    if (paymentCount > 0) { blockers.hasPayments = true; details.paymentCount = paymentCount; }
+    if (waitlistCount > 0) { blockers.hasWaitlistEntries = true; details.waitlistCount = waitlistCount; }
+    if (portalAccessCount > 0) { blockers.hasPortalAccess = true; }
+    if (documentCount > 0) { blockers.hasDocuments = true; details.documentCount = documentCount; }
+    if (messageCount > 0) { blockers.hasMessages = true; details.messageCount = messageCount; }
+    const totalContracts = contractPartyCount + offspringContractCount;
+    if (totalContracts > 0) { blockers.hasContracts = true; details.contractCount = totalContracts; }
+    const totalPlans = planPartyCount + planBuyerCount;
+    if (totalPlans > 0) { blockers.hasBreedingPlans = true; details.breedingPlanCount = totalPlans; }
+    if (expenseCount > 0) { blockers.hasExpenses = true; details.expenseCount = expenseCount; }
+    if (buyerRecord) { blockers.hasBuyerRecord = true; }
+    if (breedingAttemptCount > 0) { blockers.hasBreedingAttempts = true; details.breedingAttemptCount = breedingAttemptCount; }
+
+    return { blockers, details };
+  }
+
   // GET /contacts/:id/can-delete
   // Check if a contact can be safely deleted and return any blockers
   app.get("/contacts/:id/can-delete", async (req, reply) => {
@@ -1001,66 +1138,17 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const contactId = idNum((req.params as any).id);
     if (!contactId) return reply.code(400).send({ error: "bad_id" });
 
-    // Verify contact exists in tenant
     const contact = await prisma.contact.findFirst({
       where: { id: contactId, tenantId },
       select: { id: true, partyId: true },
     });
     if (!contact) return reply.code(404).send({ error: "contact_not_found" });
 
-    const blockers: Record<string, boolean> = {};
-    const details: Record<string, number> = {};
-
-    // Check for animals owned by this contact
-    if (contact.partyId) {
-      const animalCount = await prisma.animalOwner.count({
-        where: { partyId: contact.partyId },
-      });
-      if (animalCount > 0) {
-        blockers.hasAnimals = true;
-        details.animalCount = animalCount;
-      }
-
-      // Check for invoices linked to this party (Invoice uses clientPartyId, not partyId)
-      const invoiceCount = await prisma.invoice.count({
-        where: { clientPartyId: contact.partyId, tenantId },
-      });
-      if (invoiceCount > 0) {
-        blockers.hasInvoices = true;
-        details.invoiceCount = invoiceCount;
-      }
-
-      // Check for payments via invoices linked to this party
-      // Payment doesn't have partyId - it's linked through Invoice
-      const paymentCount = await prisma.payment.count({
-        where: {
-          tenantId,
-          invoice: { clientPartyId: contact.partyId },
-        },
-      });
-      if (paymentCount > 0) {
-        blockers.hasPayments = true;
-        details.paymentCount = paymentCount;
-      }
-
-      // Check for waitlist entries (WaitlistEntry uses clientPartyId, not partyId)
-      const waitlistCount = await prisma.waitlistEntry.count({
-        where: { clientPartyId: contact.partyId, tenantId },
-      });
-      if (waitlistCount > 0) {
-        blockers.hasWaitlistEntries = true;
-        details.waitlistCount = waitlistCount;
-      }
-
-      // Check for portal access
-      const portalAccessCount = await prisma.portalAccess.count({
-        where: { partyId: contact.partyId, tenantId },
-      });
-      if (portalAccessCount > 0) {
-        blockers.hasPortalAccess = true;
-      }
+    if (!contact.partyId) {
+      return reply.send({ canDelete: true, blockers: {} });
     }
 
+    const { blockers, details } = await checkContactBlockers(contact.partyId, tenantId);
     const canDelete = Object.keys(blockers).length === 0;
 
     return reply.send({
@@ -1068,6 +1156,74 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       blockers,
       details: Object.keys(details).length > 0 ? details : undefined,
     });
+  });
+
+  // DELETE /contacts/:id  (hard delete; tenant enforced; re-validates server-side)
+  app.delete("/contacts/:id", async (req, reply) => {
+    try {
+      ensureAuth(req);
+
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const contactId = idNum((req.params as any).id);
+      if (!contactId) return reply.code(400).send({ error: "bad_id" });
+
+      const contact = await prisma.contact.findFirst({
+        where: { id: contactId, tenantId },
+        select: { id: true, partyId: true },
+      });
+      if (!contact) return reply.code(404).send({ error: "not_found" });
+
+      // Re-validate blockers server-side (defense against race conditions)
+      if (contact.partyId) {
+        const { blockers } = await checkContactBlockers(contact.partyId, tenantId);
+        if (Object.keys(blockers).length > 0) {
+          return reply.code(409).send({
+            error: "cannot_delete_contact_with_dependents",
+            message: "Contact has linked data that prevents deletion. Use archive instead.",
+            blockers,
+          });
+        }
+
+        // Nullify nullable FK references then delete contact + party in a transaction
+        await prisma.$transaction(async (tx) => {
+          await Promise.all([
+            tx.attachment.updateMany({ where: { attachmentPartyId: contact.partyId! }, data: { attachmentPartyId: null } }),
+            tx.message.updateMany({ where: { senderPartyId: contact.partyId! }, data: { senderPartyId: null } }),
+            tx.animal.updateMany({ where: { buyerPartyId: contact.partyId! }, data: { buyerPartyId: null } }),
+            tx.offspring.updateMany({ where: { buyerPartyId: contact.partyId! }, data: { buyerPartyId: null } }),
+            tx.draft.updateMany({ where: { partyId: contact.partyId! }, data: { partyId: null } }),
+            tx.emailSendLog.updateMany({ where: { partyId: contact.partyId! }, data: { partyId: null } }),
+          ]);
+
+          // Delete contact first (Party has onDelete: Restrict from Contact side)
+          await tx.contact.delete({ where: { id: contactId } });
+          // Delete party (cascades to PartyNote, PartyEvent, PartyEmail, etc.)
+          await tx.party.delete({ where: { id: contact.partyId! } });
+        });
+      } else {
+        // Contact without a party — just delete the contact
+        await prisma.contact.delete({ where: { id: contactId } });
+      }
+
+      await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
+
+      // Audit trail (fire-and-forget)
+      auditDelete("CONTACT", contactId, auditCtx(req, tenantId));
+
+      return reply.send({ ok: true });
+    } catch (err: any) {
+      // Safety net for any FK constraint violations we missed
+      if (err?.code === "P2003") {
+        return reply.code(409).send({
+          error: "cannot_delete_contact_with_dependents",
+          message: "Contact has linked data that prevents deletion. Use archive instead.",
+        });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
   });
 
   // GET /contacts/:id/animals

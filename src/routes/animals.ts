@@ -12,8 +12,22 @@ import type { IdentifierType, OwnerRole } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
 import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 import { uploadBuffer, deleteFile } from "../services/media-storage.js";
+import { auditCreate, auditUpdate, auditDelete, auditArchive, auditRestore, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
 
 const AVATAR_SIZE = 256;
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+    requestId: req.id,
+  };
+}
 
 /* Keep these in sync with Prisma enums */
 type Species = "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
@@ -826,6 +840,20 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update usage snapshot after successful creation
       await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
 
+      // Audit trail + activity log (fire-and-forget, fail-open)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("ANIMAL", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: created.id,
+        kind: "animal_created",
+        category: "system",
+        title: `${created.name || "Animal"} created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -1015,6 +1043,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.brandMark !== undefined) data.brandMark = b.brandMark;
     if (b.scrapieTagNumber !== undefined) data.scrapieTagNumber = b.scrapieTagNumber;
 
+    // Snapshot before state for audit diff
+    const beforeSnap = await prisma.animal.findUnique({ where: { id } });
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -1057,6 +1088,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           scrapieTagNumber: true,
         },
       });
+
+      // Audit trail (fire-and-forget, fail-open)
+      if (beforeSnap) {
+        auditUpdate("ANIMAL", id, beforeSnap as any, updated as any, auditCtx(req, tenantId));
+      }
+
       reply.send(updated);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -1385,6 +1422,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: true } });
+    auditArchive("ANIMAL", id, auditCtx(req, tenantId));
     reply.send({ ok: true });
   });
 
@@ -1397,6 +1435,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: false } });
+    auditRestore("ANIMAL", id, auditCtx(req, tenantId));
     reply.send({ ok: true });
   });
 
@@ -1410,6 +1449,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.delete({ where: { id } });
+
+    // Audit trail (fire-and-forget)
+    auditDelete("ANIMAL", id, auditCtx(req, tenantId));
 
     // Update usage snapshot after deletion
     await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");

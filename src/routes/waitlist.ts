@@ -13,6 +13,19 @@ import {
   sendWaitlistRejectionToUser,
 } from "../services/marketplace-email-service.js";
 import { refreshMatchingPlansForEntry } from "../services/plan-buyer-matching.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 /* ───────── helpers ───────── */
 
@@ -130,6 +143,17 @@ function serializeEntry(w: any) {
       tag: t.tag ? { id: t.tag.id, name: t.tag.name, color: t.tag.color ?? null } : null,
     })),
 
+    planMatches: (w.planBuyerLinks ?? []).map((link: any) => ({
+      id: link.id,
+      planId: link.planId,
+      planName: link.plan?.name ?? null,
+      stage: link.stage,
+      matchScore: link.matchScore ?? null,
+      matchReasons: link.matchReasons ?? [],
+      sireName: link.plan?.sire?.name ?? null,
+      damName: link.plan?.dam?.name ?? null,
+    })),
+
     skipCount: w.skipCount ?? null,
     lastSkipAt: w.lastSkipAt?.toISOString() ?? null,
     notes: w.notes ?? null,
@@ -229,6 +253,23 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
             },
           },
         },
+        planBuyerLinks: {
+          select: {
+            id: true,
+            planId: true,
+            stage: true,
+            matchScore: true,
+            matchReasons: true,
+            plan: {
+              select: {
+                id: true,
+                name: true,
+                sire: { select: { id: true, name: true } },
+                dam: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -237,6 +278,38 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const total = await prisma.waitlistEntry.count({
       where: { tenantId, litterId: null, ...statusFilter, ...(validSpecies ? { speciesPref: validSpecies } : null) },
     });
+
+    // Lazy-match: backfill plan matches for APPROVED entries that haven't been matched yet.
+    // This covers entries created before matching was wired into POST/PATCH.
+    const unmatchedApproved = rows.filter(
+      (r) => (r.status === "APPROVED" || r.status === "DEPOSIT_PAID") &&
+        (!r.planBuyerLinks || r.planBuyerLinks.length === 0)
+    );
+    if (unmatchedApproved.length > 0) {
+      // Run matching synchronously so matches appear on this page load
+      try {
+        for (const r of unmatchedApproved) {
+          await refreshMatchingPlansForEntry(prisma, r.id, tenantId);
+          // Re-fetch this entry's links and patch into the row
+          const links = await prisma.breedingPlanBuyer.findMany({
+            where: { waitlistEntryId: r.id },
+            select: {
+              id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
+              plan: {
+                select: {
+                  id: true, name: true,
+                  sire: { select: { id: true, name: true } },
+                  dam: { select: { id: true, name: true } },
+                },
+              },
+            },
+          });
+          (r as any).planBuyerLinks = links;
+        }
+      } catch (err) {
+        console.error("[waitlist/list] lazy-match backfill error:", err);
+      }
+    }
 
     reply.send({ items: rows.map(serializeEntry), total: Number(total) });
   });
@@ -284,6 +357,23 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
                 last_name: true,
                 email: true,
                 phoneE164: true,
+              },
+            },
+          },
+        },
+        planBuyerLinks: {
+          select: {
+            id: true,
+            planId: true,
+            stage: true,
+            matchScore: true,
+            matchReasons: true,
+            plan: {
+              select: {
+                id: true,
+                name: true,
+                sire: { select: { id: true, name: true } },
+                dam: { select: { id: true, name: true } },
               },
             },
           },
@@ -367,8 +457,48 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
             },
           },
         },
+        planBuyerLinks: {
+          select: {
+            id: true,
+            planId: true,
+            stage: true,
+            matchScore: true,
+            matchReasons: true,
+            plan: {
+              select: {
+                id: true,
+                name: true,
+                sire: { select: { id: true, name: true } },
+                dam: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
       },
     });
+
+    // Audit trail + activity log (fire-and-forget)
+    const ctx = auditCtx(req, tenantId);
+    auditCreate("WAITLIST_ENTRY", created.id, created as any, ctx);
+    logEntityActivity({
+      tenantId,
+      entityType: "WAITLIST_ENTRY",
+      entityId: created.id,
+      kind: "waitlist_entry_created",
+      category: "event",
+      title: "Added to waitlist",
+      actorId: ctx.userId,
+      actorName: ctx.userName,
+    });
+
+    // If created as APPROVED, trigger plan matching immediately
+    if ((created.status || "").toUpperCase() === "APPROVED") {
+      try {
+        await refreshMatchingPlansForEntry(prisma, created.id, tenantId);
+      } catch (err) {
+        console.error("[waitlist/create] Failed to refresh matches:", err);
+      }
+    }
 
     reply.code(201).send(serializeEntry(created));
   });
@@ -457,10 +587,81 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
             },
           },
         },
+        planBuyerLinks: {
+          select: {
+            id: true,
+            planId: true,
+            stage: true,
+            matchScore: true,
+            matchReasons: true,
+            plan: {
+              select: {
+                id: true,
+                name: true,
+                sire: { select: { id: true, name: true } },
+                dam: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
       },
     });
 
-    reply.send(serializeEntry(updated));
+    // Audit trail (fire-and-forget) — existing was fetched above as before-snapshot
+    if (existing) {
+      auditUpdate("WAITLIST_ENTRY", id, existing as any, updated as any, auditCtx(req, tenantId));
+    }
+
+    // Refresh plan matches if entry is approved, then re-fetch so the
+    // response includes the updated planBuyerLinks (not stale pre-refresh data)
+    let final = updated;
+    if ((updated.status || "").toUpperCase() === "APPROVED") {
+      try {
+        await refreshMatchingPlansForEntry(prisma, id, tenantId);
+        // Re-fetch to pick up freshly created/updated plan matches
+        const refreshed = await prisma.waitlistEntry.findUnique({
+          where: { id },
+          include: {
+            sirePref: { select: { id: true, name: true } },
+            damPref: { select: { id: true, name: true } },
+            TagAssignment: { include: { tag: true } },
+            depositInvoice: {
+              select: {
+                id: true, invoiceNumber: true, status: true,
+                amountCents: true, balanceCents: true, dueAt: true, issuedAt: true,
+              },
+            },
+            clientParty: {
+              include: {
+                contact: {
+                  select: {
+                    id: true, display_name: true, first_name: true,
+                    last_name: true, email: true, phoneE164: true,
+                  },
+                },
+              },
+            },
+            planBuyerLinks: {
+              select: {
+                id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
+                plan: {
+                  select: {
+                    id: true, name: true,
+                    sire: { select: { id: true, name: true } },
+                    dam: { select: { id: true, name: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (refreshed) final = refreshed as typeof updated;
+      } catch (err) {
+        console.error("[waitlist/patch] Failed to refresh matches:", err);
+      }
+    }
+
+    reply.send(serializeEntry(final));
   });
 
   /**
@@ -475,6 +676,10 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if (!existing) return reply.code(404).send({ error: "not found" });
 
     await prisma.waitlistEntry.delete({ where: { id } });
+
+    // Audit trail (fire-and-forget)
+    auditDelete("WAITLIST_ENTRY", id, auditCtx(req, tenantId));
+
     reply.send({ ok: true });
   });
 
@@ -496,6 +701,18 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         lastSkipAt: new Date(),
       },
       select: { skipCount: true },
+    });
+
+    // Activity log (fire-and-forget)
+    logEntityActivity({
+      tenantId,
+      entityType: "WAITLIST_ENTRY",
+      entityId: id,
+      kind: "waitlist_entry_skipped",
+      category: "status",
+      title: "Waitlist entry skipped",
+      actorId: auditCtx(req, tenantId).userId,
+      actorName: auditCtx(req, tenantId).userName,
     });
 
     reply.send({ skipCount: updated.skipCount ?? 0 });
@@ -857,6 +1074,18 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       },
     });
 
+    // Activity log (fire-and-forget)
+    logEntityActivity({
+      tenantId,
+      entityType: "WAITLIST_ENTRY",
+      entityId: id,
+      kind: "waitlist_entry_approved",
+      category: "status",
+      title: "Waitlist entry approved",
+      actorId: auditCtx(req, tenantId).userId,
+      actorName: auditCtx(req, tenantId).userName,
+    });
+
     // Track approval for marketplace users (for abuse system)
     try {
       const marketplaceUserId = await getMarketplaceUserIdFromParty(entry.clientPartyId);
@@ -906,15 +1135,54 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     // Refresh matches for breeding plans under the same program
     // This allows the approved entry to appear as a possible match
+    let final = updated;
     try {
       await refreshMatchingPlansForEntry(prisma, id, tenantId);
+      // Re-fetch to include freshly created plan matches in the response
+      const refreshed = await prisma.waitlistEntry.findFirst({
+        where: { id, tenantId },
+        include: {
+          sirePref: { select: { id: true, name: true } },
+          damPref: { select: { id: true, name: true } },
+          TagAssignment: { include: { tag: true } },
+          depositInvoice: {
+            select: {
+              id: true, invoiceNumber: true, status: true,
+              amountCents: true, balanceCents: true, dueAt: true, issuedAt: true,
+            },
+          },
+          clientParty: {
+            include: {
+              contact: {
+                select: {
+                  id: true, display_name: true, first_name: true,
+                  last_name: true, email: true, phoneE164: true,
+                },
+              },
+            },
+          },
+          planBuyerLinks: {
+            select: {
+              id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
+              plan: {
+                select: {
+                  id: true, name: true,
+                  sire: { select: { id: true, name: true } },
+                  dam: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (refreshed) final = refreshed;
     } catch (err) {
       // Don't fail the approval if matching fails
       console.error("[waitlist/approve] Failed to refresh matches:", err);
     }
 
     reply.send({
-      ...serializeEntry(updated),
+      ...serializeEntry(final),
       linkedToExisting,
       linkedContactId,
     });
@@ -981,6 +1249,19 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
           },
         },
       },
+    });
+
+    // Activity log (fire-and-forget)
+    logEntityActivity({
+      tenantId,
+      entityType: "WAITLIST_ENTRY",
+      entityId: id,
+      kind: "waitlist_entry_rejected",
+      category: "status",
+      title: "Waitlist entry rejected",
+      actorId: auditCtx(req, tenantId).userId,
+      actorName: auditCtx(req, tenantId).userName,
+      metadata: { reason: (req.body as any)?.reason },
     });
 
     // If there's a message thread associated with this entry, add a system message

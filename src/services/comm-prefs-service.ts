@@ -55,7 +55,8 @@ export async function getCommPreferences(partyId: number): Promise<CommPreferenc
 
 /**
  * Check if a party can be contacted via a specific channel.
- * Returns true if the party allows contact on this channel (preference is ALLOW).
+ * Returns true if the party allows contact on this channel
+ * (preference is ALLOW and compliance is not UNSUBSCRIBED).
  */
 export async function canContactViaChannel(partyId: number, channel: CommChannel): Promise<boolean> {
   const pref = await prisma.partyCommPreference.findUnique({
@@ -65,7 +66,10 @@ export async function canContactViaChannel(partyId: number, channel: CommChannel
   // Default is ALLOW if no preference is set
   if (!pref) return true;
 
-  return pref.preference === "ALLOW";
+  if (pref.preference !== "ALLOW") return false;
+  if (pref.compliance === "UNSUBSCRIBED") return false;
+
+  return true;
 }
 
 /**
@@ -151,7 +155,65 @@ export async function updateCommPreferences(
   return getCommPreferences(partyId);
 }
 
+/**
+ * Batch-fetch communication preferences for multiple parties in a single query.
+ * Returns a Map keyed by partyId, with the same structure as getCommPreferences.
+ */
+export async function getCommPreferencesBatch(
+  partyIds: number[]
+): Promise<Map<number, CommPreferenceRead[]>> {
+  const uniqueIds = [...new Set(partyIds.filter((id) => id > 0))];
+  const result = new Map<number, CommPreferenceRead[]>();
+
+  if (uniqueIds.length === 0) return result;
+
+  const rows = await prisma.partyCommPreference.findMany({
+    where: { partyId: { in: uniqueIds } },
+    orderBy: { channel: "asc" },
+  });
+
+  // Group by partyId
+  const byParty = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const arr = byParty.get(row.partyId) ?? [];
+    arr.push(row);
+    byParty.set(row.partyId, arr);
+  }
+
+  // Build full 5-channel responses (defaults for missing channels)
+  for (const pid of uniqueIds) {
+    const existing = byParty.get(pid) ?? [];
+    const existingMap = new Map(existing.map((p) => [p.channel, p]));
+
+    result.set(
+      pid,
+      ALL_CHANNELS.map((channel) => {
+        const pref = existingMap.get(channel);
+        if (pref) {
+          return {
+            channel: pref.channel,
+            preference: pref.preference,
+            compliance: pref.compliance,
+            complianceSetAt: pref.complianceSetAt,
+            complianceSource: pref.complianceSource,
+          };
+        }
+        return {
+          channel,
+          preference: "ALLOW" as PreferenceLevel,
+          compliance: null,
+          complianceSetAt: null,
+          complianceSource: null,
+        };
+      })
+    );
+  }
+
+  return result;
+}
+
 export const CommPrefsService = {
   getCommPreferences,
+  getCommPreferencesBatch,
   updateCommPreferences,
 };

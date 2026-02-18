@@ -259,6 +259,9 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/marketplace/auth/forgot-password") return true;
   if (pathname === "/api/v1/marketplace/auth/reset-password") return true;
 
+  // International waitlist — public endpoint (user can't register yet)
+  if (pathname === "/api/v1/marketplace/international-waitlist") return true;
+
   // Portal activation - user may not have CSRF token for portal surface yet
   if (pathname === "/api/v1/portal/activate") return true;
   if (pathname.startsWith("/api/v1/portal/invites/") && pathname.endsWith("/accept")) return true;
@@ -576,6 +579,7 @@ import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Pub
 import marketplaceWaitlistRoutes from "./routes/marketplace-waitlist.js"; // Marketplace waitlist requests
 import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Marketplace messaging (buyer-to-breeder)
 import marketplaceAuthRoutes from "./routes/marketplace-auth.js"; // Marketplace authentication (JWT-based)
+import internationalWaitlistRoutes from "./routes/international-waitlist.js"; // International waitlist (public)
 import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // Marketplace provider registration
 import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
 import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
@@ -643,6 +647,7 @@ import dairyRoutes from "./routes/dairy.js"; // Dairy production tracking (lacta
 import fiberRoutes from "./routes/fiber.js"; // Fiber/wool production tracking (shearings, lab tests)
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
+import unsubscribeRoutes from "./routes/unsubscribe.js"; // CAN-SPAM unsubscribe (no auth - token-based)
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
 import listingPaymentsRoutes from "./routes/listing-payments.js"; // Listing payment config (pricing transparency)
@@ -681,6 +686,7 @@ import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discove
 import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
 import tenantStripeConnectRoutes from "./routes/tenant-stripe-connect.js"; // Tenant Stripe Connect (breeder payments)
 import animalBreedingProfileRoutes from "./routes/animal-breeding-profile.js"; // Animal Breeding Profile (user-entered preferences)
+import auditLogRoutes from "./routes/audit-log.js"; // Audit Log & Entity Activity (field-level change tracking + activity timeline)
 
 // Rearing Protocols (Offspring Module)
 import rearingProtocolsRoutes from "./routes/rearing-protocols.js"; // Rearing Protocols CRUD
@@ -730,7 +736,9 @@ app.register(
     api.register(settingsRoutes); // /api/v1/settings/* (user settings)
     api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
     api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
+    api.register(unsubscribeRoutes, { prefix: "/unsubscribe" }); // /api/v1/unsubscribe (CAN-SPAM - no auth, token-based)
     api.register(marketplaceAuthRoutes, { prefix: "/marketplace/auth" }); // /api/v1/marketplace/auth/* (JWT-based auth for marketplace)
+    api.register(internationalWaitlistRoutes, { prefix: "/marketplace/international-waitlist" }); // /api/v1/marketplace/international-waitlist (public)
     api.register(marketplaceProvidersRoutes, { prefix: "/marketplace/providers" }); // /api/v1/marketplace/providers/* (Provider registration & management)
     api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
     api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
@@ -1275,6 +1283,7 @@ app.register(
     api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
     api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
     api.register(adminBoostRoutes); // /api/v1/admin/boosts/* Admin boost management
+    api.register(auditLogRoutes);  // /api/v1/audit-log/*, /api/v1/entities/:entityType/:entityId/activity
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*

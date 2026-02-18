@@ -145,9 +145,11 @@ async function clearBefore(rows: Row[]) {
   }
 }
 
-async function upsertBreed(row: Row) {
-  const slug = toSlug(row.name);
-  const where = { name: row.name }; // leave as-is unless you add a composite unique key
+async function upsertBreed(row: Row, nameCollisions: Set<string>) {
+  const needsDisambig = nameCollisions.has(row.name.toLowerCase());
+  const dbName = needsDisambig ? `${row.name} (${row.species.charAt(0) + row.species.slice(1).toLowerCase()})` : row.name;
+  const slug = toSlug(dbName);
+  const where = { name: dbName };
 
   if (DRY_RUN) {
     console.log(`[DRY_RUN] Upsert Breed: ${row.species} :: ${row.name}`);
@@ -161,12 +163,32 @@ async function upsertBreed(row: Row) {
     return;
   }
 
-  const breed = await prisma.breed.upsert({
-    where: where as any,
-    update: { species: row.species, slug },
-    create: { name: row.name, species: row.species, slug },
-    select: { id: true, name: true },
-  });
+  let breed: { id: number; name: string };
+  try {
+    breed = await prisma.breed.upsert({
+      where: where as any,
+      update: { species: row.species, slug },
+      create: { name: dbName, species: row.species, slug },
+      select: { id: true, name: true },
+    });
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      // Slug collision — try to find the existing breed by slug and update it
+      const existing = await prisma.breed.findFirst({ where: { slug } });
+      if (existing) {
+        breed = await prisma.breed.update({
+          where: { id: existing.id },
+          data: { name: dbName, species: row.species, slug },
+          select: { id: true, name: true },
+        });
+        console.log(`Updated existing breed by slug: "${existing.name}" → "${dbName}" (slug: ${slug})`);
+      } else {
+        throw new Error(`Slug collision for "${dbName}" (slug: ${slug}) but no existing breed found — possible encoding issue`);
+      }
+    } else {
+      throw err;
+    }
+  }
 
   if (!row.registries?.length) return;
 
@@ -219,13 +241,29 @@ async function main() {
   const rows = await readRows();
   console.log(`Seeding curated breeds from JSON (rows: ${rows.length}) …`);
 
+  // Detect breed names that appear in multiple species — these need disambiguation
+  const nameCounts = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const key = r.name.toLowerCase();
+    const set = nameCounts.get(key) ?? new Set();
+    set.add(r.species);
+    nameCounts.set(key, set);
+  }
+  const nameCollisions = new Set<string>();
+  for (const [name, speciesSet] of nameCounts) {
+    if (speciesSet.size > 1) {
+      nameCollisions.add(name);
+      console.log(`Name collision: "${name}" appears in ${Array.from(speciesSet).join(", ")} — will disambiguate`);
+    }
+  }
+
   if (CLEAR_BEFORE) {
     await clearBefore(rows);
   }
 
   const batches = chunk(rows, CHUNK_SIZE);
   for (const batch of batches) {
-    await Promise.all(batch.map(upsertBreed));
+    await Promise.all(batch.map((r) => upsertBreed(r, nameCollisions)));
   }
 
   console.log("Breeds JSON seed complete ✅");

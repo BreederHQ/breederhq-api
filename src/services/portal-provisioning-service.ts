@@ -5,6 +5,16 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { sendEmail, buildFromAddress } from "./email-service.js";
+import {
+  wrapEmailLayout,
+  emailGreeting,
+  emailParagraph,
+  emailAccent,
+  emailFeatureList,
+  emailButton,
+  emailInfoCard,
+  emailFootnote,
+} from "./email-layout.js";
 import { generateReplyToAddress } from "./inbound-email-service.js";
 
 const PORTAL_DOMAIN = process.env.PORTAL_DOMAIN || "http://localhost:6170";
@@ -202,37 +212,66 @@ async function sendPortalInviteEmail(
   partyName: string,
   rawToken: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const activationUrl = `${PORTAL_DOMAIN}/activate?token=${rawToken}`;
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { name: true },
+  });
+  const orgName = tenant?.name || "Your Breeder";
 
-  const html = `
-    <h2>You have been invited to the Client Portal</h2>
-    <p>Hello ${partyName},</p>
-    <p>You have been granted access to the client portal where you can communicate directly with your breeder, view documents, and more.</p>
-    <p><a href="${activationUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Activate Your Account</a></p>
-    <p>This link will expire in ${INVITE_TTL_HOURS} hours.</p>
-    <p>If you did not expect this invitation, you can safely ignore this email.</p>
-  `;
+  const activationUrl = `${PORTAL_DOMAIN}/activate?token=${rawToken}`;
+  const expiryDays = Math.floor(INVITE_TTL_HOURS / 24);
+
+  const html = wrapEmailLayout({
+    title: "You're Invited to Your Client Portal",
+    footerOrgName: orgName,
+    body: [
+      emailGreeting(partyName),
+      emailParagraph(`${emailAccent(orgName)} has invited you to their client portal. Here's what you can do:`),
+      emailFeatureList([
+        "View and sign agreements & contracts",
+        "Track your waitlist & reservations",
+        "Make secure payments online",
+        "Send messages & stay in touch",
+      ]),
+      emailButton("Activate Your Account", activationUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent(`&#9432; Expires in ${expiryDays} days`)}<br>
+          <span style="color: #a3a3a3;">If your link expires, contact ${orgName} for a new invitation.</span>
+        </p>
+      `, { borderColor: "orange" }),
+      emailFootnote("Didn't expect this? You can safely ignore this email."),
+    ].join("\n"),
+  });
 
   const text = `
-You have been invited to the Client Portal
+Welcome to Your Client Portal
 
 Hello ${partyName},
 
-You have been granted access to the client portal where you can communicate directly with your breeder, view documents, and more.
+${orgName} has invited you to access their client portal.
 
-Visit the link below to set up your account:
+Through the portal, you'll be able to:
+- View and sign agreements & contracts
+- Track your waitlist & reservations
+- Make secure payments online
+- Send messages & stay in touch
 
+Activate your account by visiting:
 ${activationUrl}
 
-This link will expire in ${INVITE_TTL_HOURS} hours.
+This link will expire in ${expiryDays} days. If the link expires, please contact ${orgName} to request a new invitation.
 
-If you did not expect this invitation, you can safely ignore this email.
+If you weren't expecting this invitation, you can safely ignore this email.
+
+---
+This invitation was sent by ${orgName} via BreederHQ
   `.trim();
 
   return sendEmail({
     tenantId,
     to: toEmail,
-    subject: "You have been invited to the Client Portal",
+    subject: `Your ${orgName} Client Portal is Ready`,
     html,
     text,
     templateKey: "portal_invite_auto",

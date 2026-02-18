@@ -7040,6 +7040,69 @@ model ListingBoost {
   @@index([listingType, status, tier])
   @@schema("public")
 }
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model entity_activity {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  entityType  String   @db.VarChar(50)
+  entityId    Int
+  kind        String   @db.VarChar(50)
+  category    String   @default("system") @db.VarChar(30)
+  title       String   @db.VarChar(500)
+  description String?
+  metadata    Json?
+  actorId     String?  @db.VarChar(64)
+  actorName   String?  @db.VarChar(200)
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([tenantId, createdAt(sort: Desc)], map: "idx_ea_tenant_created")
+  @@index([tenantId, entityType, entityId, createdAt(sort: Desc)], map: "idx_ea_tenant_entity")
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model entity_audit_log {
+  id            BigInt   @id @default(autoincrement())
+  tenantId      Int
+  entityType    String   @db.VarChar(50)
+  entityId      Int
+  action        String   @db.VarChar(20)
+  fieldName     String?  @db.VarChar(100)
+  oldValue      String?
+  newValue      String?
+  changedBy     String   @db.VarChar(64)
+  changedByName String?  @db.VarChar(200)
+  changeSource  String   @default("PLATFORM") @db.VarChar(30)
+  ip            String?  @db.VarChar(45)
+  requestId     String?  @db.VarChar(64)
+  metadata      Json?
+  createdAt     DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([changedBy, createdAt(sort: Desc)], map: "idx_eal_changed_by")
+  @@index([tenantId, createdAt(sort: Desc)], map: "idx_eal_tenant_created")
+  @@index([tenantId, entityType, entityId, createdAt(sort: Desc)], map: "idx_eal_tenant_entity")
+  @@schema("public")
+}
+
+model international_waitlist {
+  id           Int       @id @default(autoincrement())
+  email        String    @db.VarChar(255)
+  first_name   String?   @db.VarChar(100)
+  last_name    String?   @db.VarChar(100)
+  country      String    @db.VarChar(2)
+  country_name String?   @db.VarChar(100)
+  source       String    @default("registration_gate") @db.VarChar(50)
+  notes        String?
+  notified_at  DateTime? @db.Timestamp(6)
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @default(now())
+
+  @@unique([email, country], map: "idx_intl_waitlist_email_country")
+  @@index([country], map: "idx_intl_waitlist_country")
+  @@index([notified_at], map: "idx_intl_waitlist_notified_at")
+  @@schema("marketplace")
+}
 enum PartyType {
   CONTACT
   ORGANIZATION
