@@ -64,11 +64,32 @@ export interface LogActivityParams {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Resolve actor display name from the User table when not supplied.
+ * Returns null if the user cannot be found.
+ */
+async function resolveActorName(actorId: string | undefined | null): Promise<string | null> {
+  if (!actorId || actorId === "unknown") return null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: { firstName: true, lastName: true },
+    });
+    if (user) return `${user.firstName} ${user.lastName}`.trim() || null;
+  } catch {
+    // Non-critical — fail silently
+  }
+  return null;
+}
+
+/**
  * Log a narrative activity event for an entity.
  * Never throws — silently logs to console on failure.
+ * If actorName is not provided, resolves it from the User table.
  */
 export async function logEntityActivity(params: LogActivityParams): Promise<void> {
   try {
+    const actorName = params.actorName || (await resolveActorName(params.actorId));
+
     await prisma.$executeRawUnsafe(
       `INSERT INTO "public"."entity_activity"
          ("tenantId", "entityType", "entityId", "kind", "category",
@@ -83,7 +104,7 @@ export async function logEntityActivity(params: LogActivityParams): Promise<void
       params.description ?? null,
       params.metadata ? JSON.stringify(params.metadata) : null,
       params.actorId ?? null,
-      params.actorName ?? null,
+      actorName,
     );
   } catch (err) {
     console.error("[activity-log] Failed to log activity:", {
@@ -97,6 +118,7 @@ export async function logEntityActivity(params: LogActivityParams): Promise<void
 
 /**
  * Batch-insert multiple activity events. Useful for migrations or bulk operations.
+ * Resolves missing actor names from the User table.
  * Never throws.
  */
 export async function logEntityActivitiesBatch(
@@ -105,6 +127,25 @@ export async function logEntityActivitiesBatch(
   if (entries.length === 0) return;
 
   try {
+    // Resolve missing actor names in bulk
+    const needsName = entries.filter((e) => !e.actorName && e.actorId && e.actorId !== "unknown");
+    const uniqueIds = [...new Set(needsName.map((e) => e.actorId!))];
+    const nameMap = new Map<string, string>();
+    if (uniqueIds.length > 0) {
+      try {
+        const users = await prisma.user.findMany({
+          where: { id: { in: uniqueIds } },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        for (const u of users) {
+          const name = `${u.firstName} ${u.lastName}`.trim();
+          if (name) nameMap.set(u.id, name);
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
     await prisma.$executeRawUnsafe(
       `INSERT INTO "public"."entity_activity"
          ("tenantId", "entityType", "entityId", "kind", "category",
@@ -122,7 +163,7 @@ export async function logEntityActivitiesBatch(
       entries.map((e) => e.description ?? null),
       entries.map((e) => (e.metadata ? JSON.stringify(e.metadata) : null)),
       entries.map((e) => e.actorId ?? null),
-      entries.map((e) => e.actorName ?? null),
+      entries.map((e) => e.actorName || (e.actorId ? nameMap.get(e.actorId) ?? null : null)),
     );
   } catch (err) {
     console.error("[activity-log] Failed to batch-log activities:", {

@@ -816,6 +816,7 @@ model Party {
   buyer                    Buyer?                     @relation("BuyerParty")
   contact                  Contact?                   @relation("ContactParty")
   contractParties          ContractParty[]            @relation("ContractPartyRole")
+  Document                 Document[]
   drafts                   Draft[]                    @relation("DraftParty")
   emailSendLogs            EmailSendLog[]             @relation("EmailSendLogParty")
   expenseVendors           Expense[]                  @relation("ExpenseVendor")
@@ -1139,6 +1140,7 @@ model Animal {
   tattooNumber               String?
   networkSearchVisible       Boolean                       @default(true)
   coverImageUrl              String?
+  nickname                   String?
   buyerParty                 Party?                        @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id])
   canonicalBreed             Breed?                        @relation(fields: [canonicalBreedId], references: [id])
   customBreed                CustomBreed?                  @relation(fields: [customBreedId, tenantId], references: [id, tenantId])
@@ -1670,10 +1672,12 @@ model TagAssignment {
   breedingPlanId   Int?
   buyerId          Int?
   dealId           Int?
+  documentId       Int?
   animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
   breedingPlan     BreedingPlan?   @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
   buyer            Buyer?          @relation(fields: [buyerId], references: [id], onDelete: Cascade)
   deal             Deal?           @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  Document         Document?       @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   draft            Draft?          @relation(fields: [draftId], references: [id], onDelete: Cascade)
   messageThread    MessageThread?  @relation(fields: [messageThreadId], references: [id], onDelete: Cascade)
   offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
@@ -1703,6 +1707,7 @@ model TagAssignment {
   @@index([buyerId])
   @@index([dealId])
   @@index([tagId, taggedPartyId])
+  @@index([documentId], map: "idx_TagAssignment_documentId")
   @@schema("public")
 }
 
@@ -2120,6 +2125,7 @@ model BreedingPlanBuyer {
   plan                  BreedingPlan           @relation(fields: [planId], references: [id], onDelete: Cascade)
   tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   waitlistEntry         WaitlistEntry?         @relation(fields: [waitlistEntryId], references: [id])
+  Invoice               Invoice?
 
   @@index([tenantId])
   @@index([planId])
@@ -2487,22 +2493,28 @@ model OffspringGroup {
 }
 
 model OffspringGroupBuyer {
-  id              Int            @id @default(autoincrement())
-  tenantId        Int
-  groupId         Int
-  buyerPartyId    Int?
-  waitlistEntryId Int?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  placementRank   Int?
-  buyerId         Int?
-  buyer           Buyer?         @relation("OffspringGroupBuyerCRM", fields: [buyerId], references: [id])
-  buyerParty      Party?         @relation("OffspringGroupBuyerParty", fields: [buyerPartyId], references: [id])
-  group           OffspringGroup @relation("GroupBuyerGroup", fields: [groupId], references: [id], onDelete: Cascade)
-  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waitlistEntry   WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id])
+  id                 Int            @id @default(autoincrement())
+  tenantId           Int
+  groupId            Int
+  buyerPartyId       Int?
+  waitlistEntryId    Int?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  placementRank      Int?
+  buyerId            Int?
+  stage              String         @default("PENDING") @db.VarChar(50)
+  optedOutAt         DateTime?      @db.Timestamptz(6)
+  optedOutReason     String?
+  optedOutBy         String?        @db.VarChar(20)
+  depositDisposition String?        @db.VarChar(30)
+  notes              String?
+  Invoice            Invoice?
+  buyer              Buyer?         @relation("OffspringGroupBuyerCRM", fields: [buyerId], references: [id])
+  buyerParty         Party?         @relation("OffspringGroupBuyerParty", fields: [buyerPartyId], references: [id])
+  group              OffspringGroup @relation("GroupBuyerGroup", fields: [groupId], references: [id], onDelete: Cascade)
+  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  waitlistEntry      WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id])
 
-  @@unique([groupId, buyerPartyId])
   @@unique([groupId, waitlistEntryId])
   @@index([tenantId])
   @@index([groupId])
@@ -2510,6 +2522,7 @@ model OffspringGroupBuyer {
   @@index([tenantId, buyerPartyId])
   @@index([waitlistEntryId])
   @@index([buyerId])
+  @@index([stage])
   @@schema("public")
 }
 
@@ -2770,6 +2783,7 @@ model WaitlistEntry {
   originUtmSource      String?
   programId            Int?
   buyerId              Int?
+  buyerPreferences     Json?                      @default("{}")
   planBuyerLinks       BreedingPlanBuyer[]
   contracts            Contract[]
   depositInvoice       Invoice?                   @relation("WaitlistDepositInvoice")
@@ -3019,14 +3033,18 @@ model Invoice {
   refundedCents            BigInt                 @default(0)
   stripeInvoiceId          String?
   stripePaymentIntentId    String?
+  breedingPlanBuyerId      Int?                   @unique
+  offspringGroupBuyerId    Int?                   @unique
   Attachments              Attachment[]           @relation("AttachmentInvoice")
   Contract                 Contract?
   Documents                Document?
   EmailSendLogs            EmailSendLog[]
   animal                   Animal?                @relation(fields: [animalId], references: [id])
+  BreedingPlanBuyer        BreedingPlanBuyer?     @relation(fields: [breedingPlanBuyerId], references: [id])
   breedingPlan             BreedingPlan?          @relation(fields: [breedingPlanId], references: [id])
   clientParty              Party?                 @relation("InvoiceParty", fields: [clientPartyId], references: [id])
   group                    OffspringGroup?        @relation(fields: [groupId], references: [id])
+  OffspringGroupBuyer      OffspringGroupBuyer?   @relation(fields: [offspringGroupBuyerId], references: [id])
   offspring                Offspring?             @relation(fields: [offspringId], references: [id])
   tenant                   Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   waitlistEntry            WaitlistEntry?         @relation("WaitlistDepositInvoice", fields: [waitlistEntryId], references: [id])
@@ -3051,6 +3069,7 @@ model Invoice {
   @@index([deletedAt])
   @@index([tenantId, isMarketplaceInvoice, status])
   @@index([stripeInvoiceId])
+  @@index([breedingPlanBuyerId])
   @@schema("public")
 }
 
@@ -3580,6 +3599,7 @@ model Document {
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
   watermarkEnabled   Boolean                    @default(false)
+  partyId            Int?
   titleLinks         AnimalTitleDocument[]
   traitEntries       AnimalTraitEntry[]
   traitValueLinks    AnimalTraitValueDocument[]
@@ -3590,8 +3610,10 @@ model Document {
   invoice            Invoice?                   @relation(fields: [invoiceId], references: [id])
   offspring          Offspring?                 @relation(fields: [offspringId], references: [id])
   ownershipChange    AnimalOwnershipChange?     @relation(fields: [ownershipChangeId], references: [id])
+  Party              Party?                     @relation(fields: [partyId], references: [id], onUpdate: NoAction)
   tenant             Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   bundleItems        DocumentBundleItem[]
+  TagAssignment      TagAssignment[]
   vaccinationRecords VaccinationRecord[]
 
   @@index([tenantId])
@@ -3600,6 +3622,7 @@ model Document {
   @@index([scope, invoiceId])
   @@index([scope, contractId])
   @@index([kind])
+  @@index([partyId], map: "idx_Document_partyId")
   @@schema("public")
 }
 
@@ -7233,6 +7256,8 @@ enum TagModule {
   BREEDING_PLAN
   BUYER
   DEAL
+  DOCUMENT
+  MEDIA
 
   @@schema("public")
 }
@@ -8261,6 +8286,11 @@ enum PartyActivityKind {
   PORTAL_INVITE_AUTO_SENT
   PORTAL_ACCESS_GRANTED
   PORTAL_ACCESS_REVOKED
+  NOTE_DELETED
+  EVENT_UPDATED
+  EVENT_DELETED
+  MILESTONE_UPDATED
+  MILESTONE_DELETED
 
   @@schema("public")
 }
@@ -8569,6 +8599,7 @@ enum DocumentScope {
   invoice
   contract
   animal
+  contact
 
   @@schema("public")
 }

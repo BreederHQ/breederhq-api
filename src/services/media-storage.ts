@@ -59,8 +59,15 @@ const ALLOWED_IMAGE_TYPES = [
   "image/jpg",
   "image/png",
   "image/webp",
+  "image/gif",
   "image/heic",
   "image/heif",
+];
+
+const ALLOWED_VIDEO_TYPES = [
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
 ];
 
 const ALLOWED_DOCUMENT_TYPES = [
@@ -71,15 +78,29 @@ const ALLOWED_DOCUMENT_TYPES = [
 ];
 
 const ALLOWED_ALL_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES];
+const ALLOWED_MEDIA_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES];
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB (documents)
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB
 
 export function validateContentType(
   contentType: string,
   purpose: string,
   subPath?: string
 ): { valid: boolean; error?: string } {
+  // Media subPath allows images + videos (animal photo/video gallery)
+  const isMediaPath = subPath === "media" || subPath === "photos";
+  if (isMediaPath) {
+    if (!ALLOWED_MEDIA_TYPES.includes(contentType)) {
+      return {
+        valid: false,
+        error: "Invalid content type. Allowed: images (JPEG, PNG, WebP, GIF) or videos (MP4, MOV, WebM)",
+      };
+    }
+    return { valid: true };
+  }
+
   // Purposes that allow document uploads (PDF, Word, TXT)
   const documentPurposes = ["contract", "finance", "credentials", "animal", "offspring"];
   // Also allow documents if subPath indicates documents folder
@@ -107,7 +128,8 @@ export function validateFileSize(
   contentType: string
 ): { valid: boolean; error?: string } {
   const isImage = ALLOWED_IMAGE_TYPES.includes(contentType);
-  const maxSize = isImage ? MAX_IMAGE_SIZE : MAX_FILE_SIZE;
+  const isVideo = ALLOWED_VIDEO_TYPES.includes(contentType);
+  const maxSize = isVideo ? MAX_VIDEO_SIZE : isImage ? MAX_IMAGE_SIZE : MAX_FILE_SIZE;
 
   if (sizeBytes > maxSize) {
     const maxMB = Math.floor(maxSize / 1024 / 1024);

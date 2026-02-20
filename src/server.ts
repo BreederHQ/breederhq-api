@@ -556,12 +556,14 @@ import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
 import breedingGroupsRoutes from "./routes/breeding-groups.js";
 import animalTraitsRoutes from "./routes/animal-traits.js";
 import animalDocumentsRoutes from "./routes/animal-documents.js";
+import contactDocumentsRoutes from "./routes/contact-documents.js";
 import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
+import offspringGroupBuyersRoutes from "./routes/offspring-group-buyers.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
 import tenantRoutes from "./routes/tenant.js";
@@ -667,6 +669,8 @@ import { startListingBoostExpirationJob, stopListingBoostExpirationJob } from ".
 import { startServiceListingExpirationJob, stopServiceListingExpirationJob } from "./jobs/expire-service-listings.js"; // Service listing payment expiration cron job (daily)
 import listingBoostRoutes from "./routes/listing-boosts.js"; // Listing boost checkout + CRUD
 import adminBoostRoutes from "./routes/admin-boosts.js"; // Admin boost management
+import adminDbHealthRoutes from "./routes/admin-db-health.js"; // Admin database health monitoring
+import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-health-monitor.js"; // DB health monitoring cron job (daily)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1206,6 +1210,7 @@ app.register(
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
+    api.register(contactDocumentsRoutes); // /api/v1/contacts/:contactId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
     api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
@@ -1228,6 +1233,7 @@ app.register(
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(offspringGroupBuyersRoutes); // /api/v1/offspring/groups/:id/buyers/* (Selection Board)
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
 
     // Rearing Protocols
@@ -1283,6 +1289,7 @@ app.register(
     api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
     api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
     api.register(adminBoostRoutes); // /api/v1/admin/boosts/* Admin boost management
+    api.register(adminDbHealthRoutes); // /api/v1/admin/db-health/* Database health monitoring
     api.register(auditLogRoutes);  // /api/v1/audit-log/*, /api/v1/entities/:entityType/:entityId/activity
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
@@ -1543,6 +1550,9 @@ export async function start() {
 
     // Start service listing payment expiration cron job (daily)
     startServiceListingExpirationJob();
+
+    // Start database health monitor cron job (daily)
+    startDbHealthMonitorJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1562,6 +1572,7 @@ process.on("SIGTERM", async () => {
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
+  stopDbHealthMonitorJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1576,6 +1587,7 @@ process.on("SIGINT", async () => {
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
+  stopDbHealthMonitorJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

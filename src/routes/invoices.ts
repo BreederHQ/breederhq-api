@@ -319,6 +319,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const invoiceNumber = await generateInvoiceNumber(tx, tenantId);
         const scope = determineInvoiceScope(anchors);
 
+        // Optional: link to a specific breeding plan buyer
+        const breedingPlanBuyerId = parseIntOrNull(body.breedingPlanBuyerId);
+
         const invoice = await tx.invoice.create({
           data: {
             tenantId,
@@ -328,6 +331,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             groupId: anchors.offspringGroupId,
             animalId: anchors.animalId,
             breedingPlanId: anchors.breedingPlanId,
+            breedingPlanBuyerId: breedingPlanBuyerId || null,
             clientPartyId,
             amountCents,
             balanceCents: amountCents, // Initially unpaid

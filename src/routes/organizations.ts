@@ -2,7 +2,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { CommPrefsService } from "../services/comm-prefs-service.js";
-import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate, CommPreferenceRead } from "../services/comm-prefs-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -90,13 +90,13 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
-async function toOrgDTO(org: OrgWithParty) {
-  // Fetch communication preferences
+async function toOrgDTO(org: OrgWithParty, prefetchedPrefs?: CommPreferenceRead[]) {
+  // Fetch communication preferences (use pre-fetched if available to avoid N+1)
   let commPreferences: any = null;
   const partyId = org.partyId;
   if (partyId) {
     try {
-      const prefs = await CommPrefsService.getCommPreferences(partyId);
+      const prefs = prefetchedPrefs ?? await CommPrefsService.getCommPreferences(partyId);
       // Convert array to object keyed by channel for easier frontend access
       commPreferences = {};
       for (const pref of prefs) {
@@ -191,8 +191,15 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         prisma.organization.count({ where }),
       ]);
 
-      const items = await Promise.all(rows.map((org) => toOrgDTO(org as OrgWithParty)));
-      reply.send({ items, total, page, limit });
+      // Batch-fetch comm preferences for all orgs in one query (avoids N+1)
+      const partyIds = rows.map((r) => r.partyId).filter((id): id is number => id != null && id > 0);
+      const commPrefsMap = await CommPrefsService.getCommPreferencesBatch(partyIds);
+
+      const items = rows.map((org) => {
+        const prefs = org.partyId ? commPrefsMap.get(org.partyId) : undefined;
+        return toOrgDTO(org as OrgWithParty, prefs);
+      });
+      reply.send({ items: await Promise.all(items), total, page, limit });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

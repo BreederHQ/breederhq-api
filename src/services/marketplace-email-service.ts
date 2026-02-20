@@ -1287,6 +1287,55 @@ Browse other breeders at: ${MARKETPLACE_URL}/breeders
   });
 }
 
+/**
+ * Send notification to user when a breeder removes them from their waitlist.
+ */
+export async function sendWaitlistRemovalToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+
+  const html = wrapEmailLayout({
+    title: "Waitlist Update",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`We wanted to let you know that ${emailAccent(data.breederName)} has removed your entry from their waitlist.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <span style="color: #a3a3a3;">This can happen for a variety of reasons and doesn't reflect on you. You're welcome to explore other breeders on our marketplace or reach out to them directly if you'd like more information.</span>
+        </p>
+      `, { borderColor: "gray" }),
+      emailButton("Browse Other Breeders", `${MARKETPLACE_URL}/breeders`),
+    ].join("\n"),
+  });
+
+  const text = `
+Waitlist Update
+
+Hi ${userName},
+
+We wanted to let you know that ${data.breederName} has removed your entry from their waitlist.
+
+This can happen for a variety of reasons and doesn't reflect on you. You're welcome to explore other breeders on our marketplace or reach out to them directly if you'd like more information.
+
+Browse other breeders at: ${MARKETPLACE_URL}/breeders
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: null,
+    to: data.userEmail,
+    subject: `Waitlist update from ${data.breederName}`,
+    html,
+    text,
+    templateKey: "marketplace_waitlist_removed",
+    category: "transactional",
+  });
+}
+
 // ---------- Admin & Operational Notifications (P-02) ----------
 
 // Admin notification email (configurable)

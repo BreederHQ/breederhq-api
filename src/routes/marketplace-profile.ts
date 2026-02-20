@@ -542,6 +542,71 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
   });
 
   // --------------------------------------------------------------------------
+  // GET /profile/slug/check - Check marketplace slug availability (pre-save)
+  // --------------------------------------------------------------------------
+  const RESERVED_MARKETPLACE_SLUGS = [
+    "admin", "support", "help", "about", "contact", "terms", "privacy",
+    "blog", "api", "www", "app", "login", "register", "signup",
+    "breederhq", "marketplace", "settings", "dashboard",
+  ];
+
+  app.get<{ Querystring: { slug?: string } }>("/profile/slug/check", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.send({ available: false, reason: "tenant_required" });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    const rawSlug = req.query.slug;
+    if (!rawSlug || typeof rawSlug !== "string") {
+      return reply.send({ available: false, reason: "missing_slug" });
+    }
+
+    // Normalize identically to the PUT handler
+    const slug = rawSlug
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .substring(0, 50);
+
+    if (slug.length < 3) {
+      return reply.send({ available: false, reason: "too_short" });
+    }
+
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+      return reply.send({ available: false, reason: "invalid_format" });
+    }
+
+    if (RESERVED_MARKETPLACE_SLUGS.includes(slug)) {
+      return reply.send({ available: false, reason: "reserved" });
+    }
+
+    // Check uniqueness (exclude current tenant)
+    const existing = await prisma.tenant.findFirst({
+      where: {
+        slug,
+        id: { not: tenantId },
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return reply.send({ available: false, reason: "taken" });
+    }
+
+    return reply.send({ available: true, slug });
+  });
+
+  // --------------------------------------------------------------------------
   // PUT /profile/slug - Update tenant marketplace URL slug
   // --------------------------------------------------------------------------
   app.put<{ Body: { slug: string } }>("/profile/slug", async (req, reply) => {
@@ -596,6 +661,14 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(400).send({
         error: "invalid_slug",
         message: "Slug can only contain lowercase letters, numbers, and hyphens",
+      });
+    }
+
+    // Check reserved words
+    if (RESERVED_MARKETPLACE_SLUGS.includes(slug)) {
+      return reply.code(400).send({
+        error: "reserved_slug",
+        message: "This web address is reserved",
       });
     }
 

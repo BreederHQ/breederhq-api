@@ -89,7 +89,30 @@ function shouldIgnoreField(entityType: AuditEntityType, field: string): boolean 
 }
 
 /**
+ * Resolve actor display name from the User table when not supplied.
+ * Returns null if the user cannot be found.
+ */
+async function resolveActorName(userId: string | undefined | null): Promise<string | null> {
+  if (!userId || userId === "unknown") return null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    });
+    if (user) return `${user.firstName} ${user.lastName}`.trim() || null;
+  } catch {
+    // Non-critical — fail silently
+  }
+  return null;
+}
+
+/**
  * Diff two objects and return per-field change entries.
+ *
+ * Only compares keys present in `after`. Keys only in `before` are
+ * unselected fields (Prisma select clause) — not actual deletions.
+ * Without this guard, every update generates phantom audit rows for
+ * fields the select clause omitted (e.g. collarLocked, lineTypes).
  */
 function diffFields(
   entityType: AuditEntityType,
@@ -98,10 +121,7 @@ function diffFields(
 ): { fieldName: string; oldValue: string | null; newValue: string | null }[] {
   const changes: { fieldName: string; oldValue: string | null; newValue: string | null }[] = [];
 
-  // Check all keys in the "after" object (the updated data)
-  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
-
-  for (const key of allKeys) {
+  for (const key of Object.keys(after)) {
     if (shouldIgnoreField(entityType, key)) continue;
 
     const oldVal = serializeValue(before[key]);
@@ -128,11 +148,16 @@ async function insertAuditEntries(entries: AuditEntry[]): Promise<void> {
        ("tenantId", "entityType", "entityId", "action", "fieldName",
         "oldValue", "newValue", "changedBy", "changedByName",
         "changeSource", "ip", "requestId", "metadata")
-     SELECT * FROM UNNEST(
+     SELECT t."tenantId", t."entityType", t."entityId", t."action", t."fieldName",
+            t."oldValue", t."newValue", t."changedBy", t."changedByName",
+            t."changeSource", t."ip", t."requestId", t."metadata"::jsonb
+     FROM UNNEST(
        $1::int[], $2::varchar[], $3::int[], $4::varchar[], $5::varchar[],
        $6::text[], $7::text[], $8::varchar[], $9::varchar[],
-       $10::varchar[], $11::varchar[], $12::varchar[], $13::jsonb[]
-     )`,
+       $10::varchar[], $11::varchar[], $12::varchar[], $13::text[]
+     ) AS t("tenantId", "entityType", "entityId", "action", "fieldName",
+            "oldValue", "newValue", "changedBy", "changedByName",
+            "changeSource", "ip", "requestId", "metadata")`,
     entries.map((e) => e.tenantId),
     entries.map((e) => e.entityType),
     entries.map((e) => e.entityId),
@@ -163,6 +188,8 @@ export async function auditCreate(
   ctx: AuditContext,
 ): Promise<void> {
   try {
+    const changedByName = ctx.userName || (await resolveActorName(ctx.userId));
+
     const entries: AuditEntry[] = [];
     for (const [key, value] of Object.entries(data)) {
       if (shouldIgnoreField(entityType, key)) continue;
@@ -177,7 +204,7 @@ export async function auditCreate(
         oldValue: null,
         newValue: serialized,
         changedBy: ctx.userId,
-        changedByName: ctx.userName ?? null,
+        changedByName: changedByName ?? null,
         changeSource: ctx.changeSource ?? "PLATFORM",
         ip: ctx.ip ?? null,
         requestId: ctx.requestId ?? null,
@@ -211,6 +238,8 @@ export async function auditUpdate(
     const changes = diffFields(entityType, before, after);
     if (changes.length === 0) return; // Nothing actually changed
 
+    const changedByName = ctx.userName || (await resolveActorName(ctx.userId));
+
     const entries: AuditEntry[] = changes.map((change) => ({
       tenantId: ctx.tenantId,
       entityType,
@@ -220,7 +249,7 @@ export async function auditUpdate(
       oldValue: change.oldValue,
       newValue: change.newValue,
       changedBy: ctx.userId,
-      changedByName: ctx.userName ?? null,
+      changedByName: changedByName ?? null,
       changeSource: ctx.changeSource ?? "PLATFORM",
       ip: ctx.ip ?? null,
       requestId: ctx.requestId ?? null,

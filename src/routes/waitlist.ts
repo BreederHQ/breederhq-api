@@ -11,6 +11,7 @@ import { renderInvoiceEmail } from "../services/email-templates.js";
 import {
   sendWaitlistApprovalToUser,
   sendWaitlistRejectionToUser,
+  sendWaitlistRemovalToUser,
 } from "../services/marketplace-email-service.js";
 import { refreshMatchingPlansForEntry } from "../services/plan-buyer-matching.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
@@ -111,6 +112,7 @@ function serializeEntry(w: any) {
     breedPrefs: w.breedPrefs ?? null,
     sirePrefId: w.sirePrefId,
     damPrefId: w.damPrefId,
+    buyerPreferences: w.buyerPreferences ?? {},
 
     sirePref: w.sirePref ? { id: w.sirePref.id, name: w.sirePref.name } : null,
     damPref: w.damPref ? { id: w.damPref.id, name: w.damPref.name } : null,
@@ -195,6 +197,8 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const statusValues = status.split(",").map(s => s.trim()).filter(s => Object.values(WaitlistStatus).includes(s as WaitlistStatus)) as WaitlistStatus[];
     const limit = Math.min(250, Math.max(1, Number((req.query as any)["limit"] ?? 25)));
     const cursorId = (req.query as any)["cursor"] ? Number((req.query as any)["cursor"]) : undefined;
+    const includeParam = String((req.query as any)["include"] ?? "").trim().toLowerCase();
+    const includeMatches = includeParam.split(",").map(s => s.trim()).includes("matches");
 
     const where: any = {
       tenantId,
@@ -253,23 +257,25 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
             },
           },
         },
-        planBuyerLinks: {
-          select: {
-            id: true,
-            planId: true,
-            stage: true,
-            matchScore: true,
-            matchReasons: true,
-            plan: {
-              select: {
-                id: true,
-                name: true,
-                sire: { select: { id: true, name: true } },
-                dam: { select: { id: true, name: true } },
+        ...(includeMatches ? {
+          planBuyerLinks: {
+            select: {
+              id: true,
+              planId: true,
+              stage: true,
+              matchScore: true,
+              matchReasons: true,
+              plan: {
+                select: {
+                  id: true,
+                  name: true,
+                  sire: { select: { id: true, name: true } },
+                  dam: { select: { id: true, name: true } },
+                },
               },
             },
           },
-        },
+        } : {}),
       },
     });
 
@@ -281,37 +287,123 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
     // Lazy-match: backfill plan matches for APPROVED entries that haven't been matched yet.
     // This covers entries created before matching was wired into POST/PATCH.
-    const unmatchedApproved = rows.filter(
-      (r) => (r.status === "APPROVED" || r.status === "DEPOSIT_PAID") &&
-        (!r.planBuyerLinks || r.planBuyerLinks.length === 0)
-    );
-    if (unmatchedApproved.length > 0) {
-      // Run matching synchronously so matches appear on this page load
-      try {
-        for (const r of unmatchedApproved) {
-          await refreshMatchingPlansForEntry(prisma, r.id, tenantId);
-          // Re-fetch this entry's links and patch into the row
-          const links = await prisma.breedingPlanBuyer.findMany({
-            where: { waitlistEntryId: r.id },
-            select: {
-              id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
-              plan: {
-                select: {
-                  id: true, name: true,
-                  sire: { select: { id: true, name: true } },
-                  dam: { select: { id: true, name: true } },
+    // Only runs when matches are explicitly requested via ?include=matches
+    if (includeMatches) {
+      const unmatchedApproved = rows.filter(
+        (r) => (r.status === "APPROVED" || r.status === "DEPOSIT_PAID") &&
+          (!r.planBuyerLinks || r.planBuyerLinks.length === 0)
+      );
+      if (unmatchedApproved.length > 0) {
+        try {
+          for (const r of unmatchedApproved) {
+            await refreshMatchingPlansForEntry(prisma, r.id, tenantId);
+            const links = await prisma.breedingPlanBuyer.findMany({
+              where: { waitlistEntryId: r.id },
+              select: {
+                id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
+                plan: {
+                  select: {
+                    id: true, name: true,
+                    sire: { select: { id: true, name: true } },
+                    dam: { select: { id: true, name: true } },
+                  },
                 },
               },
-            },
-          });
-          (r as any).planBuyerLinks = links;
+            });
+            (r as any).planBuyerLinks = links;
+          }
+        } catch (err) {
+          console.error("[waitlist/list] lazy-match backfill error:", err);
         }
-      } catch (err) {
-        console.error("[waitlist/list] lazy-match backfill error:", err);
       }
     }
 
     reply.send({ items: rows.map(serializeEntry), total: Number(total) });
+  });
+
+  /**
+   * GET /api/v1/waitlist/matches
+   * Batch-fetch plan matches for a set of waitlist entry IDs.
+   * Runs lazy-match backfill in parallel for entries that need it.
+   * Query: entryIds (comma-separated, max 250)
+   * Returns: { matches: { [entryId]: PlanMatchSummary[] } }
+   */
+  app.get("/waitlist/matches", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const raw = String((req.query as any)["entryIds"] ?? "").trim();
+    if (!raw) return reply.code(400).send({ error: "entryIds is required" });
+
+    const entryIds = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+    if (entryIds.length === 0) return reply.send({ matches: {} });
+    if (entryIds.length > 250) return reply.code(400).send({ error: "max 250 entryIds" });
+
+    // Check which entries need lazy-match backfill
+    const entries = await prisma.waitlistEntry.findMany({
+      where: { id: { in: entryIds }, tenantId },
+      select: { id: true, status: true },
+    });
+
+    const needsBackfill = entries.filter(
+      (e) => e.status === "APPROVED" || e.status === "DEPOSIT_PAID"
+    );
+
+    // Fetch existing match counts to identify unmatched entries
+    const existingCounts = await prisma.breedingPlanBuyer.groupBy({
+      by: ["waitlistEntryId"],
+      where: { waitlistEntryId: { in: needsBackfill.map(e => e.id) } },
+      _count: true,
+    });
+    const countMap = new Map(existingCounts.map(c => [c.waitlistEntryId, c._count]));
+    const unmatched = needsBackfill.filter(e => !countMap.get(e.id));
+
+    // Run backfill in parallel for unmatched entries
+    if (unmatched.length > 0) {
+      await Promise.allSettled(
+        unmatched.map(e => refreshMatchingPlansForEntry(prisma, e.id, tenantId))
+      );
+    }
+
+    // Single batch query for all matches across all requested entries
+    const allLinks = await prisma.breedingPlanBuyer.findMany({
+      where: { waitlistEntryId: { in: entryIds }, tenantId },
+      select: {
+        id: true,
+        planId: true,
+        stage: true,
+        matchScore: true,
+        matchReasons: true,
+        waitlistEntryId: true,
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            sire: { select: { id: true, name: true } },
+            dam: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // Group by entryId and serialize
+    const matches: Record<number, any[]> = {};
+    for (const id of entryIds) matches[id] = [];
+    for (const link of allLinks) {
+      const eid = link.waitlistEntryId;
+      if (eid != null && matches[eid]) {
+        matches[eid].push({
+          id: link.id,
+          planId: link.planId,
+          planName: link.plan?.name ?? null,
+          stage: link.stage,
+          matchScore: link.matchScore ?? null,
+          matchReasons: link.matchReasons ?? [],
+          sireName: link.plan?.sire?.name ?? null,
+          damName: link.plan?.dam?.name ?? null,
+        });
+      }
+    }
+
+    reply.send({ matches });
   });
 
   /**
@@ -410,6 +502,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
         breedPrefs: b.breedPrefs ?? null,
         sirePrefId: b.sirePrefId ? Number(b.sirePrefId) : null,
         damPrefId: b.damPrefId ? Number(b.damPrefId) : null,
+        buyerPreferences: b.buyerPreferences ?? {},
 
         status: b.status ?? "INQUIRY",
         priority: b.priority ?? null,
@@ -535,6 +628,7 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     if ("breedPrefs" in b) data.breedPrefs = b.breedPrefs ?? null;
     if ("sirePrefId" in b) data.sirePrefId = b.sirePrefId ? Number(b.sirePrefId) : null;
     if ("damPrefId" in b) data.damPrefId = b.damPrefId ? Number(b.damPrefId) : null;
+    if ("buyerPreferences" in b) data.buyerPreferences = b.buyerPreferences ?? {};
 
     // status/priority
     if ("status" in b) data.status = b.status;
@@ -666,19 +760,70 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
 
   /**
    * DELETE /api/v1/waitlist/:id
+   * Query: ?notify=true to send a removal notification email to the contact
    * No admin required
    */
   app.delete("/waitlist/:id", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const id = Number((req.params as any).id);
+    const shouldNotify = String((req.query as any)["notify"] ?? "").toLowerCase() === "true";
 
-    const existing = await prisma.waitlistEntry.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.waitlistEntry.findFirst({
+      where: { id, tenantId },
+      include: {
+        clientParty: {
+          include: {
+            contact: {
+              select: { email: true, display_name: true, first_name: true },
+            },
+          },
+        },
+      },
+    });
     if (!existing) return reply.code(404).send({ error: "not found" });
 
     await prisma.waitlistEntry.delete({ where: { id } });
 
     // Audit trail (fire-and-forget)
     auditDelete("WAITLIST_ENTRY", id, auditCtx(req, tenantId));
+
+    // Activity log (fire-and-forget)
+    logEntityActivity({
+      tenantId,
+      entityType: "WAITLIST_ENTRY",
+      entityId: id,
+      kind: "waitlist_entry_removed",
+      category: "status",
+      title: "Waitlist entry removed",
+      actorId: auditCtx(req, tenantId).userId,
+      actorName: auditCtx(req, tenantId).userName,
+    });
+
+    // Send removal notification email (fire-and-forget)
+    if (shouldNotify) {
+      try {
+        const clientEmail = existing.clientParty?.email || existing.clientParty?.contact?.email;
+        const clientName = existing.clientParty?.contact?.display_name ||
+          existing.clientParty?.contact?.first_name ||
+          existing.clientParty?.name ||
+          "there";
+
+        const breederOrg = await prisma.organization.findFirst({
+          where: { tenantId },
+          select: { name: true },
+        });
+
+        if (clientEmail) {
+          await sendWaitlistRemovalToUser({
+            userEmail: clientEmail,
+            userName: clientName,
+            breederName: breederOrg?.name || "the breeder",
+          });
+        }
+      } catch (err) {
+        console.error("[waitlist/delete] Failed to send removal notification:", err);
+      }
+    }
 
     reply.send({ ok: true });
   });

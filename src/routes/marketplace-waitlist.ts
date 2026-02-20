@@ -47,6 +47,8 @@ interface WaitlistRequestBody {
     pagePath?: string;
     programSlug?: string;
   };
+  // Buyer preferences (sex, purpose, color, timeline, registration)
+  buyerPreferences?: Record<string, any>;
   // Legal acceptance payload for audit trail
   legalAcceptance?: unknown;
 }
@@ -289,6 +291,8 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         status: "INQUIRY",
         notes,
         clientPartyId,
+        // Buyer preferences (sex, purpose, color, timeline, registration)
+        buyerPreferences: body.buyerPreferences ?? {},
         // Direct program link for buyer matching
         programId: breedingProgram?.id || null,
         // Origin tracking

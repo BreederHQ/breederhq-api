@@ -4,6 +4,13 @@
 -- This migration represents the state after 174 Prisma migrations.
 -- It is marked as applied (not executed) in existing databases.
 -- Only run this against a fresh/empty database.
+--
+-- NOTE: schema_migrations table and primary key are intentionally OMITTED from
+-- this dump. pg_dump includes them, but dbmate creates and owns that table
+-- itself. Including it causes "relation already exists" / "multiple primary keys"
+-- errors on any database where dbmate has already initialized. If you regenerate
+-- this baseline from pg_dump, make sure to strip the schema_migrations CREATE TABLE
+-- and ALTER TABLE ... ADD CONSTRAINT schema_migrations_pkey blocks before committing.
 
 
 -- Dumped from database version 17.7 (bdd1736)
@@ -12704,13 +12711,7 @@ CREATE SEQUENCE public.refresh_tokens_id_seq
 ALTER SEQUENCE public.refresh_tokens_id_seq OWNED BY public.refresh_tokens.id;
 
 
---
--- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.schema_migrations (
-    version character varying NOT NULL
-);
+-- schema_migrations table intentionally omitted: managed by dbmate
 
 
 --
@@ -16056,12 +16057,7 @@ ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id);
 
 
---
--- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.schema_migrations
-    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+-- schema_migrations_pkey intentionally omitted: managed by dbmate
 
 
 --

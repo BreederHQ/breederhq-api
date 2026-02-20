@@ -167,6 +167,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           draftId?: number;
           buyerId?: number;
           dealId?: number;
+          documentId?: number;
         }>;
       };
 
@@ -189,6 +190,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const organizationIds: number[] = [];
       const buyerIds: number[] = [];
       const dealIds: number[] = [];
+      const documentIds: number[] = [];
 
       for (const target of targets) {
         if (target.breedingPlanId != null) breedingPlanIds.push(target.breedingPlanId);
@@ -201,6 +203,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (target.organizationId != null) organizationIds.push(target.organizationId);
         if (target.buyerId != null) buyerIds.push(target.buyerId);
         if (target.dealId != null) dealIds.push(target.dealId);
+        if (target.documentId != null) documentIds.push(target.documentId);
       }
 
       const results: Record<string, ReturnType<typeof tagDTO>[]> = {};
@@ -504,6 +507,31 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         );
       }
 
+      // Documents (for both DOCUMENT and MEDIA modules)
+      if (documentIds.length > 0) {
+        queries.push(
+          prisma.tagAssignment.findMany({
+            where: {
+              documentId: { in: documentIds },
+              tag: { tenantId },
+            },
+            include: {
+              tag: {
+                select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+              },
+            },
+          }).then((assignments) => {
+            for (const a of assignments) {
+              if (a.documentId) {
+                const key = `document:${a.documentId}`;
+                if (!results[key]) results[key] = [];
+                results[key].push(tagDTO(a.tag));
+              }
+            }
+          })
+        );
+      }
+
       // Execute all queries in parallel
       await Promise.all(queries);
 
@@ -713,7 +741,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? }
+  // POST /tags/:id/assign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? | documentId? }
   // Exactly one target; target must be in the same tenant; tag.module must match target type.
   // Step 6B: Party-only writes - resolves contactId/organizationId to taggedPartyId
   app.post("/tags/:id/assign", async (req, reply) => {
@@ -733,8 +761,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "tag_archived", detail: "Cannot assign archived tag" });
       }
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number };
-      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number; documentId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId", "documentId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       try {
@@ -847,6 +875,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           // Animal assignment (not party-like, no dual-write needed)
           await createTagAssignment({ tagId: tag.id, animalId: a.id });
+        } else if (body.documentId != null) {
+          // Document/Media tagging — both DOCUMENT and MEDIA modules use the same documentId FK
+          if (tag.module !== "DOCUMENT" && tag.module !== "MEDIA") return reply.code(400).send({ error: "module_mismatch" });
+          const documentId = parseIntOrNull(body.documentId);
+          if (!documentId) return reply.code(400).send({ error: "documentId_invalid" });
+          const doc = await prisma.document.findUnique({
+            where: { id: documentId },
+            select: { id: true, tenantId: true },
+          });
+          if (!doc) return reply.code(404).send({ error: "document_not_found" });
+          if (doc.tenantId !== tenantId) return reply.code(403).send({ error: "forbidden" });
+
+          await prisma.tagAssignment.create({
+            data: { tagId: tag.id, documentId: doc.id },
+          });
         } else {
           return reply.code(400).send({ error: "one_target_required" });
         }
@@ -865,7 +908,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? }
+  // POST /tags/:id/unassign   body: { contactId? | organizationId? | animalId? | messageThreadId? | draftId? | breedingPlanId? | offspringGroupId? | offspringId? | documentId? }
   // Step 6B: Resolves contactId/organizationId to taggedPartyId before deletion
   app.post("/tags/:id/unassign", async (req, reply) => {
     try {
@@ -876,8 +919,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tag = await prisma.tag.findFirst({ where: { id: Number(id), tenantId }, select: { id: true } });
       if (!tag) return reply.code(404).send({ error: "not_found" });
 
-      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number };
-      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId"].filter((k) => (body as any)[k] != null);
+      const body = (req.body || {}) as { contactId?: number; organizationId?: number; animalId?: number; messageThreadId?: number; draftId?: number; breedingPlanId?: number; offspringGroupId?: number; offspringId?: number; documentId?: number };
+      const targets = ["contactId", "organizationId", "animalId", "messageThreadId", "draftId", "breedingPlanId", "offspringGroupId", "offspringId", "documentId"].filter((k) => (body as any)[k] != null);
       if (targets.length !== 1) return reply.code(400).send({ error: "one_target_required" });
 
       if (body.organizationId != null) {
@@ -932,6 +975,10 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const animalId = parseIntOrNull(body.animalId);
         if (!animalId) return reply.code(400).send({ error: "animalId_invalid" });
         await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, animalId } });
+      } else if (body.documentId != null) {
+        const documentId = parseIntOrNull(body.documentId);
+        if (!documentId) return reply.code(400).send({ error: "documentId_invalid" });
+        await prisma.tagAssignment.deleteMany({ where: { tagId: tag.id, documentId } });
       }
 
       reply.send({ ok: true });
@@ -1101,6 +1148,40 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const assignments = await prisma.tagAssignment.findMany({
         where: { offspringId },
+        include: {
+          tag: {
+            select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const items = assignments.map((a) => tagDTO(a.tag));
+      return reply.send({ items, total: items.length });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+  // GET /documents/:id/tags - Get tags for a document (supports both DOCUMENT and MEDIA modules)
+  app.get("/documents/:id/tags", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+
+      const { id } = req.params as { id: string };
+      const documentId = Number(id);
+      if (!Number.isInteger(documentId) || documentId <= 0) {
+        return reply.code(400).send({ error: "invalid_document_id" });
+      }
+
+      const doc = await prisma.document.findFirst({
+        where: { id: documentId, tenantId },
+        select: { id: true },
+      });
+      if (!doc) return reply.code(404).send({ error: "document_not_found" });
+
+      const assignments = await prisma.tagAssignment.findMany({
+        where: { documentId },
         include: {
           tag: {
             select: { id: true, name: true, module: true, color: true, isArchived: true, archivedAt: true, createdAt: true, updatedAt: true },

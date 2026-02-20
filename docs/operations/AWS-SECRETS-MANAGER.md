@@ -427,10 +427,11 @@ Secrets removed during the 2026-02-18 rename from `breederhq-api/*` → `breeder
 | 2.1 | 2026-02-18 | Added `JWT_UNSUBSCRIBE_SECRET` for CAN-SPAM email unsubscribe token signing (17 keys) |
 | 3.0 | 2026-02-18 | Added prototype secrets (`dev-prototype`, `prod-prototype`) for legacy NeonDB instance. Unified SM for both runtime and migrations: `run-with-env.js` now fetches from SM (thin `.env.*.migrate` config files replace hardcoded credentials). All `db:*:status/dump` scripts now route through `run-with-env.js`. DB role convention documented: `bhq_app@pooler` for `DATABASE_URL`, `bhq_migrator@direct` for `DATABASE_DIRECT_URL`. |
 | 3.1 | 2026-02-18 | Renamed all secrets from `breederhq-api/*` → `breederhq/*` (dropped `-api` prefix). Created `breederhq/prod` (future production) and `breederhq/platform` (cross-env management keys: NEON_API_KEY, SENTRY_AUTH_TOKEN, RENDER_API_KEY). Updated prod IAM policy to v3 (`breederhq/prod-*`). Updated dev IAM policy to `breederhq/*`. |
+| 3.2 | 2026-02-18 | Updated `DATABASE_URL` and `DATABASE_DIRECT_URL` in `breederhq/dev`, `breederhq/alpha`, `breederhq/bravo` (dev account) and `breederhq/prod` (prod account) from `neondb_owner` → `bhq_app` (pooler) and `bhq_migrator` (direct) respectively. All four new-environment secrets now comply with the DB role convention documented in v3.0. |
 
 ---
 
-**Document Version**: 3.1
+**Document Version**: 3.2
 **Maintained By**: Engineering Team
 **Last Updated**: 2026-02-18
 **Next Review**: 2026-05-16 (90 days)

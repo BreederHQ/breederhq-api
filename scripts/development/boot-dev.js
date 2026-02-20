@@ -162,6 +162,27 @@ async function main() {
     console.log("ℹ️  Secrets Manager disabled — using .env.dev values directly");
   }
 
+  // ── Connection summary ────────────────────────────────────────────────
+  const secretName = process.env.AWS_SECRET_NAME || "(none)";
+  const dbUrl = process.env.DATABASE_URL;
+  let dbHost = "(not set)";
+  if (dbUrl) {
+    try {
+      const parsed = new URL(dbUrl);
+      dbHost = parsed.host + parsed.pathname;
+    } catch {
+      dbHost = "(could not parse DATABASE_URL)";
+    }
+  }
+  console.log("");
+  console.log("┌─────────────────────────────────────────────────────────");
+  console.log(`│  SM Secret:  ${secretName}`);
+  console.log(`│  NeonDB:     ${dbHost}`);
+  console.log(`│  Node ENV:   ${process.env.NODE_ENV || "(not set)"}`);
+  console.log(`│  Port:       ${process.env.PORT || "(not set)"}`);
+  console.log("└─────────────────────────────────────────────────────────");
+  console.log("");
+
   // ── Step 3: Run preflight checks ───────────────────────────────────────
   console.log("🔍 Running preflight checks...");
   try {

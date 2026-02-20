@@ -1734,6 +1734,19 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const finalOvulationConfirmed = existingPlan?.ovulationConfirmed;
         const isOvulationAnchor = existingPlan?.reproAnchorMode === "OVULATION";
 
+        // VALIDATION: Dam and Sire must be set before advancing past PLANNING
+        // Check effective values (payload overrides existing)
+        const effectiveDamId = data.damId !== undefined ? data.damId : existing.damId;
+        const effectiveSireId = data.sireId !== undefined ? data.sireId : existing.sireId;
+        const POST_PLANNING = ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
+          "BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+        if (POST_PLANNING.includes(s) && (!effectiveDamId || !effectiveSireId)) {
+          return reply.code(400).send({
+            error: "dam_sire_required",
+            detail: "Both dam and sire must be assigned before advancing past the Planning phase.",
+          });
+        }
+
         // Validate required dates for each status
         // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
         // Induced ovulators (CAT, RABBIT, ALPACA, LLAMA) skip CYCLE phase and don't require cycle data for BRED
@@ -2107,25 +2120,40 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // Delete offspring group when plan status changes to terminal state or resets to CYCLE
-      // These actions indicate the breeding attempt is over and the offspring group is no longer relevant
-      const isTerminalOrReset = ["UNSUCCESSFUL", "CANCELED", "CYCLE"].includes(String(updated.status));
-      if (isTerminalOrReset && statusChanged) {
+      // Delete offspring group when plan resets or moves to a terminal status.
+      // PLANNING is included because EndPlanModal "Reset" and PlanJourney "Try Again"
+      // both regress to PLANNING — the empty group created at BRED is no longer relevant.
+      const shouldCleanupGroup = ["PLANNING", "CYCLE", "UNSUCCESSFUL", "CANCELED"].includes(String(updated.status));
+      if (shouldCleanupGroup && statusChanged) {
         try {
           const group = await prisma.offspringGroup.findFirst({
             where: { tenantId, planId: id },
             select: { id: true },
           });
           if (group) {
-            // Delete events first (foreign key constraint)
-            await prisma.offspringGroupEvent.deleteMany({
-              where: { tenantId, offspringGroupId: group.id },
-            });
-            // Delete the group
-            await prisma.offspringGroup.delete({
-              where: { id: group.id },
-            });
-            req.log?.info?.({ planId: id, groupId: group.id }, "Deleted offspring group due to plan status change");
+            // Safety check: do NOT delete if offspring animals or buyers are linked
+            const [animalCount, offspringCount, buyerCount] = await Promise.all([
+              prisma.animal.count({ where: { tenantId, offspringGroupId: group.id } }).catch(() => 0),
+              prisma.offspring.count({ where: { tenantId, groupId: group.id } }).catch(() => 0),
+              prisma.offspringGroupBuyer.count({ where: { tenantId, groupId: group.id } }).catch(() => 0),
+            ]);
+
+            if (animalCount === 0 && offspringCount === 0 && buyerCount === 0) {
+              // Delete events first (foreign key constraint)
+              await prisma.offspringGroupEvent.deleteMany({
+                where: { tenantId, offspringGroupId: group.id },
+              });
+              // Delete the group
+              await prisma.offspringGroup.delete({
+                where: { id: group.id },
+              });
+              req.log?.info?.({ planId: id, groupId: group.id }, "Deleted offspring group due to plan status change");
+            } else {
+              req.log?.warn?.(
+                { planId: id, groupId: group.id, animalCount, offspringCount, buyerCount },
+                "Skipped offspring group deletion — group has linked data",
+              );
+            }
           }
         } catch (ogErr) {
           // Log but don't fail the update
@@ -2144,6 +2172,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (beforeSnap) {
         auditUpdate("BREEDING_PLAN", id, beforeSnap as any, updated as any, auditCtx(req, tenantId));
       }
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_updated",
+        category: "system",
+        title: "Breeding plan updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       reply.send({
         ...updated,
@@ -2279,6 +2318,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId, tx);
 
         return saved;
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_committed",
+        category: "status",
+        title: "Breeding plan committed to active cycle",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
       });
 
       return reply.send(result);
@@ -2417,6 +2467,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (planForSync?.damId) await syncAnimalBreedingStatus(planForSync.damId, tenantId);
       if (planForSync?.sireId) await syncAnimalBreedingStatus(planForSync.sireId, tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_uncommitted",
+        category: "status",
+        title: "Breeding plan uncommitted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       reply.send({ ok: true });
     } catch (err) {
@@ -2835,6 +2896,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
       if (plan.sireId) await syncAnimalBreedingStatus(plan.sireId, tenantId);
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_phase_rewound",
+        category: "status",
+        title: "Breeding plan phase rewound",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send({
         ok: true,
         fromPhase: currentPhase,
@@ -3109,6 +3181,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return updated;
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_cycle_locked",
+        category: "status",
+        title: "Cycle locked with anchor date",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send({
         success: true,
         plan: result,
@@ -3359,6 +3442,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return updated;
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_ovulation_upgraded",
+        category: "status",
+        title: "Upgraded to ovulation-anchored mode",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send({
         success: true,
         plan: result,
@@ -3439,6 +3533,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_ovulation_cleared",
+        category: "status",
+        title: "Ovulation confirmation cleared",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       return reply.send({
         ok: true,
         plan: updated,
@@ -3471,6 +3576,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update usage snapshot after archiving (decreases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_archived",
+        category: "status",
+        title: "Breeding plan archived",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       reply.send({ ok: true });
     } catch (err) {
@@ -3547,6 +3663,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update usage snapshot after restoring (increases count)
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_restored",
+        category: "status",
+        title: "Breeding plan restored",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       reply.send({
         ok: true,
@@ -3691,6 +3818,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Update usage snapshot
       await updateUsageSnapshot(tenantId, "BREEDING_PLAN_COUNT");
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_archive_completed",
+        category: "status",
+        title: "Breeding plan archive completed",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       return reply.send({
         ok: true,
@@ -3923,6 +4061,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Audit trail (fire-and-forget)
       auditDelete("BREEDING_PLAN", id, auditCtx(req, tenantId));
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_deleted",
+        category: "system",
+        title: "Breeding plan deleted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send({ ok: true });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -3986,6 +4135,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: created.id,
+        kind: "cycle_created",
+        category: "health",
+        title: "Reproductive cycle recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4023,6 +4183,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.notes !== undefined) data.notes = b.notes;
 
       const updated = await prisma.reproductiveCycle.update({ where: { id }, data });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: id,
+        kind: "cycle_updated",
+        category: "health",
+        title: "Reproductive cycle updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4077,6 +4249,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           recordedByUserId: (req as any).user?.id ?? null,
         },
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "plan_event_added",
+        category: "event",
+        title: "Breeding event recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4117,6 +4301,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: b.data ?? null,
         },
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "plan_test_added",
+        category: "health",
+        title: "Test result recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4163,6 +4359,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: { breedDateActual: new Date(b.attemptAt) },
         });
       }
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "breeding_attempt_recorded",
+        category: "event",
+        title: "Breeding attempt recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
 
       reply.code(201).send(created);
     } catch (err) {
@@ -4225,6 +4432,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: { breedDateActual: null },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "breeding_attempt_removed",
+        category: "event",
+        title: "Latest breeding attempt removed",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(200).send({ success: true, deletedAttemptId: latestAttempt?.id ?? null });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4268,6 +4486,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: attemptId,
+        kind: "breeding_attempt_updated",
+        category: "event",
+        title: "Breeding attempt updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4293,6 +4522,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       await prisma.breedingAttempt.delete({
         where: { id: attemptId },
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: attemptId,
+        kind: "breeding_attempt_deleted",
+        category: "event",
+        title: "Breeding attempt deleted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
       });
 
       reply.code(200).send({ success: true, deletedAttemptId: attemptId });
@@ -4350,6 +4590,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           data: b.data ?? null,
         },
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "pregnancy_check_recorded",
+        category: "health",
+        title: "Pregnancy check recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4479,6 +4731,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: created.id,
+        kind: "litter_created",
+        category: "event",
+        title: "Litter registered",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4527,6 +4790,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
 
       const updated = await prisma.litter.update({ where: { id }, data });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: id,
+        kind: "litter_updated",
+        category: "system",
+        title: "Litter details updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(updated);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4578,6 +4853,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           recordedByUserId: (req as any).user?.id ?? null,
         },
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: litterId,
+        kind: "litter_event_added",
+        category: "event",
+        title: "Litter event recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.code(201).send(created);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4727,6 +5014,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return updated;
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: litterId,
+        kind: "litter_collars_assigned",
+        category: "system",
+        title: "Collar IDs assigned to litter",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send({ updated: result });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4766,6 +5064,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         userId,
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "foaling_recorded",
+        category: "event",
+        title: "Foaling recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send(result);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4786,6 +5095,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         tenantId,
         userId,
         ...body,
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "foaling_outcome_recorded",
+        category: "event",
+        title: "Foaling outcome recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
       });
 
       reply.status(201).send(outcome);
@@ -4821,6 +5141,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const milestones = await createBreedingMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "milestone_created",
+        category: "system",
+        title: "Milestone created",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send(milestones);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4842,6 +5174,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "milestone_completed",
+        category: "status",
+        title: "Milestone completed",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(milestone);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4861,6 +5204,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           isCompleted: false,
           completedDate: null,
         },
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "milestone_uncompleted",
+        category: "status",
+        title: "Milestone uncompleted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
       });
 
       reply.send(milestone);
@@ -4917,6 +5271,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return;
       }
 
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(mareId),
+        kind: "reproductive_history_recalculated",
+        category: "system",
+        title: "Reproductive history recalculated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(history);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4947,6 +5312,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const result = await deleteBreedingMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "milestones_cleared",
+        category: "system",
+        title: "Milestones cleared",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(result);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4961,6 +5338,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const milestones = await recalculateMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "milestones_recalculated",
+        category: "system",
+        title: "Milestones recalculated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(milestones);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -4979,6 +5368,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const milestones = await createSpeciesBirthMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "birth_milestones_created",
+        category: "system",
+        title: "Birth milestones created",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send(milestones);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5007,6 +5408,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const result = await deleteBirthMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "birth_milestones_cleared",
+        category: "system",
+        title: "Birth milestones cleared",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(result);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5023,6 +5436,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Delete existing and recreate with current dates
       await deleteBirthMilestones(Number(id), tenantId);
       const milestones = await createSpeciesBirthMilestones(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "birth_milestones_recalculated",
+        category: "system",
+        title: "Birth milestones recalculated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(milestones);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5090,6 +5515,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         activityLevel: body.activityLevel,
         notes: body.notes,
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: Number(id),
+        kind: "neonatal_care_entry_added",
+        category: "health",
+        title: "Neonatal care entry added",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send(entry);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5104,6 +5541,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const tenantId = (req as any).tenantId;
 
       const result = await deleteNeonatalCareEntry(Number(id), tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: Number(id),
+        kind: "neonatal_care_entry_deleted",
+        category: "health",
+        title: "Neonatal care entry deleted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(result);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5154,6 +5603,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         notes: body.notes,
         recordedById: userId,
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: Number(id),
+        kind: "neonatal_intervention_added",
+        category: "health",
+        title: "Neonatal intervention recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send(intervention);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5174,6 +5635,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         followUpDate: body.followUpDate ? new Date(body.followUpDate) : undefined,
         notes: body.notes,
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: Number(id),
+        kind: "neonatal_intervention_updated",
+        category: "health",
+        title: "Neonatal intervention updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(intervention);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5193,6 +5666,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         neonatalHealthStatus: body.neonatalHealthStatus,
         neonatalFeedingMethod: body.neonatalFeedingMethod,
       });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: Number(id),
+        kind: "neonatal_status_updated",
+        category: "health",
+        title: "Neonatal status updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(offspring);
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -5203,6 +5688,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /breeding/plans/:id/batch-weights - Batch record weights for multiple offspring
   app.post("/breeding/plans/:id/batch-weights", async (req, reply) => {
     try {
+      const { id } = req.params as { id: string };
       const body = req.body as { entries: Array<{ offspringId: number; weightOz: number; recordedAt?: string }> };
       const tenantId = (req as any).tenantId;
       const userId = (req as any).user?.id;
@@ -5216,6 +5702,18 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         })),
         userId
       );
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: Number(id),
+        kind: "batch_weights_recorded",
+        category: "health",
+        title: "Batch weights recorded",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.status(201).send({ entries: results });
     } catch (err) {
       const { status, payload } = errorReply(err);

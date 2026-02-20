@@ -100,6 +100,30 @@ CREATE TABLE "public"."my_table" (...);
 CREATE TABLE "marketplace"."my_table" (...);
 ```
 
+### Known Gotchas
+
+**1. `prisma:validate` requires `run-with-env.js`, not `npx dotenv`**
+
+`.env.dev.migrate` only contains `AWS_SECRET_NAME` — no actual `DATABASE_URL`. If you ever
+see the `prisma:validate` script using `npx dotenv -e .env.dev.migrate`, that's wrong.
+It must go through `run-with-env.js` so secrets are fetched from SM first:
+
+```
+"prisma:validate": "node scripts/development/run-with-env.js --quiet .env.dev.migrate prisma validate --schema=prisma/schema.prisma"
+```
+
+**2. Baseline SQL from `pg_dump` — always strip `schema_migrations`**
+
+`pg_dump` includes the `schema_migrations` table and its primary key. dbmate creates and
+owns that table itself. If you regenerate the baseline from a dump, remove these two blocks
+before committing, otherwise `db:prod:deploy` fails with relation/primary-key-already-exists
+errors on any database where dbmate has already initialized:
+
+- `CREATE TABLE [IF NOT EXISTS] public.schema_migrations (...)`
+- `ALTER TABLE ONLY public.schema_migrations ADD CONSTRAINT schema_migrations_pkey ...`
+
+---
+
 ### Self-Check for Schema Changes
 
 - [ ] Did I create a dbmate migration file (NOT edit schema.prisma)?

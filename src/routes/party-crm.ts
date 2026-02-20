@@ -192,6 +192,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: noteId, tenantId, partyId },
       });
 
+      await logActivity(tenantId, partyId, "NOTE_DELETED", "Note deleted", null, { noteId }, (req as any).userId);
       return reply.send({ ok: true });
     } catch (err: any) {
       if (err?.code === "P2025") {
@@ -331,6 +332,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: updates,
       });
 
+      await logActivity(tenantId, partyId, "EVENT_UPDATED", `Event updated: ${event.title}`, null, { eventId }, (req as any).userId);
       return reply.send({ ok: true, event });
     } catch (err: any) {
       if (err?.code === "P2025") {
@@ -355,6 +357,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: eventId, tenantId, partyId },
       });
 
+      await logActivity(tenantId, partyId, "EVENT_DELETED", "Event deleted", null, { eventId }, (req as any).userId);
       return reply.send({ ok: true });
     } catch (err: any) {
       if (err?.code === "P2025") {
@@ -456,6 +459,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      await logActivity(tenantId, partyId, "MILESTONE_OCCURRED", `Milestone created: ${label}`, null, { milestoneId: milestone.id }, (req as any).userId);
       return reply.code(201).send({ ok: true, milestone });
     } catch (err) {
       req.log?.error?.({ err }, "Failed to create party milestone");
@@ -510,6 +514,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: updates,
       });
 
+      await logActivity(tenantId, partyId, "MILESTONE_UPDATED", `Milestone updated: ${milestone.label}`, null, { milestoneId }, (req as any).userId);
       return reply.send({ ok: true, milestone });
     } catch (err: any) {
       if (err?.code === "P2025") {
@@ -534,6 +539,7 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: milestoneId, tenantId, partyId },
       });
 
+      await logActivity(tenantId, partyId, "MILESTONE_DELETED", "Milestone deleted", null, { milestoneId }, (req as any).userId);
       return reply.send({ ok: true });
     } catch (err: any) {
       if (err?.code === "P2025") {

@@ -16,6 +16,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: _monitoring; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA _monitoring;
+
+
+--
+-- Name: SCHEMA _monitoring; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA _monitoring IS 'Database monitoring: table growth tracking, performance diagnostics, cost signals';
+
+
+--
 -- Name: marketplace; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -978,7 +992,8 @@ CREATE TYPE public."DocumentScope" AS ENUM (
     'offspring',
     'invoice',
     'contract',
-    'animal'
+    'animal',
+    'contact'
 );
 
 
@@ -2032,7 +2047,12 @@ CREATE TYPE public."PartyActivityKind" AS ENUM (
     'EMAIL_CHANGE_EXPIRED',
     'PORTAL_INVITE_AUTO_SENT',
     'PORTAL_ACCESS_GRANTED',
-    'PORTAL_ACCESS_REVOKED'
+    'PORTAL_ACCESS_REVOKED',
+    'NOTE_DELETED',
+    'EVENT_UPDATED',
+    'EVENT_DELETED',
+    'MILESTONE_UPDATED',
+    'MILESTONE_DELETED'
 );
 
 
@@ -2547,7 +2567,9 @@ CREATE TYPE public."TagModule" AS ENUM (
     'DRAFT',
     'BREEDING_PLAN',
     'BUYER',
-    'DEAL'
+    'DEAL',
+    'DOCUMENT',
+    'MEDIA'
 );
 
 
@@ -2792,6 +2814,78 @@ CREATE TYPE public."WaitlistStatus" AS ENUM (
 
 
 --
+-- Name: capture_table_stats(); Type: FUNCTION; Schema: _monitoring; Owner: -
+--
+
+CREATE FUNCTION _monitoring.capture_table_stats() RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    rows_inserted INTEGER;
+BEGIN
+    INSERT INTO _monitoring.table_stats (
+        captured_at, schema_name, table_name,
+        row_count, total_bytes, index_bytes, toast_bytes,
+        inserts, updates, deletes, dead_tuples,
+        seq_scans, idx_scans
+    )
+    SELECT
+        NOW(),
+        s.schemaname,
+        s.relname,
+        s.n_live_tup,
+        pg_total_relation_size(s.relid),
+        pg_indexes_size(s.relid),
+        COALESCE(pg_total_relation_size(s.relid) - pg_relation_size(s.relid) - pg_indexes_size(s.relid), 0),
+        s.n_tup_ins,
+        s.n_tup_upd,
+        s.n_tup_del,
+        s.n_dead_tup,
+        s.seq_scan,
+        s.idx_scan
+    FROM pg_stat_user_tables s
+    WHERE s.schemaname IN ('public', 'marketplace');
+
+    GET DIAGNOSTICS rows_inserted = ROW_COUNT;
+    RETURN rows_inserted;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION capture_table_stats(); Type: COMMENT; Schema: _monitoring; Owner: -
+--
+
+COMMENT ON FUNCTION _monitoring.capture_table_stats() IS 'Capture a point-in-time snapshot of all user table sizes and activity counters';
+
+
+--
+-- Name: purge_old_stats(integer); Type: FUNCTION; Schema: _monitoring; Owner: -
+--
+
+CREATE FUNCTION _monitoring.purge_old_stats(retention_days integer DEFAULT 90) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    rows_deleted INTEGER;
+BEGIN
+    DELETE FROM _monitoring.table_stats
+    WHERE captured_at < NOW() - (retention_days || ' days')::INTERVAL;
+
+    GET DIAGNOSTICS rows_deleted = ROW_COUNT;
+    RETURN rows_deleted;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION purge_old_stats(retention_days integer); Type: COMMENT; Schema: _monitoring; Owner: -
+--
+
+COMMENT ON FUNCTION _monitoring.purge_old_stats(retention_days integer) IS 'Remove monitoring snapshots older than N days (default 90)';
+
+
+--
 -- Name: normalize_locus_code(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2942,6 +3036,138 @@ $$;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: table_stats; Type: TABLE; Schema: _monitoring; Owner: -
+--
+
+CREATE TABLE _monitoring.table_stats (
+    id bigint NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    schema_name text NOT NULL,
+    table_name text NOT NULL,
+    row_count bigint DEFAULT 0 NOT NULL,
+    total_bytes bigint DEFAULT 0 NOT NULL,
+    index_bytes bigint DEFAULT 0 NOT NULL,
+    toast_bytes bigint DEFAULT 0 NOT NULL,
+    inserts bigint DEFAULT 0 NOT NULL,
+    updates bigint DEFAULT 0 NOT NULL,
+    deletes bigint DEFAULT 0 NOT NULL,
+    dead_tuples bigint DEFAULT 0 NOT NULL,
+    seq_scans bigint DEFAULT 0 NOT NULL,
+    idx_scans bigint DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: table_stats_id_seq; Type: SEQUENCE; Schema: _monitoring; Owner: -
+--
+
+ALTER TABLE _monitoring.table_stats ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME _monitoring.table_stats_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: v_growth_rate; Type: VIEW; Schema: _monitoring; Owner: -
+--
+
+CREATE VIEW _monitoring.v_growth_rate AS
+ WITH ranked AS (
+         SELECT table_stats.schema_name,
+            table_stats.table_name,
+            table_stats.captured_at,
+            table_stats.row_count,
+            table_stats.total_bytes,
+            table_stats.inserts,
+            lag(table_stats.row_count) OVER (PARTITION BY table_stats.schema_name, table_stats.table_name ORDER BY table_stats.captured_at) AS prev_row_count,
+            lag(table_stats.total_bytes) OVER (PARTITION BY table_stats.schema_name, table_stats.table_name ORDER BY table_stats.captured_at) AS prev_bytes,
+            lag(table_stats.inserts) OVER (PARTITION BY table_stats.schema_name, table_stats.table_name ORDER BY table_stats.captured_at) AS prev_inserts,
+            lag(table_stats.captured_at) OVER (PARTITION BY table_stats.schema_name, table_stats.table_name ORDER BY table_stats.captured_at) AS prev_captured_at
+           FROM _monitoring.table_stats
+        )
+ SELECT schema_name,
+    table_name,
+    captured_at,
+    row_count,
+    pg_size_pretty(total_bytes) AS total_size,
+    (row_count - COALESCE(prev_row_count, row_count)) AS row_growth,
+    pg_size_pretty((total_bytes - COALESCE(prev_bytes, total_bytes))) AS size_growth,
+    (inserts - COALESCE(prev_inserts, inserts)) AS new_inserts,
+    (EXTRACT(epoch FROM (captured_at - prev_captured_at)) / 3600.0) AS hours_between
+   FROM ranked
+  WHERE (prev_captured_at IS NOT NULL)
+  ORDER BY captured_at DESC, (row_count - COALESCE(prev_row_count, row_count)) DESC;
+
+
+--
+-- Name: v_missing_indexes; Type: VIEW; Schema: _monitoring; Owner: -
+--
+
+CREATE VIEW _monitoring.v_missing_indexes AS
+ SELECT schemaname AS schema_name,
+    relname AS table_name,
+    seq_scan,
+    idx_scan,
+        CASE
+            WHEN ((seq_scan + idx_scan) > 0) THEN round((((seq_scan)::numeric / ((seq_scan + idx_scan))::numeric) * (100)::numeric), 1)
+            ELSE (0)::numeric
+        END AS seq_scan_pct,
+    n_live_tup AS row_count,
+    pg_size_pretty(pg_total_relation_size((relid)::regclass)) AS total_size
+   FROM pg_stat_user_tables
+  WHERE ((schemaname = ANY (ARRAY['public'::name, 'marketplace'::name])) AND (n_live_tup > 500) AND (seq_scan > idx_scan))
+  ORDER BY
+        CASE
+            WHEN ((seq_scan + idx_scan) > 0) THEN round((((seq_scan)::numeric / ((seq_scan + idx_scan))::numeric) * (100)::numeric), 1)
+            ELSE (0)::numeric
+        END DESC;
+
+
+--
+-- Name: v_table_bloat; Type: VIEW; Schema: _monitoring; Owner: -
+--
+
+CREATE VIEW _monitoring.v_table_bloat AS
+ SELECT schemaname AS schema_name,
+    relname AS table_name,
+    n_live_tup AS live_tuples,
+    n_dead_tup AS dead_tuples,
+        CASE
+            WHEN (n_live_tup > 0) THEN round((((n_dead_tup)::numeric / (n_live_tup)::numeric) * (100)::numeric), 1)
+            ELSE (0)::numeric
+        END AS dead_pct,
+    last_autovacuum,
+    last_autoanalyze
+   FROM pg_stat_user_tables
+  WHERE ((schemaname = ANY (ARRAY['public'::name, 'marketplace'::name])) AND (n_dead_tup > 100))
+  ORDER BY
+        CASE
+            WHEN (n_live_tup > 0) THEN round((((n_dead_tup)::numeric / (n_live_tup)::numeric) * (100)::numeric), 1)
+            ELSE (0)::numeric
+        END DESC;
+
+
+--
+-- Name: v_table_sizes; Type: VIEW; Schema: _monitoring; Owner: -
+--
+
+CREATE VIEW _monitoring.v_table_sizes AS
+ SELECT schemaname AS schema_name,
+    relname AS table_name,
+    n_live_tup AS row_count,
+    pg_size_pretty(pg_total_relation_size((relid)::regclass)) AS total_size,
+    pg_size_pretty(pg_indexes_size((relid)::regclass)) AS index_size,
+    pg_total_relation_size((relid)::regclass) AS total_bytes
+   FROM pg_stat_user_tables
+  WHERE (schemaname = ANY (ARRAY['public'::name, 'marketplace'::name]))
+  ORDER BY (pg_total_relation_size((relid)::regclass)) DESC;
+
 
 --
 -- Name: mkt_listing_breeder_service; Type: TABLE; Schema: marketplace; Owner: -
@@ -3904,7 +4130,8 @@ CREATE TABLE public."Animal" (
     "scrapieTagNumber" text,
     "tattooNumber" text,
     "networkSearchVisible" boolean DEFAULT true NOT NULL,
-    "coverImageUrl" text
+    "coverImageUrl" text,
+    nickname text
 );
 
 
@@ -7176,7 +7403,8 @@ CREATE TABLE public."Document" (
     url text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "watermarkEnabled" boolean DEFAULT false NOT NULL
+    "watermarkEnabled" boolean DEFAULT false NOT NULL,
+    "partyId" integer
 );
 
 
@@ -8261,7 +8489,9 @@ CREATE TABLE public."Invoice" (
     "providerConfirmedBy" integer,
     "refundedCents" bigint DEFAULT 0 NOT NULL,
     "stripeInvoiceId" text,
-    "stripePaymentIntentId" text
+    "stripePaymentIntentId" text,
+    "breedingPlanBuyerId" integer,
+    "offspringGroupBuyerId" integer
 );
 
 
@@ -9414,7 +9644,13 @@ CREATE TABLE public."OffspringGroupBuyer" (
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
     "placementRank" integer,
-    "buyerId" integer
+    "buyerId" integer,
+    stage character varying(50) DEFAULT 'PENDING'::character varying NOT NULL,
+    "optedOutAt" timestamp with time zone,
+    "optedOutReason" text,
+    "optedOutBy" character varying(20),
+    "depositDisposition" character varying(30),
+    notes text
 );
 
 
@@ -11618,7 +11854,8 @@ CREATE TABLE public."TagAssignment" (
     "messageThreadId" integer,
     "breedingPlanId" integer,
     "buyerId" integer,
-    "dealId" integer
+    "dealId" integer,
+    "documentId" integer
 );
 
 
@@ -12388,8 +12625,16 @@ CREATE TABLE public."WaitlistEntry" (
     "originUtmMedium" text,
     "originUtmSource" text,
     "programId" integer,
-    "buyerId" integer
+    "buyerId" integer,
+    "buyerPreferences" jsonb DEFAULT '{}'::jsonb
 );
+
+
+--
+-- Name: COLUMN "WaitlistEntry"."buyerPreferences"; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public."WaitlistEntry"."buyerPreferences" IS 'Structured buyer prefs: sexPref, purpose, colorPrefs, timeline, registrationRequired';
 
 
 --
@@ -14371,6 +14616,14 @@ ALTER TABLE ONLY public.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('publ
 
 
 --
+-- Name: table_stats table_stats_pkey; Type: CONSTRAINT; Schema: _monitoring; Owner: -
+--
+
+ALTER TABLE ONLY _monitoring.table_stats
+    ADD CONSTRAINT table_stats_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: abuse_reports abuse_reports_pkey; Type: CONSTRAINT; Schema: marketplace; Owner: -
 --
 
@@ -15315,6 +15568,14 @@ ALTER TABLE ONLY public."InvoiceLineItem"
 
 
 --
+-- Name: Invoice Invoice_breedingPlanBuyerId_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Invoice"
+    ADD CONSTRAINT "Invoice_breedingPlanBuyerId_key" UNIQUE ("breedingPlanBuyerId");
+
+
+--
 -- Name: Invoice Invoice_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16248,6 +16509,20 @@ ALTER TABLE ONLY public.refresh_tokens
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: idx_table_stats_captured; Type: INDEX; Schema: _monitoring; Owner: -
+--
+
+CREATE INDEX idx_table_stats_captured ON _monitoring.table_stats USING btree (captured_at DESC);
+
+
+--
+-- Name: idx_table_stats_table_time; Type: INDEX; Schema: _monitoring; Owner: -
+--
+
+CREATE INDEX idx_table_stats_table_time ON _monitoring.table_stats USING btree (schema_name, table_name, captured_at DESC);
 
 
 --
@@ -19968,6 +20243,13 @@ CREATE INDEX "InvoiceLineItem_tenantId_idx" ON public."InvoiceLineItem" USING bt
 
 
 --
+-- Name: Invoice_breedingPlanBuyerId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Invoice_breedingPlanBuyerId_idx" ON public."Invoice" USING btree ("breedingPlanBuyerId");
+
+
+--
 -- Name: Invoice_clientPartyId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19986,6 +20268,13 @@ CREATE INDEX "Invoice_clientPartyId_status_idx" ON public."Invoice" USING btree 
 --
 
 CREATE INDEX "Invoice_deletedAt_idx" ON public."Invoice" USING btree ("deletedAt");
+
+
+--
+-- Name: Invoice_offspringGroupBuyerId_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "Invoice_offspringGroupBuyerId_key" ON public."Invoice" USING btree ("offspringGroupBuyerId");
 
 
 --
@@ -20654,13 +20943,6 @@ CREATE INDEX "OffspringGroupBuyer_buyerPartyId_idx" ON public."OffspringGroupBuy
 
 
 --
--- Name: OffspringGroupBuyer_groupId_buyerPartyId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "OffspringGroupBuyer_groupId_buyerPartyId_key" ON public."OffspringGroupBuyer" USING btree ("groupId", "buyerPartyId");
-
-
---
 -- Name: OffspringGroupBuyer_groupId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20672,6 +20954,13 @@ CREATE INDEX "OffspringGroupBuyer_groupId_idx" ON public."OffspringGroupBuyer" U
 --
 
 CREATE UNIQUE INDEX "OffspringGroupBuyer_groupId_waitlistEntryId_key" ON public."OffspringGroupBuyer" USING btree ("groupId", "waitlistEntryId");
+
+
+--
+-- Name: OffspringGroupBuyer_stage_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OffspringGroupBuyer_stage_idx" ON public."OffspringGroupBuyer" USING btree (stage);
 
 
 --
@@ -22271,6 +22560,13 @@ CREATE UNIQUE INDEX "TagAssignment_tagId_dealId_key" ON public."TagAssignment" U
 
 
 --
+-- Name: TagAssignment_tagId_documentId_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "TagAssignment_tagId_documentId_key" ON public."TagAssignment" USING btree ("tagId", "documentId") WHERE ("documentId" IS NOT NULL);
+
+
+--
 -- Name: TagAssignment_tagId_draftId_key; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22982,6 +23278,20 @@ CREATE UNIQUE INDEX "devices_userId_fcmToken_key" ON public.devices USING btree 
 --
 
 CREATE INDEX "devices_userId_idx" ON public.devices USING btree ("userId");
+
+
+--
+-- Name: idx_Document_partyId; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "idx_Document_partyId" ON public."Document" USING btree ("partyId");
+
+
+--
+-- Name: idx_TagAssignment_documentId; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "idx_TagAssignment_documentId" ON public."TagAssignment" USING btree ("documentId");
 
 
 --
@@ -25172,6 +25482,14 @@ ALTER TABLE ONLY public."Document"
 
 
 --
+-- Name: Document Document_partyId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Document"
+    ADD CONSTRAINT "Document_partyId_fkey" FOREIGN KEY ("partyId") REFERENCES public."Party"(id) ON DELETE SET NULL;
+
+
+--
 -- Name: Document Document_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25620,6 +25938,14 @@ ALTER TABLE ONLY public."Invoice"
 
 
 --
+-- Name: Invoice Invoice_breedingPlanBuyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Invoice"
+    ADD CONSTRAINT "Invoice_breedingPlanBuyerId_fkey" FOREIGN KEY ("breedingPlanBuyerId") REFERENCES public."BreedingPlanBuyer"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
 -- Name: Invoice Invoice_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25641,6 +25967,14 @@ ALTER TABLE ONLY public."Invoice"
 
 ALTER TABLE ONLY public."Invoice"
     ADD CONSTRAINT "Invoice_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: Invoice Invoice_offspringGroupBuyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Invoice"
+    ADD CONSTRAINT "Invoice_offspringGroupBuyerId_fkey" FOREIGN KEY ("offspringGroupBuyerId") REFERENCES public."OffspringGroupBuyer"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -27140,6 +27474,14 @@ ALTER TABLE ONLY public."TagAssignment"
 
 
 --
+-- Name: TagAssignment TagAssignment_documentId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."TagAssignment"
+    ADD CONSTRAINT "TagAssignment_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES public."Document"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: TagAssignment TagAssignment_draftId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27651,4 +27993,17 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260218141720'),
     ('20260218150809'),
     ('20260218154311'),
-    ('20260218160406');
+    ('20260218160406'),
+    ('20260218212731'),
+    ('20260219141047'),
+    ('20260219141056'),
+    ('20260219144254'),
+    ('20260219152550'),
+    ('20260219153038'),
+    ('20260219204630'),
+    ('20260219204631'),
+    ('20260219204632'),
+    ('20260219204633'),
+    ('20260220141500'),
+    ('20260220145934'),
+    ('20260220172740');
