@@ -269,8 +269,8 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   // Stripe webhook - verified by Stripe signature, not CSRF
   if (pathname === "/api/v1/billing/webhooks/stripe") return true;
 
-  // Resend inbound email webhook - verified by Resend signature, not CSRF
-  if (pathname === "/api/v1/webhooks/resend/inbound") return true;
+  // Resend webhooks (inbound + delivery) - verified by Resend signature, not CSRF
+  if (pathname.startsWith("/api/v1/webhooks/resend/")) return true;
 
   // Public breeding program inquiries - unauthenticated public submissions
   if (pathname.startsWith("/api/v1/public/breeding-programs/") && pathname.endsWith("/inquiries")) return true;
@@ -563,6 +563,8 @@ import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
+import offspringDocumentsRoutes from "./routes/offspring-documents.js";
+import offspringGroupDocumentsRoutes from "./routes/offspring-group-documents.js";
 import offspringGroupBuyersRoutes from "./routes/offspring-group-buyers.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
@@ -670,7 +672,9 @@ import { startServiceListingExpirationJob, stopServiceListingExpirationJob } fro
 import listingBoostRoutes from "./routes/listing-boosts.js"; // Listing boost checkout + CRUD
 import adminBoostRoutes from "./routes/admin-boosts.js"; // Admin boost management
 import adminDbHealthRoutes from "./routes/admin-db-health.js"; // Admin database health monitoring
+import adminEmailLogRoutes from "./routes/admin-email-logs.js"; // Admin email log management & tenant email history
 import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-health-monitor.js"; // DB health monitoring cron job (daily)
+import { startEmailRetryJob, stopEmailRetryJob } from "./jobs/email-retry.js"; // Email retry cron job (every 5 min)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1233,6 +1237,8 @@ app.register(
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(offspringDocumentsRoutes); // /api/v1/offspring/individuals/:id/documents
+    api.register(offspringGroupDocumentsRoutes); // /api/v1/offspring/groups/:id/documents
     api.register(offspringGroupBuyersRoutes); // /api/v1/offspring/groups/:id/buyers/* (Selection Board)
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
 
@@ -1290,6 +1296,7 @@ app.register(
     api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
     api.register(adminBoostRoutes); // /api/v1/admin/boosts/* Admin boost management
     api.register(adminDbHealthRoutes); // /api/v1/admin/db-health/* Database health monitoring
+    api.register(adminEmailLogRoutes); // /api/v1/admin/email-logs/* & /api/v1/email-logs/* (tenant-scoped)
     api.register(auditLogRoutes);  // /api/v1/audit-log/*, /api/v1/entities/:entityType/:entityId/activity
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
@@ -1553,6 +1560,9 @@ export async function start() {
 
     // Start database health monitor cron job (daily)
     startDbHealthMonitorJob();
+
+    // Start email retry cron job (every 5 minutes)
+    startEmailRetryJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1573,6 +1583,7 @@ process.on("SIGTERM", async () => {
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
   stopDbHealthMonitorJob();
+  stopEmailRetryJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1588,6 +1599,7 @@ process.on("SIGINT", async () => {
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
   stopDbHealthMonitorJob();
+  stopEmailRetryJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

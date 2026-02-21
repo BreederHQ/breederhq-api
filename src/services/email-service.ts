@@ -5,6 +5,7 @@ import { canContactViaChannel } from "./comm-prefs-service.js";
 import { generateUnsubscribeToken } from "./unsubscribe-token-service.js";
 import { renderTemplate } from "./template-renderer.js";
 import { wrapEmailLayout, emailButton, emailInfoCard, emailDetailRows, emailGreeting, emailParagraph, emailFootnote, emailHeading, emailAccent, emailBulletList, emailFeatureList } from "./email-layout.js";
+import { captureMessage } from "../lib/sentry.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -45,7 +46,7 @@ const EMAIL_DEV_ALLOWED_DOMAINS = (process.env.EMAIL_DEV_ALLOWED_DOMAINS || "")
 
 // Lazy initialization of Resend client
 let resend: Resend | null = null;
-function getResendClient(): Resend {
+export function getResendClient(): Resend {
   if (!resend) {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -54,6 +55,59 @@ function getResendClient(): Resend {
     resend = new Resend(apiKey);
   }
   return resend;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Retry helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+const MAX_INLINE_RETRIES = 3;
+const INLINE_BACKOFF_BASE_MS = 1000; // 1s, 4s, 16s (base * 4^attempt)
+
+/** Cron retry delays: 5min, 30min, 2hr, 12hr, 24hr */
+const CRON_RETRY_DELAYS_MS = [
+  5 * 60 * 1000,
+  30 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+  12 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+];
+const MAX_CRON_RETRIES = CRON_RETRY_DELAYS_MS.length;
+
+/**
+ * Determine if an error is retriable (network/5xx/rate-limit).
+ * 4xx errors (bad request, auth, validation) are NOT retriable.
+ */
+function isRetriableError(error: any): boolean {
+  // Network errors (no response received)
+  const networkCodes = ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EPIPE", "EAI_AGAIN"];
+  if (error?.code && networkCodes.includes(error.code)) return true;
+
+  // Resend SDK error with status code
+  const status = error?.statusCode ?? error?.status;
+  if (typeof status === "number") {
+    if (status >= 500) return true; // Server error
+    if (status === 429) return true; // Rate limit
+  }
+
+  // Resend error object format: { name: 'rate_limit_exceeded', ... }
+  if (error?.name === "rate_limit_exceeded") return true;
+
+  return false;
+}
+
+/**
+ * Calculate next retry time for the cron job.
+ * Returns null if max retries exceeded.
+ */
+export function calculateNextRetryAt(retryCount: number): Date | null {
+  if (retryCount >= MAX_CRON_RETRIES) return null;
+  const delayMs = CRON_RETRY_DELAYS_MS[retryCount];
+  return new Date(Date.now() + delayMs);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -286,84 +340,97 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     console.log(`[email-service] DEV REDIRECT: ${to} -> ${actualRecipient}`);
   }
 
-  // Send via Resend
-  try {
-    const resendClient = getResendClient();
+  // Send via Resend (with inline retry for transient failures)
+  const resendClient = getResendClient();
 
-    // In dev mode with redirect, prepend original recipient to subject
-    const actualSubject = devMode.redirected
-      ? `[DEV: ${to}] ${subject}`
-      : subject;
+  // In dev mode with redirect, prepend original recipient to subject
+  const actualSubject = devMode.redirected
+    ? `[DEV: ${to}] ${subject}`
+    : subject;
 
-    // Build List-Unsubscribe headers when partyId and tenantId are available
-    const emailHeaders: Record<string, string> = {};
-    if (partyId && tenantId !== null) {
-      try {
-        const token = generateUnsubscribeToken({
-          partyId,
-          channel: "EMAIL",
-          tenantId,
-          purpose: "unsubscribe",
-        });
-        const apiBaseUrl = process.env.API_URL || process.env.APP_URL || "https://api.breederhq.com";
-        const unsubUrl = `${apiBaseUrl}/api/v1/unsubscribe?token=${token}`;
-        emailHeaders["List-Unsubscribe"] = `<${unsubUrl}>`;
-        emailHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
-      } catch (err) {
-        // Don't block email sending if header generation fails (e.g., missing secret)
-        console.warn("[email-service] Failed to generate unsubscribe headers:", (err as Error).message);
-      }
-    }
-
-    const { data, error } = await resendClient.emails.send({
-      from: fromAddress,
-      to: actualRecipient,
-      subject: actualSubject,
-      html: html || text || "",
-      text,
-      ...(replyTo && { reply_to: replyTo }),
-      ...(Object.keys(emailHeaders).length > 0 && { headers: emailHeaders }),
-    });
-
-    if (error) {
-      await prisma.emailSendLog.create({
-        data: {
-          tenantId,
-          to,
-          from: fromAddress,
-          subject,
-          templateKey,
-          provider: "resend",
-          relatedInvoiceId,
-          status: "failed",
-          error: { resendError: error },
-          metadata: { ...metadata, replyTo },
-        },
-      });
-      return { ok: false, error: error.message || "resend_error" };
-    }
-
-    const messageId = data?.id || null;
-    await prisma.emailSendLog.create({
-      data: {
+  // Build List-Unsubscribe headers when partyId and tenantId are available
+  const emailHeaders: Record<string, string> = {};
+  if (partyId && tenantId !== null) {
+    try {
+      const token = generateUnsubscribeToken({
+        partyId,
+        channel: "EMAIL",
         tenantId,
-        to: devMode.redirected ? to : actualRecipient, // Log original recipient
-        from: fromAddress,
-        subject,
-        templateKey,
-        category,
-        provider: "resend",
-        providerMessageId: messageId,
-        relatedInvoiceId,
-        status: "sent",
-        metadata: devMode.redirected
-          ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to, replyTo }
-          : { ...metadata, replyTo },
-      },
-    });
+        purpose: "unsubscribe",
+      });
+      const apiBaseUrl = process.env.API_URL || process.env.APP_URL || "https://api.breederhq.com";
+      const unsubUrl = `${apiBaseUrl}/api/v1/unsubscribe?token=${token}`;
+      emailHeaders["List-Unsubscribe"] = `<${unsubUrl}>`;
+      emailHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    } catch (err) {
+      // Don't block email sending if header generation fails (e.g., missing secret)
+      console.warn("[email-service] Failed to generate unsubscribe headers:", (err as Error).message);
+    }
+  }
 
-    return { ok: true, providerMessageId: messageId || undefined };
-  } catch (err: any) {
+  // Inline retry loop: 3 attempts with exponential backoff (1s, 4s, 16s)
+  let lastError: any = null;
+  let sendData: { id: string } | null = null;
+
+  for (let attempt = 1; attempt <= MAX_INLINE_RETRIES; attempt++) {
+    try {
+      const { data, error } = await resendClient.emails.send({
+        from: fromAddress,
+        to: actualRecipient,
+        subject: actualSubject,
+        html: html || text || "",
+        text,
+        ...(replyTo && { reply_to: replyTo }),
+        ...(Object.keys(emailHeaders).length > 0 && { headers: emailHeaders }),
+      });
+
+      if (error) {
+        if (attempt < MAX_INLINE_RETRIES && isRetriableError(error)) {
+          const backoffMs = INLINE_BACKOFF_BASE_MS * Math.pow(4, attempt - 1);
+          console.warn(
+            `[email-service] Resend error on attempt ${attempt}/${MAX_INLINE_RETRIES}, ` +
+            `retrying in ${backoffMs}ms: ${error.message}`
+          );
+          await sleep(backoffMs);
+          lastError = error;
+          continue;
+        }
+        // Non-retriable or final attempt
+        lastError = error;
+        break;
+      }
+
+      // Success
+      sendData = data as { id: string } | null;
+      lastError = null;
+      break;
+    } catch (err: any) {
+      if (attempt < MAX_INLINE_RETRIES && isRetriableError(err)) {
+        const backoffMs = INLINE_BACKOFF_BASE_MS * Math.pow(4, attempt - 1);
+        console.warn(
+          `[email-service] Send exception on attempt ${attempt}/${MAX_INLINE_RETRIES}, ` +
+          `retrying in ${backoffMs}ms: ${err.message}`
+        );
+        await sleep(backoffMs);
+        lastError = err;
+        continue;
+      }
+      lastError = err;
+      break;
+    }
+  }
+
+  // Handle final outcome after retry loop
+  if (lastError) {
+    // All retries exhausted — log failure and schedule for cron retry
+    const isResendError = lastError.message && !lastError.stack;
+    const errorDetail = isResendError
+      ? { resendError: lastError }
+      : { exception: lastError.message || String(lastError) };
+
+    const nextRetryAt = calculateNextRetryAt(0);
+    const errorMessage = lastError.message || "send_failed";
+
     await prisma.emailSendLog.create({
       data: {
         tenantId,
@@ -375,12 +442,54 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         provider: "resend",
         relatedInvoiceId,
         status: "failed",
-        error: { exception: err.message },
-        metadata: { ...metadata, replyTo },
+        error: { ...errorDetail, inlineAttempts: MAX_INLINE_RETRIES },
+        metadata: {
+          ...metadata,
+          replyTo,
+          ...(html ? { retryHtml: html } : {}),
+          ...(text ? { retryText: text } : {}),
+        },
+        retryCount: 0,
+        nextRetryAt,
+        partyId: partyId ?? undefined,
       },
     });
-    return { ok: false, error: err.message || "unknown_error" };
+
+    captureMessage(
+      `Email send failed after ${MAX_INLINE_RETRIES} inline attempts`,
+      "warning",
+      { to, templateKey, tenantId, error: errorMessage }
+    );
+    console.warn(
+      `[email-service] Send failed after ${MAX_INLINE_RETRIES} inline attempts to ${to}: ${errorMessage}` +
+      (nextRetryAt ? ` — scheduled cron retry at ${nextRetryAt.toISOString()}` : " — no cron retry (max retries exceeded)")
+    );
+
+    return { ok: false, error: errorMessage };
   }
+
+  // Success — log the sent email
+  const messageId = sendData?.id || null;
+  await prisma.emailSendLog.create({
+    data: {
+      tenantId,
+      to: devMode.redirected ? to : actualRecipient,
+      from: fromAddress,
+      subject,
+      templateKey,
+      category,
+      provider: "resend",
+      providerMessageId: messageId,
+      relatedInvoiceId,
+      status: "sent",
+      metadata: devMode.redirected
+        ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to, replyTo }
+        : { ...metadata, replyTo },
+      partyId: partyId ?? undefined,
+    },
+  });
+
+  return { ok: true, providerMessageId: messageId || undefined };
 }
 
 /** ───────────────────────── Billing & Quota Notifications ───────────────────────── */

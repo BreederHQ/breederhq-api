@@ -1,6 +1,6 @@
 \restrict dbmate
 
--- Dumped from database version 17.7 (bdd1736)
+-- Dumped from database version 17.8 (6108b59)
 -- Dumped by pg_dump version 17.6
 
 SET statement_timeout = 0;
@@ -1036,7 +1036,11 @@ CREATE TYPE public."EmailSendCategory" AS ENUM (
 CREATE TYPE public."EmailSendStatus" AS ENUM (
     'queued',
     'sent',
-    'failed'
+    'failed',
+    'delivered',
+    'bounced',
+    'complained',
+    'deferred'
 );
 
 
@@ -7638,7 +7642,11 @@ CREATE TABLE public."EmailSendLog" (
     "archivedAt" timestamp(3) without time zone,
     flagged boolean DEFAULT false NOT NULL,
     "flaggedAt" timestamp(3) without time zone,
-    "partyId" integer
+    "partyId" integer,
+    "retryCount" integer DEFAULT 0 NOT NULL,
+    "nextRetryAt" timestamp with time zone,
+    "lastEventAt" timestamp with time zone,
+    "deliveryEvents" jsonb
 );
 
 
@@ -9627,7 +9635,9 @@ CREATE TABLE public."OffspringGroup" (
     "placementSchedulingPolicy" jsonb,
     "archivedAt" timestamp(3) without time zone,
     "deletedAt" timestamp(3) without time zone,
-    status public."MarketplaceListingStatus" DEFAULT 'DRAFT'::public."MarketplaceListingStatus" NOT NULL
+    status public."MarketplaceListingStatus" DEFAULT 'DRAFT'::public."MarketplaceListingStatus" NOT NULL,
+    "depositRequired" boolean DEFAULT false NOT NULL,
+    "depositAmountCents" integer
 );
 
 
@@ -23330,6 +23340,13 @@ CREATE INDEX idx_eal_tenant_entity ON public.entity_audit_log USING btree ("tena
 
 
 --
+-- Name: idx_email_send_log_retry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_email_send_log_retry ON public."EmailSendLog" USING btree (status, "nextRetryAt") WHERE ((status = 'failed'::public."EmailSendStatus") AND ("nextRetryAt" IS NOT NULL));
+
+
+--
 -- Name: mkt_breeding_booking_animal_animalId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28006,4 +28023,8 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260219204633'),
     ('20260220141500'),
     ('20260220145934'),
-    ('20260220172740');
+    ('20260220172740'),
+    ('20260220174928'),
+    ('20260220185006'),
+    ('20260220223214'),
+    ('20260221135145');

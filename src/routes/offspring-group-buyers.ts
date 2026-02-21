@@ -1305,6 +1305,149 @@ const offspringGroupBuyersRoutes: FastifyPluginAsync = async (
       }
     },
   );
+
+  // ──────────────────────────────────────────────────────────
+  // 11. GET /offspring/groups/:id/buyers/deposit-audit
+  //     Returns deposit/credit status for all active buyers in
+  //     a group, classified into actionable buckets.
+  //     Used by the frontend's DepositToggleFlow when a breeder
+  //     toggles "Require Deposit" ON for a group with existing buyers.
+  // ──────────────────────────────────────────────────────────
+  app.get<{ Params: { id: string } }>(
+    "/offspring/groups/:id/buyers/deposit-audit",
+    async (req, reply) => {
+      try {
+        const tenantId = getTenantId(req)!;
+        const groupId = toNum(req.params.id);
+        if (!groupId)
+          return reply.code(400).send({ error: "invalid_group_id" });
+
+        // Verify group exists
+        const group = await prisma.offspringGroup.findFirst({
+          where: { id: groupId, tenantId },
+          select: { id: true },
+        });
+        if (!group)
+          return reply.code(404).send({ error: "group_not_found" });
+
+        // Fetch all active (non-opted-out) buyers in the group
+        const buyers = await prisma.offspringGroupBuyer.findMany({
+          where: {
+            groupId,
+            tenantId,
+            stage: { not: "OPTED_OUT" },
+          },
+          include: {
+            ...buyerIncludes,
+            buyerParty: {
+              select: { id: true, type: true, name: true, email: true, phoneE164: true },
+            },
+          },
+          orderBy: [{ placementRank: "asc" }, { id: "asc" }],
+        });
+
+        const buyersWithUnappliedCredit: Array<{
+          buyerId: number;
+          buyerName: string;
+          buyerEmail: string | null;
+          waitlistEntryId: number | null;
+          unappliedCredit: {
+            invoiceId: number;
+            invoiceNumber: string;
+            amountCents: number;
+          };
+        }> = [];
+
+        const buyersNeedingInvoice: Array<{
+          buyerId: number;
+          buyerName: string;
+          buyerEmail: string | null;
+          waitlistEntryId: number | null;
+        }> = [];
+
+        const buyersAlreadyHandled: Array<{
+          buyerId: number;
+          buyerName: string;
+          invoiceId: number;
+          invoiceNumber: string;
+          invoiceStatus: string;
+          amountCents: number;
+        }> = [];
+
+        for (const buyer of buyers) {
+          const dto = toBuyerDTO(buyer);
+
+          // If buyer already has a linked invoice, they're handled
+          if (buyer.Invoice) {
+            buyersAlreadyHandled.push({
+              buyerId: buyer.id,
+              buyerName: dto.buyerName,
+              invoiceId: buyer.Invoice.id,
+              invoiceNumber: buyer.Invoice.invoiceNumber,
+              invoiceStatus: buyer.Invoice.status,
+              amountCents: Number(buyer.Invoice.amountCents),
+            });
+            continue;
+          }
+
+          // Resolve the party ID for credit discovery
+          const partyId =
+            buyer.buyerPartyId ??
+            buyer.waitlistEntry?.clientPartyId ??
+            null;
+
+          // Check for unapplied deposit credits (same logic as POST assign)
+          if (partyId) {
+            const creditInvoice = await prisma.invoice.findFirst({
+              where: {
+                tenantId,
+                clientPartyId: partyId,
+                breedingPlanBuyerId: null,
+                offspringGroupBuyerId: null,
+                status: { in: ["paid", "partially_paid"] },
+                LineItems: { some: { kind: "DEPOSIT" } },
+              },
+              select: { id: true, invoiceNumber: true, amountCents: true },
+            });
+
+            if (creditInvoice) {
+              buyersWithUnappliedCredit.push({
+                buyerId: buyer.id,
+                buyerName: dto.buyerName,
+                buyerEmail: dto.buyerEmail,
+                waitlistEntryId: buyer.waitlistEntryId,
+                unappliedCredit: {
+                  invoiceId: creditInvoice.id,
+                  invoiceNumber: creditInvoice.invoiceNumber,
+                  amountCents: Number(creditInvoice.amountCents),
+                },
+              });
+              continue;
+            }
+          }
+
+          // No linked invoice and no unapplied credit → needs a new invoice
+          buyersNeedingInvoice.push({
+            buyerId: buyer.id,
+            buyerName: dto.buyerName,
+            buyerEmail: dto.buyerEmail,
+            waitlistEntryId: buyer.waitlistEntryId,
+          });
+        }
+
+        reply.send({
+          groupId,
+          totalBuyers: buyers.length,
+          buyersWithUnappliedCredit,
+          buyersNeedingInvoice,
+          buyersAlreadyHandled,
+        });
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        reply.status(status).send(payload);
+      }
+    },
+  );
 };
 
 export default offspringGroupBuyersRoutes;

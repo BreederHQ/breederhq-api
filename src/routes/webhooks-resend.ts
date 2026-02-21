@@ -26,6 +26,8 @@ import {
   checkUrlThreatIntelligence,
   logBlockedEmail,
 } from "../services/email-security-service.js";
+import { updateCommPreferences } from "../services/comm-prefs-service.js";
+import { captureMessage } from "../lib/sentry.js";
 
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -167,6 +169,19 @@ interface ResendInboundEvent {
   };
 }
 
+interface ResendDeliveryEvent {
+  type: string;
+  created_at: string;
+  data: {
+    email_id: string;
+    from: string;
+    to: string[];
+    subject: string;
+    created_at: string;
+    [key: string]: any;
+  };
+}
+
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * POST /api/v1/webhooks/resend/inbound
@@ -282,6 +297,154 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // Unknown address - log and acknowledge
     req.log.warn({ toAddress }, "Inbound email to unknown address");
     return reply.send({ ok: true, type: "unknown_ignored" });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Delivery status webhook
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * POST /api/v1/webhooks/resend/delivery
+   *
+   * Handles delivery status webhooks from Resend.
+   * Events: email.sent, email.delivered, email.bounced, email.complained, email.delivery_delayed
+   *
+   * Updates EmailSendLog status and triggers compliance actions for bounces/complaints.
+   */
+  app.post("/delivery", async (req, reply) => {
+    // Verify webhook signature (reuse Svix verification)
+    const rawBody = (req as any).rawBody as Buffer | undefined;
+    if (!rawBody) {
+      req.log.error("Raw body not available for delivery webhook verification");
+      return reply.code(400).send({ error: "raw_body_missing" });
+    }
+
+    const verification = verifyWebhookSignature(
+      rawBody,
+      req.headers["svix-id"] as string | undefined,
+      req.headers["svix-timestamp"] as string | undefined,
+      req.headers["svix-signature"] as string | undefined
+    );
+
+    if (!verification.valid) {
+      req.log.warn({ error: verification.error }, "Delivery webhook signature failed");
+      return reply.code(401).send({ error: verification.error });
+    }
+
+    const event = req.body as ResendDeliveryEvent;
+
+    // Map event type to EmailSendStatus
+    const STATUS_MAP: Record<string, string> = {
+      "email.sent": "sent",
+      "email.delivered": "delivered",
+      "email.delivery_delayed": "deferred",
+      "email.bounced": "bounced",
+      "email.complained": "complained",
+    };
+
+    const newStatus = STATUS_MAP[event.type];
+    if (!newStatus) {
+      // email.opened, email.clicked — acknowledge but don't update status
+      req.log.info({ eventType: event.type }, "Non-status delivery event received");
+      return reply.send({ ok: true, ignored: true, reason: "informational_event" });
+    }
+
+    const emailId = event.data?.email_id;
+    if (!emailId) {
+      return reply.code(400).send({ error: "missing_email_id" });
+    }
+
+    // Find the EmailSendLog entry by providerMessageId (indexed)
+    const logEntry = await prisma.emailSendLog.findFirst({
+      where: { providerMessageId: emailId },
+    });
+
+    if (!logEntry) {
+      req.log.warn({ emailId, eventType: event.type }, "No EmailSendLog found for delivery event");
+      return reply.send({ ok: true, ignored: true, reason: "log_not_found" });
+    }
+
+    // Build delivery event record and append to history
+    const deliveryEvent = {
+      type: event.type,
+      timestamp: event.created_at || new Date().toISOString(),
+      data: event.data,
+    };
+    const existingEvents = (logEntry.deliveryEvents as any[]) || [];
+
+    // Update the log entry
+    await prisma.emailSendLog.update({
+      where: { id: logEntry.id },
+      data: {
+        status: newStatus as any,
+        lastEventAt: new Date(),
+        deliveryEvents: [...existingEvents, deliveryEvent],
+        // Stop retry if delivered
+        ...(newStatus === "delivered" && { nextRetryAt: null }),
+      },
+    });
+
+    req.log.info(
+      { emailId, logId: logEntry.id, status: newStatus, eventType: event.type },
+      "Email delivery status updated"
+    );
+
+    // Handle bounces — block future sends to this address
+    if (newStatus === "bounced") {
+      const partyId = logEntry.partyId ?? await findPartyByEmail(logEntry.to, logEntry.tenantId);
+      if (partyId) {
+        try {
+          await updateCommPreferences(
+            partyId,
+            [{ channel: "EMAIL" as any, preference: "NEVER" as any }],
+            undefined,
+            `bounce:${emailId}`
+          );
+          req.log.info({ partyId, email: logEntry.to, emailId }, "Blocked future emails due to bounce");
+        } catch (err) {
+          req.log.error({ err, partyId }, "Failed to update comm preferences for bounce");
+        }
+      }
+
+      captureMessage(`Email bounced: ${logEntry.to}`, "warning", {
+        emailId,
+        to: logEntry.to,
+        tenantId: logEntry.tenantId,
+        templateKey: logEntry.templateKey,
+        bounceData: event.data,
+      });
+    }
+
+    // Handle complaints — unsubscribe this address
+    if (newStatus === "complained") {
+      const partyId = logEntry.partyId ?? await findPartyByEmail(logEntry.to, logEntry.tenantId);
+      if (partyId) {
+        try {
+          await updateCommPreferences(
+            partyId,
+            [{
+              channel: "EMAIL" as any,
+              compliance: "UNSUBSCRIBED" as any,
+              complianceSource: `complaint:${emailId}`,
+            }],
+            undefined,
+            `complaint:${emailId}`
+          );
+          req.log.info({ partyId, email: logEntry.to, emailId }, "Unsubscribed party due to spam complaint");
+        } catch (err) {
+          req.log.error({ err, partyId }, "Failed to update compliance for complaint");
+        }
+      }
+
+      captureMessage(`Email complaint: ${logEntry.to}`, "error", {
+        emailId,
+        to: logEntry.to,
+        tenantId: logEntry.tenantId,
+        templateKey: logEntry.templateKey,
+      });
+    }
+
+    return reply.send({ ok: true, status: newStatus });
   });
 };
 
@@ -762,6 +925,22 @@ async function handleNewInboundThread(
     log.error({ err, slug }, "Error handling new inbound thread");
     return { error: err.message };
   }
+}
+
+/**
+ * Look up a party by email address within a tenant scope.
+ * Used when EmailSendLog doesn't have a partyId but we need to update comm preferences.
+ */
+async function findPartyByEmail(email: string, tenantId: number | null): Promise<number | null> {
+  if (!tenantId) return null;
+  const party = await prisma.party.findFirst({
+    where: {
+      tenantId,
+      email: { equals: email, mode: "insensitive" },
+    },
+    select: { id: true },
+  });
+  return party?.id ?? null;
 }
 
 export default routes;

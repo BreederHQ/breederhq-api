@@ -453,6 +453,8 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
     },
     statusOverride: G.statusOverride ?? null,
     statusOverrideReason: G.statusOverrideReason ?? null,
+    depositRequired: G.depositRequired ?? false,
+    depositAmountCents: G.depositAmountCents ?? null,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
   };
@@ -926,6 +928,8 @@ function mapOffspringToAnimalLite(o: any) {
               : String(group.birthedEndAt))
             : null,
           breedText: group.breedText ?? null,
+          dam: group.dam ? { id: group.dam.id, name: group.dam.name ?? null } : null,
+          sire: group.sire ? { id: group.sire.id, name: group.sire.name ?? null } : null,
           plan: group.plan
             ? {
                 id: group.plan.id,
@@ -1927,6 +1931,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if ("countWeaned" in c) data.countWeaned = c.countWeaned ?? null;
       if ("countPlaced" in c) data.countPlaced = c.countPlaced ?? null;
     }
+    if ("depositRequired" in body) data.depositRequired = !!body.depositRequired;
+    if ("depositAmountCents" in body) data.depositAmountCents = body.depositAmountCents != null ? Number(body.depositAmountCents) : null;
 
     await prisma.offspringGroup.update({ where: { id }, data });
 
@@ -2501,6 +2507,171 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     reply.code(201).send(mapOffspringToAnimalLite(created));
   });
 
+
+  /* ===== BATCH CREATE OFFSPRING: POST /offspring/individuals/batch ===== */
+  app.post("/offspring/individuals/batch", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const body = (req.body as any) ?? {};
+
+    // --- Validate top-level fields ---
+    const groupId = body.groupId ?? null;
+    if (!groupId) {
+      return reply.code(400).send({ error: "groupId is required" });
+    }
+
+    const individuals = body.individuals;
+    if (!Array.isArray(individuals) || individuals.length === 0) {
+      return reply
+        .code(400)
+        .send({ error: "individuals array is required and must not be empty" });
+    }
+    if (individuals.length > 25) {
+      return reply
+        .code(400)
+        .send({ error: "Maximum 25 offspring per batch" });
+    }
+
+    // --- Load group with plan + dam (same query as single-create) ---
+    const group = await prisma.offspringGroup.findFirst({
+      where: { id: groupId, tenantId },
+      include: {
+        plan: { where: { deletedAt: null } },
+        dam: { include: { canonicalBreed: true } },
+      },
+    });
+    if (!group) {
+      return reply.code(404).send({ error: "offspring group not found" });
+    }
+
+    // Business rule: birth date must be recorded on linked plan
+    if (group.plan && !group.plan.birthDateActual) {
+      return reply.code(400).send({
+        error: "birth_date_not_recorded",
+        detail:
+          "Cannot add offspring until the birth date has been recorded on the linked breeding plan.",
+      });
+    }
+
+    // --- Derive shared values from group (same as single-create) ---
+    const derivedBreed = __og_deriveBreedFromGroup(group);
+    const defaultBornAt = group.plan?.birthDateActual ?? null;
+    const sharedSpecies = group.plan?.species ?? "DOG";
+    const sharedDamId = group.damId ?? group.plan?.damId ?? null;
+    const sharedSireId = group.sireId ?? group.plan?.sireId ?? null;
+
+    // --- Build create operations for each individual ---
+    const createOps = individuals.map((ind: any) => {
+      const name: string | null =
+        typeof ind.name === "string" && ind.name.trim().length > 0
+          ? ind.name.trim()
+          : null;
+
+      const sex =
+        ind.sex === "MALE" || ind.sex === "FEMALE" ? ind.sex : null;
+
+      const bornAt = ind.birthDate
+        ? parseISO(ind.birthDate)
+        : defaultBornAt;
+
+      const collarName =
+        typeof ind.whelpingCollarColor === "string" &&
+        ind.whelpingCollarColor.trim()
+          ? ind.whelpingCollarColor.trim()
+          : null;
+
+      const notes: string | null =
+        typeof ind.notes === "string" && ind.notes.trim().length > 0
+          ? ind.notes.trim()
+          : null;
+
+      // Normalize state (batch only sets bornAt; no advanced state fields)
+      const normalizedState = normalizeOffspringState(null, { bornAt });
+
+      return prisma.offspring.create({
+        data: {
+          tenantId,
+          groupId: group.id,
+
+          // core identity
+          name,
+          sex,
+          species: sharedSpecies,
+          breed: derivedBreed,
+          bornAt,
+
+          // parents from group
+          damId: sharedDamId,
+          sireId: sharedSireId,
+
+          // optional fields
+          notes,
+
+          // pricing — stored as cents if provided as dollar amount
+          ...(ind.price != null && !isNaN(Number(ind.price))
+            ? { priceCents: Math.round(Number(ind.price) * 100) }
+            : {}),
+
+          // birth weight
+          ...(ind.birthWeightOz != null && !isNaN(Number(ind.birthWeightOz))
+            ? { birthWeightOz: Number(ind.birthWeightOz) }
+            : {}),
+
+          // collar fields
+          collarColorName: collarName,
+          collarAssignedAt: collarName ? new Date() : null,
+
+          ...normalizedState,
+
+          // empty data payload — must come after spread to override
+          data: {} as any,
+        },
+        include: {
+          group: { select: { id: true, name: true } },
+          buyerParty: { select: { id: true, type: true, name: true } },
+        },
+      });
+    });
+
+    // --- Execute all creates in a single transaction ---
+    let created: any[];
+    try {
+      created = await prisma.$transaction(createOps);
+    } catch (err) {
+      req.log.error({ err }, "Batch offspring creation transaction failed");
+      return reply
+        .code(500)
+        .send({ error: "Failed to create offspring batch" });
+    }
+
+    // --- Post-create side effects (fire-and-forget) ---
+    const ctx = auditCtx(req, tenantId);
+    for (const c of created) {
+      auditCreate("OFFSPRING", c.id, c as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: c.id,
+        kind: "offspring_created",
+        category: "event",
+        title: `Offspring "${c.name || "unnamed"}" created (batch)`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+      triggerOnOffspringCreated(c.id, tenantId).catch((err) =>
+        req.log.error(
+          { err, offspringId: c.id },
+          "Failed to trigger rules on batch offspring creation",
+        ),
+      );
+    }
+
+    reply.code(201).send({
+      created: created.map(mapOffspringToAnimalLite),
+      count: created.length,
+    });
+  });
+
+
   app.get("/offspring/individuals", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
     const query = (req as any).query ?? {};
@@ -2604,6 +2775,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 id: true,
                 name: true,
                 actualBirthOn: true,
+                dam: { select: { id: true, name: true } },
+                sire: { select: { id: true, name: true } },
                 plan: {
                   where: { deletedAt: null },
                   select: {
@@ -2885,16 +3058,32 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: (err as Error).message });
     }
 
+    // Strip relation FK fields that Prisma rejects as raw scalars in update();
+    // the `data` object already handles these via connect/disconnect syntax.
+    const { promotedAnimalId: _stripPromoted, ...prismaState } = normalizedState;
+
     let updated;
     try {
       updated = await prisma.offspring.update({
         where: { id },
-        data: { ...data, ...normalizedState },
+        data: { ...data, ...prismaState },
         include: {
           group: {
             select: {
               id: true,
               name: true,
+              actualBirthOn: true,
+              dam: { select: { id: true, name: true } },
+              sire: { select: { id: true, name: true } },
+              plan: {
+                where: { deletedAt: null },
+                select: {
+                  id: true,
+                  code: true,
+                  breedText: true,
+                  birthDateActual: true,
+                },
+              },
             },
           },
           buyerParty: {

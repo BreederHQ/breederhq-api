@@ -2456,6 +2456,8 @@ model OffspringGroup {
   archivedAt                   DateTime?
   deletedAt                    DateTime?
   status                       MarketplaceListingStatus      @default(DRAFT)
+  depositRequired              Boolean                       @default(false)
+  depositAmountCents           Int?
   AnimalsLegacy                Animal[]                      @relation("OffspringGroupPuppiesLegacy")
   Attachment                   Attachment[]
   Campaign                     Campaign[]
@@ -3392,6 +3394,10 @@ model EmailSendLog {
   flagged           Boolean            @default(false)
   flaggedAt         DateTime?
   partyId           Int?
+  retryCount        Int                @default(0)
+  nextRetryAt       DateTime?          @db.Timestamptz(6)
+  lastEventAt       DateTime?          @db.Timestamptz(6)
+  deliveryEvents    Json?
   party             Party?             @relation("EmailSendLogParty", fields: [partyId], references: [id])
   invoice           Invoice?           @relation(fields: [relatedInvoiceId], references: [id])
   tenant            Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -8677,6 +8683,10 @@ enum EmailSendStatus {
   queued
   sent
   failed
+  delivered
+  bounced
+  complained
+  deferred
 
   @@schema("public")
 }

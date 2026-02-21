@@ -13,7 +13,7 @@ import {
   sendWaitlistRejectionToUser,
   sendWaitlistRemovalToUser,
 } from "../services/marketplace-email-service.js";
-import { refreshMatchingPlansForEntry } from "../services/plan-buyer-matching.js";
+import { refreshMatchingPlansForEntry, refreshMatchingPlansForEntries } from "../services/plan-buyer-matching.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
 import { logEntityActivity } from "../services/activity-log.js";
 
@@ -295,22 +295,38 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
       );
       if (unmatchedApproved.length > 0) {
         try {
-          for (const r of unmatchedApproved) {
-            await refreshMatchingPlansForEntry(prisma, r.id, tenantId);
-            const links = await prisma.breedingPlanBuyer.findMany({
-              where: { waitlistEntryId: r.id },
-              select: {
-                id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
-                plan: {
-                  select: {
-                    id: true, name: true,
-                    sire: { select: { id: true, name: true } },
-                    dam: { select: { id: true, name: true } },
-                  },
+          const unmatchedIds = unmatchedApproved.map(r => r.id);
+
+          // Batch backfill — single set of DB queries for all entries
+          await refreshMatchingPlansForEntries(prisma, unmatchedIds, tenantId);
+
+          // Single batch query for all matches across all unmatched entries
+          const allLinks = await prisma.breedingPlanBuyer.findMany({
+            where: { waitlistEntryId: { in: unmatchedIds } },
+            select: {
+              id: true, planId: true, stage: true, matchScore: true, matchReasons: true,
+              waitlistEntryId: true,
+              plan: {
+                select: {
+                  id: true, name: true,
+                  sire: { select: { id: true, name: true } },
+                  dam: { select: { id: true, name: true } },
                 },
               },
-            });
-            (r as any).planBuyerLinks = links;
+            },
+          });
+
+          // Group by entry ID and assign back to rows
+          const linksByEntry = new Map<number, typeof allLinks>();
+          for (const link of allLinks) {
+            if (link.waitlistEntryId != null) {
+              const list = linksByEntry.get(link.waitlistEntryId) || [];
+              list.push(link);
+              linksByEntry.set(link.waitlistEntryId, list);
+            }
+          }
+          for (const r of unmatchedApproved) {
+            (r as any).planBuyerLinks = linksByEntry.get(r.id) || [];
           }
         } catch (err) {
           console.error("[waitlist/list] lazy-match backfill error:", err);
@@ -356,11 +372,9 @@ const waitlistRoutes: FastifyPluginCallback = (app, _opts, done) => {
     const countMap = new Map(existingCounts.map(c => [c.waitlistEntryId, c._count]));
     const unmatched = needsBackfill.filter(e => !countMap.get(e.id));
 
-    // Run backfill in parallel for unmatched entries
+    // Batch backfill — single set of DB queries for all unmatched entries
     if (unmatched.length > 0) {
-      await Promise.allSettled(
-        unmatched.map(e => refreshMatchingPlansForEntry(prisma, e.id, tenantId))
-      );
+      await refreshMatchingPlansForEntries(prisma, unmatched.map(e => e.id), tenantId);
     }
 
     // Single batch query for all matches across all requested entries
