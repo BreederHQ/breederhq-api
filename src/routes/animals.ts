@@ -695,7 +695,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const name = String(b.name || "").trim();
     if (!name) return reply.code(400).send({ error: "name_required" });
-    const validSpecies = ["DOG", "CAT", "HORSE", "SHEEP", "GOAT", "CATTLE", "PIG", "RABBIT"];
+    const validSpecies = ["DOG", "CAT", "HORSE", "SHEEP", "GOAT", "RABBIT", "ALPACA", "LLAMA"];
     if (!b.species || !validSpecies.includes(b.species)) {
       return reply.code(400).send({ error: "species_required" });
     }

@@ -48,8 +48,6 @@ const SpeciesEnum = z.enum([
   "GOAT",
   "RABBIT",
   "SHEEP",
-  "CATTLE",
-  "PIG",
   "ALPACA",
   "LLAMA",
 ]);

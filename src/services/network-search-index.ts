@@ -64,9 +64,7 @@ const INDEXED_LOCI: Record<string, string[]> = {
   CAT: ["B", "D", "Dm", "W", "S", "PKD", "HCM"],
   SHEEP: ["SCRAPIE", "SPIDER", "B", "Sp", "BOOROOLA"],
   GOAT: ["SCRAPIE", "A", "B", "CSN3"],
-  CATTLE: ["MC1R", "POLLED", "A2", "TH", "PHA"],
   RABBIT: ["E", "A", "B", "C", "D", "En", "V", "W"],
-  PIG: ["MC1R", "RYR1", "RN", "IGF2"],
   ALPACA: ["MC1R", "A", "B", "FAWN"],
   LLAMA: ["MC1R", "A", "B"],
 };
@@ -624,8 +622,6 @@ function getCategoryLabelForLocus(locus: string, species: Species): string {
     CAT: ["PKD", "HCM"],
     SHEEP: ["SCRAPIE", "SPIDER"],
     GOAT: ["SCRAPIE"],
-    CATTLE: ["TH", "PHA"],
-    PIG: ["RYR1"],
   };
 
   const speciesHealthLoci = healthLoci[species] ?? [];
@@ -636,7 +632,6 @@ function getCategoryLabelForLocus(locus: string, species: Species): string {
   // Performance loci
   const performanceLoci: Record<string, string[]> = {
     HORSE: ["MSTN", "DMRT3"],
-    PIG: ["IGF2"],
   };
 
   const speciesPerfLoci = performanceLoci[species] ?? [];
