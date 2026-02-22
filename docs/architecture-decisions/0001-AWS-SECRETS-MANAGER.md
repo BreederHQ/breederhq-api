@@ -26,19 +26,33 @@ We needed a centralized secret management solution that addresses these concerns
 We will use **AWS Secrets Manager** to store ALL application secrets (database, API keys, JWT secrets, etc.) across all environments.
 
 **Implementation approach**:
-- Store secrets as JSON bundle with 16 keys per secret
-- Secret naming: `breederhq-api/{environment}` (production, dev, alpha, bravo)
+- Store secrets as JSON bundle with 17 keys per secret
+- Secret naming: `breederhq-api/{environment}` — 6 active secrets (see below)
 - Enable via `USE_SECRETS_MANAGER=true` environment variable (any environment)
 - Override secret name with `AWS_SECRET_NAME` env var
-- Fetch secrets at application startup via `getAppSecrets()` (cached for runtime)
-- Two AWS accounts: prod account for production, dev account for dev/alpha/bravo
+- Fetch secrets at application startup via bootstrap scripts (`boot-with-secrets.js` for deployed, `boot-dev.js` for local dev)
+- **Migration scripts also use SM** via `run-with-env.js` — thin `.env.*.migrate` files contain only `AWS_SECRET_NAME` + `AWS_PROFILE` (no hardcoded credentials)
+- `DATABASE_URL` = `bhq_app@pooler` (runtime); `DATABASE_DIRECT_URL` = `bhq_migrator@direct` (migrations). `run-with-env.js` auto-remaps for migration context.
+- Two AWS accounts: prod account for production/prod-prototype, dev account for dev/dev-prototype/alpha/bravo
 - Separate IAM policies per account (prod-only, dev-all)
-- Local development continues using `.env.dev` files
+- Local development uses SM by default (with auto SSO re-login on token expiry)
+
+**Active secrets**:
+| Secret | Account | NeonDB | Status |
+|--------|---------|--------|--------|
+| `breederhq-api/prod-prototype` | Prod | `ep-dark-breeze` (legacy) | **Active** |
+| `breederhq-api/production` | Prod | `ep-orange-smoke` (new) | Future |
+| `breederhq-api/dev-prototype` | Dev | `ep-misty-frog` (legacy) | **Active** |
+| `breederhq-api/dev` | Dev | `ep-odd-bonus` (new) | Future |
+| `breederhq-api/alpha` | Dev | `ep-twilight-sea` (new) | Future |
+| `breederhq-api/bravo` | Dev | `ep-young-river` (new) | Future |
 
 > **Updated 2026-02-15**: Trigger changed from `NODE_ENV === "production"` to `USE_SECRETS_MANAGER === "true"`.
 > **Updated 2026-02-16**: Phase 2 complete — expanded from 3 keys (DB only) to 16 keys (all secrets). New NeonDB projects (breederhq-production + breederhq-development). Separate IAM policies per AWS account. Function renamed `getDatabaseSecrets` → `getAppSecrets`.
+> **Updated 2026-02-18**: 17 keys (added `JWT_UNSUBSCRIBE_SECRET`). Local dev now fetches from SM via `boot-dev.js` with auto SSO re-login.
+> **Updated 2026-02-18**: Phase 3 — prototype secrets added for legacy NeonDB instances. Migration scripts now fetch from SM via `run-with-env.js` (no hardcoded credentials in `.env.*.migrate` files). Unified SM as single source of truth for runtime and migrations.
 
-**Cost**: ~$1.80/month for 4 secrets (production, dev, alpha, bravo)
+**Cost**: ~$2.43/month for 6 secrets (drops to ~$1.62/month after prototype decommission)
 
 ---
 
@@ -189,12 +203,13 @@ We will use **AWS Secrets Manager** to store ALL application secrets (database, 
 - Emergency fallback to env vars
 
 **Phase 2: Full Secret Management (✅ Complete — 2026-02-16)**
-- All secrets stored in Secrets Manager (16 keys per environment)
+- All secrets stored in Secrets Manager (17 keys per environment)
 - Four environments: production, dev, alpha, bravo
 - Two NeonDB projects: breederhq-production, breederhq-development (3 branches)
 - Separate IAM policies: `breederhq-api-prod-secrets-read` (prod account), `breederhq-api-dev-secrets-read` (dev account)
 - Function renamed `getDatabaseSecrets` → `getAppSecrets`
 - SM region separated from S3 region via `AWS_SECRETS_MANAGER_REGION`
+- Local dev fetches from SM via `boot-dev.js` (auto SSO re-login on token expiry)
 
 **Phase 3: Automation (Future)**
 - Automatic credential rotation
@@ -249,11 +264,12 @@ If AWS Secrets Manager proves problematic:
 - **[AWS Secrets Manager Operations Guide](../operations/AWS-SECRETS-MANAGER.md)** - Day-to-day operations
 - **[Setup Script](../../setup-secrets-manager.ps1)** - Initial infrastructure setup
 - **[Get Credentials Script](../../get-render-credentials.ps1)** - IAM key management
-- **[src/config/secrets.ts](../../src/config/secrets.ts)** - Implementation
+- **[scripts/boot-with-secrets.js](../../scripts/boot-with-secrets.js)** - Deployed startup (fetches SM → starts server)
+- **[scripts/development/boot-dev.js](../../scripts/development/boot-dev.js)** - Local dev startup (fetches SM → starts tsx watch)
 
 ---
 
-**ADR Version**: 2.0
+**ADR Version**: 2.1
 **Next Review**: 2026-05-16 (90 days after Phase 2)
 
 ### Changelog
@@ -263,3 +279,4 @@ If AWS Secrets Manager proves problematic:
 | 1.0 | 2026-02-03 | Initial decision and implementation |
 | 1.1 | 2026-02-15 | Updated: trigger changed to `USE_SECRETS_MANAGER=true`; default secret name is now `breederhq-api/${NODE_ENV}` |
 | 2.0 | 2026-02-16 | Phase 2 complete: expanded to 16 keys, 4 environments, 2 AWS accounts, separate IAM policies, new NeonDB projects |
+| 2.1 | 2026-02-18 | 17 keys (added `JWT_UNSUBSCRIBE_SECRET`). Local dev fetches from SM via `boot-dev.js` with auto SSO re-login |

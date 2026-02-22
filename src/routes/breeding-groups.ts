@@ -1,7 +1,7 @@
 /**
  * Breeding Groups API Routes
  *
- * Manages group breeding scenarios for livestock species (sheep, goats, cattle, pigs)
+ * Manages group breeding scenarios for livestock species (sheep, goats)
  * where one male is introduced to multiple females for an exposure window.
  *
  * @see docs/codebase/architecture-decisions/0008-BREEDING-GROUP-ENTITY.md
@@ -16,15 +16,11 @@ import { Species, BreedingGroupStatus, BreedingGroupMemberStatus, PregnancyCheck
 const GROUP_BREEDING_SPECIES: Set<Species> = new Set([
   Species.SHEEP,
   Species.GOAT,
-  Species.CATTLE,
-  Species.PIG,
 ]);
 
 const SPECIES_GESTATION_DAYS: Record<string, { min: number; max: number }> = {
   SHEEP: { min: 142, max: 152 },
   GOAT: { min: 145, max: 155 },
-  PIG: { min: 111, max: 120 },
-  CATTLE: { min: 279, max: 292 },
 };
 
 /* ───────────────────────── Helpers ───────────────────────── */

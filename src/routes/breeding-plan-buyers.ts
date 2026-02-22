@@ -18,6 +18,8 @@ import type {
   UpdatePlanBuyerRequest,
   RefreshMatchesResponse,
   MatchReason,
+  AssignBuyerResponse,
+  ApplyCreditRequest,
 } from "../types/breeding-plan-buyer.js";
 import { BreedingPlanBuyerStage } from "@prisma/client";
 
@@ -109,6 +111,10 @@ function toBuyerDTO(record: any): BreedingPlanBuyerDTO {
     priority: record.priority,
     offspringGroupBuyerId: record.offspringGroupBuyerId,
     offspringId: record.offspringId,
+    depositInvoiceId: record.Invoice?.id ?? null,
+    depositInvoiceStatus: record.Invoice?.status ?? null,
+    depositInvoiceBalanceCents: record.Invoice ? Number(record.Invoice.balanceCents) : null,
+    depositInvoiceTotalCents: record.Invoice ? Number(record.Invoice.amountCents) : null,
     notes: record.notes,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -126,6 +132,9 @@ const buyerIncludes = {
     },
   },
   party: { select: { id: true, name: true, email: true, phoneE164: true } },
+  Invoice: {
+    select: { id: true, status: true, balanceCents: true, amountCents: true },
+  },
 };
 
 /* ───────────────────────── routes ───────────────────────── */
@@ -348,7 +357,45 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
           include: buyerIncludes,
         });
 
-        reply.send(toBuyerDTO(updated));
+        const buyerDTO = toBuyerDTO(updated);
+
+        // When transitioning to ASSIGNED, check for unapplied deposit credits
+        const isNewAssignment = stage === "ASSIGNED" && existing.stage !== "ASSIGNED";
+        if (isNewAssignment) {
+          // Resolve the party ID (direct or via waitlist entry)
+          const resolvedPartyId =
+            updated.partyId ??
+            (updated.waitlistEntry as any)?.clientParty?.id ??
+            null;
+
+          let unappliedCredit: AssignBuyerResponse["unappliedCredit"] = null;
+
+          if (resolvedPartyId) {
+            const creditInvoice = await prisma.invoice.findFirst({
+              where: {
+                tenantId,
+                clientPartyId: resolvedPartyId,
+                breedingPlanBuyerId: null,
+                status: { in: ["paid", "partially_paid"] },
+                LineItems: { some: { kind: "DEPOSIT" } },
+              },
+              select: { id: true, invoiceNumber: true, amountCents: true },
+            });
+
+            if (creditInvoice) {
+              unappliedCredit = {
+                invoiceId: creditInvoice.id,
+                invoiceNumber: creditInvoice.invoiceNumber,
+                amountCents: Number(creditInvoice.amountCents),
+              };
+            }
+          }
+
+          const response: AssignBuyerResponse = { buyer: buyerDTO, unappliedCredit };
+          return reply.send(response);
+        }
+
+        reply.send(buyerDTO);
       } catch (err) {
         const { status, payload } = errorReply(err);
         reply.status(status).send(payload);
@@ -376,6 +423,25 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
         if (!existing) return reply.code(404).send({ error: "buyer_not_found" });
 
         await prisma.breedingPlanBuyer.delete({ where: { id: buyerId } });
+
+        // If this buyer was linked to a waitlist entry, revert it to APPROVED
+        // so it re-enters the active waitlist and can be matched again.
+        if (existing.waitlistEntryId) {
+          const entry = await prisma.waitlistEntry.findUnique({
+            where: { id: existing.waitlistEntryId },
+          });
+          if (entry && entry.status === "ALLOCATED") {
+            await prisma.waitlistEntry.update({
+              where: { id: existing.waitlistEntryId },
+              data: { status: "APPROVED" },
+            });
+          }
+        }
+
+        // Re-run matching so the plan picks up newly-available waitlist entries
+        refreshPlanMatches(prisma, planId, tenantId).catch((err) => {
+          console.error("[breeding-plan-buyers] refresh after delete failed:", err);
+        });
 
         reply.code(204).send();
       } catch (err) {
@@ -562,6 +628,7 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
                 buyerPartyId: buyer.partyId,
                 waitlistEntryId: buyer.waitlistEntryId,
                 placementRank: buyer.priority,
+                stage: "PENDING",
               },
             });
 
@@ -576,6 +643,57 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
         }
 
         reply.send({ created, skipped, offspringGroupId: groupId });
+      } catch (err) {
+        const { status, payload } = errorReply(err);
+        reply.status(status).send(payload);
+      }
+    }
+  );
+
+  /**
+   * POST /breeding/plans/:planId/buyers/:id/apply-credit
+   * Link an existing paid deposit invoice to this plan buyer.
+   * Called when the breeder accepts the unapplied-credit prompt.
+   */
+  app.post<{ Params: { planId: string; id: string }; Body: ApplyCreditRequest }>(
+    "/breeding/plans/:planId/buyers/:id/apply-credit",
+    async (req, reply) => {
+      try {
+        const tenantId = Number((req as any).tenantId);
+        const planId = toNum(req.params.planId);
+        const buyerId = toNum(req.params.id);
+        if (!planId || !buyerId) return reply.code(400).send({ error: "bad_id" });
+
+        const { invoiceId } = req.body || {};
+        if (!invoiceId) return reply.code(400).send({ error: "invoiceId_required" });
+
+        // Verify buyer exists and belongs to this plan/tenant
+        const buyer = await prisma.breedingPlanBuyer.findFirst({
+          where: { id: buyerId, planId, tenantId },
+        });
+        if (!buyer) return reply.code(404).send({ error: "buyer_not_found" });
+
+        // Verify invoice belongs to tenant and is not already linked
+        const invoice = await prisma.invoice.findFirst({
+          where: { id: invoiceId, tenantId, breedingPlanBuyerId: null },
+        });
+        if (!invoice) {
+          return reply.code(404).send({ error: "invoice_not_found_or_already_linked" });
+        }
+
+        // Link the invoice to this plan buyer
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { breedingPlanBuyerId: buyerId },
+        });
+
+        // Return the updated buyer DTO with invoice fields populated
+        const updated = await prisma.breedingPlanBuyer.findFirst({
+          where: { id: buyerId },
+          include: buyerIncludes,
+        });
+
+        reply.send(toBuyerDTO(updated!));
       } catch (err) {
         const { status, payload } = errorReply(err);
         reply.status(status).send(payload);

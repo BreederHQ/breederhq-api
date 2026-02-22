@@ -84,7 +84,7 @@ cp .env.example .env.dev
 
 ### Troubleshooting Production Issues
 
-1. Check deployment logs for secret fetch status (`✓ 16 secrets loaded`)
+1. Check deployment logs for secret fetch status (`✓ 17 secrets loaded`)
 2. Verify AWS credentials / instance role
 3. Test AWS access with CLI
 

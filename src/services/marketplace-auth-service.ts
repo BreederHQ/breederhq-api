@@ -146,6 +146,7 @@ export async function registerMarketplaceUser(data: {
   firstName: string;
   lastName: string;
   phone?: string;
+  country?: string;
   userType?: string;
 }): Promise<MarketplaceUser> {
   const email = data.email.trim().toLowerCase();
@@ -158,6 +159,7 @@ export async function registerMarketplaceUser(data: {
       firstName: data.firstName.trim(),
       lastName: data.lastName.trim(),
       phone: data.phone?.trim() || null,
+      country: data.country?.toUpperCase() || "US",
       userType: data.userType || "buyer",
       status: "active",
       emailVerified: false,

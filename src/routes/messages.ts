@@ -1,5 +1,6 @@
 // src/routes/messages.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { evaluateAndSendAutoReply } from "../services/auto-reply-service.js";
 import { autoProvisionPortalAccessForDM, sendNewMessageNotification } from "../services/portal-provisioning-service.js";
@@ -117,6 +118,7 @@ async function saveMessageAttachment(
 const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /messages/threads - Create new thread with initial message
   app.post("/messages/threads", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: senderPartyId } = await requireMessagingPartyScope(req);
 
@@ -127,8 +129,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     const now = new Date();
-
-    try {
       // Check if sender is the org party (for response time tracking)
       // Use Organization table to get the correct partyId (more reliable than Party.type lookup)
       const tenantOrg = await prisma.organization.findFirst({
@@ -238,16 +238,16 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ ok: true, thread });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
 
   // GET /messages/threads - List threads for current user's party
   app.get("/messages/threads", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: currentUserPartyId } = await requireMessagingPartyScope(req);
-
-    try {
       // Get threads where user is a participant
       const participantRecords = await prisma.messageParticipant.findMany({
         where: { partyId: currentUserPartyId },
@@ -273,49 +273,46 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         orderBy: { updatedAt: "desc" },
       });
 
-      // Calculate unread count efficiently
-      const threadsWithUnread = await Promise.all(
-        threads.map(async (t) => {
-          const participant = participantRecords.find((p) => p.threadId === t.id);
-          const lastReadAt = participant?.lastReadAt;
+      // Batch unread counts in a single query (avoids N+1)
+      const unreadCounts = await prisma.$queryRaw<
+        Array<{ threadId: number; unreadCount: number }>
+      >`
+        SELECT
+          m."threadId",
+          COUNT(*)::int AS "unreadCount"
+        FROM "Message" m
+        INNER JOIN "MessageParticipant" mp
+          ON mp."threadId" = m."threadId"
+          AND mp."partyId" = ${currentUserPartyId}
+        WHERE m."threadId" IN (${Prisma.join(threadIds)})
+          AND m."senderPartyId" IS DISTINCT FROM ${currentUserPartyId}
+          AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+        GROUP BY m."threadId"
+      `;
 
-          // Count messages created after lastReadAt, excluding sender's own messages
-          const unreadCount = lastReadAt
-            ? await prisma.message.count({
-                where: {
-                  threadId: t.id,
-                  createdAt: { gt: lastReadAt },
-                  senderPartyId: { not: currentUserPartyId },
-                },
-              })
-            : await prisma.message.count({
-                where: {
-                  threadId: t.id,
-                  senderPartyId: { not: currentUserPartyId },
-                },
-              });
-
-          return {
-            ...t,
-            unreadCount,
-          };
-        })
+      const unreadMap = new Map(
+        unreadCounts.map((r) => [r.threadId, r.unreadCount])
       );
+
+      const threadsWithUnread = threads.map((t) => ({
+        ...t,
+        unreadCount: unreadMap.get(t.id) ?? 0,
+      }));
 
       return reply.send({ threads: threadsWithUnread });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
 
   // GET /messages/threads/:id - Get thread details with all messages
   app.get("/messages/threads/:id", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
     const threadId = Number((req.params as any).id);
-
-    try {
       const thread = await prisma.messageThread.findFirst({
         where: { id: threadId, tenantId },
         include: {
@@ -365,12 +362,14 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
 
   // POST /messages/threads/:id/messages - Send message in thread
   app.post("/messages/threads/:id/messages", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
@@ -380,8 +379,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!messageBody) {
       return reply.code(400).send({ error: "missing_required_fields", required: ["body"] });
     }
-
-    try {
       const thread = await prisma.messageThread.findFirst({
         where: { id: threadId, tenantId },
         select: {
@@ -643,18 +640,18 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ ok: true, message });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
 
   // POST /messages/threads/:id/messages/upload - Send message with file attachment (multipart)
   app.post("/messages/threads/:id/messages/upload", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
     const threadId = Number((req.params as any).id);
-
-    try {
       const thread = await prisma.messageThread.findFirst({
         where: { id: threadId, tenantId },
         select: {
@@ -800,18 +797,18 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
 
   // GET /messages/attachments/:messageId - Download/serve attachment
   app.get("/messages/attachments/:messageId", async (req, reply) => {
+    try {
     // Enforce messaging party scope (supports both STAFF and CLIENT)
     const { tenantId, partyId: userPartyId } = await requireMessagingPartyScope(req);
 
     const messageId = Number((req.params as any).messageId);
-
-    try {
       const message = await prisma.message.findFirst({
         where: { id: messageId },
         select: {
@@ -860,6 +857,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send(fileBuffer);
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });
@@ -1001,6 +999,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send({ ok: true, thread: updated });
     } catch (err: any) {
+      if (err.statusCode && err.error) return reply.code(err.statusCode).send({ error: err.error, detail: err.detail });
       return reply.code(500).send({ error: "internal_error", detail: err.message });
     }
   });

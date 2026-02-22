@@ -6,31 +6,17 @@ Session cookies are HMAC-signed for security. This requires a `COOKIE_SECRET` en
 
 ### Local Development
 
-1. Generate a secret:
-   ```bash
-   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-   ```
+`COOKIE_SECRET` is fetched from AWS Secrets Manager at startup (via `boot-dev.js`). No manual setup needed — just ensure your AWS CLI dev profile is configured:
 
-2. Add to `.env.dev`:
-   ```
-   COOKIE_SECRET=<your-generated-secret>
-   ```
+```bash
+aws configure --profile dev
+```
 
-3. Verify with preflight:
-   ```bash
-   npm run preflight
-   # or with env loaded:
-   npx dotenv -e .env.dev -- npm run preflight
-   ```
+A fallback value exists in `.env.dev` for scripts that don't use SM (tests, etc.).
 
-### Production (Render)
+### Production / Deployed Environments
 
-1. In Render dashboard, add environment variable:
-   - Key: `COOKIE_SECRET`
-   - Value: Generate using the command above (min 32 characters)
-   - Ensure "Sync" is enabled if using environment groups
-
-2. Redeploy the service after adding the variable.
+`COOKIE_SECRET` is stored in AWS Secrets Manager alongside all other secrets. See [AWS Secrets Manager](../operations/AWS-SECRETS-MANAGER.md) for managing secrets across environments.
 
 ## Requirements
 
@@ -46,8 +32,8 @@ Session cookies are HMAC-signed for security. This requires a `COOKIE_SECRET` en
 **Cause**: Server cannot start without a valid `COOKIE_SECRET`.
 
 **Fix**:
-- Local: Add `COOKIE_SECRET` to `.env.dev`
-- Production: Add to Render/hosting environment variables
+- Local: Ensure AWS CLI dev profile is configured (`aws configure --profile dev`). SM provides the secret at startup.
+- Production: Managed via AWS Secrets Manager (see [operations guide](../operations/AWS-SECRETS-MANAGER.md))
 
 ### Preflight Check Failed
 
@@ -120,6 +106,7 @@ If you must rotate:
 - Use different secrets for dev vs production
 - Secrets should be cryptographically random (use the generation command)
 
-For Render/Vercel:
-- Set `COOKIE_SECRET` in dashboard environment variables
+For deployed environments:
+- All secrets are managed via AWS Secrets Manager
 - Never put secrets in build args or Dockerfile
+- See [AWS Secrets Manager](../operations/AWS-SECRETS-MANAGER.md) for operations guide

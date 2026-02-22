@@ -2,7 +2,10 @@
 import { Resend } from "resend";
 import prisma from "../prisma.js";
 import { canContactViaChannel } from "./comm-prefs-service.js";
+import { generateUnsubscribeToken } from "./unsubscribe-token-service.js";
 import { renderTemplate } from "./template-renderer.js";
+import { wrapEmailLayout, emailButton, emailInfoCard, emailDetailRows, emailGreeting, emailParagraph, emailFootnote, emailHeading, emailAccent, emailBulletList, emailFeatureList } from "./email-layout.js";
+import { captureMessage } from "../lib/sentry.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -43,7 +46,7 @@ const EMAIL_DEV_ALLOWED_DOMAINS = (process.env.EMAIL_DEV_ALLOWED_DOMAINS || "")
 
 // Lazy initialization of Resend client
 let resend: Resend | null = null;
-function getResendClient(): Resend {
+export function getResendClient(): Resend {
   if (!resend) {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -52,6 +55,59 @@ function getResendClient(): Resend {
     resend = new Resend(apiKey);
   }
   return resend;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Retry helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+const MAX_INLINE_RETRIES = 3;
+const INLINE_BACKOFF_BASE_MS = 1000; // 1s, 4s, 16s (base * 4^attempt)
+
+/** Cron retry delays: 5min, 30min, 2hr, 12hr, 24hr */
+const CRON_RETRY_DELAYS_MS = [
+  5 * 60 * 1000,
+  30 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+  12 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+];
+const MAX_CRON_RETRIES = CRON_RETRY_DELAYS_MS.length;
+
+/**
+ * Determine if an error is retriable (network/5xx/rate-limit).
+ * 4xx errors (bad request, auth, validation) are NOT retriable.
+ */
+function isRetriableError(error: any): boolean {
+  // Network errors (no response received)
+  const networkCodes = ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EPIPE", "EAI_AGAIN"];
+  if (error?.code && networkCodes.includes(error.code)) return true;
+
+  // Resend SDK error with status code
+  const status = error?.statusCode ?? error?.status;
+  if (typeof status === "number") {
+    if (status >= 500) return true; // Server error
+    if (status === 429) return true; // Rate limit
+  }
+
+  // Resend error object format: { name: 'rate_limit_exceeded', ... }
+  if (error?.name === "rate_limit_exceeded") return true;
+
+  return false;
+}
+
+/**
+ * Calculate next retry time for the cron job.
+ * Returns null if max retries exceeded.
+ */
+export function calculateNextRetryAt(retryCount: number): Date | null {
+  if (retryCount >= MAX_CRON_RETRIES) return null;
+  const delayMs = CRON_RETRY_DELAYS_MS[retryCount];
+  return new Date(Date.now() + delayMs);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -104,6 +160,8 @@ export interface SendEmailParams {
   from?: string;
   /** Optional reply-to address for threading (e.g., reply+t_123_abc@mail.breederhq.com) */
   replyTo?: string;
+  /** Optional partyId — enables List-Unsubscribe headers and pre-send compliance check */
+  partyId?: number;
 }
 
 export interface SendTemplatedEmailParams {
@@ -118,6 +176,8 @@ export interface SendTemplatedEmailParams {
   from?: string;
   /** Optional reply-to address */
   replyTo?: string;
+  /** Optional partyId — enables List-Unsubscribe headers and pre-send compliance check */
+  partyId?: number;
 }
 
 export interface SendEmailResult {
@@ -133,7 +193,7 @@ export interface SendEmailResult {
 export async function sendTemplatedEmail(
   params: SendTemplatedEmailParams
 ): Promise<SendEmailResult> {
-  const { tenantId, to, templateId, context, category, relatedInvoiceId, metadata, from, replyTo } = params;
+  const { tenantId, to, templateId, context, category, relatedInvoiceId, metadata, from, replyTo, partyId } = params;
 
   const template = await prisma.template.findFirst({
     where: { id: templateId, tenantId: tenantId ?? undefined },
@@ -162,17 +222,18 @@ export async function sendTemplatedEmail(
     category,
     from,
     replyTo,
+    partyId,
   });
 }
 
 /**
  * Send email via Resend and log to EmailSendLog.
- * - Enforces PartyCommPreference (EMAIL channel) for marketing emails only.
- * - Transactional emails (invoices, receipts, etc.) bypass preferences.
+ * - Enforces PartyCommPreference (EMAIL channel) when partyId is provided.
+ * - Also enforces for marketing emails via email lookup when partyId is not provided.
  * - Invoice emails are idempotent via unique constraint on (tenantId, templateKey, relatedInvoiceId).
  */
 export async function sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-  const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category, from, replyTo } = params;
+  const { tenantId, to, subject, html, text, templateKey, metadata, relatedInvoiceId, category, from, replyTo, partyId } = params;
 
   // Use custom from or default
   const fromAddress = from || DEFAULT_FROM;
@@ -195,8 +256,30 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     }
   }
 
-  // Validate recipient party comm preferences (marketing only, requires tenant context)
-  if (tenantId !== null && category === "marketing") {
+  // Compliance check: block emails to unsubscribed recipients when partyId is known
+  if (partyId) {
+    const allowed = await canContactViaChannel(partyId, "EMAIL");
+    if (!allowed) {
+      await prisma.emailSendLog.create({
+        data: {
+          tenantId,
+          to,
+          from: fromAddress,
+          subject,
+          templateKey,
+          provider: "resend",
+          relatedInvoiceId,
+          status: "failed",
+          error: { reason: "compliance_blocked", channel: "EMAIL" },
+          metadata,
+        },
+      });
+      return { ok: false, error: "recipient_unsubscribed" };
+    }
+  }
+
+  // Fallback: validate recipient via email lookup for marketing emails without partyId
+  if (!partyId && tenantId !== null && category === "marketing") {
     const party = await prisma.party.findFirst({
       where: { tenantId, email: { equals: to, mode: "insensitive" } },
     });
@@ -257,63 +340,97 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     console.log(`[email-service] DEV REDIRECT: ${to} -> ${actualRecipient}`);
   }
 
-  // Send via Resend
-  try {
-    const resendClient = getResendClient();
+  // Send via Resend (with inline retry for transient failures)
+  const resendClient = getResendClient();
 
-    // In dev mode with redirect, prepend original recipient to subject
-    const actualSubject = devMode.redirected
-      ? `[DEV: ${to}] ${subject}`
-      : subject;
+  // In dev mode with redirect, prepend original recipient to subject
+  const actualSubject = devMode.redirected
+    ? `[DEV: ${to}] ${subject}`
+    : subject;
 
-    const { data, error } = await resendClient.emails.send({
-      from: fromAddress,
-      to: actualRecipient,
-      subject: actualSubject,
-      html: html || text || "",
-      text,
-      ...(replyTo && { reply_to: replyTo }),
-    });
-
-    if (error) {
-      await prisma.emailSendLog.create({
-        data: {
-          tenantId,
-          to,
-          from: fromAddress,
-          subject,
-          templateKey,
-          provider: "resend",
-          relatedInvoiceId,
-          status: "failed",
-          error: { resendError: error },
-          metadata: { ...metadata, replyTo },
-        },
-      });
-      return { ok: false, error: error.message || "resend_error" };
-    }
-
-    const messageId = data?.id || null;
-    await prisma.emailSendLog.create({
-      data: {
+  // Build List-Unsubscribe headers when partyId and tenantId are available
+  const emailHeaders: Record<string, string> = {};
+  if (partyId && tenantId !== null) {
+    try {
+      const token = generateUnsubscribeToken({
+        partyId,
+        channel: "EMAIL",
         tenantId,
-        to: devMode.redirected ? to : actualRecipient, // Log original recipient
-        from: fromAddress,
-        subject,
-        templateKey,
-        category,
-        provider: "resend",
-        providerMessageId: messageId,
-        relatedInvoiceId,
-        status: "sent",
-        metadata: devMode.redirected
-          ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to, replyTo }
-          : { ...metadata, replyTo },
-      },
-    });
+        purpose: "unsubscribe",
+      });
+      const apiBaseUrl = process.env.API_URL || process.env.APP_URL || "https://api.breederhq.com";
+      const unsubUrl = `${apiBaseUrl}/api/v1/unsubscribe?token=${token}`;
+      emailHeaders["List-Unsubscribe"] = `<${unsubUrl}>`;
+      emailHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    } catch (err) {
+      // Don't block email sending if header generation fails (e.g., missing secret)
+      console.warn("[email-service] Failed to generate unsubscribe headers:", (err as Error).message);
+    }
+  }
 
-    return { ok: true, providerMessageId: messageId || undefined };
-  } catch (err: any) {
+  // Inline retry loop: 3 attempts with exponential backoff (1s, 4s, 16s)
+  let lastError: any = null;
+  let sendData: { id: string } | null = null;
+
+  for (let attempt = 1; attempt <= MAX_INLINE_RETRIES; attempt++) {
+    try {
+      const { data, error } = await resendClient.emails.send({
+        from: fromAddress,
+        to: actualRecipient,
+        subject: actualSubject,
+        html: html || text || "",
+        text,
+        ...(replyTo && { reply_to: replyTo }),
+        ...(Object.keys(emailHeaders).length > 0 && { headers: emailHeaders }),
+      });
+
+      if (error) {
+        if (attempt < MAX_INLINE_RETRIES && isRetriableError(error)) {
+          const backoffMs = INLINE_BACKOFF_BASE_MS * Math.pow(4, attempt - 1);
+          console.warn(
+            `[email-service] Resend error on attempt ${attempt}/${MAX_INLINE_RETRIES}, ` +
+            `retrying in ${backoffMs}ms: ${error.message}`
+          );
+          await sleep(backoffMs);
+          lastError = error;
+          continue;
+        }
+        // Non-retriable or final attempt
+        lastError = error;
+        break;
+      }
+
+      // Success
+      sendData = data as { id: string } | null;
+      lastError = null;
+      break;
+    } catch (err: any) {
+      if (attempt < MAX_INLINE_RETRIES && isRetriableError(err)) {
+        const backoffMs = INLINE_BACKOFF_BASE_MS * Math.pow(4, attempt - 1);
+        console.warn(
+          `[email-service] Send exception on attempt ${attempt}/${MAX_INLINE_RETRIES}, ` +
+          `retrying in ${backoffMs}ms: ${err.message}`
+        );
+        await sleep(backoffMs);
+        lastError = err;
+        continue;
+      }
+      lastError = err;
+      break;
+    }
+  }
+
+  // Handle final outcome after retry loop
+  if (lastError) {
+    // All retries exhausted — log failure and schedule for cron retry
+    const isResendError = lastError.message && !lastError.stack;
+    const errorDetail = isResendError
+      ? { resendError: lastError }
+      : { exception: lastError.message || String(lastError) };
+
+    const nextRetryAt = calculateNextRetryAt(0);
+    const errorMessage = lastError.message || "send_failed";
+
     await prisma.emailSendLog.create({
       data: {
         tenantId,
@@ -325,12 +442,54 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
         provider: "resend",
         relatedInvoiceId,
         status: "failed",
-        error: { exception: err.message },
-        metadata: { ...metadata, replyTo },
+        error: { ...errorDetail, inlineAttempts: MAX_INLINE_RETRIES },
+        metadata: {
+          ...metadata,
+          replyTo,
+          ...(html ? { retryHtml: html } : {}),
+          ...(text ? { retryText: text } : {}),
+        },
+        retryCount: 0,
+        nextRetryAt,
+        partyId: partyId ?? undefined,
       },
     });
-    return { ok: false, error: err.message || "unknown_error" };
+
+    captureMessage(
+      `Email send failed after ${MAX_INLINE_RETRIES} inline attempts`,
+      "warning",
+      { to, templateKey, tenantId, error: errorMessage }
+    );
+    console.warn(
+      `[email-service] Send failed after ${MAX_INLINE_RETRIES} inline attempts to ${to}: ${errorMessage}` +
+      (nextRetryAt ? ` — scheduled cron retry at ${nextRetryAt.toISOString()}` : " — no cron retry (max retries exceeded)")
+    );
+
+    return { ok: false, error: errorMessage };
   }
+
+  // Success — log the sent email
+  const messageId = sendData?.id || null;
+  await prisma.emailSendLog.create({
+    data: {
+      tenantId,
+      to: devMode.redirected ? to : actualRecipient,
+      from: fromAddress,
+      subject,
+      templateKey,
+      category,
+      provider: "resend",
+      providerMessageId: messageId,
+      relatedInvoiceId,
+      status: "sent",
+      metadata: devMode.redirected
+        ? { ...metadata, devMode: "redirected", actualRecipient, originalTo: to, replyTo }
+        : { ...metadata, replyTo },
+      partyId: partyId ?? undefined,
+    },
+  });
+
+  return { ok: true, providerMessageId: messageId || undefined };
 }
 
 /** ───────────────────────── Billing & Quota Notifications ───────────────────────── */
@@ -387,30 +546,19 @@ export async function sendQuotaWarningEmail(
   if (!recipient) return;
 
   const subject = `⚠️ Quota Warning: ${metricLabel} at ${Math.round(percentUsed)}%`;
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f97316;">Quota Warning</h2>
-      <p>Hi ${recipient.name},</p>
-      <p>You're approaching your quota limit for <strong>${metricLabel}</strong>.</p>
-
-      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
-        <strong>Current Usage:</strong> ${current} / ${limit} (${Math.round(percentUsed)}%)
-      </div>
-
-      <p>To avoid any interruption to your service, consider upgrading your plan.</p>
-
-      <p>
-        <a href="${APP_URL}/settings?tab=billing" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Manage Subscription
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Quota Warning",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`You're approaching your quota limit for <strong style="color: #ffffff;">${metricLabel}</strong>.`),
+      emailInfoCard(
+        `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Current Usage:</strong> ${current} / ${limit} (${Math.round(percentUsed)}%)</p>`,
+        { borderColor: "yellow" }
+      ),
+      emailParagraph("To avoid any interruption to your service, consider upgrading your plan."),
+      emailButton("Manage Subscription", `${APP_URL}/settings?tab=billing`, "orange"),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -436,32 +584,22 @@ export async function sendQuotaCriticalEmail(
   if (!recipient) return;
 
   const subject = `🚨 Critical: ${metricLabel} quota at ${Math.round(percentUsed)}%`;
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">Critical Quota Alert</h2>
-      <p>Hi ${recipient.name},</p>
-      <p><strong>Your ${metricLabel} quota is almost full!</strong></p>
-
-      <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 24px 0;">
-        <strong>Current Usage:</strong> ${current} / ${limit} (${Math.round(percentUsed)}%)
-        <br>
-        <strong>Remaining:</strong> ${limit - current} ${metricLabel.toLowerCase()}
-      </div>
-
-      <p>Once you reach 100%, you won't be able to add more ${metricLabel.toLowerCase()} until you upgrade your plan.</p>
-
-      <p>
-        <a href="${APP_URL}/settings?tab=billing" style="background: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Upgrade Now
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Critical Quota Alert",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`<strong style="color: #ffffff;">Your ${metricLabel} quota is almost full!</strong>`),
+      emailInfoCard(
+        [
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Current Usage:</strong> ${current} / ${limit} (${Math.round(percentUsed)}%)</p>`,
+          `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Remaining:</strong> ${limit - current} ${metricLabel.toLowerCase()}</p>`,
+        ].join("\n"),
+        { borderColor: "red" }
+      ),
+      emailParagraph(`Once you reach 100%, you won't be able to add more ${metricLabel.toLowerCase()} until you upgrade your plan.`),
+      emailButton("Upgrade Now", `${APP_URL}/settings?tab=billing`, "red"),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -485,30 +623,19 @@ export async function sendQuotaExceededEmail(
   if (!recipient) return;
 
   const subject = `🛑 ${metricLabel} quota limit reached`;
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">Quota Limit Reached</h2>
-      <p>Hi ${recipient.name},</p>
-      <p><strong>You've reached your ${metricLabel} quota limit of ${limit}.</strong></p>
-
-      <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0;">You cannot add more ${metricLabel.toLowerCase()} until you upgrade your plan.</p>
-      </div>
-
-      <p>Upgrade now to continue adding ${metricLabel.toLowerCase()}:</p>
-
-      <p>
-        <a href="${APP_URL}/settings?tab=billing" style="background: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Upgrade Your Plan
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Quota Limit Reached",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`<strong style="color: #ffffff;">You've reached your ${metricLabel} quota limit of ${limit}.</strong>`),
+      emailInfoCard(
+        `<p style="color: #e5e5e5; margin: 0;">You cannot add more ${metricLabel.toLowerCase()} until you upgrade your plan.</p>`,
+        { borderColor: "red" }
+      ),
+      emailParagraph(`Upgrade now to continue adding ${metricLabel.toLowerCase()}:`),
+      emailButton("Upgrade Your Plan", `${APP_URL}/settings?tab=billing`, "red"),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -539,33 +666,24 @@ export async function sendPaymentFailedEmail(
     ? new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(nextAttemptDate)
     : null;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">Payment Failed</h2>
-      <p>Hi ${recipient.name},</p>
-      <p>We were unable to process your payment for your BreederHQ subscription.</p>
-
-      <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0 0 8px 0;"><strong>Plan:</strong> ${planName}</p>
-        <p style="margin: 0 0 8px 0;"><strong>Amount Due:</strong> $${amountStr}</p>
-        ${nextAttemptStr ? `<p style="margin: 0;"><strong>Next Payment Attempt:</strong> ${nextAttemptStr}</p>` : ""}
-      </div>
-
-      <p><strong>Please update your payment method to avoid service interruption.</strong></p>
-
-      <p>
-        <a href="${invoiceUrl || `${APP_URL}/settings?tab=billing`}" style="background: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Update Payment Method
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        If you have questions, please contact our support team.<br><br>
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Failed",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph("We were unable to process your payment for your BreederHQ subscription."),
+      emailInfoCard(
+        [
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Plan:</strong> ${planName}</p>`,
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Amount Due:</strong> $${amountStr}</p>`,
+          nextAttemptStr ? `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Next Payment Attempt:</strong> ${nextAttemptStr}</p>` : "",
+        ].filter(Boolean).join("\n"),
+        { borderColor: "red" }
+      ),
+      emailParagraph(`<strong style="color: #ffffff;">Please update your payment method to avoid service interruption.</strong>`),
+      emailButton("Update Payment Method", invoiceUrl || `${APP_URL}/settings?tab=billing`, "red"),
+      emailFootnote("If you have questions, please contact our support team."),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -595,31 +713,20 @@ export async function sendSubscriptionCanceledEmail(
     day: "numeric"
   }).format(periodEndDate);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #6b7280;">Subscription Canceled</h2>
-      <p>Hi ${recipient.name},</p>
-      <p>Your <strong>${planName}</strong> subscription has been canceled.</p>
-
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0;">Your subscription will remain active until <strong>${endDateStr}</strong>.</p>
-      </div>
-
-      <p>You can reactivate your subscription at any time:</p>
-
-      <p>
-        <a href="${APP_URL}/settings?tab=billing" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Reactivate Subscription
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        We're sorry to see you go. If you have feedback, we'd love to hear it.<br><br>
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Subscription Canceled",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`Your <strong style="color: #ffffff;">${planName}</strong> subscription has been canceled.`),
+      emailInfoCard(
+        `<p style="color: #e5e5e5; margin: 0;">Your subscription will remain active until <strong style="color: #ffffff;">${endDateStr}</strong>.</p>`,
+        { borderColor: "gray" }
+      ),
+      emailParagraph("You can reactivate your subscription at any time:"),
+      emailButton("Reactivate Subscription", `${APP_URL}/settings?tab=billing`, "orange"),
+      emailFootnote("We're sorry to see you go. If you have feedback, we'd love to hear it."),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -652,30 +759,22 @@ export async function sendSubscriptionRenewedEmail(
     day: "numeric",
   }).format(nextBillingDate);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #10b981;">Subscription Renewed</h2>
-      <p>Hi ${recipient.name},</p>
-      <p>Your BreederHQ subscription has been renewed successfully!</p>
-
-      <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0 0 8px 0;"><strong>Plan:</strong> ${planName}</p>
-        <p style="margin: 0 0 8px 0;"><strong>Amount Charged:</strong> $${amountStr}</p>
-        <p style="margin: 0;"><strong>Next Billing Date:</strong> ${nextDateStr}</p>
-      </div>
-
-      <p>
-        <a href="${invoiceUrl || `${APP_URL}/settings?tab=billing`}" style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          ${invoiceUrl ? "View Invoice" : "View Billing Details"}
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Thanks for being a BreederHQ customer!<br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Subscription Renewed",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph("Your BreederHQ subscription has been renewed successfully!"),
+      emailInfoCard(
+        [
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Plan:</strong> ${planName}</p>`,
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Amount Charged:</strong> $${amountStr}</p>`,
+          `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Next Billing Date:</strong> ${nextDateStr}</p>`,
+        ].join("\n"),
+        { borderColor: "green" }
+      ),
+      emailButton(invoiceUrl ? "View Invoice" : "View Billing Details", invoiceUrl || `${APP_URL}/settings?tab=billing`, "green"),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -711,47 +810,38 @@ export async function sendWaitlistSignupNotificationEmail(
   const subject = `New Waitlist Signup: ${data.applicantName} for ${data.programName}`;
 
   const contactInfo = [
-    `<strong>Email:</strong> <a href="mailto:${data.applicantEmail}">${data.applicantEmail}</a>`,
-    data.applicantPhone ? `<strong>Phone:</strong> ${data.applicantPhone}` : null,
+    `<strong style="color: #ffffff;">Email:</strong> <a href="mailto:${data.applicantEmail}" style="color: #f97316; text-decoration: none;">${data.applicantEmail}</a>`,
+    data.applicantPhone ? `<strong style="color: #ffffff;">Phone:</strong> <span style="color: #e5e5e5;">${data.applicantPhone}</span>` : null,
   ].filter(Boolean).join("<br>");
 
-  const messageSection = data.message
-    ? `
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
-        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Message from applicant:</p>
-        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
-      </div>
-    `
-    : "";
+  const messageParts: string[] = [];
+  if (data.message) {
+    messageParts.push(
+      emailInfoCard(
+        `<p style="color: #ffffff; margin: 0 0 8px 0; font-weight: 600;">Message from applicant:</p>
+        <p style="color: #a3a3a3; margin: 0; white-space: pre-wrap;">${data.message}</p>`,
+        { borderColor: "gray" }
+      )
+    );
+  }
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f97316;">New Waitlist Signup!</h2>
-      <p>Hi ${recipient.name},</p>
-      <p>Great news! Someone has joined your waitlist for <strong>${data.programName}</strong>.</p>
-
-      <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: #c2410c;">
-          ${data.applicantName}
-        </p>
-        ${contactInfo}
-      </div>
-
-      ${messageSection}
-
-      <p>
-        <a href="${APP_URL}/waitlist" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          View Waitlist
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        This applicant's request is pending your review. You can approve, reject, or message them from your waitlist dashboard.
-        <br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "New Waitlist Signup!",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`Great news! Someone has joined your waitlist for <strong style="color: #ffffff;">${data.programName}</strong>.`),
+      emailInfoCard(
+        [
+          `<p style="color: #f97316; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${data.applicantName}</p>`,
+          contactInfo,
+        ].join("\n"),
+        { borderColor: "orange" }
+      ),
+      ...messageParts,
+      emailButton("View Waitlist", `${APP_URL}/waitlist`, "orange"),
+      emailFootnote("This applicant's request is pending your review. You can approve, reject, or message them from your waitlist dashboard."),
+    ].join("\n"),
+  });
 
   const text = `
 New Waitlist Signup!
@@ -820,52 +910,37 @@ export async function sendContractSentEmail(
   const signingUrl = `${PORTAL_URL}/contracts/${data.contractId}/sign`;
 
   const expirationNote = data.expiresAt
-    ? `<p style="color: #b45309; font-size: 14px;">⏰ This contract expires on ${new Intl.DateTimeFormat("en-US", {
+    ? emailParagraph(`<span style="color: #f59e0b;">&#9200; This contract expires on ${new Intl.DateTimeFormat("en-US", {
         year: "numeric",
         month: "long",
         day: "numeric",
-      }).format(data.expiresAt)}.</p>`
+      }).format(data.expiresAt)}.</span>`)
     : "";
 
   const personalMessage = data.message
-    ? `
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
-        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Message from ${data.breederName}:</p>
-        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
-      </div>
-    `
+    ? emailInfoCard(
+        `<p style="color: #ffffff; margin: 0 0 8px 0; font-weight: 600;">Message from ${data.breederName}:</p>
+        <p style="color: #a3a3a3; margin: 0; white-space: pre-wrap;">${data.message}</p>`,
+        { borderColor: "gray" }
+      )
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f97316;">Contract Ready for Your Signature</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p><strong>${data.breederName}</strong> has sent you a contract to review and sign.</p>
-
-      <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #c2410c;">
-          ${data.contractTitle}
-        </p>
-      </div>
-
-      ${personalMessage}
-      ${expirationNote}
-
-      <p>Please review the document and sign electronically to complete the agreement.</p>
-
-      <p>
-        <a href="${signingUrl}" style="background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Review & Sign Contract
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        If you have any questions about this contract, please contact ${data.breederName} directly.
-        <br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Contract Ready for Your Signature",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`<strong style="color: #ffffff;">${data.breederName}</strong> has sent you a contract to review and sign.`),
+      emailInfoCard(
+        `<p style="color: #f97316; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+        { borderColor: "orange" }
+      ),
+      personalMessage,
+      expirationNote,
+      emailParagraph("Please review the document and sign electronically to complete the agreement."),
+      emailButton("Review & Sign Contract", signingUrl, "orange"),
+      emailFootnote(`If you have any questions about this contract, please contact ${data.breederName} directly.`),
+    ].filter(Boolean).join("\n"),
+  });
 
   const text = `
 Contract Ready for Your Signature
@@ -914,36 +989,24 @@ export async function sendContractReminderEmail(
       : `expires in ${daysUntilExpiry} days`
     : "is awaiting your signature";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f59e0b;">Reminder: Contract Awaiting Your Signature</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p>This is a friendly reminder that the following contract from <strong>${data.breederName}</strong> ${urgencyText}.</p>
-
-      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #b45309;">
-          ${data.contractTitle}
-        </p>
-        ${data.expiresAt ? `
-        <p style="margin: 8px 0 0 0; font-size: 14px; color: #92400e;">
-          Expires: ${new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(data.expiresAt)}
-        </p>
-        ` : ""}
-      </div>
-
-      <p>
-        <a href="${signingUrl}" style="background: #f59e0b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Review & Sign Now
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        If you've already signed or have questions, please contact ${data.breederName}.
-        <br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Reminder: Contract Awaiting Signature",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`This is a friendly reminder that the following contract from <strong style="color: #ffffff;">${data.breederName}</strong> ${urgencyText}.`),
+      emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+          data.expiresAt
+            ? `<p style="color: #a3a3a3; margin: 8px 0 0 0; font-size: 14px;">Expires: ${new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(data.expiresAt)}</p>`
+            : "",
+        ].filter(Boolean).join("\n"),
+        { borderColor: "yellow" }
+      ),
+      emailButton("Review & Sign Now", signingUrl, "orange"),
+      emailFootnote(`If you've already signed or have questions, please contact ${data.breederName}.`),
+    ].join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -968,45 +1031,32 @@ export async function sendContractSignedEmail(
     : `${APP_URL}/contracts/${data.contractId}`;
 
   const statusMessage = data.allPartiesSigned
-    ? `<p style="color: #059669; font-weight: 600;">✓ All parties have now signed. The contract is fully executed.</p>`
-    : `<p>There are still other parties who need to sign before the contract is complete.</p>`;
+    ? emailParagraph(`<strong style="color: #10b981;">&#10003; All parties have now signed. The contract is fully executed.</strong>`)
+    : emailParagraph("There are still other parties who need to sign before the contract is complete.");
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #10b981;">Contract Signed</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p><strong>${data.signedByName}</strong> has signed the following contract:</p>
-
-      <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #065f46;">
-          ${data.contractTitle}
-        </p>
-        <p style="margin: 8px 0 0 0; font-size: 14px; color: #047857;">
-          Signed on ${new Intl.DateTimeFormat("en-US", {
+  const html = wrapEmailLayout({
+    title: "Contract Signed",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`<strong style="color: #ffffff;">${data.signedByName}</strong> has signed the following contract:`),
+      emailInfoCard(
+        [
+          `<p style="color: #10b981; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+          `<p style="color: #a3a3a3; margin: 8px 0 0 0; font-size: 14px;">Signed on ${new Intl.DateTimeFormat("en-US", {
             year: "numeric",
             month: "long",
             day: "numeric",
             hour: "numeric",
             minute: "2-digit",
-          }).format(data.signedAt)}
-        </p>
-      </div>
-
-      ${statusMessage}
-
-      <p>
-        <a href="${viewUrl}" style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          ${data.allPartiesSigned ? "View Signed Contract" : "View Contract Status"}
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        ${data.allPartiesSigned ? "A copy of the signed document will be sent to all parties." : ""}
-        <br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+          }).format(data.signedAt)}</p>`,
+        ].join("\n"),
+        { borderColor: "green" }
+      ),
+      statusMessage,
+      emailButton(data.allPartiesSigned ? "View Signed Contract" : "View Contract Status", viewUrl, "green"),
+      data.allPartiesSigned ? emailFootnote("A copy of the signed document will be sent to all parties.") : "",
+    ].filter(Boolean).join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -1031,48 +1081,34 @@ export async function sendContractDeclinedEmail(
   const viewUrl = `${APP_URL}/contracts/${data.contractId}`;
 
   const reasonSection = data.reason
-    ? `
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
-        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason given:</p>
-        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.reason}</p>
-      </div>
-    `
+    ? emailInfoCard(
+        `<p style="color: #ffffff; margin: 0 0 8px 0; font-weight: 600;">Reason given:</p>
+        <p style="color: #a3a3a3; margin: 0; white-space: pre-wrap;">${data.reason}</p>`,
+        { borderColor: "gray" }
+      )
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">Contract Declined</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p><strong>${data.declinedByName}</strong> has declined to sign the following contract:</p>
-
-      <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #991b1b;">
-          ${data.contractTitle}
-        </p>
-        <p style="margin: 8px 0 0 0; font-size: 14px; color: #b91c1c;">
-          Declined on ${new Intl.DateTimeFormat("en-US", {
+  const html = wrapEmailLayout({
+    title: "Contract Declined",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`<strong style="color: #ffffff;">${data.declinedByName}</strong> has declined to sign the following contract:`),
+      emailInfoCard(
+        [
+          `<p style="color: #dc2626; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+          `<p style="color: #a3a3a3; margin: 8px 0 0 0; font-size: 14px;">Declined on ${new Intl.DateTimeFormat("en-US", {
             year: "numeric",
             month: "long",
             day: "numeric",
-          }).format(data.declinedAt)}
-        </p>
-      </div>
-
-      ${reasonSection}
-
-      <p>You may want to reach out to discuss their concerns or create a new contract with updated terms.</p>
-
-      <p>
-        <a href="${viewUrl}" style="background: #6b7280; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          View Contract Details
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+          }).format(data.declinedAt)}</p>`,
+        ].join("\n"),
+        { borderColor: "red" }
+      ),
+      reasonSection,
+      emailParagraph("You may want to reach out to discuss their concerns or create a new contract with updated terms."),
+      emailButton("View Contract Details", viewUrl, "gray"),
+    ].filter(Boolean).join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -1093,37 +1129,27 @@ export async function sendContractVoidedEmail(
   data: ContractEmailData & { reason?: string }
 ): Promise<SendEmailResult> {
   const reasonSection = data.reason
-    ? `
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
-        <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason:</p>
-        <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.reason}</p>
-      </div>
-    `
+    ? emailInfoCard(
+        `<p style="color: #ffffff; margin: 0 0 8px 0; font-weight: 600;">Reason:</p>
+        <p style="color: #a3a3a3; margin: 0; white-space: pre-wrap;">${data.reason}</p>`,
+        { borderColor: "gray" }
+      )
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #6b7280;">Contract Voided</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p><strong>${data.breederName}</strong> has voided the following contract:</p>
-
-      <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #374151;">
-          ${data.contractTitle}
-        </p>
-      </div>
-
-      ${reasonSection}
-
-      <p>This contract is no longer valid and no action is required from you.</p>
-
-      <p>If you have questions, please contact ${data.breederName} directly.</p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Contract Voided",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`<strong style="color: #ffffff;">${data.breederName}</strong> has voided the following contract:`),
+      emailInfoCard(
+        `<p style="color: #ffffff; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+        { borderColor: "gray" }
+      ),
+      reasonSection,
+      emailParagraph("This contract is no longer valid and no action is required from you."),
+      emailParagraph(`If you have questions, please contact ${data.breederName} directly.`),
+    ].filter(Boolean).join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -1143,28 +1169,21 @@ export async function sendContractExpiredEmail(
   tenantId: number,
   data: ContractEmailData
 ): Promise<SendEmailResult> {
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #b45309;">Contract Expired</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p>The following contract has expired and can no longer be signed:</p>
-
-      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #92400e;">
-          ${data.contractTitle}
-        </p>
-        <p style="margin: 8px 0 0 0; font-size: 14px; color: #b45309;">
-          From: ${data.breederName}
-        </p>
-      </div>
-
-      <p>If you still wish to proceed with this agreement, please contact ${data.breederName} to request a new contract.</p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Contract Expired",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph("The following contract has expired and can no longer be signed:"),
+      emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+          `<p style="color: #a3a3a3; margin: 8px 0 0 0; font-size: 14px;">From: ${data.breederName}</p>`,
+        ].join("\n"),
+        { borderColor: "yellow" }
+      ),
+      emailParagraph(`If you still wish to proceed with this agreement, please contact ${data.breederName} to request a new contract.`),
+    ].join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -1184,33 +1203,20 @@ export async function sendContractCompletedWithPdfEmail(
   tenantId: number,
   data: ContractEmailData & { pdfDownloadUrl: string }
 ): Promise<SendEmailResult> {
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #10b981;">✓ Contract Fully Executed</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p>Great news! All parties have signed the following contract:</p>
-
-      <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #065f46;">
-          ${data.contractTitle}
-        </p>
-      </div>
-
-      <p>Your signed copy is ready for download. This document includes all signatures and a certificate of completion for your records.</p>
-
-      <p>
-        <a href="${data.pdfDownloadUrl}" style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          Download Signed Contract (PDF)
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Keep this document for your records. The signed contract is legally binding.
-        <br><br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Contract Fully Executed",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph("Great news! All parties have signed the following contract:"),
+      emailInfoCard(
+        `<p style="color: #10b981; margin: 0; font-size: 18px; font-weight: 600;">${data.contractTitle}</p>`,
+        { borderColor: "green" }
+      ),
+      emailParagraph("Your signed copy is ready for download. This document includes all signatures and a certificate of completion for your records."),
+      emailButton("Download Signed Contract (PDF)", data.pdfDownloadUrl, "green"),
+      emailFootnote("Keep this document for your records. The signed contract is legally binding."),
+    ].join("\n"),
+  });
 
   return sendEmail({
     tenantId,
@@ -1243,40 +1249,29 @@ export async function sendTenantInvoicePaymentFailedEmail(
   const recipient = { email: data.breederEmail, name: data.breederName };
 
   const subject = `⚠️ Payment Failed - Invoice ${data.invoiceNumber}`;
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">⚠️ Payment Failed</h2>
-
-      <p>Hi ${recipient.name},</p>
-
-      <p>A payment attempt for invoice <strong>${data.invoiceNumber}</strong> has failed.</p>
-
-      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
-        <p style="margin: 0;"><strong>Invoice:</strong> ${data.invoiceNumber}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Client:</strong> ${data.clientName}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Amount:</strong> ${data.totalAmount}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Payment Attempts:</strong> ${data.attemptCount}</p>
-      </div>
-
-      <p><strong>What happens next?</strong></p>
-      <ul style="color: #6b7280;">
-        <li>Stripe will automatically retry the payment</li>
-        <li>The client has been notified to update their payment method</li>
-        <li>You can reach out to the client directly if needed</li>
-      </ul>
-
-      <p>
-        <a href="${APP_URL}/invoices/${data.invoiceId}" style="background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-          View Invoice
-        </a>
-      </p>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        Thanks,<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Failed",
+    body: [
+      emailGreeting(recipient.name),
+      emailParagraph(`A payment attempt for invoice <strong style="color: #ffffff;">${data.invoiceNumber}</strong> has failed.`),
+      emailInfoCard(
+        [
+          `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Invoice:</strong> ${data.invoiceNumber}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;"><strong style="color: #ffffff;">Client:</strong> ${data.clientName}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;"><strong style="color: #ffffff;">Amount:</strong> ${data.totalAmount}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;"><strong style="color: #ffffff;">Payment Attempts:</strong> ${data.attemptCount}</p>`,
+        ].join("\n"),
+        { borderColor: "red" }
+      ),
+      emailHeading("What happens next?"),
+      emailBulletList([
+        "Stripe will automatically retry the payment",
+        "The client has been notified to update their payment method",
+        "You can reach out to the client directly if needed",
+      ]),
+      emailButton("View Invoice", `${APP_URL}/invoices/${data.invoiceId}`, "blue"),
+    ].join("\n"),
+  });
 
   await sendEmail({
     tenantId,
@@ -1311,52 +1306,37 @@ export async function sendTenantWelcomeEmail(
 
   // If we have a temp password, show credentials section
   const credentialsSection = data.tempPassword
-    ? `
-      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0 0 12px 0; font-weight: 600; color: #92400e;">Your Login Credentials</p>
-        <p style="margin: 0 0 8px 0;"><strong>Email:</strong> ${data.ownerEmail}</p>
-        <p style="margin: 0;"><strong>Temporary Password:</strong> <code style="background: #fff; padding: 2px 8px; border-radius: 4px; font-family: monospace;">${data.tempPassword}</code></p>
-        <p style="margin: 12px 0 0 0; font-size: 13px; color: #b45309;">⚠️ Please change your password after logging in.</p>
-      </div>
-    `
-    : `
-      <div style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0; color: #1e40af;">Your account has been created with your existing password, or you can use the "Forgot Password" link on the login page to set a new one.</p>
-      </div>
-    `;
+    ? emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0 0 12px 0; font-weight: 600;">Your Login Credentials</p>`,
+          `<p style="color: #e5e5e5; margin: 0 0 8px 0;"><strong style="color: #ffffff;">Email:</strong> ${data.ownerEmail}</p>`,
+          `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Temporary Password:</strong> <code style="background: #262626; padding: 2px 8px; border-radius: 4px; font-family: monospace; color: #ffffff;">${data.tempPassword}</code></p>`,
+          `<p style="color: #a3a3a3; margin: 12px 0 0 0; font-size: 13px;">&#9888;&#65039; Please change your password after logging in.</p>`,
+        ].join("\n"),
+        { borderColor: "yellow" }
+      )
+    : emailInfoCard(
+        `<p style="color: #a3a3a3; margin: 0;">Your account has been created with your existing password, or you can use the "Forgot Password" link on the login page to set a new one.</p>`,
+        { borderColor: "blue" }
+      );
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f97316;">Welcome to BreederHQ! 🎉</h2>
-      <p>Hi ${ownerName},</p>
-      <p>Great news! Your BreederHQ account for <strong>${data.tenantName}</strong> has been created and is ready to use.</p>
-
-      ${credentialsSection}
-
-      <p>
-        <a href="${loginUrl}" style="display: inline-block; background: #f97316; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600;">
-          Log In to BreederHQ
-        </a>
-      </p>
-
-      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
-        <h3 style="color: #374151; font-size: 16px; margin: 0 0 16px 0;">Getting Started</h3>
-        <ul style="color: #4b5563; padding-left: 20px; margin: 0;">
-          <li style="margin-bottom: 8px;">Add your animals to start tracking your breeding program</li>
-          <li style="margin-bottom: 8px;">Set up your contacts and client management</li>
-          <li style="margin-bottom: 8px;">Configure your marketplace profile to attract new clients</li>
-          <li style="margin-bottom: 8px;">Explore the dashboard for insights into your operation</li>
-        </ul>
-      </div>
-
-      <p style="color: #666; font-size: 14px; margin-top: 32px;">
-        If you have any questions or need help getting started, our support team is here to assist.
-        <br><br>
-        Welcome aboard!<br>
-        The BreederHQ Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Welcome to BreederHQ!",
+    body: [
+      emailGreeting(ownerName),
+      emailParagraph(`Great news! Your BreederHQ account for <strong style="color: #ffffff;">${data.tenantName}</strong> has been created and is ready to use.`),
+      credentialsSection,
+      emailButton("Log In to BreederHQ", loginUrl, "orange"),
+      emailHeading("Getting Started"),
+      emailFeatureList([
+        "Add your animals to start tracking your breeding program",
+        "Set up your contacts and client management",
+        "Configure your marketplace profile to attract new clients",
+        "Explore the dashboard for insights into your operation",
+      ]),
+      emailFootnote("If you have any questions or need help getting started, our support team is here to assist."),
+    ].join("\n"),
+  });
 
   const text = `
 Welcome to BreederHQ!

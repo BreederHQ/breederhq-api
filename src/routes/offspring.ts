@@ -14,6 +14,19 @@ import {
   type Sex,
 } from "@prisma/client";
 import prismaClient from "../prisma.js";
+import { auditCreate, auditUpdate, auditDelete, auditArchive, auditRestore, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 
 function __og_addDays(d: Date, days: number): Date {
@@ -440,9 +453,167 @@ function groupListItem(G: any, animalsCt: number, waitlistCt: number) {
     },
     statusOverride: G.statusOverride ?? null,
     statusOverrideReason: G.statusOverrideReason ?? null,
+    depositRequired: G.depositRequired ?? false,
+    depositAmountCents: G.depositAmountCents ?? null,
     createdAt: G.createdAt?.toISOString?.() ?? null,
     updatedAt: G.updatedAt?.toISOString?.() ?? null,
   };
+}
+
+/* ── Buyer summary helper for ?include=buyerSummary on the groups list ── */
+
+const BUYER_PAID_STAGES = new Set([
+  "DEPOSIT_PAID", "AWAITING_PICK", "MATCH_PROPOSED", "MATCHED",
+  "VISIT_SCHEDULED", "PICKUP_SCHEDULED", "COMPLETED",
+]);
+const BUYER_DUE_STAGES = new Set(["DEPOSIT_NEEDED"]);
+
+function buildBuyerSummary(buyers: any[], offspringRows: any[]) {
+  const activeBuyers = buyers.filter((b) => b.stage !== "OPTED_OUT");
+  const optedOut = buyers.filter((b) => b.stage === "OPTED_OUT").length;
+
+  let depositPaid = 0, depositDue = 0, noDeposit = 0;
+  for (const b of activeBuyers) {
+    if (BUYER_PAID_STAGES.has(b.stage)) depositPaid++;
+    else if (BUYER_DUE_STAGES.has(b.stage)) depositDue++;
+    else noDeposit++;
+  }
+
+  const ranked = [...activeBuyers]
+    .sort((a, b) => (a.placementRank ?? 9999) - (b.placementRank ?? 9999))
+    .map((b) => {
+      let depositStatus: "paid" | "due" | "none" = "none";
+      if (BUYER_PAID_STAGES.has(b.stage)) depositStatus = "paid";
+      else if (BUYER_DUE_STAGES.has(b.stage)) depositStatus = "due";
+
+      // Find matched offspring by buyerPartyId linkage
+      const matched = b.buyerPartyId
+        ? offspringRows.find((o) => o.buyerPartyId === b.buyerPartyId) ?? null
+        : null;
+
+      return {
+        id: b.id,
+        label:
+          b.buyerParty?.name ??
+          b.waitlistEntry?.clientParty?.name ??
+          `Buyer #${b.id}`,
+        placementRank: b.placementRank,
+        stage: b.stage as string,
+        depositStatus,
+        matchedOffspringLabel: matched
+          ? (matched.collarColorName ?? matched.name ?? null)
+          : null,
+      };
+    });
+
+  const offspringSummary = offspringRows.map((o) => ({
+    id: o.id,
+    label: o.collarColorName ?? o.name ?? `#${o.id}`,
+    sex: o.sex ?? null,
+    isKeeper: o.keeperIntent === "KEEP",
+    isMatched: o.buyerPartyId !== null,
+  }));
+
+  return {
+    total: activeBuyers.length,
+    depositPaid,
+    depositDue,
+    noDeposit,
+    optedOut,
+    buyers: ranked,
+    offspring: offspringSummary,
+  };
+}
+
+async function attachBuyerSummaries(ids: number[], items: any[]) {
+  if (!ids.length) return;
+
+  const [buyerRows, offspringRows, legacyAnimalRows] = await Promise.all([
+    prisma.offspringGroupBuyer.findMany({
+      where: { groupId: { in: ids } },
+      select: {
+        id: true,
+        groupId: true,
+        buyerPartyId: true,
+        stage: true,
+        placementRank: true,
+        buyerParty: { select: { id: true, name: true, type: true } },
+        waitlistEntry: { select: { clientParty: { select: { name: true } } } },
+      },
+      orderBy: [{ groupId: "asc" }, { placementRank: "asc" }],
+    }),
+    prisma.offspring.findMany({
+      where: { groupId: { in: ids } },
+      select: {
+        id: true,
+        groupId: true,
+        name: true,
+        sex: true,
+        keeperIntent: true,
+        buyerPartyId: true,
+        collarColorName: true,
+      },
+    }),
+    // Also fetch legacy Animal records linked via offspringGroupId
+    prisma.animal.findMany({
+      where: { offspringGroupId: { in: ids } },
+      select: {
+        id: true,
+        offspringGroupId: true,
+        name: true,
+        sex: true,
+        buyerPartyId: true,
+        collarColorName: true,
+      },
+    }),
+  ]);
+
+  const buyersByGroup = new Map<number, typeof buyerRows>();
+  for (const b of buyerRows) {
+    if (!buyersByGroup.has(b.groupId)) buyersByGroup.set(b.groupId, []);
+    buyersByGroup.get(b.groupId)!.push(b);
+  }
+
+  // Normalize offspring: combine Offspring model + legacy Animal records into a uniform shape
+  type OffspringSummaryRow = {
+    id: number;
+    groupId: number;
+    name: string | null;
+    sex: string | null;
+    keeperIntent: string | null;
+    buyerPartyId: number | null;
+    collarColorName: string | null;
+  };
+
+  const offspringByGroup = new Map<number, OffspringSummaryRow[]>();
+  for (const o of offspringRows) {
+    if (!offspringByGroup.has(o.groupId)) offspringByGroup.set(o.groupId, []);
+    offspringByGroup.get(o.groupId)!.push(o as OffspringSummaryRow);
+  }
+  // Merge legacy Animal records (those not already covered by Offspring model)
+  const seenAnimalIds = new Set(offspringRows.map((o) => o.id));
+  for (const a of legacyAnimalRows) {
+    const gId = a.offspringGroupId!;
+    // Skip if an Offspring record already covers this (shouldn't happen but be safe)
+    if (seenAnimalIds.has(a.id)) continue;
+    if (!offspringByGroup.has(gId)) offspringByGroup.set(gId, []);
+    offspringByGroup.get(gId)!.push({
+      id: a.id,
+      groupId: gId,
+      name: a.name ?? null,
+      sex: a.sex ? String(a.sex) : null,
+      keeperIntent: null, // Animal model doesn't track keeper intent
+      buyerPartyId: a.buyerPartyId ?? null,
+      collarColorName: a.collarColorName ?? null,
+    });
+  }
+
+  for (const item of items) {
+    item.buyerSummary = buildBuyerSummary(
+      buyersByGroup.get(item.id) ?? [],
+      offspringByGroup.get(item.id) ?? [],
+    );
+  }
 }
 
 function groupDetail(
@@ -757,6 +928,8 @@ function mapOffspringToAnimalLite(o: any) {
               : String(group.birthedEndAt))
             : null,
           breedText: group.breedText ?? null,
+          dam: group.dam ? { id: group.dam.id, name: group.dam.name ?? null } : null,
+          sire: group.sire ? { id: group.sire.id, name: group.sire.name ?? null } : null,
           plan: group.plan
             ? {
                 id: group.plan.id,
@@ -1067,6 +1240,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const cursorId = (req as any).query?.cursor ? Number((req as any).query.cursor) : undefined;
     const published = asBool((req as any).query?.published);
 
+    // ?include=buyerSummary — attach per-group buyer + offspring overview
+    const includeParam = String((req as any).query?.include ?? "");
+    const includeBuyerSummary = includeParam.split(",").includes("buyerSummary");
+
     const where: any = {
       tenantId,
       ...(q ? { name: { contains: q, mode: "insensitive" } } : null),
@@ -1151,6 +1328,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       for (const r of waitlistCounts) wMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
 
       const items = groups.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
+      if (includeBuyerSummary) await attachBuyerSummaries(ids, items);
       const totalPages = Math.ceil(total / limit);
 
       reply.send({
@@ -1228,6 +1406,10 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const rows = groups.length > limit ? groups.slice(0, limit) : groups;
       const items = rows.map((g) => groupListItem(g, aMap.get(g.id) ?? 0, wMap.get(g.id) ?? 0));
+      if (includeBuyerSummary) {
+        const rowIds = rows.map((g) => g.id);
+        await attachBuyerSummaries(rowIds, items);
+      }
       const nextCursor = groups.length > limit ? String(rows[rows.length - 1].id) : null;
 
       reply.send({ items, nextCursor });
@@ -1526,6 +1708,26 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ? await prisma.offspringGroup.update({ where: { id: existing.id }, data: payload as any })
       : await prisma.offspringGroup.create({ data: payload as any });
 
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      if (!existing) {
+        auditCreate("LITTER", created.id, created as any, ctx);
+        logEntityActivity({
+          tenantId,
+          entityType: "LITTER",
+          entityId: created.id,
+          kind: "litter_created",
+          category: "event",
+          title: "Litter/group created",
+          actorId: ctx.userId,
+          actorName: ctx.userName,
+        });
+      } else {
+        auditUpdate("LITTER", created.id, existing as any, created as any, ctx);
+      }
+    }
+
     // return detail payload
     const fresh = await prisma.offspringGroup.findFirst({
       where: { id: created.id, tenantId },
@@ -1729,6 +1931,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if ("countWeaned" in c) data.countWeaned = c.countWeaned ?? null;
       if ("countPlaced" in c) data.countPlaced = c.countPlaced ?? null;
     }
+    if ("depositRequired" in body) data.depositRequired = !!body.depositRequired;
+    if ("depositAmountCents" in body) data.depositAmountCents = body.depositAmountCents != null ? Number(body.depositAmountCents) : null;
 
     await prisma.offspringGroup.update({ where: { id }, data });
 
@@ -1753,6 +1957,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       },
     });
+
+    // Audit trail + activity log (fire-and-forget, fail-open) — G is the before-snapshot
+    if (G && refreshed) {
+      const ctx = auditCtx(req, tenantId);
+      auditUpdate("LITTER", id, G as any, refreshed as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: id,
+        kind: "litter_updated",
+        category: "system",
+        title: "Litter details updated",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
 
     const [animals, waitlist, attachments, buyers, offspring] = await Promise.all([
       prisma.animal.findMany({
@@ -1956,6 +2176,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       await tx.offspringGroup.delete({ where: { id } });
     });
 
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditDelete("LITTER", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: id,
+        kind: "litter_deleted",
+        category: "system",
+        title: "Litter deleted",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
+
     reply.send({ ok: true, id });
   });
 
@@ -1977,6 +2213,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data: { archivedAt: new Date() },
     });
 
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditArchive("LITTER", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: id,
+        kind: "litter_archived",
+        category: "status",
+        title: "Litter archived",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
+
     reply.send({ ok: true, id, archivedAt: updated.archivedAt });
   });
 
@@ -1997,6 +2249,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { id },
       data: { archivedAt: null },
     });
+
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditRestore("LITTER", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "LITTER",
+        entityId: id,
+        kind: "litter_restored",
+        category: "status",
+        title: "Litter restored",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
 
     reply.send({ ok: true, id, archivedAt: null });
   });
@@ -2024,6 +2292,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await prisma.$transaction(entries.map((e) =>
       prisma.waitlistEntry.update({ where: { id: e.id }, data: { offspringGroupId: id } }),
     ));
+
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "litter_waitlist_entries_moved",
+      category: "system",
+      title: "Waitlist entries moved to litter",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
 
     reply.send({ moved: entries.length });
   });
@@ -2203,6 +2483,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("OFFSPRING", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: created.id,
+        kind: "offspring_created",
+        category: "event",
+        title: `Offspring "${created.name || "unnamed"}" created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
+
     // Trigger rule execution for new offspring
     triggerOnOffspringCreated(created.id, tenantId).catch(err =>
       req.log.error({ err, offspringId: created.id }, 'Failed to trigger rules on offspring creation')
@@ -2210,6 +2506,171 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     reply.code(201).send(mapOffspringToAnimalLite(created));
   });
+
+
+  /* ===== BATCH CREATE OFFSPRING: POST /offspring/individuals/batch ===== */
+  app.post("/offspring/individuals/batch", async (req, reply) => {
+    const tenantId = (req as any).tenantId as number;
+    const body = (req.body as any) ?? {};
+
+    // --- Validate top-level fields ---
+    const groupId = body.groupId ?? null;
+    if (!groupId) {
+      return reply.code(400).send({ error: "groupId is required" });
+    }
+
+    const individuals = body.individuals;
+    if (!Array.isArray(individuals) || individuals.length === 0) {
+      return reply
+        .code(400)
+        .send({ error: "individuals array is required and must not be empty" });
+    }
+    if (individuals.length > 25) {
+      return reply
+        .code(400)
+        .send({ error: "Maximum 25 offspring per batch" });
+    }
+
+    // --- Load group with plan + dam (same query as single-create) ---
+    const group = await prisma.offspringGroup.findFirst({
+      where: { id: groupId, tenantId },
+      include: {
+        plan: { where: { deletedAt: null } },
+        dam: { include: { canonicalBreed: true } },
+      },
+    });
+    if (!group) {
+      return reply.code(404).send({ error: "offspring group not found" });
+    }
+
+    // Business rule: birth date must be recorded on linked plan
+    if (group.plan && !group.plan.birthDateActual) {
+      return reply.code(400).send({
+        error: "birth_date_not_recorded",
+        detail:
+          "Cannot add offspring until the birth date has been recorded on the linked breeding plan.",
+      });
+    }
+
+    // --- Derive shared values from group (same as single-create) ---
+    const derivedBreed = __og_deriveBreedFromGroup(group);
+    const defaultBornAt = group.plan?.birthDateActual ?? null;
+    const sharedSpecies = group.plan?.species ?? "DOG";
+    const sharedDamId = group.damId ?? group.plan?.damId ?? null;
+    const sharedSireId = group.sireId ?? group.plan?.sireId ?? null;
+
+    // --- Build create operations for each individual ---
+    const createOps = individuals.map((ind: any) => {
+      const name: string | null =
+        typeof ind.name === "string" && ind.name.trim().length > 0
+          ? ind.name.trim()
+          : null;
+
+      const sex =
+        ind.sex === "MALE" || ind.sex === "FEMALE" ? ind.sex : null;
+
+      const bornAt = ind.birthDate
+        ? parseISO(ind.birthDate)
+        : defaultBornAt;
+
+      const collarName =
+        typeof ind.whelpingCollarColor === "string" &&
+        ind.whelpingCollarColor.trim()
+          ? ind.whelpingCollarColor.trim()
+          : null;
+
+      const notes: string | null =
+        typeof ind.notes === "string" && ind.notes.trim().length > 0
+          ? ind.notes.trim()
+          : null;
+
+      // Normalize state (batch only sets bornAt; no advanced state fields)
+      const normalizedState = normalizeOffspringState(null, { bornAt });
+
+      return prisma.offspring.create({
+        data: {
+          tenantId,
+          groupId: group.id,
+
+          // core identity
+          name,
+          sex,
+          species: sharedSpecies,
+          breed: derivedBreed,
+          bornAt,
+
+          // parents from group
+          damId: sharedDamId,
+          sireId: sharedSireId,
+
+          // optional fields
+          notes,
+
+          // pricing — stored as cents if provided as dollar amount
+          ...(ind.price != null && !isNaN(Number(ind.price))
+            ? { priceCents: Math.round(Number(ind.price) * 100) }
+            : {}),
+
+          // birth weight
+          ...(ind.birthWeightOz != null && !isNaN(Number(ind.birthWeightOz))
+            ? { birthWeightOz: Number(ind.birthWeightOz) }
+            : {}),
+
+          // collar fields
+          collarColorName: collarName,
+          collarAssignedAt: collarName ? new Date() : null,
+
+          ...normalizedState,
+
+          // empty data payload — must come after spread to override
+          data: {} as any,
+        },
+        include: {
+          group: { select: { id: true, name: true } },
+          buyerParty: { select: { id: true, type: true, name: true } },
+        },
+      });
+    });
+
+    // --- Execute all creates in a single transaction ---
+    let created: any[];
+    try {
+      created = await prisma.$transaction(createOps);
+    } catch (err) {
+      req.log.error({ err }, "Batch offspring creation transaction failed");
+      return reply
+        .code(500)
+        .send({ error: "Failed to create offspring batch" });
+    }
+
+    // --- Post-create side effects (fire-and-forget) ---
+    const ctx = auditCtx(req, tenantId);
+    for (const c of created) {
+      auditCreate("OFFSPRING", c.id, c as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: c.id,
+        kind: "offspring_created",
+        category: "event",
+        title: `Offspring "${c.name || "unnamed"}" created (batch)`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+      triggerOnOffspringCreated(c.id, tenantId).catch((err) =>
+        req.log.error(
+          { err, offspringId: c.id },
+          "Failed to trigger rules on batch offspring creation",
+        ),
+      );
+    }
+
+    reply.code(201).send({
+      created: created.map(mapOffspringToAnimalLite),
+      count: created.length,
+    });
+  });
+
 
   app.get("/offspring/individuals", async (req, reply) => {
     const tenantId = (req as any).tenantId as number;
@@ -2314,6 +2775,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 id: true,
                 name: true,
                 actualBirthOn: true,
+                dam: { select: { id: true, name: true } },
+                sire: { select: { id: true, name: true } },
                 plan: {
                   where: { deletedAt: null },
                   select: {
@@ -2530,7 +2993,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if ("promotedAnimalId" in body) {
       const promotedId = body.promotedAnimalId == null ? null : Number(body.promotedAnimalId);
-      data.promotedAnimalId = promotedId;
+      if (promotedId != null) {
+        data.promotedAnimal = { connect: { id: promotedId } };
+      } else {
+        data.promotedAnimal = { disconnect: true };
+      }
       statePatch.promotedAnimalId = promotedId;
     }
 
@@ -2591,16 +3058,32 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(400).send({ error: (err as Error).message });
     }
 
+    // Strip relation FK fields that Prisma rejects as raw scalars in update();
+    // the `data` object already handles these via connect/disconnect syntax.
+    const { promotedAnimalId: _stripPromoted, ...prismaState } = normalizedState;
+
     let updated;
     try {
       updated = await prisma.offspring.update({
         where: { id },
-        data: { ...data, ...normalizedState },
+        data: { ...data, ...prismaState },
         include: {
           group: {
             select: {
               id: true,
               name: true,
+              actualBirthOn: true,
+              dam: { select: { id: true, name: true } },
+              sire: { select: { id: true, name: true } },
+              plan: {
+                where: { deletedAt: null },
+                select: {
+                  id: true,
+                  code: true,
+                  breedText: true,
+                  birthDateActual: true,
+                },
+              },
             },
           },
           buyerParty: {
@@ -2617,6 +3100,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "Database update failed",
       );
       return reply.code(500).send({ error: "database_error" });
+    }
+
+    // Audit trail + activity log (fire-and-forget, fail-open) — existing is the before-snapshot
+    if (existing) {
+      const ctx = auditCtx(req, tenantId);
+      auditUpdate("OFFSPRING", id, existing as any, updated as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: id,
+        kind: "offspring_updated",
+        category: "system",
+        title: "Offspring details updated",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
     }
 
     // Trigger rule execution for updated offspring
@@ -2720,6 +3219,23 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     // Safe to delete - offspring is fresh with no business data
     await prisma.offspring.delete({ where: { id } });
+
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditDelete("OFFSPRING", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: id,
+        kind: "offspring_deleted",
+        category: "system",
+        title: "Offspring deleted",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
+
     reply.send({ ok: true, deleted: id });
   });
 
@@ -2749,6 +3265,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archiveReason: reason || null,
       },
     });
+
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditArchive("OFFSPRING", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: id,
+        kind: "offspring_archived",
+        category: "status",
+        title: "Offspring archived",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
 
     reply.send({ ok: true, archived });
   });
@@ -2781,6 +3313,22 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         archiveReason: null,
       },
     });
+
+    // Audit trail + activity log (fire-and-forget, fail-open)
+    {
+      const ctx = auditCtx(req, tenantId);
+      auditRestore("OFFSPRING", id, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "OFFSPRING",
+        entityId: id,
+        kind: "offspring_restored",
+        category: "status",
+        title: "Offspring restored",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+    }
 
     reply.send({ ok: true, restored });
   });
@@ -2834,6 +3382,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_animal_added",
+      category: "relationship",
+      title: "Animal added to litter",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.code(201).send(created);
   });
 
@@ -2880,6 +3440,19 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     const updated = await prisma.animal.update({ where: { id: animalId }, data });
+
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_animal_updated",
+      category: "relationship",
+      title: "Litter animal details updated",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.send(updated);
   });
 
@@ -2896,10 +3469,25 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     if (mode === "delete") {
       await prisma.animal.delete({ where: { id: animalId } });
-      return reply.send({ ok: true, deleted: animalId });
+    } else {
+      await prisma.animal.update({ where: { id: animalId }, data: { offspringGroupId: null } });
     }
 
-    await prisma.animal.update({ where: { id: animalId }, data: { offspringGroupId: null } });
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_animal_removed",
+      category: "relationship",
+      title: "Animal removed from litter",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
+    if (mode === "delete") {
+      return reply.send({ ok: true, deleted: animalId });
+    }
     reply.send({ ok: true, unlinked: animalId });
   });
 
@@ -2943,6 +3531,19 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
 
     const created = await prisma.waitlistEntry.create({ data });
+
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_waitlist_entry_added",
+      category: "system",
+      title: "Waitlist entry added",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.code(201).send(created);
   });
 
@@ -2986,6 +3587,19 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if ("notes" in b) data.notes = b.notes ?? null;
 
     const updated = await prisma.waitlistEntry.update({ where: { id: wid }, data });
+
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_waitlist_entry_updated",
+      category: "system",
+      title: "Waitlist entry updated",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.send(updated);
   });
 
@@ -3002,10 +3616,25 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     if (mode === "delete") {
       await prisma.waitlistEntry.delete({ where: { id: wid } });
-      return reply.send({ ok: true, deleted: wid });
+    } else {
+      await prisma.waitlistEntry.update({ where: { id: wid }, data: { offspringGroupId: null } });
     }
 
-    await prisma.waitlistEntry.update({ where: { id: wid }, data: { offspringGroupId: null } });
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_waitlist_entry_removed",
+      category: "system",
+      title: "Waitlist entry removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
+    if (mode === "delete") {
+      return reply.send({ ok: true, deleted: wid });
+    }
     reply.send({ ok: true, unlinked: wid });
   });
 
@@ -3067,6 +3696,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_attachment_added",
+      category: "document",
+      title: "Attachment added",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.code(201).send(created);
   });
 
@@ -3081,267 +3722,25 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (A.offspringGroupId !== id) return reply.code(409).send({ error: "attachment does not belong to this group" });
 
     await prisma.attachment.delete({ where: { id: aid } });
+
+    // Activity log (fire-and-forget, fail-open)
+    logEntityActivity({
+      tenantId,
+      entityType: "LITTER",
+      entityId: id,
+      kind: "offspring_attachment_removed",
+      category: "document",
+      title: "Attachment removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
+
     reply.send({ ok: true, deleted: aid });
   });
 
   // [OG-ROUTES-START] Offspring Group linking endpoints
-
-  app.post<{
-    Params: { groupId: string };
-    Body: {
-      buyerPartyId?: number | null;
-      waitlistEntryId?: number | null;
-      actorId?: string | null; // currently ignored, reserved for future event logging
-    };
-  }>(
-    "/offspring/groups/:groupId/buyers",
-    async (req, reply) => {
-      const tenantId = (req as any).tenantId as number;
-      const groupId = Number(req.params.groupId);
-      const { buyerPartyId, waitlistEntryId } = req.body ?? {};
-
-      if (!buyerPartyId && !waitlistEntryId) {
-        return reply
-          .code(400)
-          .send({ error: "buyerPartyId or waitlistEntryId required" });
-      }
-
-      const group = await prisma.offspringGroup.findFirst({
-        where: { id: groupId, tenantId },
-        select: { id: true },
-      });
-      if (!group) return reply.code(404).send({ error: "group not found" });
-
-      try {
-        await prisma.offspringGroupBuyer.create({
-          data: {
-            tenantId,
-            groupId: group.id,
-            waitlistEntryId: waitlistEntryId ?? null,
-            buyerPartyId: buyerPartyId ?? null,
-          },
-        });
-      } catch (err: any) {
-        if (err && err.code === "P2002") {
-          // Link already exists, treat as success and fall through to fetch updated group
-        } else {
-          req.log?.error?.({ err }, "Failed to create offspring group buyer");
-          return reply.status(500).send({ error: "internal_error" });
-        }
-      }
-
-      const updatedGroup = await prisma.offspringGroup.findFirst({
-        where: { id: group.id, tenantId },
-        include: {
-          groupBuyerLinks: {
-            include: {
-              waitlistEntry: true,
-            },
-          },
-        },
-      });
-
-      if (!updatedGroup) {
-        return reply.status(500).send({ error: "group_reload_failed" });
-      }
-
-      return reply.status(200).send({
-        ok: true,
-        duplicate: false,
-        group: updatedGroup,
-      });
-    }
-  );
-
-  app.delete<{ Params: { groupId: string; buyerId: string } }>(
-    "/offspring/groups/:groupId/buyers/:buyerId",
-    async (req, reply) => {
-      const tenantId = (req as any).tenantId as number;
-      const groupId = Number(req.params.groupId);
-      const buyerId = Number(req.params.buyerId);
-
-      if (!Number.isFinite(groupId) || !Number.isFinite(buyerId)) {
-        return reply.code(400).send({ error: "invalid_id" });
-      }
-
-      // Make sure the group exists for this tenant
-      const group = await prisma.offspringGroup.findFirst({
-        where: { id: groupId, tenantId },
-        select: { id: true },
-      });
-
-      if (!group) {
-        return reply.code(404).send({ error: "group_not_found" });
-      }
-
-      // Remove the buyer link
-      await prisma.offspringGroupBuyer.deleteMany({
-        where: {
-          id: buyerId,
-          groupId: group.id,
-          tenantId,
-        },
-      });
-
-      // Reload full group detail so UI gets buyers and linked offspring in the same shape as GET /offspring/:id
-      const G = await prisma.offspringGroup.findFirst({
-        where: { id: group.id, tenantId },
-        include: {
-          plan: {
-            where: { deletedAt: null },
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              species: true,
-              breedText: true,
-              dam: { select: { id: true, name: true } },
-              sire: { select: { id: true, name: true } },
-              // Birth date fields for offspring group UI
-              status: true,
-              birthDateActual: true,
-              breedDateActual: true,
-            },
-          },
-        },
-      });
-
-      if (!G) {
-        return reply.code(404).send({ error: "group not found after buyer create" });
-      }
-
-      const [animals, waitlist, attachments, buyers, offspring] = await Promise.all([
-        prisma.animal.findMany({
-          where: {
-            offspringGroupId: group.id,
-            tenantId,
-          },
-          select: {
-            id: true,
-            name: true,
-            sex: true,
-            status: true,
-            birthDate: true,
-            species: true,
-            breed: true,
-            updatedAt: true,
-            collarColorId: true,
-            collarColorName: true,
-            collarColorHex: true,
-            collarAssignedAt: true,
-            collarLocked: true,
-            buyerPartyId: true,
-            buyerParty: {
-              select: {
-                id: true,
-                type: true,
-                contact: { select: { id: true } },
-                organization: { select: { id: true } },
-              },
-            },
-          },
-          orderBy: {
-            id: "asc",
-          },
-        }),
-        prisma.waitlistEntry.findMany({
-          where: {
-            offspringGroupId: group.id,
-            tenantId,
-          },
-          include: {
-            clientParty: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-              },
-            },
-          },
-          orderBy: [
-            { priority: "asc" },
-            { createdAt: "asc" },
-            { id: "asc" },
-          ],
-        }),
-        prisma.attachment.findMany({
-          where: {
-            offspringGroupId: group.id,
-            tenantId,
-          },
-          include: {
-            attachmentParty: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-              },
-            },
-          },
-        }),
-        prisma.offspringGroupBuyer.findMany({
-          where: {
-            groupId: group.id,
-            tenantId,
-          },
-          include: {
-            buyerParty: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-              },
-            },
-          },
-          orderBy: [
-            { createdAt: "asc" },
-            { id: "asc" },
-          ],
-        }),
-        prisma.offspring.findMany({
-          where: {
-            tenantId,
-            groupId: group.id,
-          },
-          orderBy: {
-            id: "asc",
-          },
-          include: {
-            group: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        }),
-      ]);
-
-      // Step 6C: Map buyers to Party-native fields
-      const mappedBuyers = buyers.map((buyer: any) => ({
-        id: buyer.id,
-        buyerPartyId: buyer.buyerPartyId,
-        buyerName: buyer.buyerParty?.name ?? null,
-        buyerKind: buyer.buyerParty?.type ?? null,
-        priority: buyer.priority,
-        poolMin: buyer.poolMin,
-        poolMax: buyer.poolMax,
-        createdAt: buyer.createdAt,
-        updatedAt: buyer.updatedAt,
-      }));
-
-      reply.code(200).send(
-        groupDetail(
-          G as any,
-          animals as any,
-          waitlist as any,
-          attachments as any,
-          mappedBuyers as any,
-          offspring as any,
-        ),
-      );
-    }
-  );
+  // NOTE: POST /offspring/groups/:groupId/buyers and DELETE /offspring/groups/:groupId/buyers/:buyerId
+  // are now in offspring-group-buyers.ts (Selection Board routes). Do not duplicate them here.
 
   app.post<{ Params: { groupId: string }; Body: { planId: number; actorId: string } }>(
     "/offspring/groups/:groupId/link",

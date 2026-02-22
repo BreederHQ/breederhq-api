@@ -2,7 +2,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import { CommPrefsService } from "../services/comm-prefs-service.js";
-import type { CommPreferenceUpdate } from "../services/comm-prefs-service.js";
+import type { CommPreferenceUpdate, CommPreferenceRead } from "../services/comm-prefs-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -90,13 +90,13 @@ function errorReply(err: any) {
   return { status: 500, payload: { error: "internal_error" } };
 }
 
-async function toOrgDTO(org: OrgWithParty) {
-  // Fetch communication preferences
+async function toOrgDTO(org: OrgWithParty, prefetchedPrefs?: CommPreferenceRead[]) {
+  // Fetch communication preferences (use pre-fetched if available to avoid N+1)
   let commPreferences: any = null;
   const partyId = org.partyId;
   if (partyId) {
     try {
-      const prefs = await CommPrefsService.getCommPreferences(partyId);
+      const prefs = prefetchedPrefs ?? await CommPrefsService.getCommPreferences(partyId);
       // Convert array to object keyed by channel for easier frontend access
       commPreferences = {};
       for (const pref of prefs) {
@@ -191,8 +191,15 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         prisma.organization.count({ where }),
       ]);
 
-      const items = await Promise.all(rows.map((org) => toOrgDTO(org as OrgWithParty)));
-      reply.send({ items, total, page, limit });
+      // Batch-fetch comm preferences for all orgs in one query (avoids N+1)
+      const partyIds = rows.map((r) => r.partyId).filter((id): id is number => id != null && id > 0);
+      const commPrefsMap = await CommPrefsService.getCommPreferencesBatch(partyIds);
+
+      const items = rows.map((org) => {
+        const prefs = org.partyId ? commPrefsMap.get(org.partyId) : undefined;
+        return toOrgDTO(org as OrgWithParty, prefs);
+      });
+      reply.send({ items: await Promise.all(items), total, page, limit });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
@@ -461,6 +468,39 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         await tx.organization.update({ where: { id: org.id }, data: { archived: false } });
       });
       reply.send({ ok: true });
+    } catch (e: any) {
+      const { status, payload } = errorReply(e);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /organizations/:id/compliance-reset
+  // Resets compliance status for a specific channel (EMAIL or SMS).
+  // Used by admins to re-opt-in an organization after an unsubscribe.
+  app.post("/organizations/:id/compliance-reset", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const body = req.body as { channel?: string } | null;
+      const channel = body?.channel?.toUpperCase();
+      if (channel !== "EMAIL" && channel !== "SMS") {
+        return reply.code(400).send({ error: "invalid_channel", message: "Channel must be EMAIL or SMS" });
+      }
+
+      const org = await getOrgInTenant(id, tenantId);
+      if (!org.partyId) throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
+
+      const updated = await CommPrefsService.updateCommPreferences(
+        org.partyId,
+        [{ channel: channel as "EMAIL" | "SMS", compliance: "SUBSCRIBED", complianceSource: "admin_reset" }],
+        undefined,
+        "admin_compliance_reset"
+      );
+
+      reply.send({ ok: true, commPreferences: updated });
     } catch (e: any) {
       const { status, payload } = errorReply(e);
       reply.status(status).send(payload);

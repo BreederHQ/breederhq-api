@@ -1482,6 +1482,18 @@ async function main() {
   const tenantId = lukeMembership.tenant.id;
   console.log(`✓ Found Luke's tenant: ${lukeMembership.tenant.name} (ID: ${tenantId})\n`);
 
+  // Pre-flight: detect existing duplicates and warn
+  const duplicateCheck = await prisma.$queryRaw<Array<{ name: string; count: bigint }>>`
+    SELECT name, COUNT(*) as count FROM "Animal"
+    WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+    GROUP BY name, species, sex
+    HAVING COUNT(*) > 1
+  `;
+  if (duplicateCheck.length > 0) {
+    console.log(`⚠️  WARNING: ${duplicateCheck.length} duplicate animal groups already exist in tenant ${tenantId}!`);
+    console.log(`   Run the cleanup script before re-seeding to avoid further duplication.\n`);
+  }
+
   // Combine all test animals
   const allTestAnimals: TestAnimal[] = [
     ...DOG_TEST_ANIMALS,

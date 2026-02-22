@@ -37,6 +37,7 @@ export async function createTagAssignment(params: {
   waitlistEntryId?: number;
   offspringGroupId?: number;
   offspringId?: number;
+  documentId?: number;
 }): Promise<void> {
   const data: any = { tagId: params.tagId };
 
@@ -63,6 +64,7 @@ export async function createTagAssignment(params: {
   if (params.waitlistEntryId != null) data.waitlistEntryId = params.waitlistEntryId;
   if (params.offspringGroupId != null) data.offspringGroupId = params.offspringGroupId;
   if (params.offspringId != null) data.offspringId = params.offspringId;
+  if (params.documentId != null) data.documentId = params.documentId;
 
   await prisma.tagAssignment.create({ data });
 }

@@ -17,6 +17,19 @@ import { sendEmail } from "../services/email-service.js";
 import { renderInvoiceEmail } from "../services/email-templates.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
 import { activeOnly } from "../utils/query-helpers.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 /* ───────────────────────── errors ───────────────────────── */
 
@@ -83,8 +96,8 @@ function invoiceDTO(inv: any) {
     animalId: inv.animalId,
     breedingPlanId: inv.breedingPlanId,
     clientPartyId: inv.clientPartyId,
-    amountCents: inv.amountCents,
-    balanceCents: inv.balanceCents,
+    amountCents: Number(inv.amountCents),
+    balanceCents: Number(inv.balanceCents),
     currency: inv.currency,
     status: inv.status,
     category: inv.category,
@@ -176,7 +189,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
           _sum: { amountCents: true },
         });
-        expensesMtdCents = expensesMtdResult._sum.amountCents || 0;
+        expensesMtdCents = Number(expensesMtdResult._sum.amountCents || 0);
       }
 
       // Deposits outstanding (invoices with category DEPOSIT or MIXED, not void, with balance > 0)
@@ -189,11 +202,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
         _sum: { balanceCents: true },
       });
-      const depositsOutstandingCents = depositsResult._sum.balanceCents || 0;
+      const depositsOutstandingCents = Number(depositsResult._sum.balanceCents || 0);
 
       return reply.code(200).send({
-        outstandingTotalCents: outstandingResult._sum.balanceCents || 0,
-        invoicedMtdCents: invoicedMtdResult._sum.amountCents || 0,
+        outstandingTotalCents: Number(outstandingResult._sum.balanceCents || 0),
+        invoicedMtdCents: Number(invoicedMtdResult._sum.amountCents || 0),
         collectedMtdCents,
         expensesMtdCents,
         depositsOutstandingCents,
@@ -306,6 +319,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const invoiceNumber = await generateInvoiceNumber(tx, tenantId);
         const scope = determineInvoiceScope(anchors);
 
+        // Optional: link to a specific breeding plan buyer
+        const breedingPlanBuyerId = parseIntOrNull(body.breedingPlanBuyerId);
+
         const invoice = await tx.invoice.create({
           data: {
             tenantId,
@@ -315,6 +331,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             groupId: anchors.offspringGroupId,
             animalId: anchors.animalId,
             breedingPlanId: anchors.breedingPlanId,
+            breedingPlanBuyerId: breedingPlanBuyerId || null,
             clientPartyId,
             amountCents,
             balanceCents: amountCents, // Initially unpaid
@@ -359,6 +376,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Store idempotency key
       await storeIdempotencyKey(prisma, tenantId, idempotencyKey, requestHash, result);
+
+      // Audit trail & activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("INVOICE", result.id, result as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "INVOICE",
+        entityId: result.id,
+        kind: "invoice_created",
+        category: "financial",
+        title: "Invoice created",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
 
       return reply.code(201).send(result);
     } catch (err) {
@@ -551,6 +582,11 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const updated = await prisma.invoice.findUnique({ where: { id } });
 
+      // Audit trail (fire-and-forget)
+      if (beforeUpdate && updated) {
+        auditUpdate("INVOICE", id, beforeUpdate as any, updated as any, auditCtx(req, tenantId));
+      }
+
       // If status changed to "issued", send email
       if (body.status === "issued" && beforeUpdate.status !== "issued") {
         const clientEmail = beforeUpdate.clientParty?.email;
@@ -606,6 +642,21 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (invoice.count === 0) return reply.code(404).send({ error: "not_found" });
 
       const updated = await prisma.invoice.findUnique({ where: { id } });
+
+      // Audit trail & activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditDelete("INVOICE", id, ctx, { reason: "voided" });
+      logEntityActivity({
+        tenantId,
+        entityType: "INVOICE",
+        entityId: id,
+        kind: "invoice_voided",
+        category: "financial",
+        title: "Invoice voided",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.code(200).send(invoiceDTO(updated));
     } catch (err) {
       const { status, payload } = errorReply(err);

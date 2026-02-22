@@ -526,7 +526,7 @@ function escapeXml(str: string): string {
  * Check if a MIME type is a supported image format for watermarking
  */
 export function isImageMimeType(mimeType: string | null): boolean {
-  const imageTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+  const imageTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"];
   return mimeType ? imageTypes.includes(mimeType) : false;
 }
 

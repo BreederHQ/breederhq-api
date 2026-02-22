@@ -28,10 +28,21 @@ async function main() {
 
   console.log(`✓ Using tenant: ${tenant.name} (ID: ${tenant.id})\n`);
 
+  // Idempotency: check if test dam already exists
+  let dam = await prisma.animal.findFirst({
+    where: { tenantId: tenant.id, name: "Fang's Legacy", species: 'DOG' }
+  });
+
+  if (dam) {
+    console.log(`⏭️  Dam already exists: ${dam.name} (ID: ${dam.id}) — skipping entire seed`);
+    console.log(`   Navigate to: /animals/${dam.id} → CYCLE INFO tab to see pattern analysis\n`);
+    return;
+  }
+
   // Create test dam: "Fang's Legacy" - A proven breeder with pattern
   console.log('Creating test dam: Fang\'s Legacy...');
 
-  const dam = await prisma.animal.create({
+  dam = await prisma.animal.create({
     data: {
       tenantId: tenant.id,
       name: "Fang's Legacy",

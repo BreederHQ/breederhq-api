@@ -10,6 +10,10 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import { getActorId } from "../utils/session.js";
+import {
+  validateLegalAcceptancePayload,
+  writeLegalAcceptance,
+} from "../services/marketplace-legal-service.js";
 
 // ============================================================================
 // Constants
@@ -436,10 +440,13 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
     }
 
-    const publishPayload = req.body ?? {};
-    if (typeof publishPayload !== "object") {
+    const rawBody = req.body ?? {};
+    if (typeof rawBody !== "object") {
       return reply.code(400).send({ error: "invalid_payload" });
     }
+
+    // Extract legalAcceptance from payload (sent by frontend on first publish)
+    const { legalAcceptance, ...publishPayload } = rawBody as Record<string, unknown>;
 
     // Validate required fields
     const validation = validatePublishPayload(publishPayload);
@@ -448,6 +455,31 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
         error: "validation_failed",
         errors: validation.errors,
       });
+    }
+
+    // Record legal acceptance if provided (first-time publish flow)
+    if (legalAcceptance) {
+      try {
+        const payload = validateLegalAcceptancePayload(legalAcceptance);
+        const actorId = getActorId(req);
+        // Look up user email for audit trail
+        let email: string | undefined;
+        if (actorId) {
+          const user = await prisma.user.findUnique({
+            where: { id: actorId },
+            select: { email: true },
+          });
+          email = user?.email ?? undefined;
+        }
+        await writeLegalAcceptance(payload, req, {
+          email,
+          entityType: "tenant",
+          entityId: tenantId,
+        });
+      } catch (err) {
+        req.log.error({ err, tenantId }, "Failed to record legal acceptance on publish");
+        // Don't block publish if legal logging fails — record the error
+      }
     }
 
     // Strip address fields from published data for privacy
@@ -510,6 +542,71 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
   });
 
   // --------------------------------------------------------------------------
+  // GET /profile/slug/check - Check marketplace slug availability (pre-save)
+  // --------------------------------------------------------------------------
+  const RESERVED_MARKETPLACE_SLUGS = [
+    "admin", "support", "help", "about", "contact", "terms", "privacy",
+    "blog", "api", "www", "app", "login", "register", "signup",
+    "breederhq", "marketplace", "settings", "dashboard",
+  ];
+
+  app.get<{ Querystring: { slug?: string } }>("/profile/slug/check", async (req, reply) => {
+    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
+
+    if (!tenantId) {
+      return reply.send({ available: false, reason: "tenant_required" });
+    }
+
+    const gate = await requireTenantMemberOrAdmin(req, tenantId);
+    if (!gate.ok) {
+      return reply.code(gate.code).send({
+        error: gate.code === 401 ? "unauthorized" : "forbidden",
+      });
+    }
+
+    const rawSlug = req.query.slug;
+    if (!rawSlug || typeof rawSlug !== "string") {
+      return reply.send({ available: false, reason: "missing_slug" });
+    }
+
+    // Normalize identically to the PUT handler
+    const slug = rawSlug
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .substring(0, 50);
+
+    if (slug.length < 3) {
+      return reply.send({ available: false, reason: "too_short" });
+    }
+
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+      return reply.send({ available: false, reason: "invalid_format" });
+    }
+
+    if (RESERVED_MARKETPLACE_SLUGS.includes(slug)) {
+      return reply.send({ available: false, reason: "reserved" });
+    }
+
+    // Check uniqueness (exclude current tenant)
+    const existing = await prisma.tenant.findFirst({
+      where: {
+        slug,
+        id: { not: tenantId },
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return reply.send({ available: false, reason: "taken" });
+    }
+
+    return reply.send({ available: true, slug });
+  });
+
+  // --------------------------------------------------------------------------
   // PUT /profile/slug - Update tenant marketplace URL slug
   // --------------------------------------------------------------------------
   app.put<{ Body: { slug: string } }>("/profile/slug", async (req, reply) => {
@@ -564,6 +661,14 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(400).send({
         error: "invalid_slug",
         message: "Slug can only contain lowercase letters, numbers, and hyphens",
+      });
+    }
+
+    // Check reserved words
+    if (RESERVED_MARKETPLACE_SLUGS.includes(slug)) {
+      return reply.code(400).send({
+        error: "reserved_slug",
+        message: "This web address is reserved",
       });
     }
 

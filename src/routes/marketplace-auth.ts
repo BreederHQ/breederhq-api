@@ -48,7 +48,7 @@ import {
 import { requireMarketplaceAuth } from "../middleware/marketplace-auth.js";
 import { randomBytes } from "node:crypto";
 import { hasAcceptedCurrentProviderTerms } from "../services/marketplace-provider-terms-service.js";
-import { writeLegacyTosAcceptance } from "../services/marketplace-legal-service.js";
+import { writeLegacyTosAcceptance, validateLegalAcceptancePayload, writeLegalAcceptance } from "../services/marketplace-legal-service.js";
 
 const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
 const IS_PROD = NODE_ENV === "production";
@@ -73,6 +73,10 @@ export default async function marketplaceAuthRoutes(
 ) {
   /* ───────────────────────── Register ───────────────────────── */
 
+  // Countries currently supported for registration. Expand this list as
+  // payment processing, legal, and locale support is added per region.
+  const ALLOWED_REGISTRATION_COUNTRIES = ["US"] as const;
+
   app.post("/register", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
   }, async (req, reply) => {
@@ -82,14 +86,18 @@ export default async function marketplaceAuthRoutes(
       firstName = "",
       lastName = "",
       phone = "",
+      country = "US",
       tosAcceptance,
+      legalAcceptance,
     } = (req.body || {}) as {
       email?: string;
       password?: string;
       firstName?: string;
       lastName?: string;
       phone?: string;
+      country?: string;
       tosAcceptance?: { version: string; effectiveDate: string; surface: string; flow: string };
+      legalAcceptance?: unknown;
     };
 
     // Validation
@@ -97,6 +105,7 @@ export default async function marketplaceAuthRoutes(
     const p = String(password);
     const fn = String(firstName).trim();
     const ln = String(lastName).trim();
+    const c = String(country || "US").trim().toUpperCase();
 
     if (!e) {
       return reply.code(400).send({ error: "email_required" });
@@ -114,6 +123,15 @@ export default async function marketplaceAuthRoutes(
       return reply.code(400).send({ error: "last_name_required" });
     }
 
+    // Country gate: registration is currently US-only
+    if (!(ALLOWED_REGISTRATION_COUNTRIES as readonly string[]).includes(c)) {
+      return reply.code(403).send({
+        error: "country_not_supported",
+        message: "Registration is currently available in the United States only.",
+        country: c,
+      });
+    }
+
     // Check if user already exists
     const existing = await findMarketplaceUserByEmail(e);
     if (existing) {
@@ -128,11 +146,24 @@ export default async function marketplaceAuthRoutes(
         firstName: fn,
         lastName: ln,
         phone: phone.trim() || undefined,
+        country: c,
         userType: "buyer",
       });
 
-      // Record legal acceptance (if provided by frontend)
-      if (tosAcceptance && tosAcceptance.version) {
+      // Record legal acceptance (prefer new multi-document format, fall back to legacy)
+      if (legalAcceptance) {
+        try {
+          const payload = validateLegalAcceptancePayload(legalAcceptance);
+          writeLegalAcceptance(payload, req, {
+            marketplaceUserId: user.id,
+            email: email,
+          }).catch((err) => {
+            req.log?.error?.({ err, userId: user.id }, "Failed to record legal acceptance for marketplace registration");
+          });
+        } catch (err) {
+          req.log?.error?.({ err, userId: user.id }, "Invalid legal acceptance payload for marketplace registration");
+        }
+      } else if (tosAcceptance && tosAcceptance.version) {
         writeLegacyTosAcceptance(tosAcceptance, user.id, req).catch((err) => {
           req.log?.error?.({ err, userId: user.id }, "Failed to record ToS acceptance for marketplace registration");
         });

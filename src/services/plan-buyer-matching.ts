@@ -1,4 +1,4 @@
-import { PrismaClient, WaitlistEntry, BreedingPlan, MktListingBreedingProgram, WaitlistStatus } from "@prisma/client";
+import { PrismaClient, WaitlistEntry, BreedingPlan, BreedingPlanBuyerStage, MktListingBreedingProgram, WaitlistStatus } from "@prisma/client";
 import type { MatchReason, BreedingPlanBuyerDTO } from "../types/breeding-plan-buyer.js";
 
 export interface MatchResult {
@@ -111,12 +111,13 @@ export async function findPossibleMatches(
     return [];
   }
 
-  // Get approved waitlist entries (not already assigned to this plan)
-  const existingPlanBuyers = await prisma.breedingPlanBuyer.findMany({
-    where: { planId },
+  // Get approved waitlist entries (not already assigned/matched to this plan)
+  // Only exclude confirmed stages — POSSIBLE_MATCH entries need to be re-evaluated
+  const confirmedPlanBuyers = await prisma.breedingPlanBuyer.findMany({
+    where: { planId, stage: { notIn: ["POSSIBLE_MATCH"] } },
     select: { waitlistEntryId: true },
   });
-  const excludeIds = existingPlanBuyers
+  const excludeIds = confirmedPlanBuyers
     .filter((b) => b.waitlistEntryId !== null)
     .map((b) => b.waitlistEntryId as number);
 
@@ -136,10 +137,19 @@ export async function findPossibleMatches(
 
   const matches: MatchResult[] = [];
 
+  // Reasons that indicate a meaningful preference overlap (not just species)
+  const MEANINGFUL_REASONS: MatchReason[] = [
+    "PROGRAM_MATCH",
+    "BREED_MATCH",
+    "SIRE_PREFERENCE",
+    "DAM_PREFERENCE",
+  ];
+
   for (const entry of waitlist) {
     const result = calculateMatch(entry, plan);
-    // Only include if there's some relevance (score > 0)
-    if (result.score > 0) {
+    // Require at least one meaningful match reason — species-only is too generic
+    const hasMeaningful = result.reasons.some((r) => MEANINGFUL_REASONS.includes(r));
+    if (hasMeaningful && result.score > 0) {
       matches.push(result);
     }
   }
@@ -148,6 +158,47 @@ export async function findPossibleMatches(
   return matches.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     // Deposit paid entries first within same score
+    const aDeposit = a.reasons.includes("DEPOSIT_PAID") ? 1 : 0;
+    const bDeposit = b.reasons.includes("DEPOSIT_PAID") ? 1 : 0;
+    return bDeposit - aDeposit;
+  });
+}
+
+/**
+ * Find possible matches using pre-fetched data (no DB queries).
+ * Used by batch operations to avoid N+1.
+ */
+function findPossibleMatchesFromData(
+  plan: PlanWithProgram,
+  approvedEntries: WaitlistEntryWithPrefs[],
+  existingLinks: { waitlistEntryId: number | null; stage: string }[],
+): MatchResult[] {
+  // Only exclude confirmed stages — POSSIBLE_MATCH entries need to be re-evaluated
+  const excludeIds = new Set(
+    existingLinks
+      .filter((b) => b.waitlistEntryId !== null && b.stage !== "POSSIBLE_MATCH")
+      .map((b) => b.waitlistEntryId as number)
+  );
+
+  const MEANINGFUL_REASONS: MatchReason[] = [
+    "PROGRAM_MATCH",
+    "BREED_MATCH",
+    "SIRE_PREFERENCE",
+    "DAM_PREFERENCE",
+  ];
+
+  const matches: MatchResult[] = [];
+  for (const entry of approvedEntries) {
+    if (excludeIds.has(entry.id)) continue;
+    const result = calculateMatch(entry, plan);
+    const hasMeaningful = result.reasons.some((r) => MEANINGFUL_REASONS.includes(r));
+    if (hasMeaningful && result.score > 0) {
+      matches.push(result);
+    }
+  }
+
+  return matches.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
     const aDeposit = a.reasons.includes("DEPOSIT_PAID") ? 1 : 0;
     const bDeposit = b.reasons.includes("DEPOSIT_PAID") ? 1 : 0;
     return bDeposit - aDeposit;
@@ -219,6 +270,89 @@ export async function refreshPlanMatches(
 }
 
 /**
+ * Batch-optimized version of refreshPlanMatches that accepts pre-fetched data.
+ * Avoids N+1 by reusing already-fetched approved entries and existing links.
+ */
+async function refreshPlanMatchesWithData(
+  prisma: PrismaClient,
+  plan: PlanWithProgram,
+  tenantId: number,
+  approvedEntries: WaitlistEntryWithPrefs[],
+  existingLinksForPlan: { id: number; waitlistEntryId: number | null; stage: string; matchScore: number | null; matchReasons: any }[],
+): Promise<{ added: number; removed: number; updated: number }> {
+  // Filter to POSSIBLE_MATCH stage only
+  const possibleMatches = existingLinksForPlan.filter((e) => e.stage === "POSSIBLE_MATCH");
+  const existingMap = new Map(
+    possibleMatches
+      .filter((e) => e.waitlistEntryId !== null)
+      .map((e) => [e.waitlistEntryId as number, e])
+  );
+
+  // Calculate new matches from pre-fetched data (no DB queries)
+  const newMatches = findPossibleMatchesFromData(plan, approvedEntries, existingLinksForPlan);
+  const newMatchMap = new Map(newMatches.map((m) => [m.waitlistEntryId, m]));
+
+  let added = 0,
+    removed = 0,
+    updated = 0;
+
+  // Collect IDs to delete in batch
+  const toDelete: number[] = [];
+  for (const [entryId, record] of existingMap) {
+    if (!newMatchMap.has(entryId)) {
+      toDelete.push(record.id);
+      removed++;
+    }
+  }
+  if (toDelete.length > 0) {
+    await prisma.breedingPlanBuyer.deleteMany({ where: { id: { in: toDelete } } });
+  }
+
+  // Collect creates and updates
+  const toCreate: { tenantId: number; planId: number; waitlistEntryId: number; stage: BreedingPlanBuyerStage; matchScore: number; matchReasons: MatchReason[] }[] = [];
+  const toUpdate: { id: number; matchScore: number; matchReasons: MatchReason[] }[] = [];
+
+  for (const [entryId, match] of newMatchMap) {
+    const existingRecord = existingMap.get(entryId);
+    if (existingRecord) {
+      if (existingRecord.matchScore !== match.score) {
+        toUpdate.push({ id: existingRecord.id, matchScore: match.score, matchReasons: match.reasons });
+        updated++;
+      }
+    } else {
+      toCreate.push({
+        tenantId,
+        planId: plan.id,
+        waitlistEntryId: entryId,
+        stage: "POSSIBLE_MATCH" as BreedingPlanBuyerStage,
+        matchScore: match.score,
+        matchReasons: match.reasons,
+      });
+      added++;
+    }
+  }
+
+  // Batch create
+  if (toCreate.length > 0) {
+    await prisma.breedingPlanBuyer.createMany({ data: toCreate });
+  }
+
+  // Batch update (Prisma doesn't support bulk update, use Promise.all for parallel)
+  if (toUpdate.length > 0) {
+    await Promise.all(
+      toUpdate.map((u) =>
+        prisma.breedingPlanBuyer.update({
+          where: { id: u.id },
+          data: { matchScore: u.matchScore, matchReasons: u.matchReasons },
+        })
+      )
+    );
+  }
+
+  return { added, removed, updated };
+}
+
+/**
  * Refresh matches for all active plans under a program when a waitlist entry changes.
  */
 export async function refreshMatchingPlansForEntry(
@@ -231,20 +365,149 @@ export async function refreshMatchingPlansForEntry(
     include: { program: true },
   });
 
-  if (!entry?.programId) return;
+  if (!entry) return;
 
-  // Find all active plans under this program
+  // Build plan filter: scope to program if the entry has one,
+  // otherwise match against ALL active plans for the tenant (parking-lot entries)
+  const planWhere: any = {
+    tenantId,
+    status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+    deletedAt: null,
+  };
+  if (entry.programId) {
+    planWhere.programId = entry.programId;
+  }
+
   const plans = await prisma.breedingPlan.findMany({
+    where: planWhere,
+    include: { program: true },
+  });
+
+  if (plans.length === 0) return;
+
+  // Pre-fetch shared data once instead of per-plan (avoids N+1):
+  // 1. All approved waitlist entries for this tenant
+  const allApprovedEntries = await prisma.waitlistEntry.findMany({
     where: {
       tenantId,
-      programId: entry.programId,
-      status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
-      deletedAt: null,
+      status: { in: [WaitlistStatus.APPROVED, WaitlistStatus.DEPOSIT_PAID] },
+    },
+    include: {
+      clientParty: { select: { name: true, email: true, phoneE164: true } },
+      sirePref: { select: { name: true } },
+      damPref: { select: { name: true } },
     },
   });
 
-  // Refresh matches for each plan
+  // 2. All existing plan-buyer links for these plans
+  const planIds = plans.map(p => p.id);
+  const allExistingLinks = await prisma.breedingPlanBuyer.findMany({
+    where: { planId: { in: planIds } },
+  });
+
+  // Group existing links by plan
+  const linksByPlan = new Map<number, typeof allExistingLinks>();
+  for (const link of allExistingLinks) {
+    const list = linksByPlan.get(link.planId) || [];
+    list.push(link);
+    linksByPlan.set(link.planId, list);
+  }
+
+  // Refresh matches for each plan using pre-fetched data
   for (const plan of plans) {
-    await refreshPlanMatches(prisma, plan.id, tenantId);
+    const existingForPlan = linksByPlan.get(plan.id) || [];
+    await refreshPlanMatchesWithData(
+      prisma, plan, tenantId, allApprovedEntries, existingForPlan,
+    );
+  }
+}
+
+/**
+ * Batch-refresh matches for multiple waitlist entries at once.
+ * Consolidates all DB queries to avoid the N+1 pattern that occurs when
+ * refreshMatchingPlansForEntry is called per-entry in a loop.
+ */
+export async function refreshMatchingPlansForEntries(
+  prisma: PrismaClient,
+  entryIds: number[],
+  tenantId: number
+): Promise<void> {
+  if (entryIds.length === 0) return;
+
+  // 1. Batch-fetch all entries with their program info
+  const entries = await prisma.waitlistEntry.findMany({
+    where: { id: { in: entryIds } },
+    include: { program: true },
+  });
+
+  if (entries.length === 0) return;
+
+  // 2. Collect all unique program IDs (null = parking-lot entry that matches all plans)
+  const programIds = [...new Set(entries.map(e => e.programId).filter((id): id is number => id !== null))];
+  const hasParkingLot = entries.some(e => e.programId === null);
+
+  // 3. Batch-fetch all relevant active plans
+  const planWhere: any = {
+    tenantId,
+    status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+    deletedAt: null,
+  };
+  if (!hasParkingLot && programIds.length > 0) {
+    // All entries have programs — scope plans to those programs
+    planWhere.programId = { in: programIds };
+  }
+  // If hasParkingLot is true, we need ALL active plans (no programId filter)
+
+  const plans = await prisma.breedingPlan.findMany({
+    where: planWhere,
+    include: { program: true },
+  });
+
+  if (plans.length === 0) return;
+
+  // 4. Batch-fetch all approved waitlist entries for matching
+  const allApprovedEntries = await prisma.waitlistEntry.findMany({
+    where: {
+      tenantId,
+      status: { in: [WaitlistStatus.APPROVED, WaitlistStatus.DEPOSIT_PAID] },
+    },
+    include: {
+      clientParty: { select: { name: true, email: true, phoneE164: true } },
+      sirePref: { select: { name: true } },
+      damPref: { select: { name: true } },
+    },
+  });
+
+  // 5. Batch-fetch all existing plan-buyer links
+  const planIds = plans.map(p => p.id);
+  const allExistingLinks = await prisma.breedingPlanBuyer.findMany({
+    where: { planId: { in: planIds } },
+  });
+
+  // Group existing links by plan
+  const linksByPlan = new Map<number, typeof allExistingLinks>();
+  for (const link of allExistingLinks) {
+    const list = linksByPlan.get(link.planId) || [];
+    list.push(link);
+    linksByPlan.set(link.planId, list);
+  }
+
+  // 6. Determine which plans each entry maps to, then deduplicate
+  const plansToRefresh = new Set<number>();
+  for (const entry of entries) {
+    for (const plan of plans) {
+      if (entry.programId === null || entry.programId === plan.programId) {
+        plansToRefresh.add(plan.id);
+      }
+    }
+  }
+
+  // 7. Refresh matches for each unique plan using pre-fetched data (no extra DB queries)
+  for (const planId of plansToRefresh) {
+    const plan = plans.find(p => p.id === planId)!;
+    const existingForPlan = linksByPlan.get(plan.id) || [];
+    await refreshPlanMatchesWithData(
+      prisma, plan, tenantId, allApprovedEntries, existingForPlan,
+    );
   }
 }

@@ -12,8 +12,22 @@ import type { IdentifierType, OwnerRole } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
 import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 import { uploadBuffer, deleteFile } from "../services/media-storage.js";
+import { auditCreate, auditUpdate, auditDelete, auditArchive, auditRestore, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
 
 const AVATAR_SIZE = 256;
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+    requestId: req.id,
+  };
+}
 
 /* Keep these in sync with Prisma enums */
 type Species = "DOG" | "CAT" | "HORSE" | "GOAT" | "SHEEP" | "RABBIT";
@@ -370,6 +384,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (q) {
       where.OR = [
         { name: { contains: q, mode: "insensitive" } },
+        { nickname: { contains: q, mode: "insensitive" } },
         { microchip: { contains: q, mode: "insensitive" } },
         { breed: { contains: q, mode: "insensitive" } },
         { notes: { contains: q, mode: "insensitive" } },
@@ -388,6 +403,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId: true,
           organizationId: true,
           name: true,
+          nickname: true,
           species: true,
           sex: true,
           status: true,
@@ -499,6 +515,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!rec) return reply.code(404).send({ error: "not_found" });
 
     const cycleStartDates = extractCycleStartDates(rec);
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_cycle_dates_updated",
+      category: "health",
+      title: `Reproductive cycle dates updated for ${rec.name}`,
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ...rec, cycleStartDates });
   });
 
@@ -548,6 +574,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         tenantId: true,
         organizationId: true,
         name: true,
+        nickname: true,
         species: true,
         sex: true,
         status: true,
@@ -645,6 +672,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const b = (req.body || {}) as Partial<{
       name: string;
+      nickname: string | null;
       species: Species;
       sex: Sex;
       status: AnimalStatus;
@@ -667,7 +695,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const name = String(b.name || "").trim();
     if (!name) return reply.code(400).send({ error: "name_required" });
-    const validSpecies = ["DOG", "CAT", "HORSE", "SHEEP", "GOAT", "CATTLE", "PIG", "RABBIT"];
+    const validSpecies = ["DOG", "CAT", "HORSE", "SHEEP", "GOAT", "RABBIT", "ALPACA", "LLAMA"];
     if (!b.species || !validSpecies.includes(b.species)) {
       return reply.code(400).send({ error: "species_required" });
     }
@@ -722,6 +750,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     if (typeof b.notes === "string") {
       data.notes = b.notes.trim() || null;
+    }
+    if (b.nickname !== undefined) {
+      data.nickname = b.nickname ? String(b.nickname).trim() : null;
     }
 
     // normalise photoUrl / coverImageUrl in create
@@ -778,6 +809,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId: true,
           organizationId: true,
           name: true,
+          nickname: true,
           species: true,
           sex: true,
           status: true,
@@ -826,6 +858,20 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update usage snapshot after successful creation
       await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
 
+      // Audit trail + activity log (fire-and-forget, fail-open)
+      const ctx = auditCtx(req, tenantId);
+      auditCreate("ANIMAL", created.id, created as any, ctx);
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: created.id,
+        kind: "animal_created",
+        category: "system",
+        title: `${created.name || "Animal"} created`,
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -856,6 +902,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const b = (req.body || {}) as Partial<{
       organizationId: number | null;
       name: string;
+      nickname: string | null;
       species: Species;
       sex: Sex;
       status: AnimalStatus;
@@ -900,6 +947,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const n = String(b.name || "").trim();
       if (!n) return reply.code(400).send({ error: "name_required" });
       data.name = n;
+    }
+    if (b.nickname !== undefined) {
+      data.nickname = b.nickname ? String(b.nickname).trim() : null;
     }
     if (b.species !== undefined) {
       if (!["DOG", "CAT", "HORSE"].includes(b.species)) return reply.code(400).send({ error: "species_invalid" });
@@ -1015,6 +1065,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (b.brandMark !== undefined) data.brandMark = b.brandMark;
     if (b.scrapieTagNumber !== undefined) data.scrapieTagNumber = b.scrapieTagNumber;
 
+    // Snapshot before state for audit diff
+    const beforeSnap = await prisma.animal.findUnique({ where: { id } });
+
     try {
       const updated = await prisma.animal.update({
         where: { id },
@@ -1024,6 +1077,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           tenantId: true,
           organizationId: true,
           name: true,
+          nickname: true,
           species: true,
           sex: true,
           status: true,
@@ -1057,6 +1111,22 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           scrapieTagNumber: true,
         },
       });
+
+      // Audit trail (fire-and-forget, fail-open)
+      if (beforeSnap) {
+        auditUpdate("ANIMAL", id, beforeSnap as any, updated as any, auditCtx(req, tenantId));
+      }
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: id,
+        kind: "animal_updated",
+        category: "system",
+        title: `${updated.name || "Animal"} profile updated`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
       reply.send(updated);
     } catch (e: any) {
       if (e?.code === "P2002") {
@@ -1118,6 +1188,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_breeding_availability_changed",
+      category: "status",
+      title: `Breeding availability set to ${status} for ${updated.name}`,
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({
       id: updated.id,
       name: updated.name,
@@ -1199,6 +1279,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { photoUrl: true },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_photo_uploaded",
+      category: "system",
+      title: "Photo uploaded",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     // Send response immediately — don't block on old file cleanup
     reply.send({ photoUrl: updated.photoUrl, storageKey });
 
@@ -1255,6 +1345,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { photoUrl: true },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_photo_removed",
+      category: "system",
+      title: "Photo removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send(updated);
   });
 
@@ -1318,6 +1418,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { coverImageUrl: true },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_cover_uploaded",
+      category: "system",
+      title: "Cover image uploaded",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     // Send response immediately — don't block on old file cleanup
     reply.send({ coverImageUrl: updated.coverImageUrl, storageKey });
 
@@ -1372,6 +1482,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { coverImageUrl: true },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_cover_removed",
+      category: "system",
+      title: "Cover image removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send(updated);
   });
 
@@ -1385,6 +1505,17 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: true } });
+    auditArchive("ANIMAL", id, auditCtx(req, tenantId));
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_archived",
+      category: "status",
+      title: "Animal archived",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ok: true });
   });
 
@@ -1397,6 +1528,17 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.update({ where: { id }, data: { archived: false } });
+    auditRestore("ANIMAL", id, auditCtx(req, tenantId));
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_restored",
+      category: "status",
+      title: "Animal restored from archive",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ok: true });
   });
 
@@ -1410,6 +1552,19 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
     await prisma.animal.delete({ where: { id } });
+
+    // Audit trail (fire-and-forget)
+    auditDelete("ANIMAL", id, auditCtx(req, tenantId));
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_deleted",
+      category: "system",
+      title: "Animal deleted",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
 
     // Update usage snapshot after deletion
     await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
@@ -1642,6 +1797,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       await prisma.tagAssignment.create({ data: { tagId: tId, animalId: id } });
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: id,
+        kind: "animal_tag_added",
+        category: "system",
+        title: "Tag assigned",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(201).send({ ok: true });
     } catch (e: any) {
       if (e?.code === "P2002") return reply.code(409).send({ error: "already_assigned" });
@@ -1660,6 +1825,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     await assertAnimalInTenant(id, tenantId);
 
     await prisma.tagAssignment.deleteMany({ where: { animalId: id, tagId } });
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: id,
+      kind: "animal_tag_removed",
+      category: "system",
+      title: "Tag removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ok: true });
   });
 
@@ -1817,13 +1992,24 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      const ownerName = created.party?.type === "CONTACT"
+        ? created.party?.contact?.display_name
+        : created.party?.organization?.name ?? null;
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_owner_added",
+        category: "relationship",
+        title: `Owner added${ownerName ? `: ${ownerName}` : ""}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(201).send({
         id: created.id,
         partyId: created.partyId,
         kind: created.party?.type ?? null,
-        displayName: created.party?.type === "CONTACT"
-          ? created.party?.contact?.display_name
-          : created.party?.organization?.name ?? null,
+        displayName: ownerName,
         percent: created.percent,
         isPrimary: created.isPrimary,
         role: created.role,
@@ -1955,6 +2141,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_owner_updated",
+        category: "relationship",
+        title: "Ownership details updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       reply.send({
         id: updated.id,
         partyId: updated.partyId,
@@ -1998,6 +2194,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     await prisma.animalOwner.delete({ where: { id: ownerId } });
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_owner_removed",
+      category: "relationship",
+      title: "Owner removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ok: true });
   });
 
@@ -2329,6 +2535,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           issuedAt: issuedAtDate,
         },
       });
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_registry_added",
+        category: "system",
+        title: `Registry identifier added: ${identifier}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(201).send(created);
     } catch (e: any) {
       if (e?.code === "P2002") return reply.code(409).send({ error: "identifier_conflict" }); // @@unique([registryId, identifier])
@@ -2384,6 +2600,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: identifierId },
         data,
       });
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_registry_updated",
+        category: "system",
+        title: "Registry identifier updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       reply.send(updated);
     } catch (e: any) {
       if (e?.code === "P2002") return reply.code(409).send({ error: "identifier_conflict" });
@@ -2408,6 +2634,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!existing || existing.animalId !== animalId) return reply.code(404).send({ error: "not_found" });
 
     await prisma.animalRegistryIdentifier.delete({ where: { id: identifierId } });
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_registry_removed",
+      category: "system",
+      title: "Registry identifier removed",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ ok: true });
   });
 
@@ -2577,6 +2813,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       lineage: genetics.lineage || null,
       predictedAdultWeight: genetics.predictedAdultWeight || null,
       lifeStage: genetics.lifeStage || null,
+    });
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_genetics_updated",
+      category: "system",
+      title: "Genetic data updated",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
     });
   });
 
@@ -3096,6 +3342,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // Note: animal_loci table is automatically synced via database trigger
     // No manual sync needed - database handles it on INSERT/UPDATE
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_genetics_imported",
+      category: "system",
+      title: `Genetic data imported from ${provider.name}`,
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({
       success: true,
       imported: {
@@ -3234,6 +3490,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update usage snapshot after import
       await updateUsageSnapshot(tenantId, "ANIMAL_COUNT");
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: 0,
+        kind: "animal_imported",
+        category: "system",
+        title: `CSV import completed: ${result.summary?.imported ?? 0} animal(s) imported`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       reply.send(result);
     } catch (error) {
       console.error("CSV import execution error:", error);
@@ -3941,6 +4207,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_parents_updated",
+        category: "relationship",
+        title: "Parentage updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       reply.send(updated);
     } catch (e: any) {
       if (e.statusCode) {
@@ -4200,6 +4476,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_privacy_updated",
+      category: "system",
+      title: "Privacy settings updated",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send(settings);
   });
 
@@ -4402,6 +4688,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       userId
     );
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_identity_linked",
+      category: "relationship",
+      title: "Linked to global identity",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ success: true, globalIdentityId: body.globalIdentityId });
   });
 
@@ -4430,6 +4726,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       where: { animalId },
     });
 
+    logEntityActivity({
+      tenantId,
+      entityType: "ANIMAL",
+      entityId: animalId,
+      kind: "animal_identity_unlinked",
+      category: "relationship",
+      title: "Unlinked from global identity",
+      actorId: String((req as any).userId ?? "unknown"),
+      actorName: (req as any).userName,
+    });
     reply.send({ success: true });
   });
 
@@ -4482,6 +4788,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_identifier_added",
+        category: "system",
+        title: `Identifier added: ${body.type}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       reply.code(201).send({
         id: identifier.id,
         type: identifier.type,
@@ -4624,6 +4940,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_test_result_added",
+        category: "health",
+        title: `Test result recorded: ${b.kind}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(201).send(created);
     } catch (err: any) {
       if (err?.code === "P2003") {
@@ -4848,6 +5174,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_test_result_updated",
+        category: "health",
+        title: `Test result updated: ${b.kind}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(200).send(updated);
     } catch (err: any) {
       if (err?.code === "P2003") {
@@ -4910,6 +5246,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: testResultId },
       });
 
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: animalId,
+        kind: "animal_test_result_deleted",
+        category: "health",
+        title: "Test result deleted",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
       return reply.code(204).send();
     } catch (err) {
       throw err;

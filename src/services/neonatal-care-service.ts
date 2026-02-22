@@ -455,7 +455,6 @@ function getCriticalPeriodDays(species: string): number {
     RABBIT: 10,   // First 10 days critical for kits
     GOAT: 7,      // First week critical for kids
     SHEEP: 7,     // First week critical for lambs
-    PIG: 7,       // First week critical for piglets
     CHICKEN: 7,   // First week critical for chicks
   };
   return criticalPeriods[species.toUpperCase()] || 14;

@@ -549,8 +549,6 @@ const SPECIES_GESTATION_DAYS: Record<string, number> = {
   RABBIT: 31,
   GOAT: 150,
   SHEEP: 147,
-  PIG: 114,
-  CATTLE: 283,
   CHICKEN: 21,
   ALPACA: 345,
   LLAMA: 350,
@@ -566,8 +564,6 @@ const SPECIES_PRE_BIRTH_SIGNS: Record<string, string[]> = {
   RABBIT: ["FUR_PULLING", "NEST_BUILDING", "RESTLESSNESS"],
   GOAT: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "NESTING_BEHAVIOR", "LOSS_OF_APPETITE"],
   SHEEP: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "RESTLESSNESS"],
-  PIG: ["NESTING_BEHAVIOR", "MILK_PRESENT", "VULVAR_CHANGES", "RESTLESSNESS"],
-  CATTLE: ["UDDER_TIGHT", "LIGAMENT_SOFTENING", "VULVAR_CHANGES", "RESTLESSNESS"],
   CHICKEN: ["NESTING_BEHAVIOR"],
   ALPACA: ["UDDER_TIGHT", "VULVAR_CHANGES", "RESTLESSNESS"],
   LLAMA: ["UDDER_TIGHT", "VULVAR_CHANGES", "RESTLESSNESS"],
@@ -625,24 +621,6 @@ function getScheduledMilestonesConfig(species: string): Array<{ type: string; da
         { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 142 },
         { type: "DUE_DATE", daysFromBreeding: gestation },
         { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 5 },
-      ];
-
-    case "PIG":
-      return [
-        { type: "ULTRASOUND_COUNT", daysFromBreeding: 28 },
-        { type: "BEGIN_MONITORING", daysFromBreeding: 110 },
-        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 111 },
-        { type: "DUE_DATE", daysFromBreeding: gestation },
-        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 3 },
-      ];
-
-    case "CATTLE":
-      return [
-        { type: "PREGNANCY_CONFIRMATION", daysFromBreeding: 30 },
-        { type: "BEGIN_MONITORING", daysFromBreeding: 270 },
-        { type: "PREPARE_BIRTH_AREA", daysFromBreeding: 275 },
-        { type: "DUE_DATE", daysFromBreeding: gestation },
-        { type: "OVERDUE_VET_CALL", daysFromBreeding: gestation + 7 },
       ];
 
     case "CHICKEN":

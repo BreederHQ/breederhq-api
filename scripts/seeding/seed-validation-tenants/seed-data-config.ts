@@ -72,6 +72,14 @@ export const DEV_THEMES: Record<string, ThemeDefinition> = {
     accentColor: '#F4C430',
     logoText: 'Stark Industries',
   },
+  tattooine: {
+    id: 'tattooine',
+    name: 'Tattooine Cuddly Buggers',
+    primaryColor: '#C2A366',
+    secondaryColor: '#8B6914',
+    accentColor: '#FFD700',
+    logoText: 'Tattooine Breeders',
+  },
 };
 
 // PROD THEMES - Completely different universes
@@ -119,6 +127,8 @@ export const TENANT_THEMES = DEV_THEMES;
 
 export interface TenantDefinition {
   slug: string;
+  /** When set, overrides getEnvSlug() — the DB slug is used as-is (no env prefix). */
+  fixedSlug?: string;
   theme: ThemeDefinition;
   // Marketplace visibility settings
   marketplaceVisibility: {
@@ -252,6 +262,15 @@ export const DEV_TENANT_DEFINITIONS: TenantDefinition[] = [
     lineageVisibility: MIXED_VISIBILITY,
     species: ['CAT', 'GOAT', 'HORSE', 'DOG'],
   },
+  // TENANT 5: Tattooine Cuddly Buggers — fixed slug/email, no env prefixing
+  {
+    slug: 'tattooine',
+    fixedSlug: 'tattoine-cuddly-buggers',
+    theme: DEV_THEMES.tattooine,
+    marketplaceVisibility: { isPublicProgram: false, hasActiveListings: false, programsEnabled: 0, programsSaved: 0 },
+    lineageVisibility: PARTIAL_VISIBILITY,
+    species: ['DOG', 'CAT'],
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -308,7 +327,9 @@ export const TENANT_DEFINITIONS = DEV_TENANT_DEFINITIONS;
 export interface UserDefinition {
   firstName: string;
   lastName: string;
-  emailBase: string; // Will be prefixed with env
+  emailBase: string; // Will be prefixed with env (unless fixedEmail is set)
+  /** When set, overrides getEnvEmail() — the email is used as-is (no env suffix). */
+  fixedEmail?: string;
   password: string;
   isSuperAdmin: boolean;
 }
@@ -319,6 +340,8 @@ export const DEV_TENANT_USERS: Record<string, UserDefinition> = {
   hogwarts: { firstName: 'Rubeus', lastName: 'Hagrid', emailBase: 'hagrid@hogwarts.local', password: 'Hogwarts123!', isSuperAdmin: false },
   winterfell: { firstName: 'Eddard', lastName: 'Stark', emailBase: 'ned.stark@winterfell.local', password: 'Winterfell123!', isSuperAdmin: false },
   'stark-tower': { firstName: 'Tony', lastName: 'Stark', emailBase: 'tony.stark@avengers.local', password: 'Avengers123!', isSuperAdmin: false },
+  // Tattooine uses a fixed email — no env suffix applied
+  tattooine: { firstName: 'Luke', lastName: 'Skywalker', emailBase: 'luke.skywalker@tester.local', fixedEmail: 'luke.skywalker@tester.local', password: 'Tattooine123!', isSuperAdmin: false },
 };
 
 // PROD Users - Different themes
@@ -345,7 +368,11 @@ export interface ContactDefinition {
   firstName: string;
   lastName: string;
   nickname?: string;
+  /** Overrides the default "firstName lastName" display name. */
+  displayName?: string;
   emailBase: string;
+  /** When set, overrides getEnvEmail() — the email is used as-is (no env suffix). */
+  fixedEmail?: string;
   phone: string;
   city: string;
   state: string;
@@ -389,6 +416,18 @@ export const TENANT_CONTACTS: Record<string, ContactDefinition[]> = {
     { firstName: 'Thor', lastName: 'Odinson', emailBase: 'thor@asgard.local', phone: '+1-555-0334', city: 'Asgard', state: 'Realm Eternal', country: 'US' },
     { firstName: 'Clint', lastName: 'Barton', nickname: 'Hawkeye', emailBase: 'clint.barton@avengers.local', phone: '+1-555-0335', city: 'Iowa', state: 'IA', country: 'US' },
   ],
+  // Tattooine contacts — fixed emails, no env suffix
+  tattooine: [
+    { firstName: 'Obi-Wan', lastName: 'Kenobi', nickname: 'Ben', displayName: 'Ben Kenobi', emailBase: 'obiwan@jundland.example.com', fixedEmail: 'obiwan@jundland.example.com', phone: '+15550202', city: 'Jundland Wastes', state: 'Tatooine', country: 'US' },
+    { firstName: 'Beru', lastName: 'Lars', emailBase: 'beru@larshomestead.example.com', fixedEmail: 'beru@larshomestead.example.com', phone: '+15550204', city: 'Great Chott Salt Flat', state: 'Tatooine', country: 'US' },
+    { firstName: 'Wuher', lastName: 'Bartender', displayName: 'Wuher', emailBase: 'wuher@moseisley.example.com', fixedEmail: 'wuher@moseisley.example.com', phone: '+15550203', city: 'Mos Eisley', state: 'Tatooine', country: 'US' },
+    { firstName: 'Biggs', lastName: 'Darklighter', emailBase: 'biggs@tosche.example.com', fixedEmail: 'biggs@tosche.example.com', phone: '+15550205', city: 'Anchorhead', state: 'Tatooine', country: 'US' },
+    { firstName: 'Owen', lastName: 'Lars', emailBase: 'owen@larshomestead.example.com', fixedEmail: 'owen@larshomestead.example.com', phone: '+15550206', city: 'Great Chott Salt Flat', state: 'Tatooine', country: 'US' },
+    { firstName: 'Camie', lastName: 'Marstrap', emailBase: 'camie@tosche.example.com', fixedEmail: 'camie@tosche.example.com', phone: '+15550207', city: 'Anchorhead', state: 'Tatooine', country: 'US' },
+    { firstName: 'Huff', lastName: 'Darklighter', emailBase: 'huff@darklighter-ranch.example.com', fixedEmail: 'huff@darklighter-ranch.example.com', phone: '+15550208', city: 'Anchorhead', state: 'Tatooine', country: 'US' },
+    { firstName: 'Kitster', lastName: 'Banai', emailBase: 'kitster@mosespa.example.com', fixedEmail: 'kitster@mosespa.example.com', phone: '+15550209', city: 'Mos Espa', state: 'Tatooine', country: 'US' },
+    { firstName: 'Gavin', lastName: 'Darklighter', emailBase: 'gavin@darklighter-ranch.example.com', fixedEmail: 'gavin@darklighter-ranch.example.com', phone: '+15550210', city: 'Anchorhead', state: 'Tatooine', country: 'US' },
+  ],
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -398,6 +437,8 @@ export const TENANT_CONTACTS: Record<string, ContactDefinition[]> = {
 export interface OrganizationDefinition {
   name: string;
   emailBase: string;
+  /** When set, overrides getEnvEmail() — the email is used as-is (no env suffix). */
+  fixedEmail?: string;
   phone: string;
   website?: string;
   city: string;
@@ -405,6 +446,8 @@ export interface OrganizationDefinition {
   country: string;
   isPublicProgram: boolean;
   programSlug?: string;
+  /** When set, overrides getEnvSlug() for the program slug — used as-is. */
+  fixedProgramSlug?: string;
   programBio?: string;
 }
 
@@ -425,6 +468,14 @@ export const TENANT_ORGANIZATIONS: Record<string, OrganizationDefinition[]> = {
   'stark-tower': [
     { name: 'Stark Industries K9 Division', emailBase: 'k9@stark.local', phone: '+1-555-0431', website: 'https://stark.local/k9', city: 'New York', state: 'NY', country: 'US', isPublicProgram: true, programSlug: 'stark-k9', programBio: 'Advanced breeding program powered by Stark Industries technology.' },
     { name: 'Avengers Compound Animals', emailBase: 'animals@avengers.local', phone: '+1-555-0432', city: 'Upstate', state: 'NY', country: 'US', isPublicProgram: true, programSlug: 'avengers-animals', programBio: 'Home to the animal companions of Earth\'s Mightiest Heroes.' },
+  ],
+  // Tattooine organizations — fixed emails and program slugs, no env prefixing
+  tattooine: [
+    { name: 'Mos Eisley Cantina Breeders', emailBase: 'info@moseisley.example.com', fixedEmail: 'info@moseisley.example.com', phone: '+1-555-0101', website: 'https://moseisley.example.com', city: 'Mos Eisley', state: 'Tatooine', country: 'US', isPublicProgram: true, programSlug: 'mos-eisley-breeders', fixedProgramSlug: 'mos-eisley-breeders', programBio: 'Premier breeding program specializing in exotic species from across the galaxy.' },
+    { name: 'Tosche Station Genetics', emailBase: 'genetics@tosche.example.com', fixedEmail: 'genetics@tosche.example.com', phone: '+1-555-0102', website: 'https://tosche.example.com', city: 'Anchorhead', state: 'Tatooine', country: 'US', isPublicProgram: true, programSlug: 'tosche-genetics', fixedProgramSlug: 'tosche-genetics', programBio: 'Family-owned breeding operation focused on quality and tradition.' },
+    { name: 'Jundland Wastes Breeding Co.', emailBase: 'contact@jundland.example.com', fixedEmail: 'contact@jundland.example.com', phone: '+1-555-0103', city: 'Jundland', state: 'Tatooine', country: 'US', isPublicProgram: false },
+    { name: 'Lars Homestead Livestock', emailBase: 'owen@larshomestead.example.com', fixedEmail: 'owen@larshomestead.example.com', phone: '+1-555-0104', city: 'Great Chott Salt Flat', state: 'Tatooine', country: 'US', isPublicProgram: true, programSlug: 'lars-livestock', fixedProgramSlug: 'lars-livestock', programBio: 'Multi-generational moisture farmers with a passion for quality breeding.' },
+    { name: 'Jabba\'s Palace Exotics', emailBase: 'exotic@jabbas.example.com', fixedEmail: 'exotic@jabbas.example.com', phone: '+1-555-0105', website: 'https://jabbas-exotics.example.com', city: 'Dune Sea', state: 'Tatooine', country: 'US', isPublicProgram: false },
   ],
 };
 

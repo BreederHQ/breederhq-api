@@ -22,6 +22,19 @@ import {
   generateContractPdf,
   type CreateContractInput,
 } from "../services/contracts/index.js";
+import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { logEntityActivity } from "../services/activity-log.js";
+
+/** Build AuditContext from a Fastify request */
+function auditCtx(req: any, tenantId: number): AuditContext {
+  return {
+    tenantId,
+    userId: String((req as any).userId ?? "unknown"),
+    userName: (req as any).userName ?? undefined,
+    changeSource: "PLATFORM",
+    ip: req.ip,
+  };
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Routes
@@ -161,6 +174,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const contract = await createContract(req, tenantId, input);
 
+    // Audit trail & activity log (fire-and-forget)
+    const ctx = auditCtx(req, tenantId);
+    auditCreate("CONTRACT", contract.id, contract as any, ctx);
+    logEntityActivity({
+      tenantId,
+      entityType: "CONTRACT",
+      entityId: contract.id,
+      kind: "contract_created",
+      category: "document",
+      title: "Contract created",
+      actorId: ctx.userId,
+      actorName: ctx.userName,
+    });
+
     return reply.code(201).send(contract);
   });
 
@@ -204,6 +231,9 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
+    // Audit trail (fire-and-forget) — `existing` is the before-snapshot
+    auditUpdate("CONTRACT", contractId, existing as any, updated as any, auditCtx(req, tenantId));
+
     return reply.send(updated);
   });
 
@@ -224,6 +254,20 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       await sendContract(req, tenantId, contractId, message);
+
+      // Activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      logEntityActivity({
+        tenantId,
+        entityType: "CONTRACT",
+        entityId: contractId,
+        kind: "contract_sent",
+        category: "document",
+        title: "Contract sent for signing",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+      });
+
       return reply.send({ success: true, message: "Contract sent" });
     } catch (err: any) {
       return reply.code(400).send({
@@ -251,6 +295,22 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       await voidContract(req, tenantId, contractId, userId, reason);
+
+      // Audit trail & activity log (fire-and-forget)
+      const ctx = auditCtx(req, tenantId);
+      auditDelete("CONTRACT", contractId, ctx, { reason });
+      logEntityActivity({
+        tenantId,
+        entityType: "CONTRACT",
+        entityId: contractId,
+        kind: "contract_voided",
+        category: "document",
+        title: "Contract voided",
+        actorId: ctx.userId,
+        actorName: ctx.userName,
+        metadata: { reason },
+      });
+
       return reply.send({ success: true, message: "Contract voided" });
     } catch (err: any) {
       return reply.code(400).send({

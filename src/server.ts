@@ -4,6 +4,17 @@
 import { initSentry, captureException, setUser, flush, Sentry } from "./lib/sentry.js";
 initSentry();
 
+// Global BigInt serialization support.
+// Prisma returns BigInt for BigInt columns (e.g. Invoice.amountCents);
+// JSON.stringify cannot serialize BigInt natively and throws
+// "TypeError: Do not know how to serialize a BigInt".
+// This polyfill converts BigInt to Number when safe, or to string for
+// values exceeding Number.MAX_SAFE_INTEGER.
+(BigInt.prototype as any).toJSON = function () {
+  const n = Number(this);
+  return Number.isSafeInteger(n) ? n : this.toString();
+};
+
 import Fastify, { FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -248,6 +259,9 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/marketplace/auth/forgot-password") return true;
   if (pathname === "/api/v1/marketplace/auth/reset-password") return true;
 
+  // International waitlist — public endpoint (user can't register yet)
+  if (pathname === "/api/v1/marketplace/international-waitlist") return true;
+
   // Portal activation - user may not have CSRF token for portal surface yet
   if (pathname === "/api/v1/portal/activate") return true;
   if (pathname.startsWith("/api/v1/portal/invites/") && pathname.endsWith("/accept")) return true;
@@ -255,8 +269,8 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   // Stripe webhook - verified by Stripe signature, not CSRF
   if (pathname === "/api/v1/billing/webhooks/stripe") return true;
 
-  // Resend inbound email webhook - verified by Resend signature, not CSRF
-  if (pathname === "/api/v1/webhooks/resend/inbound") return true;
+  // Resend webhooks (inbound + delivery) - verified by Resend signature, not CSRF
+  if (pathname.startsWith("/api/v1/webhooks/resend/")) return true;
 
   // Public breeding program inquiries - unauthenticated public submissions
   if (pathname.startsWith("/api/v1/public/breeding-programs/") && pathname.endsWith("/inquiries")) return true;
@@ -542,12 +556,16 @@ import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
 import breedingGroupsRoutes from "./routes/breeding-groups.js";
 import animalTraitsRoutes from "./routes/animal-traits.js";
 import animalDocumentsRoutes from "./routes/animal-documents.js";
+import contactDocumentsRoutes from "./routes/contact-documents.js";
 import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
+import offspringDocumentsRoutes from "./routes/offspring-documents.js";
+import offspringGroupDocumentsRoutes from "./routes/offspring-group-documents.js";
+import offspringGroupBuyersRoutes from "./routes/offspring-group-buyers.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
 import tenantRoutes from "./routes/tenant.js";
@@ -565,6 +583,7 @@ import marketplaceBreedersRoutes from "./routes/marketplace-breeders.js"; // Pub
 import marketplaceWaitlistRoutes from "./routes/marketplace-waitlist.js"; // Marketplace waitlist requests
 import marketplaceMessagesRoutes from "./routes/marketplace-messages.js"; // Marketplace messaging (buyer-to-breeder)
 import marketplaceAuthRoutes from "./routes/marketplace-auth.js"; // Marketplace authentication (JWT-based)
+import internationalWaitlistRoutes from "./routes/international-waitlist.js"; // International waitlist (public)
 import marketplaceProvidersRoutes from "./routes/marketplace-providers.js"; // Marketplace provider registration
 import marketplaceListingsRoutes from "./routes/marketplace-listings.js"; // Marketplace service listings
 import marketplaceTransactionsRoutes from "./routes/marketplace-transactions.js"; // Marketplace transactions & payments
@@ -632,6 +651,7 @@ import dairyRoutes from "./routes/dairy.js"; // Dairy production tracking (lacta
 import fiberRoutes from "./routes/fiber.js"; // Fiber/wool production tracking (shearings, lab tests)
 import microchipRegistrationsRoutes from "./routes/microchip-registrations.js"; // Microchip registry tracking
 import resendWebhooksRoutes from "./routes/webhooks-resend.js"; // Resend inbound email webhooks
+import unsubscribeRoutes from "./routes/unsubscribe.js"; // CAN-SPAM unsubscribe (no auth - token-based)
 import marketplaceV2Routes from "./routes/marketplace-v2.js"; // Marketplace V2 - Direct Listings & Animal Programs
 import breederServicesRoutes from "./routes/breeder-services.js"; // Breeder Service Listings Management
 import listingPaymentsRoutes from "./routes/listing-payments.js"; // Listing payment config (pricing transparency)
@@ -651,6 +671,10 @@ import { startListingBoostExpirationJob, stopListingBoostExpirationJob } from ".
 import { startServiceListingExpirationJob, stopServiceListingExpirationJob } from "./jobs/expire-service-listings.js"; // Service listing payment expiration cron job (daily)
 import listingBoostRoutes from "./routes/listing-boosts.js"; // Listing boost checkout + CRUD
 import adminBoostRoutes from "./routes/admin-boosts.js"; // Admin boost management
+import adminDbHealthRoutes from "./routes/admin-db-health.js"; // Admin database health monitoring
+import adminEmailLogRoutes from "./routes/admin-email-logs.js"; // Admin email log management & tenant email history
+import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-health-monitor.js"; // DB health monitoring cron job (daily)
+import { startEmailRetryJob, stopEmailRetryJob } from "./jobs/email-retry.js"; // Email retry cron job (every 5 min)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -670,6 +694,7 @@ import compatibilityRoutes from "./routes/compatibility.js"; // Breeding Discove
 import publicBreedingDiscoveryRoutes from "./routes/public-breeding-discovery.js"; // Breeding Discovery: Public Endpoints (Phase 2)
 import tenantStripeConnectRoutes from "./routes/tenant-stripe-connect.js"; // Tenant Stripe Connect (breeder payments)
 import animalBreedingProfileRoutes from "./routes/animal-breeding-profile.js"; // Animal Breeding Profile (user-entered preferences)
+import auditLogRoutes from "./routes/audit-log.js"; // Audit Log & Entity Activity (field-level change tracking + activity timeline)
 
 // Rearing Protocols (Offspring Module)
 import rearingProtocolsRoutes from "./routes/rearing-protocols.js"; // Rearing Protocols CRUD
@@ -719,7 +744,9 @@ app.register(
     api.register(settingsRoutes); // /api/v1/settings/* (user settings)
     api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
     api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
+    api.register(unsubscribeRoutes, { prefix: "/unsubscribe" }); // /api/v1/unsubscribe (CAN-SPAM - no auth, token-based)
     api.register(marketplaceAuthRoutes, { prefix: "/marketplace/auth" }); // /api/v1/marketplace/auth/* (JWT-based auth for marketplace)
+    api.register(internationalWaitlistRoutes, { prefix: "/marketplace/international-waitlist" }); // /api/v1/marketplace/international-waitlist (public)
     api.register(marketplaceProvidersRoutes, { prefix: "/marketplace/providers" }); // /api/v1/marketplace/providers/* (Provider registration & management)
     api.register(marketplaceListingsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Service listing management)
     api.register(marketplaceTransactionsRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/* (Transactions & payments)
@@ -1187,6 +1214,7 @@ app.register(
     api.register(breedsRoutes);        // /api/v1/breeds/*
     api.register(animalTraitsRoutes);  // /api/v1/animals/:animalId/traits
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
+    api.register(contactDocumentsRoutes); // /api/v1/contacts/:contactId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
     api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
@@ -1209,6 +1237,9 @@ app.register(
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(offspringDocumentsRoutes); // /api/v1/offspring/individuals/:id/documents
+    api.register(offspringGroupDocumentsRoutes); // /api/v1/offspring/groups/:id/documents
+    api.register(offspringGroupBuyersRoutes); // /api/v1/offspring/groups/:id/buyers/* (Selection Board)
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
 
     // Rearing Protocols
@@ -1264,6 +1295,9 @@ app.register(
     api.register(adminSubscriptionRoutes); // /api/v1/admin/subscriptions/* & /api/v1/admin/products/*
     api.register(adminFeatureRoutes); // /api/v1/admin/features/* & /api/v1/features/checks (telemetry)
     api.register(adminBoostRoutes); // /api/v1/admin/boosts/* Admin boost management
+    api.register(adminDbHealthRoutes); // /api/v1/admin/db-health/* Database health monitoring
+    api.register(adminEmailLogRoutes); // /api/v1/admin/email-logs/* & /api/v1/email-logs/* (tenant-scoped)
+    api.register(auditLogRoutes);  // /api/v1/audit-log/*, /api/v1/entities/:entityType/:entityId/activity
 
     // Marketplace routes - accessible by STAFF (platform module) or PUBLIC (with entitlement)
     api.register(publicMarketplaceRoutes, { prefix: "/marketplace" }); // /api/v1/marketplace/*
@@ -1523,6 +1557,12 @@ export async function start() {
 
     // Start service listing payment expiration cron job (daily)
     startServiceListingExpirationJob();
+
+    // Start database health monitor cron job (daily)
+    startDbHealthMonitorJob();
+
+    // Start email retry cron job (every 5 minutes)
+    startEmailRetryJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1542,6 +1582,8 @@ process.on("SIGTERM", async () => {
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
+  stopDbHealthMonitorJob();
+  stopEmailRetryJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1556,6 +1598,8 @@ process.on("SIGINT", async () => {
   stopAnimalAccessExpirationJob();
   stopListingBoostExpirationJob();
   stopServiceListingExpirationJob();
+  stopDbHealthMonitorJob();
+  stopEmailRetryJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

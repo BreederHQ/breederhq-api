@@ -6,6 +6,20 @@
  */
 
 import { sendEmail } from "./email-service.js";
+import {
+  wrapEmailLayout,
+  emailGreeting,
+  emailParagraph,
+  emailAccent,
+  emailButton,
+  emailInfoCard,
+  emailDetailRows,
+  emailFeatureList,
+  emailBulletList,
+  emailHeading,
+  emailFootnote,
+  emailCodeBlock,
+} from "./email-layout.js";
 
 const MARKETPLACE_URL = process.env.MARKETPLACE_URL || "https://marketplace.breederhq.com";
 const FROM_NAME = process.env.RESEND_FROM_NAME || "BreederHQ Marketplace";
@@ -23,23 +37,20 @@ export async function sendMarketplaceWelcomeEmail(data: {
   const verifyUrl = `${MARKETPLACE_URL}/verify-email?token=${data.verificationToken}`;
   const userName = data.firstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Welcome to ${FROM_NAME}!</h2>
-      <p>Hi ${userName},</p>
-      <p>Thanks for joining our marketplace! Please verify your email address to complete your registration.</p>
-      <p style="margin: 24px 0;">
-        <a href="${verifyUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Verify Email Address
-        </a>
-      </p>
-      <p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>
-      <p style="color: #6b7280; font-size: 14px;">If you didn't create this account, you can safely ignore this email.</p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: `Welcome to ${FROM_NAME}!`,
+    body: [
+      emailGreeting(userName),
+      emailParagraph("Thanks for joining our marketplace! Please verify your email address to complete your registration."),
+      emailButton("Verify Email Address", verifyUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent("&#9432; This link will expire in 1 hour")}<br>
+          <span style="color: #a3a3a3;">If you didn't create this account, you can safely ignore this email.</span>
+        </p>
+      `, { borderColor: "orange" }),
+    ].join("\n"),
+  });
 
   const text = `
 Welcome to ${FROM_NAME}!
@@ -58,7 +69,7 @@ If you didn't create this account, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Welcome to ${FROM_NAME} - Please verify your email`,
     html,
@@ -79,24 +90,20 @@ export async function sendMarketplacePasswordResetEmail(data: {
   const resetUrl = `${MARKETPLACE_URL}/reset-password?token=${data.resetToken}`;
   const userName = data.firstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Reset Your Password</h2>
-      <p>Hi ${userName},</p>
-      <p>We received a request to reset the password for your ${FROM_NAME} account.</p>
-      <p>Click the button below to set a new password:</p>
-      <p style="margin: 24px 0;">
-        <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Reset Password
-        </a>
-      </p>
-      <p style="color: #6b7280; font-size: 14px;">This link will expire in 30 minutes.</p>
-      <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Reset Your Password",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`We received a request to reset the password for your ${FROM_NAME} account. Click the button below to set a new password:`),
+      emailButton("Reset Password", resetUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent("&#9432; This link will expire in 30 minutes")}<br>
+          <span style="color: #a3a3a3;">If you didn't request this, you can safely ignore this email.</span>
+        </p>
+      `, { borderColor: "orange" }),
+    ].join("\n"),
+  });
 
   const text = `
 Reset Your Password
@@ -115,7 +122,7 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Reset your ${FROM_NAME} password`,
     html,
@@ -136,23 +143,20 @@ export async function sendMarketplaceVerificationEmail(data: {
   const verifyUrl = `${MARKETPLACE_URL}/verify-email?token=${data.verificationToken}`;
   const userName = data.firstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Verify Your Email</h2>
-      <p>Hi ${userName},</p>
-      <p>Please verify your email address to continue using ${FROM_NAME}.</p>
-      <p style="margin: 24px 0;">
-        <a href="${verifyUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Verify Email Address
-        </a>
-      </p>
-      <p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>
-      <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Verify Your Email",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Please verify your email address to continue using ${FROM_NAME}.`),
+      emailButton("Verify Email Address", verifyUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent("&#9432; This link will expire in 1 hour")}<br>
+          <span style="color: #a3a3a3;">If you didn't request this, you can safely ignore this email.</span>
+        </p>
+      `, { borderColor: "orange" }),
+    ].join("\n"),
+  });
 
   const text = `
 Verify Your Email
@@ -171,7 +175,7 @@ If you didn't request this, you can safely ignore this email.
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Verify your ${FROM_NAME} email address`,
     html,
@@ -191,23 +195,20 @@ export async function sendEmailVerificationCodeEmail(data: {
 }): Promise<void> {
   const userName = data.firstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Your Verification Code</h2>
-      <p>Hi ${userName},</p>
-      <p>Use the code below to verify your email address on ${FROM_NAME}.</p>
-      <div style="text-align: center; margin: 32px 0;">
-        <span style="display: inline-block; font-size: 36px; font-weight: 700; letter-spacing: 8px; padding: 16px 32px; background: #f3f4f6; border-radius: 8px; color: #1f2937;">
-          ${data.code}
-        </span>
-      </div>
-      <p style="color: #6b7280; font-size: 14px;">This code will expire in 10 minutes.</p>
-      <p style="color: #6b7280; font-size: 14px;">If you didn't request this code, you can safely ignore this email.</p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Your Verification Code",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Use the code below to verify your email address on ${FROM_NAME}.`),
+      emailCodeBlock(data.code),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent("&#9432; This code will expire in 10 minutes")}<br>
+          <span style="color: #a3a3a3;">If you didn't request this code, you can safely ignore this email.</span>
+        </p>
+      `, { borderColor: "orange" }),
+    ].join("\n"),
+  });
 
   const text = `
 Your Verification Code
@@ -252,46 +253,29 @@ export async function sendProviderWelcomeEmail(data: {
     ? "Your next step is to complete Stripe Connect onboarding to accept automated payments."
     : "You can start creating service listings right away! Buyers will contact you using the payment instructions you provided.";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Welcome to ${FROM_NAME} Providers!</h2>
-      <p>Hi ${userName},</p>
-      <p>Congratulations! You're now registered as a service provider on ${FROM_NAME}.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0; font-weight: 600;">Business Name:</p>
-        <p style="margin: 4px 0 0 0;">${data.businessName}</p>
-        <p style="margin: 16px 0 0 0; font-weight: 600;">Payment Mode:</p>
-        <p style="margin: 4px 0 0 0;">${data.paymentMode === "stripe" ? "Automated (Stripe)" : "Manual"}</p>
-      </div>
-
-      <h3 style="color: #374151;">Next Steps</h3>
-      <p>${nextSteps}</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${dashboardUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Go to Provider Dashboard
-        </a>
-      </p>
-
-      <h3 style="color: #374151;">What You Can Do</h3>
-      <ul style="color: #6b7280;">
-        <li>Create service listings</li>
-        <li>Set your pricing and availability</li>
-        <li>Manage bookings and transactions</li>
-        <li>Respond to customer inquiries</li>
-        <li>Track your revenue and reviews</li>
-      </ul>
-
-      <p style="color: #6b7280; font-size: 14px; margin-top: 32px;">
-        Need help? Visit our provider resources or contact support anytime.
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: `Welcome to ${FROM_NAME} Providers!`,
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Congratulations! You're now registered as a service provider on ${FROM_NAME}.`),
+      emailDetailRows([
+        { label: "Business Name", value: data.businessName },
+        { label: "Payment Mode", value: data.paymentMode === "stripe" ? "Automated (Stripe)" : "Manual" },
+      ]),
+      emailHeading("Next Steps"),
+      emailParagraph(nextSteps),
+      emailButton("Go to Provider Dashboard", dashboardUrl),
+      emailHeading("What You Can Do"),
+      emailBulletList([
+        "Create service listings",
+        "Set your pricing and availability",
+        "Manage bookings and transactions",
+        "Respond to customer inquiries",
+        "Track your revenue and reviews",
+      ]),
+      emailFootnote("Need help? Visit our provider resources or contact support anytime."),
+    ].join("\n"),
+  });
 
   const text = `
 Welcome to ${FROM_NAME} Providers!
@@ -321,7 +305,7 @@ Need help? Visit our provider resources or contact support anytime.
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Welcome to ${FROM_NAME} Providers!`,
     html,
@@ -342,46 +326,33 @@ export async function sendProviderStripeOnboardingCompleteEmail(data: {
   const userName = data.firstName || "there";
   const dashboardUrl = `${MARKETPLACE_URL}/provider/dashboard`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">🎉 Stripe Connect Setup Complete!</h2>
-      <p>Hi ${userName},</p>
-      <p>Great news! Your Stripe Connect account has been successfully set up for <strong>${data.businessName}</strong>.</p>
-
-      <div style="background: #ecfdf5; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #10b981;">
-        <p style="margin: 0; color: #065f46; font-weight: 600;">✓ Automated Payments Enabled</p>
-        <p style="margin: 8px 0 0 0; color: #065f46;">You can now accept credit card payments directly through the platform.</p>
-      </div>
-
-      <h3 style="color: #374151;">What This Means</h3>
-      <ul style="color: #6b7280;">
-        <li>Customers can pay you automatically via credit card</li>
-        <li>Funds are securely transferred to your bank account</li>
-        <li>You'll receive payout notifications from Stripe</li>
-        <li>Platform fees are deducted automatically</li>
-      </ul>
-
-      <h3 style="color: #374151;">Next Steps</h3>
-      <p>You can now switch your payment mode to "stripe" in your provider settings to start accepting automated payments.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${dashboardUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Dashboard
-        </a>
-      </p>
-
-      <p style="color: #6b7280; font-size: 14px; margin-top: 32px;">
-        Questions about payouts? Check Stripe's documentation or contact our support team.
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Stripe Connect Setup Complete!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Great news! Your Stripe Connect account has been successfully set up for ${emailAccent(data.businessName)}.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #10b981;">&#10003; Automated Payments Enabled</strong><br>
+          <span style="color: #a3a3a3;">You can now accept credit card payments directly through the platform.</span>
+        </p>
+      `, { borderColor: "green" }),
+      emailHeading("What This Means"),
+      emailBulletList([
+        "Customers can pay you automatically via credit card",
+        "Funds are securely transferred to your bank account",
+        "You'll receive payout notifications from Stripe",
+        "Platform fees are deducted automatically",
+      ]),
+      emailHeading("Next Steps"),
+      emailParagraph('You can now switch your payment mode to "stripe" in your provider settings to start accepting automated payments.'),
+      emailButton("View Dashboard", dashboardUrl),
+      emailFootnote("Questions about payouts? Check Stripe's documentation or contact our support team."),
+    ].join("\n"),
+  });
 
   const text = `
-🎉 Stripe Connect Setup Complete!
+Stripe Connect Setup Complete!
 
 Hi ${userName},
 
@@ -407,7 +378,7 @@ Questions about payouts? Check Stripe's documentation or contact our support tea
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Stripe Connect Setup Complete - ${FROM_NAME}`,
     html,
@@ -429,38 +400,25 @@ export async function sendProviderStripeIssueEmail(data: {
   const userName = data.firstName || "there";
   const onboardingUrl = `${MARKETPLACE_URL}/provider/settings/payments`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Action Required: Stripe Account Verification</h2>
-      <p>Hi ${userName},</p>
-      <p>Your Stripe Connect account for <strong>${data.businessName}</strong> requires additional information.</p>
-
-      <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f59e0b;">
-        <p style="margin: 0; color: #92400e; font-weight: 600;">⚠️ Verification Needed</p>
-        <p style="margin: 8px 0 0 0; color: #92400e;">${data.issueDescription}</p>
-      </div>
-
-      <h3 style="color: #374151;">Why This Happens</h3>
-      <p>Stripe requires additional verification to comply with financial regulations and protect both you and your customers.</p>
-
-      <h3 style="color: #374151;">What To Do</h3>
-      <p>Click the button below to complete the verification process. This usually takes just a few minutes.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${onboardingUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Complete Verification
-        </a>
-      </p>
-
-      <p style="color: #6b7280; font-size: 14px; margin-top: 32px;">
-        Until verification is complete, you may not be able to receive payouts.
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Action Required: Stripe Account Verification",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Your Stripe Connect account for ${emailAccent(data.businessName)} requires additional information.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #f59e0b;">&#9888; Verification Needed</strong><br>
+          <span style="color: #a3a3a3;">${data.issueDescription}</span>
+        </p>
+      `, { borderColor: "yellow" }),
+      emailHeading("Why This Happens"),
+      emailParagraph("Stripe requires additional verification to comply with financial regulations and protect both you and your customers."),
+      emailHeading("What To Do"),
+      emailParagraph("Click the button below to complete the verification process. This usually takes just a few minutes."),
+      emailButton("Complete Verification", onboardingUrl),
+      emailFootnote("Until verification is complete, you may not be able to receive payouts."),
+    ].join("\n"),
+  });
 
   const text = `
 Action Required: Stripe Account Verification
@@ -486,7 +444,7 @@ Until verification is complete, you may not be able to receive payouts.
   `.trim();
 
   await sendEmail({
-    tenantId: null,  // Marketplace/system email - no tenant context // System email
+    tenantId: null,  // Marketplace/system email - no tenant context
     to: data.email,
     subject: `Action Required: Stripe Account Verification - ${FROM_NAME}`,
     html,
@@ -515,43 +473,29 @@ export async function sendTransactionCreatedEmailToBuyer(data: {
   const userName = data.buyerFirstName || "there";
 
   const paymentSection = data.paymentMode === "manual"
-    ? `
-      <h3 style="color: #1f2937; margin-top: 24px;">Payment Instructions</h3>
-      <div style="background: #f9fafb; padding: 16px; border-radius: 6px; margin: 16px 0;">
-        <p style="margin: 0;">${data.paymentInstructions || "Contact the provider for payment details."}</p>
-      </div>
-      <p style="color: #6b7280; font-size: 14px;">After sending payment, mark it as paid in your transaction page.</p>
-    `
-    : `
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Pay Now
-        </a>
-      </p>
-    `;
+    ? [
+        emailHeading("Payment Instructions"),
+        emailInfoCard(`
+          <p style="color: #d4d4d4; font-size: 14px; margin: 0;">${data.paymentInstructions || "Contact the provider for payment details."}</p>
+        `),
+        emailParagraph('<span style="color: #a3a3a3; font-size: 14px;">After sending payment, mark it as paid in your transaction page.</span>'),
+      ].join("\n")
+    : emailButton("Pay Now", transactionUrl);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Booking Confirmed!</h2>
-      <p>Hi ${userName},</p>
-      <p>Your booking has been confirmed with <strong>${data.providerBusinessName}</strong>.</p>
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <h3 style="color: #1f2937; margin-top: 0;">Service Details</h3>
-        <p style="margin: 8px 0;"><strong>${data.serviceTitle}</strong></p>
-        <p style="margin: 8px 0;">Total: <strong>${data.totalAmount}</strong></p>
-        <p style="margin: 8px 0;">Transaction ID: #${data.transactionId}</p>
-      </div>
-      ${paymentSection}
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #e5e7eb; color: #1f2937; text-decoration: none; border-radius: 6px;">
-          View Booking Details
-        </a>
-      </p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Booking Confirmed!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Your booking has been confirmed with ${emailAccent(data.providerBusinessName)}.`),
+      emailDetailRows([
+        { label: "Service", value: data.serviceTitle },
+        { label: "Total", value: data.totalAmount },
+        { label: "Transaction ID", value: `#${data.transactionId}` },
+      ]),
+      paymentSection,
+      emailButton("View Booking Details", transactionUrl, "gray"),
+    ].join("\n"),
+  });
 
   const text = `
 Booking Confirmed!
@@ -598,37 +542,27 @@ export async function sendTransactionCreatedEmailToProvider(data: {
   const transactionUrl = `${MARKETPLACE_URL}/provider/transactions/${data.transactionId}`;
 
   const notesSection = data.buyerNotes
-    ? `
-      <h3 style="color: #1f2937; margin-top: 24px;">Buyer Notes</h3>
-      <div style="background: #f9fafb; padding: 16px; border-radius: 6px; margin: 16px 0;">
-        <p style="margin: 0;">${data.buyerNotes}</p>
-      </div>
-    `
+    ? [
+        emailHeading("Buyer Notes"),
+        emailInfoCard(`<p style="color: #d4d4d4; font-size: 14px; margin: 0; white-space: pre-wrap;">${data.buyerNotes}</p>`),
+      ].join("\n")
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">New Booking Received!</h2>
-      <p>Hi ${data.providerBusinessName},</p>
-      <p>You have received a new booking.</p>
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <h3 style="color: #1f2937; margin-top: 0;">Booking Details</h3>
-        <p style="margin: 8px 0;"><strong>${data.serviceTitle}</strong></p>
-        <p style="margin: 8px 0;">Buyer: ${data.buyerName}</p>
-        <p style="margin: 8px 0;">Amount: ${data.totalAmount}</p>
-        <p style="margin: 8px 0;">Transaction ID: #${data.transactionId}</p>
-      </div>
-      ${notesSection}
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Booking
-        </a>
-      </p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "New Booking Received!",
+    body: [
+      emailGreeting(data.providerBusinessName),
+      emailParagraph("You have received a new booking."),
+      emailDetailRows([
+        { label: "Service", value: data.serviceTitle },
+        { label: "Buyer", value: data.buyerName },
+        { label: "Amount", value: data.totalAmount },
+        { label: "Transaction ID", value: `#${data.transactionId}` },
+      ]),
+      notesSection,
+      emailButton("View Booking", transactionUrl),
+    ].join("\n"),
+  });
 
   const text = `
 New Booking Received!
@@ -674,25 +608,16 @@ export async function sendServiceStartedEmailToBuyer(data: {
   const transactionUrl = `${MARKETPLACE_URL}/transactions/${data.transactionId}`;
   const userName = data.buyerFirstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Service Started!</h2>
-      <p>Hi ${userName},</p>
-      <p>${data.providerBusinessName} has started working on your service.</p>
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>${data.serviceTitle}</strong></p>
-      </div>
-      <p>You can track the progress and communicate with the provider through your transaction page.</p>
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Transaction
-        </a>
-      </p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Service Started!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`${emailAccent(data.providerBusinessName)} has started working on your service.`),
+      emailInfoCard(`<p style="color: #e5e5e5; font-size: 15px; font-weight: 600; margin: 0;">${data.serviceTitle}</p>`),
+      emailParagraph("You can track the progress and communicate with the provider through your transaction page."),
+      emailButton("View Transaction", transactionUrl),
+    ].join("\n"),
+  });
 
   const text = `
 Service Started!
@@ -732,26 +657,17 @@ export async function sendServiceCompletedEmailToBuyer(data: {
   const reviewUrl = `${MARKETPLACE_URL}/transactions/${data.transactionId}/review`;
   const userName = data.buyerFirstName || "there";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Service Completed!</h2>
-      <p>Hi ${userName},</p>
-      <p>${data.providerBusinessName} has marked your service as complete.</p>
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>${data.serviceTitle}</strong></p>
-      </div>
-      <p>How was your experience?</p>
-      <p style="margin: 24px 0;">
-        <a href="${reviewUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          ★ Leave a Review
-        </a>
-      </p>
-      <p style="color: #6b7280; font-size: 14px;">Your feedback helps other buyers make informed decisions.</p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Service Completed!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`${emailAccent(data.providerBusinessName)} has marked your service as complete.`),
+      emailInfoCard(`<p style="color: #e5e5e5; font-size: 15px; font-weight: 600; margin: 0;">${data.serviceTitle}</p>`),
+      emailParagraph("How was your experience?"),
+      emailButton("Leave a Review", reviewUrl, "green"),
+      emailFootnote("Your feedback helps other buyers make informed decisions."),
+    ].join("\n"),
+  });
 
   const text = `
 Service Completed!
@@ -797,40 +713,35 @@ export async function sendCancellationEmail(data: {
     : `${MARKETPLACE_URL}/provider/transactions/${data.transactionId}`;
 
   const reasonSection = data.reason
-    ? `
-      <p><strong>Reason:</strong> ${data.reason}</p>
-    `
+    ? emailInfoCard(`
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0 0 4px 0; font-weight: 600;">Reason:</p>
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0;">${data.reason}</p>
+      `, { borderColor: "gray" })
     : "";
 
   const refundSection = data.refundInitiated
-    ? `
-      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <p style="margin: 0; color: #92400e;"><strong>A refund has been initiated.</strong> You should receive it within 5-10 business days.</p>
-      </div>
-    `
+    ? emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #f59e0b;">A refund has been initiated.</strong><br>
+          <span style="color: #a3a3a3;">You should receive it within 5-10 business days.</span>
+        </p>
+      `, { borderColor: "yellow" })
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Booking Cancelled</h2>
-      <p>Hi ${data.recipientName},</p>
-      <p>A booking has been cancelled.</p>
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>${data.serviceTitle}</strong></p>
-        <p style="margin: 8px 0 0 0;">Transaction ID: #${data.transactionId}</p>
-      </div>
-      ${reasonSection}
-      ${refundSection}
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #e5e7eb; color: #1f2937; text-decoration: none; border-radius: 6px;">
-          View Transaction
-        </a>
-      </p>
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Booking Cancelled",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph("A booking has been cancelled."),
+      emailDetailRows([
+        { label: "Service", value: data.serviceTitle },
+        { label: "Transaction ID", value: `#${data.transactionId}` },
+      ]),
+      reasonSection,
+      refundSection,
+      emailButton("View Transaction", transactionUrl, "gray"),
+    ].join("\n"),
+  });
 
   const text = `
 Booking Cancelled
@@ -875,42 +786,29 @@ export async function sendPaymentReceivedEmailToBuyer(data: {
 }): Promise<void> {
   const transactionUrl = `${MARKETPLACE_URL}/transactions/${data.transactionId}`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #16a34a;">✅ Payment Confirmed!</h2>
-
-      <p>Hi ${data.buyerFirstName},</p>
-
-      <p>Your payment for <strong>${data.serviceTitle}</strong> has been confirmed.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>Service:</strong> ${data.serviceTitle}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Provider:</strong> ${data.providerBusinessName}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Amount Paid:</strong> ${data.totalAmount}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Transaction ID:</strong> #${data.transactionId}</p>
-      </div>
-
-      <p><strong>What's Next?</strong></p>
-      <ul style="color: #6b7280;">
-        <li>The provider will be in touch to coordinate service delivery</li>
-        <li>You can message them directly through your transaction page</li>
-        <li>Once the service is complete, you'll be able to leave a review</li>
-      </ul>
-
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Transaction
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Confirmed!",
+    body: [
+      emailGreeting(data.buyerFirstName),
+      emailParagraph(`Your payment for ${emailAccent(data.serviceTitle)} has been confirmed.`),
+      emailDetailRows([
+        { label: "Service", value: data.serviceTitle },
+        { label: "Provider", value: data.providerBusinessName },
+        { label: "Amount Paid", value: data.totalAmount },
+        { label: "Transaction ID", value: `#${data.transactionId}` },
+      ]),
+      emailHeading("What's Next?"),
+      emailBulletList([
+        "The provider will be in touch to coordinate service delivery",
+        "You can message them directly through your transaction page",
+        "Once the service is complete, you'll be able to leave a review",
+      ]),
+      emailButton("View Transaction", transactionUrl),
+    ].join("\n"),
+  });
 
   const text = `
-✅ Payment Confirmed!
+Payment Confirmed!
 
 Hi ${data.buyerFirstName},
 
@@ -959,42 +857,29 @@ export async function sendPaymentReceivedEmailToProvider(data: {
     ? "Funds will be transferred to your Stripe account according to your payout schedule."
     : "You have confirmed receipt of the payment.";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #16a34a;">💰 Payment Received</h2>
-
-      <p>Hi ${data.providerBusinessName},</p>
-
-      <p>Payment has been confirmed for your service booking.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>Service:</strong> ${data.serviceTitle}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Customer:</strong> ${data.buyerName}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Amount:</strong> ${data.totalAmount}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Transaction ID:</strong> #${data.transactionId}</p>
-      </div>
-
-      <p><strong>Next Steps:</strong></p>
-      <ul style="color: #6b7280;">
-        <li>Coordinate with the customer to schedule service delivery</li>
-        <li>Mark the service as complete when finished</li>
-        <li>${paymentInfo}</li>
-      </ul>
-
-      <p style="margin: 24px 0;">
-        <a href="${transactionUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Transaction
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Received",
+    body: [
+      emailGreeting(data.providerBusinessName),
+      emailParagraph("Payment has been confirmed for your service booking."),
+      emailDetailRows([
+        { label: "Service", value: data.serviceTitle },
+        { label: "Customer", value: data.buyerName },
+        { label: "Amount", value: data.totalAmount },
+        { label: "Transaction ID", value: `#${data.transactionId}` },
+      ]),
+      emailHeading("Next Steps"),
+      emailBulletList([
+        "Coordinate with the customer to schedule service delivery",
+        "Mark the service as complete when finished",
+        paymentInfo,
+      ]),
+      emailButton("View Transaction", transactionUrl),
+    ].join("\n"),
+  });
 
   const text = `
-💰 Payment Received
+Payment Received
 
 Hi ${data.providerBusinessName},
 
@@ -1046,51 +931,21 @@ export async function sendNewMessageNotificationEmail(data: {
       ? data.messagePreview.substring(0, 200) + "..."
       : data.messagePreview;
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Message</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="text-align: center; margin-bottom: 30px;">
-    <h1 style="color: #2563eb; margin: 0; font-size: 24px;">${FROM_NAME}</h1>
-  </div>
-
-  <div style="background: #f8fafc; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
-    <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #1e293b;">New Message</h2>
-    <p style="margin: 0 0 16px 0; color: #64748b;">
-      You have a new message from <strong>${data.senderName}</strong> regarding:
-    </p>
-    <p style="margin: 0 0 16px 0; font-weight: 600; color: #1e293b;">
-      ${data.serviceTitle}
-    </p>
-    <div style="background: #ffffff; border-left: 4px solid #2563eb; padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0;">
-      <p style="margin: 0; color: #475569; font-style: italic;">
-        "${preview}"
-      </p>
-    </div>
-  </div>
-
-  <div style="text-align: center; margin-bottom: 24px;">
-    <a href="${transactionUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: 600;">View & Reply</a>
-  </div>
-
-  <div style="text-align: center; color: #94a3b8; font-size: 14px;">
-    <p style="margin: 0;">Transaction #${data.transactionId}</p>
-  </div>
-
-  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
-
-  <div style="text-align: center; color: #94a3b8; font-size: 12px;">
-    <p style="margin: 0 0 8px 0;">You're receiving this email because you have an active transaction on ${FROM_NAME}.</p>
-    <p style="margin: 0;">© ${new Date().getFullYear()} ${FROM_NAME}. All rights reserved.</p>
-  </div>
-</body>
-</html>
-  `.trim();
+  const html = wrapEmailLayout({
+    title: "New Message",
+    body: [
+      emailGreeting(data.recipientName),
+      emailParagraph(`You have a new message from ${emailAccent(data.senderName)} regarding:`),
+      emailParagraph(`<strong style="color: #ffffff;">${data.serviceTitle}</strong>`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; font-style: italic; line-height: 1.6;">
+          "${preview}"
+        </p>
+      `, { borderColor: "blue" }),
+      emailButton("View & Reply", transactionUrl, "blue"),
+      emailFootnote(`Transaction #${data.transactionId}`),
+    ].join("\n"),
+  });
 
   const text = `
 New Message from ${data.senderName}
@@ -1134,30 +989,19 @@ export async function sendInquiryConfirmationToUser(data: {
     ? `Your inquiry about "${data.listingTitle}" has been sent`
     : `Your inquiry to ${data.breederName} has been sent`;
 
-  const html = `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2 style="color: #10b981;">Inquiry Sent Successfully!</h2>
-  <p>Hi ${userName},</p>
-  <p>Your inquiry to <strong>${data.breederName}</strong>${data.listingTitle ? ` about "${data.listingTitle}"` : ""} has been sent.</p>
-
-  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Your message:</p>
-    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
-  </div>
-
-  <p>The breeder will receive your message and respond as soon as possible. You'll get an email notification when they reply.</p>
-
-  <p>
-    <a href="${MARKETPLACE_URL}/inquiries" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
-      View Your Inquiries
-    </a>
-  </p>
-
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-    — The ${FROM_NAME} Team
-  </p>
-</div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Inquiry Sent Successfully!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Your inquiry to ${emailAccent(data.breederName)}${data.listingTitle ? ` about "${data.listingTitle}"` : ""} has been sent.`),
+      emailInfoCard(`
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0 0 8px 0; font-weight: 600;">Your message:</p>
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; white-space: pre-wrap;">${data.message}</p>
+      `, { borderColor: "gray" }),
+      emailParagraph("The breeder will receive your message and respond as soon as possible. You'll get an email notification when they reply."),
+      emailButton("View Your Inquiries", `${MARKETPLACE_URL}/inquiries`),
+    ].join("\n"),
+  });
 
   const text = `
 Inquiry Sent Successfully!
@@ -1206,37 +1050,23 @@ export async function sendInquiryNotificationToBreeder(data: {
     ? `New inquiry from ${data.inquirerName}: ${data.listingTitle}`
     : `New inquiry from ${data.inquirerName}`;
 
-  const html = `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2 style="color: #f97316;">New Inquiry Received!</h2>
-  <p>Hi ${breederName},</p>
-  <p>You have a new inquiry from the marketplace${data.listingTitle ? ` about <strong>"${data.listingTitle}"</strong>` : ""}.</p>
-
-  <div style="background: #fff7ed; border-left: 4px solid #f97316; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: #c2410c;">
-      ${data.inquirerName}
-    </p>
-    <strong>Email:</strong> <a href="mailto:${data.inquirerEmail}">${data.inquirerEmail}</a>
-  </div>
-
-  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 16px 0;">
-    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Their message:</p>
-    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
-  </div>
-
-  <p>
-    <a href="${APP_URL}/messages/${data.threadId}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
-      Reply to Inquiry
-    </a>
-  </p>
-
-  <p style="color: #666; font-size: 14px; margin-top: 32px;">
-    Quick responses help build trust with potential buyers!
-    <br><br>
-    — The BreederHQ Team
-  </p>
-</div>
-  `;
+  const html = wrapEmailLayout({
+    title: "New Inquiry Received!",
+    body: [
+      emailGreeting(breederName),
+      emailParagraph(`You have a new inquiry from the marketplace${data.listingTitle ? ` about ${emailAccent(`"${data.listingTitle}"`)}` : ""}.`),
+      emailInfoCard(`
+        <p style="color: #f97316; font-size: 18px; font-weight: 600; margin: 0 0 12px 0;">${data.inquirerName}</p>
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0;"><strong style="color: #d4d4d4;">Email:</strong> <a href="mailto:${data.inquirerEmail}" style="color: #f97316; text-decoration: none;">${data.inquirerEmail}</a></p>
+      `, { borderColor: "orange" }),
+      emailInfoCard(`
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0 0 8px 0; font-weight: 600;">Their message:</p>
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; white-space: pre-wrap;">${data.message}</p>
+      `, { borderColor: "gray" }),
+      emailButton("Reply to Inquiry", `${APP_URL}/messages/${data.threadId}`),
+      emailFootnote("Quick responses help build trust with potential buyers!"),
+    ].join("\n"),
+  });
 
   const text = `
 New Inquiry Received!
@@ -1284,40 +1114,27 @@ export async function sendWaitlistConfirmationToUser(data: {
   const userName = data.userName || "there";
 
   const messageSection = data.message
-    ? `
-  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Your message:</p>
-    <p style="margin: 0; color: #4b5563; white-space: pre-wrap;">${data.message}</p>
-  </div>
-    `
+    ? emailInfoCard(`
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0 0 8px 0; font-weight: 600;">Your message:</p>
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; white-space: pre-wrap;">${data.message}</p>
+      `, { borderColor: "gray" })
     : "";
 
-  const html = `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2 style="color: #10b981;">Waitlist Request Submitted!</h2>
-  <p>Hi ${userName},</p>
-  <p>Your request to join the waitlist for <strong>${data.programName}</strong> at <strong>${data.breederName}</strong> has been submitted.</p>
-
-  ${messageSection}
-
-  <div style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0; color: #1e40af;">
-      <strong>What happens next?</strong><br>
-      The breeder will review your request and may reach out with questions or next steps. You'll receive an email notification when your request is approved.
-    </p>
-  </div>
-
-  <p>
-    <a href="${MARKETPLACE_URL}/inquiries?tab=waitlist" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
-      View Your Waitlist Requests
-    </a>
-  </p>
-
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-    — The ${FROM_NAME} Team
-  </p>
-</div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Waitlist Request Submitted!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Your request to join the waitlist for ${emailAccent(data.programName)} at ${emailAccent(data.breederName)} has been submitted.`),
+      messageSection,
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #3b82f6;">What happens next?</strong><br>
+          <span style="color: #a3a3a3;">The breeder will review your request and may reach out with questions or next steps. You'll receive an email notification when your request is approved.</span>
+        </p>
+      `, { borderColor: "blue" }),
+      emailButton("View Your Waitlist Requests", `${MARKETPLACE_URL}/inquiries?tab=waitlist`),
+    ].join("\n"),
+  });
 
   const text = `
 Waitlist Request Submitted!
@@ -1358,36 +1175,26 @@ export async function sendWaitlistApprovalToUser(data: {
   tenantSlug?: string;
 }): Promise<void> {
   const userName = data.userName || "there";
-  const programInfo = data.programName ? ` for <strong>${data.programName}</strong>` : "";
+  const programInfo = data.programName ? ` for ${emailAccent(data.programName)}` : "";
   const programInfoText = data.programName ? ` for ${data.programName}` : "";
   const viewUrl = data.tenantSlug
     ? `${MARKETPLACE_URL}/breeders/${data.tenantSlug}`
     : `${MARKETPLACE_URL}/inquiries?tab=waitlist`;
 
-  const html = `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2 style="color: #10b981;">Great News - You've Been Approved!</h2>
-  <p>Hi ${userName},</p>
-  <p>Your waitlist request${programInfo} at <strong>${data.breederName}</strong> has been <span style="color: #10b981; font-weight: 600;">approved</span>!</p>
-
-  <div style="background: #d1fae5; border-left: 4px solid #10b981; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0; color: #065f46;">
-      <strong>You're on the list!</strong><br>
-      The breeder may reach out with next steps, including any deposit requirements or additional information needed.
-    </p>
-  </div>
-
-  <p>
-    <a href="${viewUrl}" style="display: inline-block; padding: 12px 24px; background: #10b981; color: #fff; text-decoration: none; border-radius: 6px;">
-      View Details
-    </a>
-  </p>
-
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-    — The ${FROM_NAME} Team
-  </p>
-</div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Great News - You've Been Approved!",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`Your waitlist request${programInfo} at ${emailAccent(data.breederName)} has been <strong style="color: #10b981;">approved</strong>!`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #10b981;">You're on the list!</strong><br>
+          <span style="color: #a3a3a3;">The breeder may reach out with next steps, including any deposit requirements or additional information needed.</span>
+        </p>
+      `, { borderColor: "green" }),
+      emailButton("View Details", viewUrl, "green"),
+    ].join("\n"),
+  });
 
   const text = `
 Great News - You've Been Approved!
@@ -1426,44 +1233,31 @@ export async function sendWaitlistRejectionToUser(data: {
   reason?: string;
 }): Promise<void> {
   const userName = data.userName || "there";
-  const programInfo = data.programName ? ` for <strong>${data.programName}</strong>` : "";
+  const programInfo = data.programName ? ` for ${emailAccent(data.programName)}` : "";
   const programInfoText = data.programName ? ` for ${data.programName}` : "";
 
   const reasonSection = data.reason
-    ? `
-  <div style="background: #f3f4f6; border-left: 4px solid #6b7280; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Reason provided:</p>
-    <p style="margin: 0; color: #4b5563;">${data.reason}</p>
-  </div>
-    `
+    ? emailInfoCard(`
+        <p style="color: #a3a3a3; font-size: 14px; margin: 0 0 8px 0; font-weight: 600;">Reason provided:</p>
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0;">${data.reason}</p>
+      `, { borderColor: "gray" })
     : "";
 
-  const html = `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2 style="color: #6b7280;">Waitlist Request Update</h2>
-  <p>Hi ${userName},</p>
-  <p>We wanted to let you know that your waitlist request${programInfo} at <strong>${data.breederName}</strong> was not approved at this time.</p>
-
-  ${reasonSection}
-
-  <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
-    <p style="margin: 0; color: #92400e;">
-      <strong>Don't be discouraged!</strong><br>
-      Breeders often have limited availability and receive many requests. You're welcome to explore other breeders on our marketplace or try again in the future.
-    </p>
-  </div>
-
-  <p>
-    <a href="${MARKETPLACE_URL}/breeders" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px;">
-      Browse Other Breeders
-    </a>
-  </p>
-
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-    — The ${FROM_NAME} Team
-  </p>
-</div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Waitlist Request Update",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`We wanted to let you know that your waitlist request${programInfo} at ${emailAccent(data.breederName)} was not approved at this time.`),
+      reasonSection,
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #f59e0b;">Don't be discouraged!</strong><br>
+          <span style="color: #a3a3a3;">Breeders often have limited availability and receive many requests. You're welcome to explore other breeders on our marketplace or try again in the future.</span>
+        </p>
+      `, { borderColor: "yellow" }),
+      emailButton("Browse Other Breeders", `${MARKETPLACE_URL}/breeders`),
+    ].join("\n"),
+  });
 
   const text = `
 Waitlist Request Update
@@ -1493,6 +1287,55 @@ Browse other breeders at: ${MARKETPLACE_URL}/breeders
   });
 }
 
+/**
+ * Send notification to user when a breeder removes them from their waitlist.
+ */
+export async function sendWaitlistRemovalToUser(data: {
+  userEmail: string;
+  userName: string;
+  breederName: string;
+}): Promise<void> {
+  const userName = data.userName || "there";
+
+  const html = wrapEmailLayout({
+    title: "Waitlist Update",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`We wanted to let you know that ${emailAccent(data.breederName)} has removed your entry from their waitlist.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <span style="color: #a3a3a3;">This can happen for a variety of reasons and doesn't reflect on you. You're welcome to explore other breeders on our marketplace or reach out to them directly if you'd like more information.</span>
+        </p>
+      `, { borderColor: "gray" }),
+      emailButton("Browse Other Breeders", `${MARKETPLACE_URL}/breeders`),
+    ].join("\n"),
+  });
+
+  const text = `
+Waitlist Update
+
+Hi ${userName},
+
+We wanted to let you know that ${data.breederName} has removed your entry from their waitlist.
+
+This can happen for a variety of reasons and doesn't reflect on you. You're welcome to explore other breeders on our marketplace or reach out to them directly if you'd like more information.
+
+Browse other breeders at: ${MARKETPLACE_URL}/breeders
+
+— The ${FROM_NAME} Team
+  `.trim();
+
+  await sendEmail({
+    tenantId: null,
+    to: data.userEmail,
+    subject: `Waitlist update from ${data.breederName}`,
+    html,
+    text,
+    templateKey: "marketplace_waitlist_removed",
+    category: "transactional",
+  });
+}
+
 // ---------- Admin & Operational Notifications (P-02) ----------
 
 // Admin notification email (configurable)
@@ -1511,35 +1354,24 @@ export async function sendAdminListingFlaggedNotification(data: {
 }): Promise<void> {
   const adminUrl = `${MARKETPLACE_URL}/admin/listings/${data.listingId}`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">⚠️ Listing Auto-Flagged</h2>
-      <p>A service listing has been automatically flagged due to multiple abuse reports.</p>
-
-      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
-        <p style="margin: 0; font-weight: 600;">Listing Details</p>
-        <p style="margin: 8px 0 0 0;"><strong>Title:</strong> ${data.listingTitle}</p>
-        <p style="margin: 4px 0 0 0;"><strong>Listing ID:</strong> ${data.listingId}</p>
-        <p style="margin: 4px 0 0 0;"><strong>Provider:</strong> ${data.providerBusinessName} (ID: ${data.providerId})</p>
-        <p style="margin: 4px 0 0 0;"><strong>Reports in 24h:</strong> ${data.reportCount}</p>
-      </div>
-
-      <p>Please review this listing and take appropriate action.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${adminUrl}" style="display: inline-block; padding: 12px 24px; background: #dc2626; color: #fff; text-decoration: none; border-radius: 6px;">
-          Review Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — ${FROM_NAME} Automated Notifications
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Listing Auto-Flagged",
+    body: [
+      emailParagraph("A service listing has been automatically flagged due to multiple abuse reports."),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; font-weight: 600;">Listing Details</p>
+        <p style="color: #a3a3a3; font-size: 14px; margin: 8px 0 0 0;"><strong style="color: #d4d4d4;">Title:</strong> ${data.listingTitle}</p>
+        <p style="color: #a3a3a3; font-size: 14px; margin: 4px 0 0 0;"><strong style="color: #d4d4d4;">Listing ID:</strong> ${data.listingId}</p>
+        <p style="color: #a3a3a3; font-size: 14px; margin: 4px 0 0 0;"><strong style="color: #d4d4d4;">Provider:</strong> ${data.providerBusinessName} (ID: ${data.providerId})</p>
+        <p style="color: #a3a3a3; font-size: 14px; margin: 4px 0 0 0;"><strong style="color: #d4d4d4;">Reports in 24h:</strong> <span style="color: #dc2626; font-weight: 600;">${data.reportCount}</span></p>
+      `, { borderColor: "red" }),
+      emailParagraph("Please review this listing and take appropriate action."),
+      emailButton("Review Listing", adminUrl, "red"),
+    ].join("\n"),
+  });
 
   const text = `
-⚠️ Listing Auto-Flagged
+Listing Auto-Flagged
 
 A service listing has been automatically flagged due to multiple abuse reports.
 
@@ -1580,44 +1412,31 @@ export async function sendProviderVerificationFailedNotification(data: {
   const verificationUrl = `${MARKETPLACE_URL}/provider/settings/verification`;
 
   const reasonText = data.failureReason
-    ? `<p style="margin: 8px 0 0 0;"><strong>Details:</strong> ${data.failureReason}</p>`
+    ? `<br><span style="color: #a3a3a3;">${data.failureReason}</span>`
     : "";
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Identity Verification Update</h2>
-      <p>Hi ${userName},</p>
-      <p>We were unable to complete your identity verification${data.businessName ? ` for <strong>${data.businessName}</strong>` : ""}.</p>
-
-      <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f59e0b;">
-        <p style="margin: 0; color: #92400e; font-weight: 600;">⚠️ Verification Incomplete</p>
-        ${reasonText}
-      </div>
-
-      <h3 style="color: #374151;">What To Do Next</h3>
-      <p>Please try the verification process again. Common issues include:</p>
-      <ul style="color: #6b7280;">
-        <li>Document was unclear or partially visible</li>
-        <li>Photo didn't match the document</li>
-        <li>Document type wasn't accepted</li>
-        <li>Session timed out</li>
-      </ul>
-
-      <p style="margin: 24px 0;">
-        <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Try Again
-        </a>
-      </p>
-
-      <p style="color: #6b7280; font-size: 14px;">
-        If you continue to have issues, please contact our support team.
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Identity Verification Update",
+    body: [
+      emailGreeting(userName),
+      emailParagraph(`We were unable to complete your identity verification${data.businessName ? ` for ${emailAccent(data.businessName)}` : ""}.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          <strong style="color: #f59e0b;">&#9888; Verification Incomplete</strong>${reasonText}
+        </p>
+      `, { borderColor: "yellow" }),
+      emailHeading("What To Do Next"),
+      emailParagraph("Please try the verification process again. Common issues include:"),
+      emailBulletList([
+        "Document was unclear or partially visible",
+        "Photo didn't match the document",
+        "Document type wasn't accepted",
+        "Session timed out",
+      ]),
+      emailButton("Try Again", verificationUrl, "blue"),
+      emailFootnote("If you continue to have issues, please contact our support team."),
+    ].join("\n"),
+  });
 
   const text = `
 Identity Verification Update
@@ -1668,42 +1487,29 @@ export async function sendInvoicePaymentFailedToProvider(data: {
 }): Promise<void> {
   const dashboardUrl = `${MARKETPLACE_URL}/provider/invoices/${data.invoiceId}`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">⚠️ Payment Failed</h2>
-
-      <p>Hi ${data.providerBusinessName},</p>
-
-      <p>A payment attempt for invoice <strong>${data.invoiceNumber}</strong> has failed.</p>
-
-      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
-        <p style="margin: 0;"><strong>Invoice:</strong> ${data.invoiceNumber}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Customer:</strong> ${data.clientName}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Amount:</strong> ${data.totalAmount}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Payment Attempts:</strong> ${data.attemptCount}</p>
-      </div>
-
-      <p><strong>What happens next?</strong></p>
-      <ul style="color: #6b7280;">
-        <li>Stripe will automatically retry the payment</li>
-        <li>The customer has been notified to update their payment method</li>
-        <li>You can reach out to the customer directly if needed</li>
-      </ul>
-
-      <p style="margin: 24px 0;">
-        <a href="${dashboardUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          View Invoice
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Failed",
+    body: [
+      emailGreeting(data.providerBusinessName),
+      emailParagraph(`A payment attempt for invoice ${emailAccent(data.invoiceNumber)} has failed.`),
+      emailDetailRows([
+        { label: "Invoice", value: data.invoiceNumber },
+        { label: "Customer", value: data.clientName },
+        { label: "Amount", value: data.totalAmount },
+        { label: "Payment Attempts", value: String(data.attemptCount) },
+      ]),
+      emailHeading("What happens next?"),
+      emailBulletList([
+        "Stripe will automatically retry the payment",
+        "The customer has been notified to update their payment method",
+        "You can reach out to the customer directly if needed",
+      ]),
+      emailButton("View Invoice", dashboardUrl, "blue"),
+    ].join("\n"),
+  });
 
   const text = `
-⚠️ Payment Failed
+Payment Failed
 
 Hi ${data.providerBusinessName},
 
@@ -1743,36 +1549,24 @@ export async function sendInactiveAddressAutoReply(data: {
   fromSlug: string;
   originalSubject: string;
 }): Promise<void> {
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Email Delivery Failed</h2>
-      <p>Your email to <strong>${data.fromSlug}@mail.breederhq.com</strong> could not be delivered.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>Original Subject:</strong> ${data.originalSubject || "(no subject)"}</p>
-      </div>
-
-      <p>This email address is not currently active or does not exist. Possible reasons:</p>
-      <ul style="color: #6b7280;">
-        <li>The business may have changed their email address</li>
-        <li>The account may no longer be active on BreederHQ</li>
-        <li>There may be a typo in the address</li>
-      </ul>
-
-      <p>If you're trying to reach a breeder or service provider on BreederHQ, please visit our marketplace to find their current contact information.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${MARKETPLACE_URL}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">
-          Visit BreederHQ Marketplace
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        This is an automated message. Please do not reply.
-        <br>— ${FROM_NAME}
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Email Delivery Failed",
+    body: [
+      emailParagraph(`Your email to <strong style="color: #ffffff;">${data.fromSlug}@mail.breederhq.com</strong> could not be delivered.`),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0;"><strong style="color: #a3a3a3;">Original Subject:</strong> ${data.originalSubject || "(no subject)"}</p>
+      `),
+      emailParagraph("This email address is not currently active or does not exist. Possible reasons:"),
+      emailBulletList([
+        "The business may have changed their email address",
+        "The account may no longer be active on BreederHQ",
+        "There may be a typo in the address",
+      ]),
+      emailParagraph("If you're trying to reach a breeder or service provider on BreederHQ, please visit our marketplace to find their current contact information."),
+      emailButton("Visit BreederHQ Marketplace", MARKETPLACE_URL),
+      emailFootnote("This is an automated message. Please do not reply."),
+    ].join("\n"),
+  });
 
   const text = `
 Email Delivery Failed

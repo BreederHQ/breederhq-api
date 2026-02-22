@@ -63,9 +63,30 @@ export interface BreedingPlanBuyerDTO {
   offspringGroupBuyerId: number | null;
   offspringId: number | null;
 
+  // Deposit invoice (linked directly to this plan buyer)
+  depositInvoiceId: number | null;
+  depositInvoiceStatus: string | null;
+  depositInvoiceBalanceCents: number | null;
+  depositInvoiceTotalCents: number | null;
+
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UnappliedCredit {
+  invoiceId: number;
+  invoiceNumber: string;
+  amountCents: number;
+}
+
+export interface AssignBuyerResponse {
+  buyer: BreedingPlanBuyerDTO;
+  unappliedCredit: UnappliedCredit | null;
+}
+
+export interface ApplyCreditRequest {
+  invoiceId: number;
 }
 
 export interface PlanBuyersSummary {

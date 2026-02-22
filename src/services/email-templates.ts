@@ -1,5 +1,16 @@
 // src/services/email-templates.ts
 
+import {
+  wrapEmailLayout,
+  emailButton,
+  emailInfoCard,
+  emailDetailRows,
+  emailGreeting,
+  emailParagraph,
+  emailHeading,
+  emailAccent,
+} from "./email-layout.js";
+
 export interface InvoiceTemplateParams {
   invoiceNumber: string;
   amountCents: number;
@@ -40,53 +51,22 @@ Thank you,
 ${tenantName}
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #f97316 0%, #0d9488 100%); color: white; padding: 30px 20px; text-align: center; border-radius: 8px 8px 0 0; }
-    .content { background: #f9fafb; padding: 30px 20px; border-radius: 0 0 8px 8px; }
-    .invoice-card { background: white; padding: 20px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #f97316; }
-    .amount { font-size: 24px; font-weight: bold; color: #f97316; }
-    .button { display: inline-block; background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
-    .footer { text-align: center; color: #6b7280; font-size: 14px; margin-top: 20px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 style="margin: 0;">Invoice Ready</h1>
-    </div>
-    <div class="content">
-      <p>Hi <strong>${clientName}</strong>,</p>
-      <p>Your invoice from <strong>${tenantName}</strong> is ready.</p>
-
-      <div class="invoice-card">
-        <p style="margin: 0 0 10px 0; color: #6b7280; font-size: 14px;">Invoice Number</p>
-        <p style="margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">${invoiceNumber}</p>
-
-        <p style="margin: 0 0 10px 0; color: #6b7280; font-size: 14px;">Amount Due</p>
-        <p class="amount">${currency} ${amount}</p>
-
-        <p style="margin: 20px 0 10px 0; color: #6b7280; font-size: 14px;">Payment Due</p>
-        <p style="margin: 0;">${dueDate}</p>
-      </div>
-
-      ${invoiceUrl ? `<a href="${invoiceUrl}" class="button">View Invoice</a>` : '<p>Please contact us for payment details.</p>'}
-
-      <div class="footer">
-        <p>Thank you,<br/>${tenantName}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = wrapEmailLayout({
+    title: "Invoice Ready",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph(`Your invoice from ${emailAccent(tenantName)} is ready.`),
+      emailDetailRows([
+        { label: "Invoice Number", value: invoiceNumber },
+        { label: "Amount Due", value: `${currency} ${amount}` },
+        { label: "Payment Due", value: dueDate },
+      ]),
+      invoiceUrl
+        ? emailButton("View Invoice", invoiceUrl)
+        : emailParagraph("Please contact us for payment details."),
+    ].join("\n"),
+  });
 
   return { subject, html, text };
 }
@@ -128,12 +108,12 @@ function formatSchedulingTime(date: Date): string {
 
 function buildLocationHtml(location: string | null, mode: "in_person" | "virtual" | null): string {
   if (mode === "virtual") {
-    return '<p style="margin: 10px 0;"><strong>Location:</strong> Virtual Meeting</p>';
+    return '<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">Location:</strong> Virtual Meeting</p>';
   }
   if (location) {
-    return `<p style="margin: 10px 0;"><strong>Location:</strong> ${location}</p>`;
+    return `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">Location:</strong> ${location}</p>`;
   }
-  return '<p style="margin: 10px 0;"><strong>Location:</strong> To be confirmed</p>';
+  return '<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">Location:</strong> To be confirmed</p>';
 }
 
 function buildLocationText(location: string | null, mode: "in_person" | "virtual" | null): string {
@@ -145,24 +125,6 @@ function buildLocationText(location: string | null, mode: "in_person" | "virtual
   }
   return "Location: To be confirmed";
 }
-
-const emailStyles = `
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #f97316 0%, #0d9488 100%); color: white; padding: 30px 20px; text-align: center; border-radius: 8px 8px 0 0; }
-    .content { background: #f9fafb; padding: 30px 20px; border-radius: 0 0 8px 8px; }
-    .card { background: white; padding: 20px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #0d9488; }
-    .card-cancel { border-left-color: #ef4444; }
-    .card-reschedule { border-left-color: #f97316; }
-    .card-reminder { border-left-color: #3b82f6; }
-    .event-type { font-size: 18px; font-weight: 600; color: #0d9488; margin-bottom: 15px; }
-    .next-steps { background: #fef3c7; padding: 15px; border-radius: 6px; margin-top: 15px; }
-    .next-steps-title { font-weight: 600; color: #92400e; margin-bottom: 10px; }
-    .button { display: inline-block; background: #0d9488; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
-    .footer { text-align: center; color: #6b7280; font-size: 14px; margin-top: 20px; }
-  </style>
-`;
 
 export function renderBookingConfirmationEmail(params: SchedulingEmailParams): { subject: string; html: string; text: string } {
   const { eventType, clientName, breederName, tenantName, startsAt, endsAt, location, mode, nextSteps, portalUrl } = params;
@@ -189,46 +151,33 @@ Thank you,
 ${tenantName}
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${emailStyles}
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 style="margin: 0;">Appointment Confirmed</h1>
-    </div>
-    <div class="content">
-      <p>Hi <strong>${clientName}</strong>,</p>
-      <p>Your appointment has been confirmed!</p>
-
-      <div class="card">
-        <div class="event-type">${eventType}</div>
-        <p style="margin: 10px 0;"><strong>When:</strong> ${dateStr} - ${endTimeStr}</p>
-        ${buildLocationHtml(location, mode)}
-        <p style="margin: 10px 0;"><strong>With:</strong> ${breederName}</p>
-        ${nextSteps ? `
-        <div class="next-steps">
-          <div class="next-steps-title">Next Steps</div>
-          <p style="margin: 0; white-space: pre-wrap;">${nextSteps}</p>
-        </div>
-        ` : ""}
-      </div>
-
-      ${portalUrl ? `<a href="${portalUrl}" class="button">View in Portal</a>` : ""}
-
-      <div class="footer">
-        <p>Thank you,<br/>${tenantName}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = wrapEmailLayout({
+    title: "Appointment Confirmed",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph("Your appointment has been confirmed!"),
+      emailInfoCard(
+        [
+          `<p style="color: #f97316; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${eventType}</p>`,
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">When:</strong> ${dateStr} - ${endTimeStr}</p>`,
+          buildLocationHtml(location, mode),
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">With:</strong> ${breederName}</p>`,
+        ].join("\n"),
+        { borderColor: "orange" },
+      ),
+      nextSteps
+        ? emailInfoCard(
+            [
+              emailHeading("Next Steps"),
+              `<p style="color: #e5e5e5; margin: 0; white-space: pre-wrap;">${nextSteps}</p>`,
+            ].join("\n"),
+            { borderColor: "yellow" },
+          )
+        : "",
+      portalUrl ? emailButton("View in Portal", portalUrl) : "",
+    ].join("\n"),
+  });
 
   return { subject, html, text };
 }
@@ -259,42 +208,25 @@ Thank you,
 ${tenantName}
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${emailStyles}
-</head>
-<body>
-  <div class="container">
-    <div class="header" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
-      <h1 style="margin: 0;">Appointment Cancelled</h1>
-    </div>
-    <div class="content">
-      <p>Hi <strong>${clientName}</strong>,</p>
-      <p>Your appointment has been cancelled.</p>
-
-      <div class="card card-cancel">
-        <div class="event-type" style="color: #ef4444;">${eventType}</div>
-        <p style="margin: 10px 0;"><strong>Original Time:</strong> ${dateStr} - ${endTimeStr}</p>
-        ${buildLocationHtml(location, mode)}
-        <p style="margin: 10px 0;"><strong>With:</strong> ${breederName}</p>
-      </div>
-
-      <p>If you'd like to reschedule, please visit the portal or contact ${breederName}.</p>
-
-      ${portalUrl ? `<a href="${portalUrl}" class="button" style="background: #ef4444;">View in Portal</a>` : ""}
-
-      <div class="footer">
-        <p>Thank you,<br/>${tenantName}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = wrapEmailLayout({
+    title: "Appointment Cancelled",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph("Your appointment has been cancelled."),
+      emailInfoCard(
+        [
+          `<p style="color: #dc2626; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${eventType}</p>`,
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">Original Time:</strong> ${dateStr} - ${endTimeStr}</p>`,
+          buildLocationHtml(location, mode),
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">With:</strong> ${breederName}</p>`,
+        ].join("\n"),
+        { borderColor: "red" },
+      ),
+      emailParagraph(`If you'd like to reschedule, please visit the portal or contact ${breederName}.`),
+      portalUrl ? emailButton("View in Portal", portalUrl, "red") : "",
+    ].join("\n"),
+  });
 
   return { subject, html, text };
 }
@@ -334,47 +266,34 @@ Thank you,
 ${tenantName}
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${emailStyles}
-</head>
-<body>
-  <div class="container">
-    <div class="header" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
-      <h1 style="margin: 0;">Appointment Rescheduled</h1>
-    </div>
-    <div class="content">
-      <p>Hi <strong>${clientName}</strong>,</p>
-      <p>Your appointment has been rescheduled.</p>
-
-      <div class="card card-reschedule">
-        <div class="event-type" style="color: #f97316;">${eventType}</div>
-        <p style="margin: 10px 0;"><strong>NEW TIME:</strong> ${newDateStr} - ${newEndTimeStr}</p>
-        <p style="margin: 10px 0; color: #6b7280; font-size: 14px;"><s>Previously: ${oldDateStr} - ${oldEndTimeStr}</s></p>
-        ${buildLocationHtml(location, mode)}
-        <p style="margin: 10px 0;"><strong>With:</strong> ${breederName}</p>
-        ${nextSteps ? `
-        <div class="next-steps">
-          <div class="next-steps-title">Next Steps</div>
-          <p style="margin: 0; white-space: pre-wrap;">${nextSteps}</p>
-        </div>
-        ` : ""}
-      </div>
-
-      ${portalUrl ? `<a href="${portalUrl}" class="button" style="background: #f97316;">View in Portal</a>` : ""}
-
-      <div class="footer">
-        <p>Thank you,<br/>${tenantName}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = wrapEmailLayout({
+    title: "Appointment Rescheduled",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph("Your appointment has been rescheduled."),
+      emailInfoCard(
+        [
+          `<p style="color: #f97316; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${eventType}</p>`,
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">NEW TIME:</strong> ${newDateStr} - ${newEndTimeStr}</p>`,
+          `<p style="color: #737373; margin: 10px 0; font-size: 14px;"><s>Previously: ${oldDateStr} - ${oldEndTimeStr}</s></p>`,
+          buildLocationHtml(location, mode),
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">With:</strong> ${breederName}</p>`,
+        ].join("\n"),
+        { borderColor: "orange" },
+      ),
+      nextSteps
+        ? emailInfoCard(
+            [
+              emailHeading("Next Steps"),
+              `<p style="color: #e5e5e5; margin: 0; white-space: pre-wrap;">${nextSteps}</p>`,
+            ].join("\n"),
+            { borderColor: "yellow" },
+          )
+        : "",
+      portalUrl ? emailButton("View in Portal", portalUrl) : "",
+    ].join("\n"),
+  });
 
   return { subject, html, text };
 }
@@ -404,46 +323,33 @@ Thank you,
 ${tenantName}
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${emailStyles}
-</head>
-<body>
-  <div class="container">
-    <div class="header" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);">
-      <h1 style="margin: 0;">Appointment Reminder</h1>
-    </div>
-    <div class="content">
-      <p>Hi <strong>${clientName}</strong>,</p>
-      <p>This is a friendly reminder about your upcoming appointment.</p>
-
-      <div class="card card-reminder">
-        <div class="event-type" style="color: #3b82f6;">${eventType}</div>
-        <p style="margin: 10px 0;"><strong>When:</strong> ${dateStr} - ${endTimeStr}</p>
-        ${buildLocationHtml(location, mode)}
-        <p style="margin: 10px 0;"><strong>With:</strong> ${breederName}</p>
-        ${nextSteps ? `
-        <div class="next-steps">
-          <div class="next-steps-title">Reminder - Next Steps</div>
-          <p style="margin: 0; white-space: pre-wrap;">${nextSteps}</p>
-        </div>
-        ` : ""}
-      </div>
-
-      ${portalUrl ? `<a href="${portalUrl}" class="button" style="background: #3b82f6;">View in Portal</a>` : ""}
-
-      <div class="footer">
-        <p>Thank you,<br/>${tenantName}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = wrapEmailLayout({
+    title: "Appointment Reminder",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph("This is a friendly reminder about your upcoming appointment."),
+      emailInfoCard(
+        [
+          `<p style="color: #3b82f6; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${eventType}</p>`,
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">When:</strong> ${dateStr} - ${endTimeStr}</p>`,
+          buildLocationHtml(location, mode),
+          `<p style="color: #e5e5e5; margin: 10px 0;"><strong style="color: #ffffff;">With:</strong> ${breederName}</p>`,
+        ].join("\n"),
+        { borderColor: "blue" },
+      ),
+      nextSteps
+        ? emailInfoCard(
+            [
+              emailHeading("Reminder - Next Steps"),
+              `<p style="color: #e5e5e5; margin: 0; white-space: pre-wrap;">${nextSteps}</p>`,
+            ].join("\n"),
+            { borderColor: "yellow" },
+          )
+        : "",
+      portalUrl ? emailButton("View in Portal", portalUrl, "blue") : "",
+    ].join("\n"),
+  });
 
   return { subject, html, text };
 }

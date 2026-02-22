@@ -14,15 +14,17 @@ build/
 .env
 .env.local
 .env.*.local
-.env.dev
-.env.dev.*
 .env.test
 .env.test.*
 .env.production.local
-.env.prod
-.env.prod.*
 .env.staging
 .env.staging.*
+
+# SM-pointer env files (no secrets — safe to commit)
+!.env.dev
+!.env.prod
+!.env.dev.migrate
+!.env.prod.migrate
 
 # Env templates (commit these)
 !.env.dev.example
@@ -63,9 +65,3 @@ cookies.txt
 .env.proto
 *.cookies.txt
 *-cookies.txt
-
-# Elastic Beanstalk Files
-.elasticbeanstalk/*
-!.elasticbeanstalk/*.cfg.yml
-!.elasticbeanstalk/config.yml
-!.elasticbeanstalk/*.global.yml

@@ -100,6 +100,30 @@ CREATE TABLE "public"."my_table" (...);
 CREATE TABLE "marketplace"."my_table" (...);
 ```
 
+### Known Gotchas
+
+**1. `prisma:validate` requires `run-with-env.js`, not `npx dotenv`**
+
+`.env.dev.migrate` only contains `AWS_SECRET_NAME` — no actual `DATABASE_URL`. If you ever
+see the `prisma:validate` script using `npx dotenv -e .env.dev.migrate`, that's wrong.
+It must go through `run-with-env.js` so secrets are fetched from SM first:
+
+```
+"prisma:validate": "node scripts/development/run-with-env.js --quiet .env.dev.migrate prisma validate --schema=prisma/schema.prisma"
+```
+
+**2. Baseline SQL from `pg_dump` — always strip `schema_migrations`**
+
+`pg_dump` includes the `schema_migrations` table and its primary key. dbmate creates and
+owns that table itself. If you regenerate the baseline from a dump, remove these two blocks
+before committing, otherwise `db:prod:deploy` fails with relation/primary-key-already-exists
+errors on any database where dbmate has already initialized:
+
+- `CREATE TABLE [IF NOT EXISTS] public.schema_migrations (...)`
+- `ALTER TABLE ONLY public.schema_migrations ADD CONSTRAINT schema_migrations_pkey ...`
+
+---
+
 ### Self-Check for Schema Changes
 
 - [ ] Did I create a dbmate migration file (NOT edit schema.prisma)?
@@ -127,6 +151,54 @@ CREATE TABLE "marketplace"."my_table" (...);
 - Skip authentication checks (security issue)
 - Trust user input directly (injection risk)
 - Query in loops (N+1 performance issue)
+- Send raw Prisma objects with BigInt fields via `reply.send()` without conversion (see BigInt section below)
+
+---
+
+## BigInt Serialization (ENFORCED)
+
+**`JSON.stringify` cannot serialize BigInt values.** Prisma returns `BigInt` for PostgreSQL `bigint`/`int8` columns.
+
+### Global Safety Net
+
+A `BigInt.prototype.toJSON` shim exists in `server.ts` that auto-converts BigInt → Number during serialization. This prevents 500 errors but is a **last resort**, not a design pattern.
+
+### BigInt Fields in This Codebase
+
+| Model | Fields | Type |
+|-------|--------|------|
+| Invoice | `amountCents`, `balanceCents`, `depositCents`, `refundedCents` | BigInt |
+| Contact | `marketplaceTotalSpentCents` | BigInt |
+| MarketplaceProvider | `totalRevenueCents`, `lifetimePayoutCents` | BigInt |
+| MarketplaceTransaction | `totalCents`, `platformFeeCents`, `providerPayoutCents`, `taxCents`, etc. | BigInt |
+| MktListingServiceListing | `priceCents` | BigInt |
+
+### Best Practice: Explicit Conversion in Serializer Functions
+
+When writing serializer/DTO functions, always convert BigInt fields explicitly:
+
+```typescript
+// ✅ CORRECT - Explicit conversion
+const dto = {
+  totalCents: Number(invoice.amountCents),
+  balanceCents: Number(invoice.balanceCents),
+};
+
+// ✅ ALSO CORRECT - Use Prisma `select` to avoid including BigInt fields you don't need
+const contact = await prisma.contact.findFirst({
+  where: { id },
+  select: { id: true, display_name: true, email: true }, // No BigInt fields
+});
+
+// ❌ RISKY - Spreading raw Prisma objects that may contain BigInt
+reply.send({ ...rawPrismaResult }); // May contain BigInt fields!
+```
+
+### Self-Check Before Sending Responses
+
+- [ ] Does the Prisma result include any BigInt columns?
+- [ ] Did I convert them with `Number()` in the serializer?
+- [ ] Or did I use `select` to exclude unneeded BigInt fields?
 
 ---
 
@@ -339,4 +411,4 @@ This approach works inside a transaction (no `transaction:false` needed).
 ---
 
 **Auto-loaded by Claude Code at session start**
-**Last Updated**: 2026-02-16 (Migrated from Prisma Migrate to dbmate for SQL migrations)
+**Last Updated**: 2026-02-17 (Added BigInt serialization safety net and documentation)

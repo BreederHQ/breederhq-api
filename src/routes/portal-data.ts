@@ -858,8 +858,8 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         invoice: {
           id: invoice.id,
           invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
-          amountCents: invoice.amountCents,
-          balanceCents: invoice.balanceCents,
+          amountCents: Number(invoice.amountCents),
+          balanceCents: Number(invoice.balanceCents),
           status: invoice.status,
           issuedAt: invoice.issuedAt?.toISOString() || invoice.createdAt.toISOString(),
           dueAt: invoice.dueAt?.toISOString() || null,

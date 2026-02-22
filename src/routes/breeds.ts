@@ -123,7 +123,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
     }
 
     // --- Step 3: registries (safe join using the real relation name) -----------
-    let regsByBreed = new Map<number, Array<{ code: string; status?: string | null; primary?: boolean | null }>>();
+    let regsByBreed = new Map<number, Array<{ code: string; name?: string | null; status?: string | null; primary?: boolean | null }>>();
     try {
       const breedIds = canonRows.map(b => b.id);
       if (breedIds.length) {
@@ -145,6 +145,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
           const arr = regsByBreed.get(l.breedId) || [];
           arr.push({
             code: l.registry.code ?? "",
+            name: l.registry.name ?? null,
             status: l.statusText ?? null,
             primary: l.primary ?? null,
           });
@@ -163,7 +164,7 @@ export default async function breedsRoutes(app: FastifyInstance, _opts: FastifyP
       species: Species;
       source: "canonical" | "custom";
       canonicalBreedId?: number | null;
-      registries?: Array<{ code: string; status?: string | null; primary?: boolean | null }>;
+      registries?: Array<{ code: string; name?: string | null; status?: string | null; primary?: boolean | null }>;
     };
 
     const canon: OutRow[] = canonRows.map(r => ({

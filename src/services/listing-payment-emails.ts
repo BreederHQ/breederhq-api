@@ -8,6 +8,7 @@
  */
 
 import { sendEmail } from "./email-service.js";
+import { wrapEmailLayout, emailButton, emailInfoCard, emailGreeting, emailParagraph, emailFootnote } from "./email-layout.js";
 
 const MARKETPLACE_URL =
   process.env.MARKETPLACE_URL || "https://marketplace.breederhq.com";
@@ -57,31 +58,24 @@ export async function sendListingActivatedEmail(
   const fee = formatCents(data.feeCents);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #10b981;">Your Listing Is Live!</h2>
-      <p>Hi ${name},</p>
-      <p>Your service listing <strong>${data.listingTitle}</strong> is now live on the marketplace.</p>
-
-      <div style="background: #ecfdf5; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #10b981;">
-        <p style="margin: 0; color: #065f46; font-weight: 600;">Subscription Active</p>
-        <p style="margin: 8px 0 0 0; color: #065f46;">Your listing will renew monthly at ${fee}.</p>
-      </div>
-
-      <p>Potential clients can now find your listing and reach out to book your services.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          View Your Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        You can manage your subscription anytime from your provider dashboard.
-        <br>— The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Your Listing Is Live!",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`Your service listing <strong style="color: #ffffff;">${data.listingTitle}</strong> is now live on the marketplace.`),
+      emailInfoCard(
+        [
+          `<p style="color: #10b981; margin: 0; font-weight: 600;">Subscription Active</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;">Your listing will renew monthly at ${fee}.</p>`,
+        ].join("\n"),
+        { borderColor: "green" }
+      ),
+      emailParagraph("Potential clients can now find your listing and reach out to book your services."),
+      emailButton("View Your Listing", url),
+      emailFootnote("You can manage your subscription anytime from your provider dashboard."),
+    ].join("\n"),
+  });
 
   const text = `
 Your Listing Is Live!
@@ -122,28 +116,22 @@ export async function sendListingRenewedEmail(
   const nextDate = formatDate(data.nextRenewalDate);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Listing Renewed</h2>
-      <p>Hi ${name},</p>
-      <p>Your service listing <strong>${data.listingTitle}</strong> has been renewed for another 30 days.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0;"><strong>Amount charged:</strong> ${fee}</p>
-        <p style="margin: 8px 0 0 0;"><strong>Next renewal:</strong> ${nextDate}</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Manage Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Listing Renewed",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`Your service listing <strong style="color: #ffffff;">${data.listingTitle}</strong> has been renewed for another 30 days.`),
+      emailInfoCard(
+        [
+          `<p style="color: #e5e5e5; margin: 0;"><strong style="color: #ffffff;">Amount charged:</strong> ${fee}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;"><strong style="color: #ffffff;">Next renewal:</strong> ${nextDate}</p>`,
+        ].join("\n"),
+        { borderColor: "gray" }
+      ),
+      emailButton("Manage Listing", url),
+    ].join("\n"),
+  });
 
   const text = `
 Listing Renewed
@@ -183,32 +171,23 @@ export async function sendListingPaymentFailedEmail(
   const paymentUrl =
     data.updatePaymentUrl || `${MARKETPLACE_URL}/provider/settings/payments`;
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">Payment Failed</h2>
-      <p>Hi ${name},</p>
-      <p>We were unable to charge your card for the listing <strong>${data.listingTitle}</strong>.</p>
-
-      <div style="background: #fef2f2; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #dc2626;">
-        <p style="margin: 0; color: #991b1b; font-weight: 600;">Action Required</p>
-        <p style="margin: 8px 0 0 0; color: #991b1b;">Please update your payment method to keep your listing active. If payment is not resolved, your listing will be paused.</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${paymentUrl}" style="display: inline-block; padding: 12px 24px; background: #dc2626; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Update Payment Method
-        </a>
-      </p>
-
-      <p style="color: #6b7280; font-size: 14px;">
-        <a href="${url}" style="color: #6b7280;">View listing</a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Payment Failed",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`We were unable to charge your card for the listing <strong style="color: #ffffff;">${data.listingTitle}</strong>.`),
+      emailInfoCard(
+        [
+          `<p style="color: #dc2626; margin: 0; font-weight: 600;">Action Required</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;">Please update your payment method to keep your listing active. If payment is not resolved, your listing will be paused.</p>`,
+        ].join("\n"),
+        { borderColor: "red" }
+      ),
+      emailButton("Update Payment Method", paymentUrl, "red"),
+      emailParagraph(`<a href="${url}" style="color: #a3a3a3; text-decoration: underline;">View listing</a>`),
+    ].join("\n"),
+  });
 
   const text = `
 Payment Failed
@@ -248,28 +227,22 @@ export async function sendListingExpiryWarningEmail(
   const expiryDate = formatDate(data.expiresAt);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f59e0b;">Listing Expiring Soon</h2>
-      <p>Hi ${name},</p>
-      <p>Your service listing <strong>${data.listingTitle}</strong> expires in <strong>${data.daysRemaining} day${data.daysRemaining === 1 ? "" : "s"}</strong> (${expiryDate}).</p>
-
-      <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f59e0b;">
-        <p style="margin: 0; color: #92400e; font-weight: 600;">Renew to stay visible</p>
-        <p style="margin: 8px 0 0 0; color: #92400e;">Once expired, your listing will be paused and hidden from the marketplace. Renew for ${fee}/month to keep it active.</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Renew Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Listing Expiring Soon",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`Your service listing <strong style="color: #ffffff;">${data.listingTitle}</strong> expires in <strong style="color: #ffffff;">${data.daysRemaining} day${data.daysRemaining === 1 ? "" : "s"}</strong> (${expiryDate}).`),
+      emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0; font-weight: 600;">Renew to stay visible</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;">Once expired, your listing will be paused and hidden from the marketplace. Renew for ${fee}/month to keep it active.</p>`,
+        ].join("\n"),
+        { borderColor: "yellow" }
+      ),
+      emailButton("Renew Listing", url),
+    ].join("\n"),
+  });
 
   const text = `
 Listing Expiring Soon
@@ -307,28 +280,22 @@ export async function sendListingExpiredEmail(
   const fee = formatCents(data.feeCents);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #6b7280;">Listing Paused</h2>
-      <p>Hi ${name},</p>
-      <p>Your service listing <strong>${data.listingTitle}</strong> has been paused because it expired without an active subscription.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #6b7280;">
-        <p style="margin: 0; color: #374151; font-weight: 600;">Your listing is no longer visible</p>
-        <p style="margin: 8px 0 0 0; color: #374151;">Renew your subscription (${fee}/month) to make it visible on the marketplace again.</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Renew Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Listing Paused",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`Your service listing <strong style="color: #ffffff;">${data.listingTitle}</strong> has been paused because it expired without an active subscription.`),
+      emailInfoCard(
+        [
+          `<p style="color: #a3a3a3; margin: 0; font-weight: 600;">Your listing is no longer visible</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;">Renew your subscription (${fee}/month) to make it visible on the marketplace again.</p>`,
+        ].join("\n"),
+        { borderColor: "gray" }
+      ),
+      emailButton("Renew Listing", url),
+    ].join("\n"),
+  });
 
   const text = `
 Listing Paused
@@ -371,32 +338,23 @@ export async function sendFoundingPeriodEndingEmail(
   const endDate = formatDate(data.foundingFreeUntil);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #f59e0b;">Your Free Period Is Ending</h2>
-      <p>Hi ${name},</p>
-      <p>As a founding provider, your listing <strong>${data.listingTitle}</strong> has been free. Your free period ends in <strong>${data.daysRemaining} day${data.daysRemaining === 1 ? "" : "s"}</strong> (${endDate}).</p>
-
-      <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f59e0b;">
-        <p style="margin: 0; color: #92400e; font-weight: 600;">Subscribe to keep your listing active</p>
-        <p style="margin: 8px 0 0 0; color: #92400e;">After ${endDate}, a subscription of ${fee}/month is required to keep your listing visible on the marketplace. Without a subscription, your listing will be paused.</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Subscribe Now
-        </a>
-      </p>
-
-      <p style="color: #6b7280; font-size: 14px;">
-        Thank you for being an early supporter of BreederHQ!
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        — The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Your Free Period Is Ending",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`As a founding provider, your listing <strong style="color: #ffffff;">${data.listingTitle}</strong> has been free. Your free period ends in <strong style="color: #ffffff;">${data.daysRemaining} day${data.daysRemaining === 1 ? "" : "s"}</strong> (${endDate}).`),
+      emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0; font-weight: 600;">Subscribe to keep your listing active</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0 0 0;">After ${endDate}, a subscription of ${fee}/month is required to keep your listing visible on the marketplace. Without a subscription, your listing will be paused.</p>`,
+        ].join("\n"),
+        { borderColor: "yellow" }
+      ),
+      emailButton("Subscribe Now", url),
+      emailParagraph("Thank you for being an early supporter of BreederHQ!"),
+    ].join("\n"),
+  });
 
   const text = `
 Your Free Period Is Ending
@@ -437,29 +395,23 @@ export async function sendListingCanceledEmail(
   const expiryDate = formatDate(data.expiresAt);
   const url = listingManageUrl(data.listingId);
 
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1f2937;">Auto-Renewal Canceled</h2>
-      <p>Hi ${name},</p>
-      <p>The auto-renewal for your listing <strong>${data.listingTitle}</strong> has been canceled.</p>
-
-      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 24px 0;">
-        <p style="margin: 0; font-weight: 600;">Your listing stays live until ${expiryDate}</p>
-        <p style="margin: 8px 0 0 0; color: #6b7280;">After that date, it will be paused and hidden from the marketplace. You can resubscribe anytime at ${fee}/month.</p>
-      </div>
-
-      <p style="margin: 24px 0;">
-        <a href="${url}" style="display: inline-block; padding: 12px 24px; background: #f97316; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Manage Listing
-        </a>
-      </p>
-
-      <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">
-        Changed your mind? You can resubscribe from your listing page before it expires.
-        <br>— The ${FROM_NAME} Team
-      </p>
-    </div>
-  `;
+  const html = wrapEmailLayout({
+    title: "Auto-Renewal Canceled",
+    footerOrgName: FROM_NAME,
+    body: [
+      emailGreeting(name),
+      emailParagraph(`The auto-renewal for your listing <strong style="color: #ffffff;">${data.listingTitle}</strong> has been canceled.`),
+      emailInfoCard(
+        [
+          `<p style="color: #ffffff; margin: 0; font-weight: 600;">Your listing stays live until ${expiryDate}</p>`,
+          `<p style="color: #a3a3a3; margin: 8px 0 0 0;">After that date, it will be paused and hidden from the marketplace. You can resubscribe anytime at ${fee}/month.</p>`,
+        ].join("\n"),
+        { borderColor: "gray" }
+      ),
+      emailButton("Manage Listing", url),
+      emailFootnote("Changed your mind? You can resubscribe from your listing page before it expires."),
+    ].join("\n"),
+  });
 
   const text = `
 Auto-Renewal Canceled

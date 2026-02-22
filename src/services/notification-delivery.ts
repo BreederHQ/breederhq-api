@@ -10,6 +10,7 @@ import prisma from "../prisma.js";
 import { sendEmail } from "./email-service.js";
 import { canContactViaChannel } from "./comm-prefs-service.js";
 import type { Notification, NotificationPriority } from "@prisma/client";
+import { wrapEmailLayout, emailButton, emailInfoCard, emailDetailRows, emailParagraph, emailFootnote, emailBulletList } from "./email-layout.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Email Templates
@@ -51,60 +52,16 @@ function generateNotificationEmail(notification: Notification, tenantName: strin
   const priorityLabel = getPriorityLabel(notification.priority);
   const deepLinkUrl = notification.linkUrl ? `${appUrl}${notification.linkUrl}` : appUrl;
 
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${notification.title}</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9fafb; margin: 0; padding: 0;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <!-- Header -->
-    <div style="background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <!-- Priority Badge -->
-      <div style="display: inline-block; padding: 6px 12px; background-color: ${priorityColor}; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">
-        ${priorityLabel}
-      </div>
-
-      <!-- Title -->
-      <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #111;">
-        ${notification.title}
-      </h1>
-
-      <!-- Message -->
-      <p style="margin: 0 0 24px 0; font-size: 16px; color: #4b5563; line-height: 1.6;">
-        ${notification.message}
-      </p>
-
-      <!-- Action Button -->
-      ${
-        notification.linkUrl
-          ? `
-      <a href="${deepLinkUrl}" style="display: inline-block; padding: 12px 24px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
-        View Details
-      </a>
-      `
-          : ""
-      }
-    </div>
-
-    <!-- Footer -->
-    <div style="text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0;">
-      <p style="margin: 0 0 8px 0;">
-        This notification was sent from <strong>${tenantName}</strong> via BreederHQ
-      </p>
-      <p style="margin: 0;">
-        <a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">
-          Manage notification preferences
-        </a>
-      </p>
-    </div>
-  </div>
-</body>
-</html>
-  `.trim();
+  return wrapEmailLayout({
+    title: notification.title,
+    footerOrgName: tenantName,
+    body: [
+      `<div style="display: inline-block; padding: 6px 12px; background-color: ${priorityColor}; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">${priorityLabel}</div>`,
+      emailParagraph(notification.message),
+      notification.linkUrl ? emailButton("View Details", deepLinkUrl) : "",
+      emailFootnote(`<a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">Manage notification preferences</a>`),
+    ].join("\n"),
+  });
 }
 
 /**
@@ -163,85 +120,29 @@ function generateCarrierWarningEmail(
 ): string {
   const deepLinkUrl = notification.linkUrl ? `${appUrl}${notification.linkUrl}` : appUrl;
 
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>⚠️ Lethal Pairing Risk Detected</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9fafb; margin: 0; padding: 0;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <!-- Header -->
-    <div style="background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <!-- Priority Badge -->
-      <div style="display: inline-block; padding: 6px 12px; background-color: #dc2626; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">
-        🚨 URGENT - LETHAL PAIRING RISK
-      </div>
-
-      <!-- Title -->
-      <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #111;">
-        ⚠️ Lethal Pairing Risk Detected
-      </h1>
-
-      <!-- Warning Message -->
-      <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-        <p style="margin: 0; color: #991b1b; font-weight: 500;">
-          A potential lethal pairing has been detected in your breeding plan.
-        </p>
-      </div>
-
-      <!-- Details Table -->
-      <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151; width: 40%;">Breeding Plan:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.planName || "Unnamed Plan"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Dam:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.damName || "Unknown"} <span style="color: #f97316;">(${metadata.damStatus || "Carrier"})</span></td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Sire:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.sireName || "Unknown"} <span style="color: #f97316;">(${metadata.sireStatus || "Carrier"})</span></td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; color: #374151;">Gene:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111;">${metadata.geneName || metadata.gene || "Unknown"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; font-weight: 600; color: #374151;">Risk:</td>
-          <td style="padding: 10px; color: #dc2626; font-weight: 600;">${metadata.riskPercentage || 25}% chance of affected offspring</td>
-        </tr>
-      </table>
-
-      <!-- Explanation -->
-      <p style="margin: 0 0 24px 0; font-size: 14px; color: #6b7280; line-height: 1.6;">
-        Both parents are carriers of this gene. When two carriers are bred together, there is a ${metadata.riskPercentage || 25}% chance of producing offspring that ${metadata.isLethal ? "will not survive" : "may have health issues"}.
-      </p>
-
-      <!-- Action Button -->
-      <a href="${deepLinkUrl}" style="display: inline-block; padding: 14px 28px; background-color: #dc2626; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
-        Review Breeding Plan
-      </a>
-    </div>
-
-    <!-- Footer -->
-    <div style="text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0;">
-      <p style="margin: 0 0 8px 0;">
-        This urgent notification was sent from <strong>${tenantName}</strong> via BreederHQ
-      </p>
-      <p style="margin: 0;">
-        <a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">
-          Manage notification preferences
-        </a>
-      </p>
-    </div>
-  </div>
-</body>
-</html>
-  `.trim();
+  return wrapEmailLayout({
+    title: "Lethal Pairing Risk Detected",
+    footerOrgName: tenantName,
+    body: [
+      `<div style="display: inline-block; padding: 6px 12px; background-color: #dc2626; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">🚨 URGENT - LETHAL PAIRING RISK</div>`,
+      emailInfoCard(
+        `<p style="margin: 0; font-weight: 500;">A potential lethal pairing has been detected in your breeding plan.</p>`,
+        { borderColor: "red" },
+      ),
+      emailDetailRows([
+        { label: "Breeding Plan", value: metadata.planName || "Unnamed Plan" },
+        { label: "Dam", value: `${metadata.damName || "Unknown"} <span style="color: #f97316;">(${metadata.damStatus || "Carrier"})</span>` },
+        { label: "Sire", value: `${metadata.sireName || "Unknown"} <span style="color: #f97316;">(${metadata.sireStatus || "Carrier"})</span>` },
+        { label: "Gene", value: metadata.geneName || metadata.gene || "Unknown" },
+        { label: "Risk", value: `<span style="color: #dc2626; font-weight: 600;">${metadata.riskPercentage || 25}% chance of affected offspring</span>` },
+      ]),
+      emailParagraph(
+        `Both parents are carriers of this gene. When two carriers are bred together, there is a ${metadata.riskPercentage || 25}% chance of producing offspring that ${metadata.isLethal ? "will not survive" : "may have health issues"}.`,
+      ),
+      emailButton("Review Breeding Plan", deepLinkUrl, "red"),
+      emailFootnote(`<a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">Manage notification preferences</a>`),
+    ].join("\n"),
+  });
 }
 
 /**
@@ -255,68 +156,28 @@ function generatePrebreedingEmail(
 ): string {
   const deepLinkUrl = notification.linkUrl ? `${appUrl}${notification.linkUrl}` : appUrl;
 
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Genetic Testing Reminder</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9fafb; margin: 0; padding: 0;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <div style="background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <!-- Priority Badge -->
-      <div style="display: inline-block; padding: 6px 12px; background-color: #f97316; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">
-        ⚠️ HIGH PRIORITY
-      </div>
-
-      <!-- Title -->
-      <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #111;">
-        🧬 Genetic Testing Reminder
-      </h1>
-
-      <!-- Message -->
-      <p style="margin: 0 0 16px 0; font-size: 16px; color: #4b5563;">
-        Your breeding plan ${metadata.planName ? `"${metadata.planName}"` : ""} is scheduled within 7 days.
-      </p>
-
-      <div style="background-color: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-        <p style="margin: 0; color: #92400e; font-weight: 500;">
-          <strong>${metadata.animalName || "This animal"}</strong> has not been genetically tested yet.
-        </p>
-      </div>
-
-      <p style="margin: 0 0 16px 0; font-size: 14px; color: #6b7280;">
-        Consider testing before breeding to:
-      </p>
-      <ul style="margin: 0 0 24px 0; padding-left: 20px; color: #4b5563;">
-        <li style="margin-bottom: 8px;">Identify carrier status for lethal genes</li>
-        <li style="margin-bottom: 8px;">Meet registry requirements</li>
-        <li style="margin-bottom: 8px;">Make informed breeding decisions</li>
-      </ul>
-
-      <!-- Action Button -->
-      <a href="${deepLinkUrl}" style="display: inline-block; padding: 12px 24px; background-color: #f97316; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
-        View Genetics
-      </a>
-    </div>
-
-    <!-- Footer -->
-    <div style="text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0;">
-      <p style="margin: 0 0 8px 0;">
-        This notification was sent from <strong>${tenantName}</strong> via BreederHQ
-      </p>
-      <p style="margin: 0;">
-        <a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">
-          Manage notification preferences
-        </a>
-      </p>
-    </div>
-  </div>
-</body>
-</html>
-  `.trim();
+  return wrapEmailLayout({
+    title: "Genetic Testing Reminder",
+    footerOrgName: tenantName,
+    body: [
+      `<div style="display: inline-block; padding: 6px 12px; background-color: #f97316; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">⚠️ HIGH PRIORITY</div>`,
+      emailParagraph(
+        `Your breeding plan ${metadata.planName ? `"${metadata.planName}"` : ""} is scheduled within 7 days.`,
+      ),
+      emailInfoCard(
+        `<p style="margin: 0; font-weight: 500;"><strong>${metadata.animalName || "This animal"}</strong> has not been genetically tested yet.</p>`,
+        { borderColor: "yellow" },
+      ),
+      emailParagraph("Consider testing before breeding to:"),
+      emailBulletList([
+        "Identify carrier status for lethal genes",
+        "Meet registry requirements",
+        "Make informed breeding decisions",
+      ]),
+      emailButton("View Genetics", deepLinkUrl),
+      emailFootnote(`<a href="${appUrl}/settings/notifications" style="color: #f97316; text-decoration: none;">Manage notification preferences</a>`),
+    ].join("\n"),
+  });
 }
 
 /**

@@ -206,10 +206,18 @@ async function main() {
       data: {
         name: "Test Breeder (Seed)",
         slug: "test-breeder-seed",
+        primaryEmail: TEST_USERS[0].email,
       },
     });
     console.log(`✅ Created test tenant: ${testTenant.name} (id: ${testTenant.id})`);
   } else {
+    if (!testTenant.primaryEmail) {
+      testTenant = await prisma.tenant.update({
+        where: { id: testTenant.id },
+        data: { primaryEmail: TEST_USERS[0].email },
+      });
+      console.log(`ℹ️  Set primaryEmail on existing tenant: ${TEST_USERS[0].email}`);
+    }
     console.log(`ℹ️  Using existing test tenant: ${testTenant.name} (id: ${testTenant.id})`);
   }
 

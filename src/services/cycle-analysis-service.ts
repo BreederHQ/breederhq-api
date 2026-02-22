@@ -111,18 +111,6 @@ const SPECIES_DEFAULTS: Record<string, SpeciesConfig> = {
     cycleLenDays: 17,
     isInducedOvulator: false,
   },
-  PIG: {
-    ovulationOffsetDays: 2,
-    gestationDays: 114,
-    cycleLenDays: 21,
-    isInducedOvulator: false,
-  },
-  CATTLE: {
-    ovulationOffsetDays: 1,
-    gestationDays: 283,
-    cycleLenDays: 21,
-    isInducedOvulator: false,
-  },
   ALPACA: {
     ovulationOffsetDays: 0, // Induced ovulator
     gestationDays: 345,

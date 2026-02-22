@@ -3,6 +3,16 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "../prisma.js";
 import { sendEmail } from "../services/email-service.js";
+import {
+  wrapEmailLayout,
+  emailGreeting,
+  emailParagraph,
+  emailAccent,
+  emailButton,
+  emailFeatureList,
+  emailInfoCard,
+  emailFootnote,
+} from "../services/email-layout.js";
 import { auditSuccess } from "../services/audit.js";
 import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
@@ -128,81 +138,28 @@ async function sendInviteEmail(
   const activationUrl = `${PORTAL_DOMAIN}/activate?token=${rawToken}`;
   const expiryDays = Math.floor(INVITE_TTL_HOURS / 24);
 
-  const html = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0a0a0a; border-radius: 12px; overflow: hidden;">
-      <!-- Orange accent bar -->
-      <div style="height: 4px; background: linear-gradient(90deg, #f97316 0%, #ea580c 100%);"></div>
-
-      <!-- Header with Logo -->
-      <div style="padding: 32px 24px 24px 24px; text-align: center; border-bottom: 1px solid #262626;">
-        <!-- BreederHQ Logo SVG -->
-        <div style="margin-bottom: 16px;">
-          <img src="https://app.breederhq.com/assets/logo-BzhLJbz9.png" alt="BreederHQ" style="height: 80px; width: auto;" />
-        </div>
-        <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 600;">You're Invited to Your Client Portal</h1>
-      </div>
-
-      <!-- Body -->
-      <div style="padding: 32px 24px; background-color: #0a0a0a;">
-        <p style="color: #e5e5e5; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-          Hello <strong style="color: #ffffff;">${partyName}</strong>,
+  const html = wrapEmailLayout({
+    title: "You're Invited to Your Client Portal",
+    footerOrgName: orgName,
+    body: [
+      emailGreeting(partyName),
+      emailParagraph(`${emailAccent(orgName)} has invited you to their client portal. Here's what you can do:`),
+      emailFeatureList([
+        "View and sign agreements & contracts",
+        "Track your waitlist & reservations",
+        "Make secure payments online",
+        "Send messages & stay in touch",
+      ]),
+      emailButton("Activate Your Account", activationUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent(`&#9432; Expires in ${expiryDays} days`)}<br>
+          <span style="color: #a3a3a3;">If your link expires, contact ${orgName} for a new invitation.</span>
         </p>
-
-        <p style="color: #a3a3a3; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-          <strong style="color: #f97316;">${orgName}</strong> has invited you to their client portal. Here's what you can do:
-        </p>
-
-        <!-- Feature Cards -->
-        <div style="margin: 0 0 28px 0;">
-          <div style="display: flex; align-items: center; padding: 12px 16px; background-color: #171717; border-radius: 8px; margin-bottom: 8px;">
-            <span style="color: #f97316; font-size: 16px; margin-right: 12px;">&#10003;</span>
-            <span style="color: #d4d4d4; font-size: 14px;">View and sign agreements & contracts</span>
-          </div>
-          <div style="display: flex; align-items: center; padding: 12px 16px; background-color: #171717; border-radius: 8px; margin-bottom: 8px;">
-            <span style="color: #f97316; font-size: 16px; margin-right: 12px;">&#10003;</span>
-            <span style="color: #d4d4d4; font-size: 14px;">Track your waitlist & reservations</span>
-          </div>
-          <div style="display: flex; align-items: center; padding: 12px 16px; background-color: #171717; border-radius: 8px; margin-bottom: 8px;">
-            <span style="color: #f97316; font-size: 16px; margin-right: 12px;">&#10003;</span>
-            <span style="color: #d4d4d4; font-size: 14px;">Make secure payments online</span>
-          </div>
-          <div style="display: flex; align-items: center; padding: 12px 16px; background-color: #171717; border-radius: 8px;">
-            <span style="color: #f97316; font-size: 16px; margin-right: 12px;">&#10003;</span>
-            <span style="color: #d4d4d4; font-size: 14px;">Send messages & stay in touch</span>
-          </div>
-        </div>
-
-        <!-- CTA Button -->
-        <div style="text-align: center; margin: 32px 0;">
-          <a href="${activationUrl}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 14px rgba(249, 115, 22, 0.4);">
-            Activate Your Account
-          </a>
-        </div>
-
-        <!-- Expiry Notice -->
-        <div style="background-color: #171717; border: 1px solid #262626; border-left: 3px solid #f97316; padding: 16px; margin: 24px 0; border-radius: 0 8px 8px 0;">
-          <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
-            <strong style="color: #f97316;">&#9432; Expires in ${expiryDays} days</strong><br>
-            <span style="color: #a3a3a3;">If your link expires, contact ${orgName} for a new invitation.</span>
-          </p>
-        </div>
-
-        <p style="color: #737373; font-size: 13px; line-height: 1.6; margin: 24px 0 0 0; text-align: center;">
-          Didn't expect this? You can safely ignore this email.
-        </p>
-      </div>
-
-      <!-- Footer -->
-      <div style="background-color: #171717; padding: 24px; text-align: center; border-top: 1px solid #262626;">
-        <p style="color: #737373; font-size: 12px; margin: 0 0 8px 0;">
-          Sent by <strong style="color: #a3a3a3;">${orgName}</strong> via BreederHQ
-        </p>
-        <p style="color: #525252; font-size: 11px; margin: 0;">
-          <a href="https://breederhq.com" style="color: #f97316; text-decoration: none;">breederhq.com</a> &bull; Professional Breeder Management
-        </p>
-      </div>
-    </div>
-  `;
+      `, { borderColor: "orange" }),
+      emailFootnote("Didn't expect this? You can safely ignore this email."),
+    ].join("\n"),
+  });
 
   const text = `
 Welcome to Your Client Portal
@@ -247,14 +204,20 @@ async function sendPasswordResetEmail(
 ): Promise<{ ok: boolean; error?: string }> {
   const resetUrl = `${PORTAL_DOMAIN}/reset-password?token=${rawToken}`;
 
-  const html = `
-    <h2>Password Reset Required</h2>
-    <p>Hello ${partyName},</p>
-    <p>A password reset has been requested for your client portal account. Click the link below to set a new password:</p>
-    <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Reset Your Password</a></p>
-    <p>This link will expire in 1 hour.</p>
-    <p>If you did not request this reset, please contact support immediately.</p>
-  `;
+  const html = wrapEmailLayout({
+    title: "Password Reset Required",
+    body: [
+      emailGreeting(partyName),
+      emailParagraph("A password reset has been requested for your client portal account. Click the button below to set a new password:"),
+      emailButton("Reset Your Password", resetUrl),
+      emailInfoCard(`
+        <p style="color: #d4d4d4; font-size: 14px; margin: 0; line-height: 1.5;">
+          ${emailAccent("&#9432; Expires in 1 hour")}<br>
+          <span style="color: #a3a3a3;">If you did not request this reset, please contact support immediately.</span>
+        </p>
+      `, { borderColor: "orange" }),
+    ].join("\n"),
+  });
 
   const text = `
 Password Reset Required

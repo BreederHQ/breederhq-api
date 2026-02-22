@@ -9,6 +9,20 @@
   { "name": "LaMancha", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
   { "name": "Nubian", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
   { "name": "Oberhasli", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
-  { "name": "Angora", "species": "GOAT", "registries": [ { "code": "GOAT_OTHER", "status": "PRIMARY" } ] },
-  { "name": "Myotonic (Tennessee Fainting)", "species": "GOAT", "registries": [ { "code": "MGR", "status": "PRIMARY" } ] }
+  { "name": "Angora", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] },
+  { "name": "Myotonic (Tennessee Fainting)", "species": "GOAT", "registries": [ { "code": "MGR", "status": "PRIMARY" } ] },
+  { "name": "Savanna", "species": "GOAT", "registries": [ { "code": "SCIGR", "status": "PRIMARY" } ] },
+  { "name": "Spanish", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] },
+  { "name": "Cashmere", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] },
+  { "name": "Golden Guernsey", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] },
+  { "name": "Sable", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Mini Alpine", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Mini LaMancha", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Mini Nubian", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Mini Saanen", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Mini Toggenburg", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Mini Oberhasli", "species": "GOAT", "registries": [ { "code": "MDGA", "status": "PRIMARY" } ] },
+  { "name": "Kinder", "species": "GOAT", "registries": [ { "code": "ADGA", "status": "PRIMARY" } ] },
+  { "name": "Nigora", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] },
+  { "name": "TexMaster", "species": "GOAT", "registries": [ { "code": "OTHER", "status": "PRIMARY" } ] }
 ]
