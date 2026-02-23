@@ -375,6 +375,10 @@ function pick<T extends object>(obj: any, keys: (keyof T)[]): Partial<T> {
 /* ========= serializers ========= */
 
 
+// DEPRECATED FIELDS: expectedPlacementStart, expectedPlacementCompleted,
+// placementStartDateActual, placementCompletedDateActual are no longer written
+// to BreedingPlan. Post-birth lifecycle dates now live on OffspringGroup.
+// These reads remain for historical data until the columns are dropped (Phase 6).
 function litePlanForList(p: any) {
   if (!p) return null;
   return {
@@ -900,6 +904,8 @@ function mapOffspringToAnimalLite(o: any) {
     color:
       (o as any).color ??
       (extra && typeof extra === "object" ? (extra as any).color ?? null : null),
+    pattern:
+      extra && typeof extra === "object" ? (extra as any).pattern ?? null : null,
 
     microchip:
       (o as any).microchip ??
@@ -1171,15 +1177,9 @@ export function normalizeOffspringState(
     nextPlacementState = OffspringPlacementState.RESERVED;
   }
 
-  // Promotion locks keeper intent to KEEP and cannot be flipped back to AVAILABLE.
+  // Promotion locks keeper intent to KEEP permanently.
   if (nextPromotedAnimalId != null) {
     nextKeeperIntent = OffspringKeeperIntent.KEEP;
-  }
-  if (
-    current?.keeperIntent === OffspringKeeperIntent.KEEP &&
-    patch.keeperIntent === OffspringKeeperIntent.AVAILABLE
-  ) {
-    throw new Error("cannot mark offspring as AVAILABLE once keeper intent is KEEP");
   }
 
   // paidInFullAt forces the terminal financial state.
@@ -1282,6 +1282,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 sire: { select: { id: true, name: true } },
                 programId: true,
                 program: { select: { id: true, name: true } },
+                // DEPRECATED: Post-birth dates no longer written to plan (Phase 4).
+                // Reads remain for historical data until columns are dropped (Phase 6).
                 expectedPlacementStart: true,
                 expectedPlacementCompleted: true,
                 placementStartDateActual: true,
@@ -1361,6 +1363,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sire: { select: { id: true, name: true } },
               programId: true,
               program: { select: { id: true, name: true } },
+              // DEPRECATED: Post-birth dates no longer written to plan (Phase 4).
+              // Reads remain for historical data until columns are dropped (Phase 6).
               expectedPlacementStart: true,
               expectedPlacementCompleted: true,
               placementStartDateActual: true,
@@ -2584,6 +2588,18 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           ? ind.notes.trim()
           : null;
 
+      // Build data blob from individual's data + color + birth metadata
+      const dataBlob: Record<string, unknown> =
+        typeof ind.data === "object" && ind.data !== null ? { ...ind.data } : {};
+
+      // persist color into JSON data blob (same as single-create)
+      if ("color" in ind) {
+        const rawColor = ind.color;
+        if (rawColor != null && typeof rawColor === "string" && rawColor.trim() !== "") {
+          dataBlob.color = rawColor.trim();
+        }
+      }
+
       // Normalize state (batch only sets bornAt; no advanced state fields)
       const normalizedState = normalizeOffspringState(null, { bornAt });
 
@@ -2622,8 +2638,8 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           ...normalizedState,
 
-          // empty data payload — must come after spread to override
-          data: {} as any,
+          // data blob — stores color, timeOfBirth, deliveryType, etc.
+          data: dataBlob as any,
         },
         include: {
           group: { select: { id: true, name: true } },
@@ -2711,7 +2727,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           prisma.offspring.findMany({
             where,
             take: limit,
-            orderBy: { id: "desc" },
+            orderBy: { id: "asc" },
             include: {
               group: {
                 select: {
@@ -2737,7 +2753,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           prisma.offspring.findMany({
             where: simpleWhere,
             take: limit,
-            orderBy: { id: "desc" },
+            orderBy: { id: "asc" },
           }),
           prisma.offspring.count({ where: simpleWhere }),
         ]);
@@ -3017,12 +3033,16 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       data.buyerPartyId = body.buyerPartyId == null ? null : Number(body.buyerPartyId);
     }
 
-    if ("color" in body || "microchip" in body || "registrationId" in body) {
+    if ("color" in body || "pattern" in body || "microchip" in body || "registrationId" in body) {
       const existingData = existing.data && typeof existing.data === "object" ? existing.data : {};
       const updatedData: Record<string, unknown> = { ...existingData };
 
       if ("color" in body) {
         updatedData.color = body.color ?? null;
+      }
+
+      if ("pattern" in body) {
+        updatedData.pattern = body.pattern ?? null;
       }
 
       if ("microchip" in body) {

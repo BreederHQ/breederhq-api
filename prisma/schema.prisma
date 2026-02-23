@@ -205,6 +205,8 @@ model Tenant {
   watermarkSettings               Json?
   inquiryPermission               InquiryPermission               @default(ANYONE)
   networkVisibility               NetworkVisibility               @default(VISIBLE)
+  invoicingMode                   String                          @default("manual")
+  paymentInstructions             String?
   unifiedListings                 MktListingBreederService[]
   activityCompletions             ActivityCompletion[]
   animals                         Animal[]
@@ -243,6 +245,7 @@ model Tenant {
   breedingPlans                   BreedingPlan[]
   BreedingPlanBuyer               BreedingPlanBuyer[]
   planEvents                      BreedingPlanEvent[]
+  BreedingPlanTempLog             BreedingPlanTempLog[]
   breedingProgramInquiries        BreedingProgramInquiry[]
   breedingProgramMedia            BreedingProgramMedia[]
   breedingProgramRules            BreedingProgramRule[]
@@ -2063,6 +2066,7 @@ model BreedingPlan {
   tenant                        Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   buyers                        BreedingPlanBuyer[]
   Events                        BreedingPlanEvent[]
+  BreedingPlanTempLog           BreedingPlanTempLog[]
   Expense                       Expense[]
   foalingOutcome                FoalingOutcome?
   Invoice                       Invoice[]
@@ -2352,6 +2356,13 @@ model FoalingOutcome {
   foalPhotoUrls         Json?
   createdAt             DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
+  wasCSection           Boolean                   @default(false)
+  cSectionReason        String?
+  placentaCount         Int?
+  damRecoveryNotes      String?
+  totalBorn             Int?
+  bornAlive             Int?
+  stillborn             Int?
   breedingPlan          BreedingPlan              @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
   tenant                Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -2398,21 +2409,23 @@ model MareReproductiveHistory {
 }
 
 model BreedingMilestone {
-  id                 Int           @id @default(autoincrement())
+  id                 Int             @id @default(autoincrement())
   tenantId           Int
   breedingPlanId     Int
   milestoneType      MilestoneType
   scheduledDate      DateTime
   completedDate      DateTime?
-  isCompleted        Boolean       @default(false)
-  notificationSent   Boolean       @default(false)
+  isCompleted        Boolean         @default(false)
+  notificationSent   Boolean         @default(false)
   notificationSentAt DateTime?
   notes              String?
   vetAppointmentId   Int?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  breedingPlan       BreedingPlan  @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
-  tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  offspringGroupId   Int?
+  breedingPlan       BreedingPlan    @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+  OffspringGroup     OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([breedingPlanId, scheduledDate])
@@ -2458,8 +2471,15 @@ model OffspringGroup {
   status                       MarketplaceListingStatus      @default(DRAFT)
   depositRequired              Boolean                       @default(false)
   depositAmountCents           Int?
+  lifecycleStatus              String                        @default("PENDING") @db.VarChar(30)
+  expectedWeanedAt             DateTime?                     @db.Timestamptz(6)
+  expectedPlacementStartAt     DateTime?                     @db.Timestamptz(6)
+  expectedPlacementCompletedAt DateTime?                     @db.Timestamptz(6)
+  completedAt                  DateTime?                     @db.Timestamptz(6)
+  lockedPlacementStartDate     DateTime?                     @db.Timestamptz(6)
   AnimalsLegacy                Animal[]                      @relation("OffspringGroupPuppiesLegacy")
   Attachment                   Attachment[]
+  BreedingMilestone            BreedingMilestone[]
   Campaign                     Campaign[]
   Contract                     Contract[]
   Document                     Document[]
@@ -2477,6 +2497,7 @@ model OffspringGroup {
   Events                       OffspringGroupEvent[]
   rearingAssignments           RearingProtocolAssignment[]
   schedulingBlocks             SchedulingAvailabilityBlock[] @relation("GroupSchedulingBlocks")
+  SupplementSchedule           SupplementSchedule[]
   Tags                         TagAssignment[]
   Task                         Task[]
   Waitlist                     WaitlistEntry[]
@@ -2491,6 +2512,7 @@ model OffspringGroup {
   @@index([placementCompletedAt])
   @@index([status])
   @@index([deletedAt])
+  @@index([lifecycleStatus])
   @@schema("public")
 }
 
@@ -5703,9 +5725,11 @@ model SupplementSchedule {
   notes                    String?
   createdAt                DateTime                   @default(now())
   updatedAt                DateTime                   @updatedAt
+  offspringGroupId         Int?
   administrations          SupplementAdministration[]
   animal                   Animal                     @relation(fields: [animalId], references: [id], onDelete: Cascade)
   breedingPlan             BreedingPlan?              @relation(fields: [breedingPlanId], references: [id])
+  OffspringGroup           OffspringGroup?            @relation(fields: [offspringGroupId], references: [id], onUpdate: NoAction)
   protocol                 SupplementProtocol         @relation(fields: [protocolId], references: [id], onDelete: Cascade)
   tenant                   Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -7132,6 +7156,23 @@ model international_waitlist {
   @@index([notified_at], map: "idx_intl_waitlist_notified_at")
   @@schema("marketplace")
 }
+
+model BreedingPlanTempLog {
+  id           Int          @id @default(autoincrement())
+  planId       Int
+  tenantId     Int
+  recordedAt   DateTime     @db.Timestamptz(3)
+  temperatureF Decimal      @db.Decimal(5, 2)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime
+  BreedingPlan BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  Tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@index([tenantId])
+  @@schema("public")
+}
 enum PartyType {
   CONTACT
   ORGANIZATION
@@ -7701,6 +7742,7 @@ enum BreedingPlanStatus {
   CYCLE
   UNSUCCESSFUL
   ON_HOLD
+  PLAN_COMPLETE
 
   @@schema("public")
 }

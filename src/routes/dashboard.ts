@@ -96,12 +96,12 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { tenantId, archived: false },
         }),
 
-        // Active breeding plans (not COMPLETE, not archived)
+        // Active breeding plans (not terminal, not archived)
         prisma.breedingPlan.count({
           where: {
             tenantId,
             archived: false,
-            status: { notIn: ["COMPLETE"] },
+            status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
           },
         }),
 
@@ -663,7 +663,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const bredPlans = await prisma.breedingPlan.count({
         where: {
           tenantId,
-          status: { in: ["BRED", "PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"] },
+          status: { in: ["BRED", "PREGNANT", "BIRTHED", "PLAN_COMPLETE"] },
           createdAt: { gte: windowStart },
         },
       });
@@ -671,7 +671,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const confirmedPlans = await prisma.breedingPlan.count({
         where: {
           tenantId,
-          status: { in: ["PREGNANT", "BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"] },
+          status: { in: ["PREGNANT", "BIRTHED", "PLAN_COMPLETE"] },
           createdAt: { gte: windowStart },
         },
       });

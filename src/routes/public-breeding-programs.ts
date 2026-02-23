@@ -233,7 +233,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
           },
           breedingPlans: {
             where: {
-              status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
             },
             select: {
               id: true,
@@ -538,7 +538,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         where: {
           id: planIdNum,
           programId: program.id,
-          status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+          status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
         },
         include: {
           dam: {

@@ -158,7 +158,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           mareReproductiveHistory: true,
           breedingPlansAsDam: {
             where: {
-              status: { notIn: ["COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
               ...(stallionIdFilter && { sireId: stallionIdFilter }),
             },
             orderBy: { createdAt: "desc" },
@@ -294,7 +294,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           breedingPlansAsSire: {
             some: {
               tenantId,
-              status: { notIn: ["COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
             },
           },
         },
@@ -350,7 +350,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         include: {
           breedingPlansAsSire: {
             where: {
-              status: { notIn: ["COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
             },
             include: {
               dam: { select: { id: true, name: true } },

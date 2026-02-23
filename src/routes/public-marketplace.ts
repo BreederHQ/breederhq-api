@@ -1951,7 +1951,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "PLAN_COMPLETE"] },
                 },
               },
             },
@@ -2575,7 +2575,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "PLAN_COMPLETE"] },
                 },
               },
             },

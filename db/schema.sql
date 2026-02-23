@@ -633,7 +633,8 @@ CREATE TYPE public."BreedingPlanStatus" AS ENUM (
     'CANCELED',
     'CYCLE',
     'UNSUCCESSFUL',
-    'ON_HOLD'
+    'ON_HOLD',
+    'PLAN_COMPLETE'
 );
 
 
@@ -6079,7 +6080,8 @@ CREATE TABLE public."BreedingMilestone" (
     notes text,
     "vetAppointmentId" integer,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "offspringGroupId" integer
 );
 
 
@@ -6259,6 +6261,42 @@ CREATE SEQUENCE public."BreedingPlanEvent_id_seq"
 --
 
 ALTER SEQUENCE public."BreedingPlanEvent_id_seq" OWNED BY public."BreedingPlanEvent".id;
+
+
+--
+-- Name: BreedingPlanTempLog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."BreedingPlanTempLog" (
+    id integer NOT NULL,
+    "planId" integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "recordedAt" timestamp(3) with time zone NOT NULL,
+    "temperatureF" numeric(5,2) NOT NULL,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: BreedingPlanTempLog_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."BreedingPlanTempLog_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: BreedingPlanTempLog_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."BreedingPlanTempLog_id_seq" OWNED BY public."BreedingPlanTempLog".id;
 
 
 --
@@ -8028,7 +8066,14 @@ CREATE TABLE public."FoalingOutcome" (
     "rebredDate" timestamp(3) without time zone,
     "foalPhotoUrls" jsonb,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "wasCSection" boolean DEFAULT false NOT NULL,
+    "cSectionReason" text,
+    "placentaCount" integer,
+    "damRecoveryNotes" text,
+    "totalBorn" integer,
+    "bornAlive" integer,
+    stillborn integer
 );
 
 
@@ -9637,7 +9682,13 @@ CREATE TABLE public."OffspringGroup" (
     "deletedAt" timestamp(3) without time zone,
     status public."MarketplaceListingStatus" DEFAULT 'DRAFT'::public."MarketplaceListingStatus" NOT NULL,
     "depositRequired" boolean DEFAULT false NOT NULL,
-    "depositAmountCents" integer
+    "depositAmountCents" integer,
+    "lifecycleStatus" character varying(30) DEFAULT 'PENDING'::character varying NOT NULL,
+    "expectedWeanedAt" timestamp with time zone,
+    "expectedPlacementStartAt" timestamp with time zone,
+    "expectedPlacementCompletedAt" timestamp with time zone,
+    "completedAt" timestamp with time zone,
+    "lockedPlacementStartDate" timestamp with time zone
 );
 
 
@@ -11806,7 +11857,8 @@ CREATE TABLE public."SupplementSchedule" (
     "disclaimerAcknowledgedBy" text,
     notes text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "offspringGroupId" integer
 );
 
 
@@ -12056,7 +12108,9 @@ CREATE TABLE public."Tenant" (
     region text,
     "watermarkSettings" jsonb,
     "inquiryPermission" public."InquiryPermission" DEFAULT 'ANYONE'::public."InquiryPermission" NOT NULL,
-    "networkVisibility" public."NetworkVisibility" DEFAULT 'VISIBLE'::public."NetworkVisibility" NOT NULL
+    "networkVisibility" public."NetworkVisibility" DEFAULT 'VISIBLE'::public."NetworkVisibility" NOT NULL,
+    "invoicingMode" text DEFAULT 'manual'::text NOT NULL,
+    "paymentInstructions" text
 );
 
 
@@ -13545,6 +13599,13 @@ ALTER TABLE ONLY public."BreedingPlanBuyer" ALTER COLUMN id SET DEFAULT nextval(
 --
 
 ALTER TABLE ONLY public."BreedingPlanEvent" ALTER COLUMN id SET DEFAULT nextval('public."BreedingPlanEvent_id_seq"'::regclass);
+
+
+--
+-- Name: BreedingPlanTempLog id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog" ALTER COLUMN id SET DEFAULT nextval('public."BreedingPlanTempLog_id_seq"'::regclass);
 
 
 --
@@ -15159,6 +15220,14 @@ ALTER TABLE ONLY public."BreedingPlanBuyer"
 
 ALTER TABLE ONLY public."BreedingPlanEvent"
     ADD CONSTRAINT "BreedingPlanEvent_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_pkey" PRIMARY KEY (id);
 
 
 --
@@ -18538,6 +18607,20 @@ CREATE INDEX "BreedingPlanEvent_tenantId_idx" ON public."BreedingPlanEvent" USIN
 
 
 --
+-- Name: BreedingPlanTempLog_planId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanTempLog_planId_idx" ON public."BreedingPlanTempLog" USING btree ("planId");
+
+
+--
+-- Name: BreedingPlanTempLog_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanTempLog_tenantId_idx" ON public."BreedingPlanTempLog" USING btree ("tenantId");
+
+
+--
 -- Name: BreedingPlan_committedAt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21013,6 +21096,13 @@ CREATE INDEX "OffspringGroupEvent_tenantId_idx" ON public."OffspringGroupEvent" 
 --
 
 CREATE INDEX "OffspringGroup_deletedAt_idx" ON public."OffspringGroup" USING btree ("deletedAt");
+
+
+--
+-- Name: OffspringGroup_lifecycleStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OffspringGroup_lifecycleStatus_idx" ON public."OffspringGroup" USING btree ("lifecycleStatus");
 
 
 --
@@ -24779,6 +24869,14 @@ ALTER TABLE ONLY public."BreedingMilestone"
 
 
 --
+-- Name: BreedingMilestone BreedingMilestone_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingMilestone"
+    ADD CONSTRAINT "BreedingMilestone_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: BreedingMilestone BreedingMilestone_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24848,6 +24946,22 @@ ALTER TABLE ONLY public."BreedingPlanEvent"
 
 ALTER TABLE ONLY public."BreedingPlanEvent"
     ADD CONSTRAINT "BreedingPlanEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_planId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_planId_fkey" FOREIGN KEY ("planId") REFERENCES public."BreedingPlan"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -27443,6 +27557,14 @@ ALTER TABLE ONLY public."SupplementSchedule"
 
 
 --
+-- Name: SupplementSchedule SupplementSchedule_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SupplementSchedule"
+    ADD CONSTRAINT "SupplementSchedule_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON DELETE SET NULL;
+
+
+--
 -- Name: SupplementSchedule SupplementSchedule_protocolId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28027,4 +28149,12 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260220174928'),
     ('20260220185006'),
     ('20260220223214'),
-    ('20260221135145');
+    ('20260221135145'),
+    ('20260221232212'),
+    ('20260221232216'),
+    ('20260222141801'),
+    ('20260223142154'),
+    ('20260223142155'),
+    ('20260223152034'),
+    ('20260223172107'),
+    ('20260223182250');

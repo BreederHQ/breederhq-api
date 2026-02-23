@@ -423,26 +423,35 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           // Title display fields
           titlePrefix: true,
           titleSuffix: true,
-          // Achievement counts
+          // Achievement counts + genetics loci count
           _count: {
             select: {
               titles: true,
               competitionEntries: true,
+              loci: true,
             },
           },
 
           reproductiveCycles: {
             select: { cycleStart: true },
           },
+          // Check for genetics record existence (covers data not yet synced to loci)
+          genetics: {
+            select: { id: true },
+          },
         },
       }),
       prisma.animal.count({ where: whereWithActive }),
     ]);
 
-    const items = rawItems.map((rec) => ({
-      ...rec,
-      cycleStartDates: extractCycleStartDates(rec),
-    }));
+    const items = rawItems.map((rec) => {
+      const { genetics, ...rest } = rec;
+      return {
+        ...rest,
+        hasGenetics: rec._count.loci > 0 || !!genetics,
+        cycleStartDates: extractCycleStartDates(rec),
+      };
+    });
 
     reply.send({ items, total, page: pageNum, limit: take });
   });

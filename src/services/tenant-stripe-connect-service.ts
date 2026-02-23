@@ -178,18 +178,22 @@ export async function handleTenantAccountUpdated(event: Stripe.Event): Promise<v
     return;
   }
 
+  const payoutsEnabled = account.payouts_enabled ?? false;
+
   await prisma.tenant.update({
     where: { id: tenantIdNum },
     data: {
-      stripeConnectPayoutsEnabled: account.payouts_enabled ?? false,
+      stripeConnectPayoutsEnabled: payoutsEnabled,
       stripeConnectOnboardingComplete: account.details_submitted ?? false,
       // Auto-switch to stripe payment mode when onboarding is complete
-      marketplacePaymentMode: account.payouts_enabled ? "stripe" : "manual",
+      marketplacePaymentMode: payoutsEnabled ? "stripe" : "manual",
+      // Auto-set invoicing mode to stripe when payouts become enabled
+      ...(payoutsEnabled ? { invoicingMode: "stripe" } : {}),
     },
   });
 
   console.log("[Tenant Stripe Connect] Account updated for tenant:", tenantIdNum, {
-    payoutsEnabled: account.payouts_enabled,
+    payoutsEnabled,
     detailsSubmitted: account.details_submitted,
   });
 }
@@ -246,19 +250,23 @@ export async function handleOAuthCallback(code: string, tenantId: number): Promi
   const account = await stripe.accounts.retrieve(connectedAccountId);
 
   // Save to tenant
+  const payoutsEnabled = account.payouts_enabled ?? false;
+
   await prisma.tenant.update({
     where: { id: tenantId },
     data: {
       stripeConnectAccountId: connectedAccountId,
-      stripeConnectPayoutsEnabled: account.payouts_enabled ?? false,
+      stripeConnectPayoutsEnabled: payoutsEnabled,
       stripeConnectOnboardingComplete: account.details_submitted ?? false,
-      marketplacePaymentMode: account.payouts_enabled ? "stripe" : "manual",
+      marketplacePaymentMode: payoutsEnabled ? "stripe" : "manual",
+      // Auto-set invoicing mode to stripe when payouts are enabled
+      ...(payoutsEnabled ? { invoicingMode: "stripe" } : {}),
     },
   });
 
   console.log("[Tenant Stripe Connect] OAuth completed for tenant:", tenantId, {
     accountId: connectedAccountId,
-    payoutsEnabled: account.payouts_enabled,
+    payoutsEnabled,
   });
 
   return connectedAccountId;

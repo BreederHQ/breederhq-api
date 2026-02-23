@@ -563,6 +563,7 @@ import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
+import offspringLifecycleRoutes from "./routes/offspring-lifecycle.js";
 import offspringDocumentsRoutes from "./routes/offspring-documents.js";
 import offspringGroupDocumentsRoutes from "./routes/offspring-group-documents.js";
 import offspringGroupBuyersRoutes from "./routes/offspring-group-buyers.js";
@@ -675,6 +676,7 @@ import adminDbHealthRoutes from "./routes/admin-db-health.js"; // Admin database
 import adminEmailLogRoutes from "./routes/admin-email-logs.js"; // Admin email log management & tenant email history
 import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-health-monitor.js"; // DB health monitoring cron job (daily)
 import { startEmailRetryJob, stopEmailRetryJob } from "./jobs/email-retry.js"; // Email retry cron job (every 5 min)
+import { startOverdueReminderJob, stopOverdueReminderJob } from "./jobs/invoice-overdue-reminder.js"; // Overdue invoice reminder cron job (daily 9 AM UTC)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1237,6 +1239,7 @@ app.register(
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
+    api.register(offspringLifecycleRoutes); // /api/v1/offspring/:groupId/(advance-status|rewind-status|dates|milestones|batch-weights)
     api.register(offspringDocumentsRoutes); // /api/v1/offspring/individuals/:id/documents
     api.register(offspringGroupDocumentsRoutes); // /api/v1/offspring/groups/:id/documents
     api.register(offspringGroupBuyersRoutes); // /api/v1/offspring/groups/:id/buyers/* (Selection Board)
@@ -1563,6 +1566,9 @@ export async function start() {
 
     // Start email retry cron job (every 5 minutes)
     startEmailRetryJob();
+
+    // Start overdue invoice reminder cron job (daily at 9 AM UTC)
+    startOverdueReminderJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1584,6 +1590,7 @@ process.on("SIGTERM", async () => {
   stopServiceListingExpirationJob();
   stopDbHealthMonitorJob();
   stopEmailRetryJob();
+  stopOverdueReminderJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1600,6 +1607,7 @@ process.on("SIGINT", async () => {
   stopServiceListingExpirationJob();
   stopDbHealthMonitorJob();
   stopEmailRetryJob();
+  stopOverdueReminderJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

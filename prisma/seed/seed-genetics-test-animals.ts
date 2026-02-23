@@ -1507,6 +1507,7 @@ async function main() {
 
   let created = 0;
   let skipped = 0;
+  let backfilled = 0;
 
   for (const animal of allTestAnimals) {
     // Check if animal already exists
@@ -1515,12 +1516,34 @@ async function main() {
         tenantId,
         name: animal.name,
         species: animal.species,
-      }
+      },
+      include: { genetics: { select: { id: true } } },
     });
 
     if (existing) {
-      console.log(`⏭️  Skipped (exists): ${animal.name} (${animal.species})`);
-      skipped++;
+      if (existing.genetics) {
+        // Animal AND genetics both exist — nothing to do
+        console.log(`⏭️  Skipped (exists with genetics): ${animal.name} (${animal.species})`);
+        skipped++;
+        continue;
+      }
+
+      // Animal exists but missing genetics — backfill
+      await prisma.animalGenetics.create({
+        data: {
+          animalId: existing.id,
+          testProvider: animal.testProvider || null,
+          testDate: animal.birthDate ? new Date(animal.birthDate.getTime() + 180 * 24 * 60 * 60 * 1000) : null,
+          coatColorData: animal.genetics.coatColor || [],
+          coatTypeData: animal.genetics.coatType || [],
+          physicalTraitsData: animal.genetics.physicalTraits || [],
+          eyeColorData: animal.genetics.eyeColor || [],
+          healthGeneticsData: animal.genetics.health || [],
+        }
+      });
+
+      console.log(`🔧 Backfilled genetics: ${animal.name} (${animal.species} - ${animal.breed})`);
+      backfilled++;
       continue;
     }
 
@@ -1573,6 +1596,7 @@ async function main() {
 
   let coiCreated = 0;
   let coiSkipped = 0;
+  let coiBackfilled = 0;
 
   for (const animal of sortedCoiAnimals) {
     // Check if animal already exists
@@ -1581,13 +1605,37 @@ async function main() {
         tenantId,
         name: animal.name,
         species: 'DOG',
-      }
+      },
+      include: { genetics: { select: { id: true } } },
     });
 
     if (existing) {
-      console.log(`⏭️  Skipped (exists): ${animal.name}`);
       animalIdMap.set(animal.name, existing.id);
-      coiSkipped++;
+
+      if (existing.genetics) {
+        // Animal AND genetics both exist — nothing to do
+        console.log(`⏭️  Skipped (exists with genetics): ${animal.name}`);
+        coiSkipped++;
+        continue;
+      }
+
+      // Animal exists but missing genetics — backfill
+      const birthDate = new Date(`${2015 + (animal.generation * 2)}-06-15`);
+      await prisma.animalGenetics.create({
+        data: {
+          animalId: existing.id,
+          testProvider: 'Embark',
+          testDate: new Date(birthDate.getTime() + 180 * 24 * 60 * 60 * 1000),
+          coatColorData: animal.genetics.coatColor || [],
+          coatTypeData: animal.genetics.coatType || [],
+          physicalTraitsData: animal.genetics.physicalTraits || [],
+          eyeColorData: animal.genetics.eyeColor || [],
+          healthGeneticsData: animal.genetics.health || [],
+        }
+      });
+
+      console.log(`🔧 Backfilled genetics: ${animal.name} (Gen ${animal.generation})`);
+      coiBackfilled++;
       continue;
     }
 
@@ -1667,11 +1715,13 @@ async function main() {
   console.log('\n' + '═'.repeat(70));
   console.log('🎉 Genetics Test Animals seed completed!');
   console.log('═'.repeat(70));
-  console.log(`   Basic animals created: ${created}`);
-  console.log(`   Basic animals skipped: ${skipped} (already existed)`);
-  console.log(`   COI family created:    ${coiCreated}`);
-  console.log(`   COI family skipped:    ${coiSkipped} (already existed)`);
-  console.log(`   Total animals:         ${allTestAnimals.length + COI_FAMILY_TREE_DOGS.length}\n`);
+  console.log(`   Basic animals created:    ${created}`);
+  console.log(`   Basic animals backfilled: ${backfilled} (existed, genetics added)`);
+  console.log(`   Basic animals skipped:    ${skipped} (already had genetics)`);
+  console.log(`   COI family created:       ${coiCreated}`);
+  console.log(`   COI family backfilled:    ${coiBackfilled} (existed, genetics added)`);
+  console.log(`   COI family skipped:       ${coiSkipped} (already had genetics)`);
+  console.log(`   Total animals:            ${allTestAnimals.length + COI_FAMILY_TREE_DOGS.length}\n`);
 
   console.log('📋 TEST SCENARIOS:');
   console.log('─'.repeat(70));

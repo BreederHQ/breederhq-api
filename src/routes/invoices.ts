@@ -18,6 +18,7 @@ import { renderInvoiceEmail } from "../services/email-templates.js";
 import { requireClientPartyScope } from "../middleware/actor-context.js";
 import { activeOnly } from "../utils/query-helpers.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
+import { generateInvoicePdf } from "../services/finance/invoice-pdf-builder.js";
 import { logEntityActivity } from "../services/activity-log.js";
 
 /** Build AuditContext from a Fastify request */
@@ -919,21 +920,47 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // GET /tenant/stripe-connect/can-invoice - Check if tenant can create Stripe invoices
-  app.get("/tenant/stripe-connect/can-invoice", async (req, reply) => {
+  // GET /invoices/:id/pdf - Download invoice PDF
+  app.get("/invoices/:id/pdf", async (req, reply) => {
     try {
       const tenantId = Number((req as any).tenantId);
       if (!tenantId) return reply.code(400).send({ error: "missing_tenant" });
 
-      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
-      const canCreate = await tenantInvoiceStripe.canTenantCreateStripeInvoices(tenantId);
+      const id = Number((req.params as any).id);
+      if (!id || !Number.isInteger(id)) return reply.code(400).send({ error: "invalid_id" });
 
-      return reply.send({ canCreateStripeInvoices: canCreate });
+      // Check if invoice has a Stripe PDF — if so, redirect to it
+      const invoice = await prisma.invoice.findFirst({
+        where: { id, tenantId, ...activeOnly },
+        select: { stripeInvoiceId: true },
+      });
+
+      if (!invoice) return reply.code(404).send({ error: "not_found" });
+
+      if (invoice.stripeInvoiceId) {
+        // Fetch Stripe invoice PDF URL via existing service
+        try {
+          const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+          const pdfUrl = await tenantInvoiceStripe.getTenantInvoicePdfUrl(tenantId, id);
+          return reply.redirect(pdfUrl);
+        } catch {
+          // Fall through to generate our own PDF
+        }
+      }
+
+      // Generate platform PDF
+      const { buffer, filename } = await generateInvoicePdf(id, tenantId);
+
+      return reply
+        .header("Content-Type", "application/pdf")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(Buffer.from(buffer));
     } catch (err) {
       const { status, payload } = errorReply(err);
       return reply.code(status).send(payload);
     }
   });
+
 };
 
 export default routes;

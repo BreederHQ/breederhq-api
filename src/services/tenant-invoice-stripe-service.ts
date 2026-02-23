@@ -17,6 +17,9 @@ import Stripe from "stripe";
 import prisma from "../prisma.js";
 import { getStripe } from "./stripe-service.js";
 import { canTenantAcceptStripePayments, getTenantStripeAccountId } from "./tenant-stripe-connect-service.js";
+import { createPaymentAndRecalculate } from "./finance/payment-service.js";
+import { sendEmail, sendTenantInvoicePaymentFailedEmail } from "./email-service.js";
+import { renderPaymentReceiptEmail, renderBreederPaymentNotification } from "./email-templates.js";
 
 // ============================================================================
 // Types
@@ -601,7 +604,7 @@ export async function handleTenantInvoicePaid(
       stripeInvoiceId: stripeInvoice.id,
     },
     include: {
-      tenant: { select: { name: true, primaryEmail: true } },
+      tenant: { select: { name: true, primaryEmail: true, slug: true } },
       clientParty: { select: { name: true, email: true } },
     },
   });
@@ -630,62 +633,93 @@ export async function handleTenantInvoicePaid(
         : (rawInvoice.charge as { id?: string })?.id || null;
   }
 
-  // Update invoice
-  await prisma.invoice.update({
-    where: { id: invoice.id },
-    data: {
-      status: "paid",
-      paidAt: new Date(),
-      balanceCents: 0,
-      stripePaymentIntentId: paymentIntentId,
-      // stripeChargeId: chargeId, // Add to schema if needed
-    },
+  // Create Payment record and recalculate balance (single source of truth)
+  const amountPaid = stripeInvoice.amount_paid || Number(invoice.amountCents);
+
+  await prisma.$transaction(async (tx: any) => {
+    await createPaymentAndRecalculate(tx, {
+      tenantId: invoice.tenantId,
+      invoiceId: invoice.id,
+      amountCents: amountPaid,
+      receivedAt: new Date(),
+      methodType: "card",
+      processor: "stripe",
+      processorRef: paymentIntentId || undefined,
+      status: "succeeded",
+      notes: `Stripe Invoice payment (connected account): ${stripeInvoice.id}`,
+      data: { chargeId, stripeInvoiceId: stripeInvoice.id },
+    });
+
+    // Store Stripe cross-reference on invoice
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { stripePaymentIntentId: paymentIntentId },
+    });
   });
 
-  console.log("[Tenant Invoice Webhook] Invoice paid:", {
+  console.log("[Tenant Invoice Webhook] Invoice paid (Payment record created):", {
     invoiceId: invoice.id,
     stripeInvoiceId: stripeInvoice.id,
-    amountPaid: stripeInvoice.amount_paid,
+    amountPaid,
   });
 
-  // Send confirmation emails
+  // Send confirmation emails using shared templates (fire-and-forget)
   try {
-    const { sendEmail } = await import("./email-service.js");
-    const { renderInvoiceEmail } = await import("./email-templates.js");
+    // Re-fetch invoice to get updated balance/status after payment
+    const updatedInvoice = await prisma.invoice.findUnique({
+      where: { id: invoice.id },
+      select: { amountCents: true, balanceCents: true, status: true },
+    });
 
-    const totalAmount = `$${(stripeInvoice.amount_paid / 100).toFixed(2)}`;
+    const remainingBalanceCents = Number(updatedInvoice?.balanceCents ?? 0);
+    const isPaid = updatedInvoice?.status === "paid";
 
-    // Send confirmation to client
+    // Send receipt to client
     if (invoice.clientParty?.email) {
-      const emailContent = renderInvoiceEmail({
+      const receipt = renderPaymentReceiptEmail({
         invoiceNumber: invoice.invoiceNumber,
-        amountCents: stripeInvoice.amount_paid,
+        paymentAmountCents: amountPaid,
+        totalCents: Number(invoice.amountCents),
+        remainingBalanceCents,
         clientName: invoice.clientParty.name || "Customer",
         tenantName: invoice.tenant?.name || "BreederHQ",
+        methodType: "card",
+        receivedAt: new Date(),
+        portalUrl: invoice.tenant?.slug
+          ? `${process.env.PORTAL_BASE_URL || "https://portal.breederhq.com"}/t/${invoice.tenant.slug}/financials`
+          : undefined,
       });
 
       sendEmail({
         tenantId: invoice.tenantId,
         to: invoice.clientParty.email,
-        subject: `Payment Received - ${emailContent.subject}`,
-        html: emailContent.html,
-        text: emailContent.text,
-        templateKey: "invoice_paid_confirmation",
+        subject: receipt.subject,
+        html: receipt.html,
+        text: receipt.text,
+        templateKey: "payment_receipt",
         relatedInvoiceId: invoice.id,
         category: "transactional",
-      }).catch((err) => console.error("[Tenant Invoice Email] Failed to send client confirmation:", err));
+      }).catch((err) => console.error("[Tenant Invoice Email] Failed to send client receipt:", err));
     }
 
-    // Send notification to tenant/breeder
+    // Send notification to breeder
     if (invoice.tenant?.primaryEmail) {
-      const clientName = invoice.clientParty?.name || "Customer";
+      const notification = renderBreederPaymentNotification({
+        invoiceNumber: invoice.invoiceNumber,
+        paymentAmountCents: amountPaid,
+        remainingBalanceCents,
+        clientName: invoice.clientParty?.name || "Customer",
+        tenantName: invoice.tenant.name || "BreederHQ",
+        isPaid,
+      });
+
       sendEmail({
         tenantId: invoice.tenantId,
         to: invoice.tenant.primaryEmail,
-        subject: `Payment Received: Invoice ${invoice.invoiceNumber}`,
-        html: `<p>Invoice ${invoice.invoiceNumber} has been paid by ${clientName}. Amount: ${totalAmount}</p>`,
-        text: `Invoice ${invoice.invoiceNumber} has been paid by ${clientName}. Amount: ${totalAmount}`,
-        templateKey: "invoice_paid_notification",
+        subject: notification.subject,
+        html: notification.html,
+        text: notification.text,
+        templateKey: "breeder_payment_notification",
         relatedInvoiceId: invoice.id,
         category: "transactional",
       }).catch((err) => console.error("[Tenant Invoice Email] Failed to send breeder notification:", err));
@@ -776,8 +810,6 @@ export async function handleTenantInvoicePaymentFailed(
 
   // Send notification to breeder about failed payment
   try {
-    const { sendTenantInvoicePaymentFailedEmail } = await import("./email-service.js");
-
     const clientName = invoice.clientParty?.name || "Customer";
     const totalAmount = `$${(Number(invoice.amountCents) / 100).toFixed(2)}`;
 

@@ -43,6 +43,8 @@ export default async function tenantStripeConnectRoutes(
           stripeConnectAccountId: true,
           stripeConnectOnboardingComplete: true,
           stripeConnectPayoutsEnabled: true,
+          invoicingMode: true,
+          paymentInstructions: true,
         },
       });
 
@@ -58,6 +60,8 @@ export default async function tenantStripeConnectRoutes(
           payoutsEnabled: false,
           detailsSubmitted: false,
           chargesEnabled: false,
+          invoicingMode: tenant.invoicingMode,
+          paymentInstructions: tenant.paymentInstructions,
         });
       }
 
@@ -67,6 +71,8 @@ export default async function tenantStripeConnectRoutes(
       return reply.send({
         ...status,
         accountId: tenant.stripeConnectAccountId,
+        invoicingMode: tenant.invoicingMode,
+        paymentInstructions: tenant.paymentInstructions,
       });
     } catch (err: any) {
       req.log.error({ err, tenantId }, "Stripe Connect status check failed");
@@ -288,7 +294,25 @@ export default async function tenantStripeConnectRoutes(
         });
       }
 
-      // Clear the Stripe Connect account from tenant record
+      // Check for open Stripe invoices before disconnecting
+      const openStripeInvoices = await app.prisma.invoice.count({
+        where: {
+          tenantId,
+          stripeInvoiceId: { not: null },
+          status: { in: ["issued", "partially_paid"] },
+          deletedAt: null,
+        },
+      });
+
+      if (openStripeInvoices > 0) {
+        return reply.code(409).send({
+          error: "open_stripe_invoices",
+          message: `Cannot disconnect: ${openStripeInvoices} open Stripe invoice(s) exist. Void or collect payment on them first.`,
+          openCount: openStripeInvoices,
+        });
+      }
+
+      // Clear the Stripe Connect account and set invoicing mode to manual
       // Note: We don't delete the Stripe account - breeder can reconnect or use it elsewhere
       await app.prisma.tenant.update({
         where: { id: tenantId },
@@ -296,14 +320,15 @@ export default async function tenantStripeConnectRoutes(
           stripeConnectAccountId: null,
           stripeConnectOnboardingComplete: false,
           stripeConnectPayoutsEnabled: false,
+          invoicingMode: "manual",
         },
       });
 
-      req.log.info({ tenantId }, "Stripe Connect account disconnected");
+      req.log.info({ tenantId }, "Stripe Connect account disconnected, invoicingMode set to manual");
 
       return reply.send({
         success: true,
-        message: "Stripe account disconnected. You can reconnect at any time.",
+        message: "Stripe account disconnected. Invoicing mode set to manual. You can reconnect at any time.",
       });
     } catch (err: any) {
       req.log.error({ err, tenantId }, "Stripe Connect disconnect failed");
@@ -358,6 +383,114 @@ export default async function tenantStripeConnectRoutes(
         error: "oauth_failed",
         message: "Failed to connect Stripe account. Please try again.",
       });
+    }
+  });
+
+  /* ───────────────────────── Invoicing Settings ───────────────────────── */
+
+  /**
+   * PUT /invoicing-settings - Update invoicing mode and payment instructions
+   * Body: { invoicingMode: "manual" | "stripe", paymentInstructions?: string }
+   */
+  app.put("/invoicing-settings", async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as any).tenantId as number;
+    const { invoicingMode, paymentInstructions } = (req.body || {}) as {
+      invoicingMode?: string;
+      paymentInstructions?: string;
+    };
+
+    if (!tenantId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    // Validate invoicingMode
+    if (invoicingMode && !["manual", "stripe"].includes(invoicingMode)) {
+      return reply.code(400).send({
+        error: "invalid_mode",
+        message: "invoicingMode must be 'manual' or 'stripe'.",
+      });
+    }
+
+    // If switching to stripe, verify Stripe Connect is active
+    if (invoicingMode === "stripe") {
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          stripeConnectAccountId: true,
+          stripeConnectPayoutsEnabled: true,
+        },
+      });
+
+      if (!tenant?.stripeConnectAccountId || !tenant.stripeConnectPayoutsEnabled) {
+        return reply.code(400).send({
+          error: "stripe_not_ready",
+          message: "Cannot switch to Stripe mode: Stripe Connect is not set up or payouts are not enabled.",
+        });
+      }
+    }
+
+    // Validate paymentInstructions length
+    if (paymentInstructions && paymentInstructions.length > 500) {
+      return reply.code(400).send({
+        error: "instructions_too_long",
+        message: "Payment instructions must be 500 characters or fewer.",
+      });
+    }
+
+    try {
+      const data: Record<string, any> = {};
+      if (invoicingMode) data.invoicingMode = invoicingMode;
+      if (paymentInstructions !== undefined) data.paymentInstructions = paymentInstructions || null;
+
+      await app.prisma.tenant.update({
+        where: { id: tenantId },
+        data,
+      });
+
+      req.log.info({ tenantId, invoicingMode, hasInstructions: !!paymentInstructions }, "Invoicing settings updated");
+
+      return reply.send({ success: true, invoicingMode, paymentInstructions: paymentInstructions || null });
+    } catch (err: any) {
+      req.log.error({ err, tenantId }, "Failed to update invoicing settings");
+      return reply.code(500).send({
+        error: "update_failed",
+        message: "Failed to update invoicing settings.",
+      });
+    }
+  });
+
+  /* ───────────────────────── Can Invoice (Stripe) ───────────────────────── */
+
+  /**
+   * GET /can-invoice - Check if tenant can create Stripe invoices
+   */
+  app.get("/can-invoice", async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as any).tenantId as number;
+
+    if (!tenantId) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    try {
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          stripeConnectAccountId: true,
+          stripeConnectPayoutsEnabled: true,
+          invoicingMode: true,
+        },
+      });
+
+      const canCreateStripeInvoices = !!(
+        tenant?.stripeConnectAccountId &&
+        tenant?.stripeConnectPayoutsEnabled &&
+        tenant?.invoicingMode === "stripe"
+      );
+
+      return reply.send({ canCreateStripeInvoices, invoicingMode: tenant?.invoicingMode || "manual" });
+    } catch (err: any) {
+      req.log.error({ err, tenantId }, "Can-invoice check failed");
+      return reply.code(500).send({ error: "check_failed" });
     }
   });
 }
