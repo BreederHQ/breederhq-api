@@ -3,6 +3,7 @@
 // using Wright's path coefficient method
 
 import prisma from "../prisma.js";
+import { Prisma } from "@prisma/client";
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Types
@@ -168,7 +169,7 @@ async function buildAncestorTree(
 
 /**
  * Collect all ancestors for an animal into a map (id -> generation distances)
- * Used for COI path finding
+ * Uses a single recursive CTE instead of N+1 individual queries.
  */
 async function collectAncestors(
   animalId: number | null,
@@ -177,34 +178,41 @@ async function collectAncestors(
   cache: Map<number, AnimalRow>
 ): Promise<Map<number, number[]>> {
   const ancestors = new Map<number, number[]>();
+  if (!animalId) return ancestors;
 
-  async function traverse(id: number | null, generation: number) {
-    if (!id || generation > maxGenerations) return;
+  const rows = await prisma.$queryRaw<
+    Array<{ id: number; name: string; generation: number }>
+  >(Prisma.sql`
+    WITH RECURSIVE ancestors AS (
+      SELECT p.id, p.name, p."damId", p."sireId", 1 AS generation
+      FROM "Animal" start
+      JOIN "Animal" p ON p.id IN (start."damId", start."sireId")
+      WHERE start.id = ${animalId}
+        AND start."tenantId" = ${tenantId}
+        AND p."tenantId" = ${tenantId}
 
-    let animal = cache.get(id);
-    if (!animal) {
-      const row = await prisma.animal.findFirst({
-        where: { id, tenantId },
-        select: animalSelect,
-      });
-      if (!row) return;
-      animal = row as AnimalRow;
-      cache.set(id, animal);
+      UNION ALL
+
+      SELECT p.id, p.name, p."damId", p."sireId", a.generation + 1
+      FROM ancestors a
+      JOIN "Animal" p ON p.id IN (a."damId", a."sireId")
+      WHERE a.generation < ${maxGenerations}
+        AND p."tenantId" = ${tenantId}
+    )
+    SELECT id, name, generation FROM ancestors
+  `);
+
+  for (const row of rows) {
+    const existing = ancestors.get(row.id) || [];
+    existing.push(row.generation);
+    ancestors.set(row.id, existing);
+
+    // Populate cache for name lookups in calculateCOI
+    if (!cache.has(row.id)) {
+      cache.set(row.id, { id: row.id, name: row.name } as AnimalRow);
     }
-
-    // Record this ancestor at this generation
-    const existing = ancestors.get(id) || [];
-    existing.push(generation);
-    ancestors.set(id, existing);
-
-    // Continue up the tree
-    await Promise.all([
-      traverse(animal.damId, generation + 1),
-      traverse(animal.sireId, generation + 1),
-    ]);
   }
 
-  await traverse(animalId, 1);
   return ancestors;
 }
 
