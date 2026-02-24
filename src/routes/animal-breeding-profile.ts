@@ -356,13 +356,8 @@ async function computeMaleBreedingStats(animalId: number, tenantId: number) {
       status: true,
       birthDateActual: true,
       breedDateActual: true,
-      offspringGroup: {
-        select: {
-          countBorn: true,
-          countLive: true,
-          actualBirthOn: true,
-        },
-      },
+      countBorn: true,
+      countLive: true,
       BreedingAttempts: {
         select: {
           id: true,
@@ -397,10 +392,10 @@ async function computeMaleBreedingStats(animalId: number, tenantId: number) {
       lastBreedingDate = plan.breedDateActual;
     }
 
-    // Count pregnancies and offspring
-    if (plan.offspringGroup?.actualBirthOn || plan.birthDateActual) {
+    // Count pregnancies and offspring (data now directly on breedingPlan)
+    if (plan.birthDateActual) {
       pregnanciesProduced++;
-      const litterSize = plan.offspringGroup?.countLive ?? plan.offspringGroup?.countBorn ?? 0;
+      const litterSize = plan.countLive ?? plan.countBorn ?? 0;
       if (litterSize > 0) {
         totalOffspring += litterSize;
         litterSizes.push(litterSize);
@@ -429,14 +424,9 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
       id: true,
       status: true,
       birthDateActual: true,
-      offspringGroup: {
-        select: {
-          countBorn: true,
-          countLive: true,
-          countStillborn: true,
-          actualBirthOn: true,
-        },
-      },
+      countBorn: true,
+      countLive: true,
+      countStillborn: true,
     },
   });
 
@@ -450,23 +440,23 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
   let lastBirthDate: Date | null = null;
 
   for (const plan of plans) {
-    const hasBirth = plan.offspringGroup?.actualBirthOn || plan.birthDateActual;
+    const hasBirth = plan.birthDateActual;
 
     if (hasBirth) {
       totalPregnancies++;
       liveLitters++;
-      const birthDate = plan.offspringGroup?.actualBirthOn || plan.birthDateActual;
+      const birthDate = plan.birthDateActual;
       if (birthDate && (!lastBirthDate || birthDate > lastBirthDate)) {
         lastBirthDate = birthDate;
         lastPregnancyDate = birthDate;
       }
 
-      const litterSize = plan.offspringGroup?.countLive ?? plan.offspringGroup?.countBorn ?? 0;
+      const litterSize = plan.countLive ?? plan.countBorn ?? 0;
       if (litterSize > 0) {
         totalOffspring += litterSize;
         litterSizes.push(litterSize);
       }
-      totalDeceased += plan.offspringGroup?.countStillborn ?? 0;
+      totalDeceased += plan.countStillborn ?? 0;
     } else if (plan.status === "CANCELED" || plan.status === "UNSUCCESSFUL") {
       // Count as pregnancy loss if plan was cancelled/failed
       pregnancyLosses++;

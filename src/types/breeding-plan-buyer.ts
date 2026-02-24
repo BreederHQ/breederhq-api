@@ -60,7 +60,6 @@ export interface BreedingPlanBuyerDTO {
   priority: number | null;
 
   // Offspring connection
-  offspringGroupBuyerId: number | null;
   offspringId: number | null;
 
   // Deposit invoice (linked directly to this plan buyer)
@@ -138,8 +137,3 @@ export interface BulkAssignRequest {
   buyerIds: number[];
 }
 
-export interface SendToOffspringGroupResponse {
-  created: number;
-  skipped: number;
-  offspringGroupId: number;
-}

@@ -31,7 +31,6 @@ import { DEFAULT_PUBLIC_IMAGE_SETTINGS } from "../types/watermark.js";
  * - tenants/{t}/animals/{a}/photo.jpg → animalProfile
  * - tenants/{t}/programs/{p}/cover.jpg → breedingProgramCover
  * - tenants/{t}/programs/{p}/media/{m} → breedingProgramGallery
- * - tenants/{t}/offspring/{o}/cover.jpg → offspringGroupCover
  * - tenants/{t}/services/{s}/banner.jpg → serviceListingBanner
  * - tenants/{t}/services/{s}/gallery/{g} → serviceGallery
  * - tenants/{t}/profile/banner.jpg → breederBanner
@@ -55,11 +54,6 @@ export function detectImageType(storageKey: string): PublicImageType | null {
   // Breeding program gallery/media
   if (/tenants\/\d+\/programs\/\d+\/(media|gallery)/i.test(storageKey)) {
     return "breedingProgramGallery";
-  }
-
-  // Offspring group covers
-  if (/tenants\/\d+\/offspring\/\d+\/cover/i.test(storageKey)) {
-    return "offspringGroupCover";
   }
 
   // Service listing banners

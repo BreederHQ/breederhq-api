@@ -173,7 +173,7 @@ Remap: DATABASE_URL = DATABASE_DIRECT_URL  (bhq_migrator @ direct — required f
 | `AWS_ACCESS_KEY_ID` | On Render only | Not needed on EB (uses instance roles) |
 | `AWS_SECRET_ACCESS_KEY` | On Render only | Not needed on EB (uses instance roles) |
 
-**Note**: `AWS_SECRETS_MANAGER_REGION` is separate from `AWS_REGION` (which is used by S3, defaults to `us-east-1`).
+**Note**: `AWS_SECRETS_MANAGER_REGION` is separate from `AWS_REGION` (which is used by S3). Both default to `us-east-2` — all AWS resources (S3, Secrets Manager, IAM) are now in us-east-2 as of 2026-02-22.
 
 ---
 
@@ -307,7 +307,7 @@ aws iam list-attached-user-policies \
 
 **Cause**: `AWS_REGION` in the secret may override the S3 region.
 
-**Fix**: The SM client now uses `AWS_SECRETS_MANAGER_REGION` (separate from `AWS_REGION`). Ensure secrets include `AWS_REGION=us-east-1` if S3 needs it, or rely on the default in s3-client.ts.
+**Fix**: The SM client uses `AWS_SECRETS_MANAGER_REGION` (separate from `AWS_REGION`). As of 2026-02-22, all S3 buckets are in us-east-2 (same as Secrets Manager). The S3 client reads `S3_REGION || AWS_REGION` and defaults to `us-east-2`. If `AWS_REGION` is absent from the SM secret, the s3-client.ts default applies. The S3 client also has `followRegionRedirects: true` as a safety net.
 
 ---
 

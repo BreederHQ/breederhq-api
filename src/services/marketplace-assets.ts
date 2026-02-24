@@ -15,7 +15,7 @@ import { createHash } from "crypto";
 
 export type AssetType =
   | "animal_photo"
-  | "offspring_group_cover"
+  | "plan_cover"
   | "dam_photo"
   | "sire_photo"
   | "program_photo";
@@ -80,7 +80,7 @@ export function resolveAssetId(assetId: string): { sourceUrl: string; type: Asse
     // Validate type
     const validTypes: AssetType[] = [
       "animal_photo",
-      "offspring_group_cover",
+      "plan_cover",
       "dam_photo",
       "sire_photo",
       "program_photo",

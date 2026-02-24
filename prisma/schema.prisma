@@ -65,7 +65,6 @@ model User {
   neonatalInterventions          NeonatalIntervention[]
   notifications                  Notification[]
   OffspringEvent                 OffspringEvent[]
-  OffspringGroupEvent            OffspringGroupEvent[]
   portalAccessesCreatedBy        PortalAccess[]                  @relation("PortalAccessCreatedBy")
   portalAccessesUpdatedBy        PortalAccess[]                  @relation("PortalAccessUpdatedBy")
   portalAccesses                 PortalAccess[]                  @relation("PortalAccessUser")
@@ -205,6 +204,8 @@ model Tenant {
   watermarkSettings               Json?
   inquiryPermission               InquiryPermission               @default(ANYONE)
   networkVisibility               NetworkVisibility               @default(VISIBLE)
+  invoicingMode                   String                          @default("manual")
+  paymentInstructions             String?
   unifiedListings                 MktListingBreederService[]
   activityCompletions             ActivityCompletion[]
   animals                         Animal[]
@@ -243,6 +244,7 @@ model Tenant {
   breedingPlans                   BreedingPlan[]
   BreedingPlanBuyer               BreedingPlanBuyer[]
   planEvents                      BreedingPlanEvent[]
+  BreedingPlanTempLog             BreedingPlanTempLog[]
   breedingProgramInquiries        BreedingProgramInquiry[]
   breedingProgramMedia            BreedingProgramMedia[]
   breedingProgramRules            BreedingProgramRule[]
@@ -305,9 +307,6 @@ model Tenant {
   OffspringContract               OffspringContract[]
   OffspringDocument               OffspringDocument[]
   OffspringEvent                  OffspringEvent[]
-  offspringGroups                 OffspringGroup[]
-  OffspringGroupBuyer             OffspringGroupBuyer[]
-  OffspringGroupEvent             OffspringGroupEvent[]
   OffspringInvoiceLink            OffspringInvoiceLink[]
   protocolExceptions              OffspringProtocolException[]
   organizations                   Organization[]
@@ -827,7 +826,6 @@ model Party {
   messageParticipants      MessageParticipant[]       @relation("MessageParticipantParty")
   offspringBuyers          Offspring[]                @relation("OffspringBuyerParty")
   offspringContracts       OffspringContract[]        @relation("OffspringContractBuyerParty")
-  offspringGroupBuyers     OffspringGroupBuyer[]      @relation("OffspringGroupBuyerParty")
   organization             Organization?              @relation("OrganizationParty")
   tenant                   Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   activity                 PartyActivity[]            @relation("PartyActivity")
@@ -1075,155 +1073,153 @@ model PartyActivity {
 }
 
 model Animal {
-  id                         Int                           @id @default(autoincrement())
-  tenantId                   Int
-  organizationId             Int?
-  name                       String
-  species                    Species
-  sex                        Sex
-  status                     AnimalStatus                  @default(ACTIVE)
-  intendedUse                HorseIntendedUse?
-  declaredValueCents         Int?
-  declaredValueCurrency      String?                       @db.VarChar(3)
-  valuationDate              DateTime?
-  valuationSource            HorseValuationSource?
-  forSale                    Boolean                       @default(false)
-  inSyndication              Boolean                       @default(false)
-  isLeased                   Boolean                       @default(false)
-  birthDate                  DateTime?
-  microchip                  String?
-  notes                      String?
-  breed                      String?
-  photoUrl                   String?
-  canonicalBreedId           Int?
-  customBreedId              Int?
-  litterId                   Int?
-  offspringGroupId           Int?
-  collarColorId              String?
-  collarColorName            String?
-  collarColorHex             String?
-  collarAssignedAt           DateTime?
-  collarLocked               Boolean                       @default(false)
-  buyerPartyId               Int?
-  priceCents                 Int?
-  depositCents               Int?
-  saleInvoiceId              String?
-  contractId                 String?
-  contractSignedAt           DateTime?
-  paidInFullAt               DateTime?
-  healthCertAt               DateTime?
-  microchipAppliedAt         DateTime?
-  pickupAt                   DateTime?
-  placedAt                   DateTime?
-  createdAt                  DateTime                      @default(now())
-  updatedAt                  DateTime                      @updatedAt
-  archived                   Boolean                       @default(false)
-  femaleCycleLenOverrideDays Int?
-  damId                      Int?
-  sireId                     Int?
-  coiPercent                 Float?
-  coiGenerations             Int?
-  coiCalculatedAt            DateTime?
-  titlePrefix                String?
-  titleSuffix                String?
-  exchangeCode               String?                       @unique
-  exchangeCodeExpiresAt      DateTime?
-  deletedAt                  DateTime?
-  breedingAvailability       String?
-  lineDescription            String?
-  lineTypes                  String[]
-  primaryLineType            String?
-  brandMark                  String?
-  earTagNumber               String?
-  earTagRfidNumber           String?
-  scrapieTagNumber           String?
-  tattooNumber               String?
-  networkSearchVisible       Boolean                       @default(true)
-  coverImageUrl              String?
-  nickname                   String?
-  buyerParty                 Party?                        @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id])
-  canonicalBreed             Breed?                        @relation(fields: [canonicalBreedId], references: [id])
-  customBreed                CustomBreed?                  @relation(fields: [customBreedId, tenantId], references: [id, tenantId])
-  dam                        Animal?                       @relation("AnimalDam", fields: [damId], references: [id])
-  childrenAsDam              Animal[]                      @relation("AnimalDam")
-  litter                     Litter?                       @relation(fields: [litterId], references: [id])
-  offspringGroup             OffspringGroup?               @relation("OffspringGroupPuppiesLegacy", fields: [offspringGroupId], references: [id])
-  organization               Organization?                 @relation("OrgAnimals", fields: [organizationId, tenantId], references: [id, tenantId])
-  sire                       Animal?                       @relation("AnimalSire", fields: [sireId], references: [id])
-  childrenAsSire             Animal[]                      @relation("AnimalSire")
-  tenant                     Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  animalAccesses             AnimalAccess[]                @relation("AnimalAccessAnimal")
-  breeds                     AnimalBreed[]
-  breedingProfile            AnimalBreedingProfile?
-  genetics                   AnimalGenetics?
-  identityLink               AnimalIdentityLink?
-  incompatibleWithProfiles   AnimalIncompatibility[]       @relation("IncompatibleWith")
-  linkRequestsAsSource       AnimalLinkRequest[]           @relation("LinkSource")
-  linkRequestsAsTarget       AnimalLinkRequest[]           @relation("LinkTarget")
-  microchipRegistrations     AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
-  owners                     AnimalOwner[]
-  ownershipChanges           AnimalOwnershipChange[]
-  privacySettings            AnimalPrivacySettings?
-  programParticipants        AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
-  registryIds                AnimalRegistryIdentifier[]
-  titles                     AnimalTitle[]
-  AnimalTraitEntry           AnimalTraitEntry[]
-  AnimalTraitValue           AnimalTraitValue[]
-  Attachment                 Attachment[]
-  breedingAttemptsAsDam      BreedingAttempt[]             @relation("BreedingAttemptDam")
-  breedingAttemptsAsSire     BreedingAttempt[]             @relation("BreedingAttemptSire")
-  breedingBookingsOffering   BreedingBooking[]             @relation("OfferingAnimal")
-  breedingBookingsSeeking    BreedingBooking[]             @relation("SeekingAnimal")
-  breedingEvents             BreedingEvent[]               @relation("BreedingEvents")
-  partnerBreedingEvents      BreedingEvent[]               @relation("PartnerBreedingEvents")
-  breedingGroupsAsSire       BreedingGroup[]               @relation("BreedingGroupSire")
-  breedingGroupMembersAsDam  BreedingGroupMember[]         @relation("BreedingGroupDam")
-  breedingListings           BreedingListing[]
-  breedingPlansAsDam         BreedingPlan[]                @relation("PlanDam")
-  breedingPlansAsSire        BreedingPlan[]                @relation("PlanSire")
-  buyerInterests             BuyerInterest[]               @relation("BuyerInterestAnimal")
-  buyerTasks                 BuyerTask[]                   @relation("BuyerTaskAnimal")
-  competitionEntries         CompetitionEntry[]
-  contracts                  Contract[]                    @relation("ContractAnimal")
-  crossTenantLinksAsChild    CrossTenantAnimalLink[]       @relation("LinkedChild")
-  crossTenantLinksAsParent   CrossTenantAnimalLink[]       @relation("LinkedParent")
-  dhiaTestRecords            DHIATestRecord[]
-  dairyProductionHistory     DairyProductionHistory?
-  deals                      Deal[]                        @relation("DealAnimal")
-  Document                   Document[]
-  Expense                    Expense[]
-  feedingPlans               FeedingPlan[]
-  feedingRecords             FeedingRecord[]
-  fiberLabTests              FiberLabTest[]
-  fiberProductionHistory     FiberProductionHistory?
-  foodChanges                FoodChange[]
-  Invoice                    Invoice[]
-  lactationCycles            LactationCycle[]
-  linearAppraisals           LinearAppraisal[]
-  mareReproductiveHistory    MareReproductiveHistory?
-  milkingRecords             MilkingRecord[]
-  offspringAsDam             Offspring[]                   @relation("OffspringIndividualDam")
-  Offspring                  Offspring[]                   @relation("PromotedAnimal")
-  offspringAsSire            Offspring[]                   @relation("OffspringIndividualSire")
-  offspringGroupsAsDam       OffspringGroup[]              @relation("OffspringDam")
-  offspringGroupsAsSire      OffspringGroup[]              @relation("OffspringSire")
-  PaymentIntent              PaymentIntent[]
-  rearingAssignments         RearingProtocolAssignment[]   @relation("AnimalProtocolAssignment")
-  registryPedigrees          RegistryPedigree[]            @relation("RegistryPedigreeLinkedAnimal")
-  reproductiveCycles         ReproductiveCycle[]
-  semenInventory             SemenInventory[]              @relation("StallionSemenInventory")
-  shearingRecords            ShearingRecord[]
-  supplementAdministrations  SupplementAdministration[]
-  supplementSchedules        SupplementSchedule[]
-  tagAssignments             TagAssignment[]
-  TestResult                 TestResult[]
-  VaccinationRecord          VaccinationRecord[]
-  waitlistAllocations        WaitlistEntry[]               @relation("WaitlistAllocation")
-  waitlistDamPrefs           WaitlistEntry[]               @relation("WaitlistDamPref")
-  waitlistSirePrefs          WaitlistEntry[]               @relation("WaitlistSirePref")
-  loci                       AnimalLoci[]                  @relation("AnimalLoci")
-  breedingBookingAnimals     MktBreedingBookingAnimal[]
-  individualAnimalListings   MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
+  id                                               Int                           @id @default(autoincrement())
+  tenantId                                         Int
+  organizationId                                   Int?
+  name                                             String
+  species                                          Species
+  sex                                              Sex
+  status                                           AnimalStatus                  @default(ACTIVE)
+  intendedUse                                      HorseIntendedUse?
+  declaredValueCents                               Int?
+  declaredValueCurrency                            String?                       @db.VarChar(3)
+  valuationDate                                    DateTime?
+  valuationSource                                  HorseValuationSource?
+  forSale                                          Boolean                       @default(false)
+  inSyndication                                    Boolean                       @default(false)
+  isLeased                                         Boolean                       @default(false)
+  birthDate                                        DateTime?
+  microchip                                        String?
+  notes                                            String?
+  breed                                            String?
+  photoUrl                                         String?
+  canonicalBreedId                                 Int?
+  customBreedId                                    Int?
+  litterId                                         Int?
+  collarColorId                                    String?
+  collarColorName                                  String?
+  collarColorHex                                   String?
+  collarAssignedAt                                 DateTime?
+  collarLocked                                     Boolean                       @default(false)
+  buyerPartyId                                     Int?
+  priceCents                                       Int?
+  depositCents                                     Int?
+  saleInvoiceId                                    String?
+  contractId                                       String?
+  contractSignedAt                                 DateTime?
+  paidInFullAt                                     DateTime?
+  healthCertAt                                     DateTime?
+  microchipAppliedAt                               DateTime?
+  pickupAt                                         DateTime?
+  placedAt                                         DateTime?
+  createdAt                                        DateTime                      @default(now())
+  updatedAt                                        DateTime                      @updatedAt
+  archived                                         Boolean                       @default(false)
+  femaleCycleLenOverrideDays                       Int?
+  damId                                            Int?
+  sireId                                           Int?
+  coiPercent                                       Float?
+  coiGenerations                                   Int?
+  coiCalculatedAt                                  DateTime?
+  titlePrefix                                      String?
+  titleSuffix                                      String?
+  exchangeCode                                     String?                       @unique
+  exchangeCodeExpiresAt                            DateTime?
+  deletedAt                                        DateTime?
+  breedingAvailability                             String?
+  lineDescription                                  String?
+  lineTypes                                        String[]
+  primaryLineType                                  String?
+  brandMark                                        String?
+  earTagNumber                                     String?
+  earTagRfidNumber                                 String?
+  scrapieTagNumber                                 String?
+  tattooNumber                                     String?
+  networkSearchVisible                             Boolean                       @default(true)
+  coverImageUrl                                    String?
+  nickname                                         String?
+  breedingPlanId                                   Int?
+  BreedingPlan_Animal_breedingPlanIdToBreedingPlan BreedingPlan?                 @relation("Animal_breedingPlanIdToBreedingPlan", fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  buyerParty                                       Party?                        @relation("AnimalBuyerParty", fields: [buyerPartyId], references: [id])
+  canonicalBreed                                   Breed?                        @relation(fields: [canonicalBreedId], references: [id])
+  customBreed                                      CustomBreed?                  @relation(fields: [customBreedId, tenantId], references: [id, tenantId])
+  dam                                              Animal?                       @relation("AnimalDam", fields: [damId], references: [id])
+  childrenAsDam                                    Animal[]                      @relation("AnimalDam")
+  litter                                           Litter?                       @relation(fields: [litterId], references: [id])
+  organization                                     Organization?                 @relation("OrgAnimals", fields: [organizationId, tenantId], references: [id, tenantId])
+  sire                                             Animal?                       @relation("AnimalSire", fields: [sireId], references: [id])
+  childrenAsSire                                   Animal[]                      @relation("AnimalSire")
+  tenant                                           Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  animalAccesses                                   AnimalAccess[]                @relation("AnimalAccessAnimal")
+  breeds                                           AnimalBreed[]
+  breedingProfile                                  AnimalBreedingProfile?
+  genetics                                         AnimalGenetics?
+  identityLink                                     AnimalIdentityLink?
+  incompatibleWithProfiles                         AnimalIncompatibility[]       @relation("IncompatibleWith")
+  linkRequestsAsSource                             AnimalLinkRequest[]           @relation("LinkSource")
+  linkRequestsAsTarget                             AnimalLinkRequest[]           @relation("LinkTarget")
+  microchipRegistrations                           AnimalMicrochipRegistration[] @relation("AnimalMicrochipRegistrations")
+  owners                                           AnimalOwner[]
+  ownershipChanges                                 AnimalOwnershipChange[]
+  privacySettings                                  AnimalPrivacySettings?
+  programParticipants                              AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
+  registryIds                                      AnimalRegistryIdentifier[]
+  titles                                           AnimalTitle[]
+  AnimalTraitEntry                                 AnimalTraitEntry[]
+  AnimalTraitValue                                 AnimalTraitValue[]
+  Attachment                                       Attachment[]
+  breedingAttemptsAsDam                            BreedingAttempt[]             @relation("BreedingAttemptDam")
+  breedingAttemptsAsSire                           BreedingAttempt[]             @relation("BreedingAttemptSire")
+  breedingBookingsOffering                         BreedingBooking[]             @relation("OfferingAnimal")
+  breedingBookingsSeeking                          BreedingBooking[]             @relation("SeekingAnimal")
+  breedingEvents                                   BreedingEvent[]               @relation("BreedingEvents")
+  partnerBreedingEvents                            BreedingEvent[]               @relation("PartnerBreedingEvents")
+  breedingGroupsAsSire                             BreedingGroup[]               @relation("BreedingGroupSire")
+  breedingGroupMembersAsDam                        BreedingGroupMember[]         @relation("BreedingGroupDam")
+  breedingListings                                 BreedingListing[]
+  breedingPlansAsDam                               BreedingPlan[]                @relation("PlanDam")
+  breedingPlansAsSire                              BreedingPlan[]                @relation("PlanSire")
+  buyerInterests                                   BuyerInterest[]               @relation("BuyerInterestAnimal")
+  buyerTasks                                       BuyerTask[]                   @relation("BuyerTaskAnimal")
+  competitionEntries                               CompetitionEntry[]
+  contracts                                        Contract[]                    @relation("ContractAnimal")
+  crossTenantLinksAsChild                          CrossTenantAnimalLink[]       @relation("LinkedChild")
+  crossTenantLinksAsParent                         CrossTenantAnimalLink[]       @relation("LinkedParent")
+  dhiaTestRecords                                  DHIATestRecord[]
+  dairyProductionHistory                           DairyProductionHistory?
+  deals                                            Deal[]                        @relation("DealAnimal")
+  Document                                         Document[]
+  Expense                                          Expense[]
+  feedingPlans                                     FeedingPlan[]
+  feedingRecords                                   FeedingRecord[]
+  fiberLabTests                                    FiberLabTest[]
+  fiberProductionHistory                           FiberProductionHistory?
+  foodChanges                                      FoodChange[]
+  Invoice                                          Invoice[]
+  lactationCycles                                  LactationCycle[]
+  linearAppraisals                                 LinearAppraisal[]
+  mareReproductiveHistory                          MareReproductiveHistory?
+  milkingRecords                                   MilkingRecord[]
+  offspringAsDam                                   Offspring[]                   @relation("OffspringIndividualDam")
+  Offspring                                        Offspring[]                   @relation("PromotedAnimal")
+  offspringAsSire                                  Offspring[]                   @relation("OffspringIndividualSire")
+  PaymentIntent                                    PaymentIntent[]
+  rearingAssignments                               RearingProtocolAssignment[]   @relation("AnimalProtocolAssignment")
+  registryPedigrees                                RegistryPedigree[]            @relation("RegistryPedigreeLinkedAnimal")
+  reproductiveCycles                               ReproductiveCycle[]
+  semenInventory                                   SemenInventory[]              @relation("StallionSemenInventory")
+  shearingRecords                                  ShearingRecord[]
+  supplementAdministrations                        SupplementAdministration[]
+  supplementSchedules                              SupplementSchedule[]
+  tagAssignments                                   TagAssignment[]
+  TestResult                                       TestResult[]
+  VaccinationRecord                                VaccinationRecord[]
+  waitlistAllocations                              WaitlistEntry[]               @relation("WaitlistAllocation")
+  waitlistDamPrefs                                 WaitlistEntry[]               @relation("WaitlistDamPref")
+  waitlistSirePrefs                                WaitlistEntry[]               @relation("WaitlistSirePref")
+  loci                                             AnimalLoci[]                  @relation("AnimalLoci")
+  breedingBookingAnimals                           MktBreedingBookingAnimal[]
+  individualAnimalListings                         MktListingIndividualAnimal[]  @relation("AnimalIndividualAnimalListings")
 
   @@unique([tenantId, microchip])
   @@index([organizationId])
@@ -1234,7 +1230,6 @@ model Animal {
   @@index([canonicalBreedId])
   @@index([tenantId, customBreedId])
   @@index([litterId])
-  @@index([offspringGroupId])
   @@index([tenantId, placedAt])
   @@index([buyerPartyId])
   @@index([tenantId, buyerPartyId])
@@ -1242,6 +1237,7 @@ model Animal {
   @@index([sireId])
   @@index([tenantId, species, primaryLineType])
   @@index([tenantId, species, sex, networkSearchVisible])
+  @@index([breedingPlanId])
   @@schema("public")
 }
 
@@ -1659,37 +1655,34 @@ model Tag {
 }
 
 model TagAssignment {
-  id               Int             @id @default(autoincrement())
-  tagId            Int
-  taggedPartyId    Int?
-  animalId         Int?
-  waitlistEntryId  Int?
-  offspringGroupId Int?
-  offspringId      Int?
-  createdAt        DateTime        @default(now())
-  draftId          Int?
-  messageThreadId  Int?
-  breedingPlanId   Int?
-  buyerId          Int?
-  dealId           Int?
-  documentId       Int?
-  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  breedingPlan     BreedingPlan?   @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
-  buyer            Buyer?          @relation(fields: [buyerId], references: [id], onDelete: Cascade)
-  deal             Deal?           @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  Document         Document?       @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  draft            Draft?          @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  messageThread    MessageThread?  @relation(fields: [messageThreadId], references: [id], onDelete: Cascade)
-  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
-  offspring        Offspring?      @relation(fields: [offspringId], references: [id], onDelete: Cascade)
-  tag              Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  taggedParty      Party?          @relation("TagAssignmentTaggedParty", fields: [taggedPartyId], references: [id])
-  waitlistEntry    WaitlistEntry?  @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
+  id              Int            @id @default(autoincrement())
+  tagId           Int
+  taggedPartyId   Int?
+  animalId        Int?
+  waitlistEntryId Int?
+  offspringId     Int?
+  createdAt       DateTime       @default(now())
+  draftId         Int?
+  messageThreadId Int?
+  breedingPlanId  Int?
+  buyerId         Int?
+  dealId          Int?
+  documentId      Int?
+  animal          Animal?        @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  breedingPlan    BreedingPlan?  @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+  buyer           Buyer?         @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  deal            Deal?          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  Document        Document?      @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  draft           Draft?         @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  messageThread   MessageThread? @relation(fields: [messageThreadId], references: [id], onDelete: Cascade)
+  offspring       Offspring?     @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  tag             Tag            @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  taggedParty     Party?         @relation("TagAssignmentTaggedParty", fields: [taggedPartyId], references: [id])
+  waitlistEntry   WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
 
   @@unique([tagId, taggedPartyId])
   @@unique([tagId, animalId])
   @@unique([tagId, waitlistEntryId])
-  @@unique([tagId, offspringGroupId])
   @@unique([tagId, offspringId])
   @@unique([tagId, messageThreadId])
   @@unique([tagId, draftId])
@@ -1699,7 +1692,6 @@ model TagAssignment {
   @@index([taggedPartyId])
   @@index([animalId])
   @@index([waitlistEntryId])
-  @@index([offspringGroupId])
   @@index([offspringId])
   @@index([messageThreadId])
   @@index([draftId])
@@ -1967,113 +1959,140 @@ model MktBreedingBookingAnimal {
 }
 
 model BreedingPlan {
-  id                            Int                        @id @default(autoincrement())
-  tenantId                      Int
-  organizationId                Int?
-  code                          String?
-  name                          String
-  nickname                      String?
-  species                       Species
-  breedText                     String?
-  damId                         Int?
-  sireId                        Int?
-  lockedCycleKey                String?
-  lockedCycleStart              DateTime?
-  lockedOvulationDate           DateTime?
-  lockedDueDate                 DateTime?
-  lockedPlacementStartDate      DateTime?
-  expectedCycleStart            DateTime?
-  expectedHormoneTestingStart   DateTime?
-  expectedBreedDate             DateTime?
-  expectedBirthDate             DateTime?
-  expectedWeaned                DateTime?
-  expectedPlacementStart        DateTime?
-  expectedPlacementCompleted    DateTime?
-  cycleStartDateActual          DateTime?
-  hormoneTestingStartDateActual DateTime?
-  breedDateActual               DateTime?
-  birthDateActual               DateTime?
-  weanedDateActual              DateTime?
-  placementStartDateActual      DateTime?
-  placementCompletedDateActual  DateTime?
-  completedDateActual           DateTime?
-  status                        BreedingPlanStatus         @default(PLANNING)
-  notes                         String?
-  committedAt                   DateTime?
-  committedByUserId             String?
-  depositsCommittedCents        Int?
-  depositsPaidCents             Int?
-  depositRiskScore              Int?
-  archived                      Boolean                    @default(false)
-  createdAt                     DateTime                   @default(now())
-  updatedAt                     DateTime                   @updatedAt
-  programId                     Int?
-  deletedAt                     DateTime?
-  actualOvulationOffset         Int?
-  cycleStartConfidence          ConfidenceLevel?
+  id                                         Int                           @id @default(autoincrement())
+  tenantId                                   Int
+  organizationId                             Int?
+  code                                       String?
+  name                                       String
+  nickname                                   String?
+  species                                    Species
+  breedText                                  String?
+  damId                                      Int?
+  sireId                                     Int?
+  lockedCycleKey                             String?
+  lockedCycleStart                           DateTime?
+  lockedOvulationDate                        DateTime?
+  lockedDueDate                              DateTime?
+  lockedPlacementStartDate                   DateTime?
+  expectedCycleStart                         DateTime?
+  expectedHormoneTestingStart                DateTime?
+  expectedBreedDate                          DateTime?
+  expectedBirthDate                          DateTime?
+  expectedWeaned                             DateTime?
+  expectedPlacementStart                     DateTime?
+  expectedPlacementCompleted                 DateTime?
+  cycleStartDateActual                       DateTime?
+  hormoneTestingStartDateActual              DateTime?
+  breedDateActual                            DateTime?
+  birthDateActual                            DateTime?
+  weanedDateActual                           DateTime?
+  placementStartDateActual                   DateTime?
+  placementCompletedDateActual               DateTime?
+  completedDateActual                        DateTime?
+  status                                     BreedingPlanStatus            @default(PLANNING)
+  notes                                      String?
+  committedAt                                DateTime?
+  committedByUserId                          String?
+  depositsCommittedCents                     Int?
+  depositsPaidCents                          Int?
+  depositRiskScore                           Int?
+  archived                                   Boolean                       @default(false)
+  createdAt                                  DateTime                      @default(now())
+  updatedAt                                  DateTime                      @updatedAt
+  programId                                  Int?
+  deletedAt                                  DateTime?
+  actualOvulationOffset                      Int?
+  cycleStartConfidence                       ConfidenceLevel?
   /// Cycle start tracking (observed or derived from ovulation)
-  cycleStartObserved            DateTime?
-  cycleStartSource              DataSource?
+  cycleStartObserved                         DateTime?
+  cycleStartSource                           DataSource?
   /// General date confidence metadata
-  dateConfidenceLevel           ConfidenceLevel?           @default(MEDIUM)
-  dateSourceNotes               String?
+  dateConfidenceLevel                        ConfidenceLevel?              @default(MEDIUM)
+  dateSourceNotes                            String?
   /// Variance tracking for machine learning and validation
-  expectedOvulationOffset       Int?
-  ovulationConfidence           ConfidenceLevel?
+  expectedOvulationOffset                    Int?
+  ovulationConfidence                        ConfidenceLevel?
   /// Ovulation tracking (confirmed via hormone test or calculated)
-  ovulationConfirmed            DateTime?
-  ovulationConfirmedMethod      OvulationMethod?
-  ovulationTestResultId         Int?
+  ovulationConfirmed                         DateTime?
+  ovulationConfirmedMethod                   OvulationMethod?
+  ovulationTestResultId                      Int?
   /// System-determined primary anchor based on data quality
-  primaryAnchor                 AnchorType                 @default(CYCLE_START)
+  primaryAnchor                              AnchorType                    @default(CYCLE_START)
   /// User-selected primary anchor mode for this plan
-  reproAnchorMode               ReproAnchorMode            @default(CYCLE_START)
-  varianceFromExpected          Int?
-  breedDateUnknown              Boolean                    @default(false)
+  reproAnchorMode                            ReproAnchorMode               @default(CYCLE_START)
+  varianceFromExpected                       Int?
+  breedDateUnknown                           Boolean                       @default(false)
   /// Unknown date flags - for surprise pregnancies where breeder doesn't know exact dates
   /// When true, the corresponding date is unknown and phase can progress without it
-  cycleStartDateUnknown         Boolean                    @default(false)
+  cycleStartDateUnknown                      Boolean                       @default(false)
   /// User intent flag: breeder has mentally committed to this plan (set during PLANNING phase)
   /// This is separate from the CYCLE phase - indicates serious intent without locking cycle dates
-  isCommittedIntent             Boolean                    @default(false)
-  ovulationDateUnknown          Boolean                    @default(false)
+  isCommittedIntent                          Boolean                       @default(false)
+  ovulationDateUnknown                       Boolean                       @default(false)
   /// For ON_HOLD status: stores the previous status so plan can resume
-  statusBeforeHold              BreedingPlanStatus?
+  statusBeforeHold                           BreedingPlanStatus?
   /// Optional reason for terminal status (CANCELED, UNSUCCESSFUL, ON_HOLD)
-  statusReason                  String?
-  depositOverrideAmountCents    Int?
-  depositOverrideRequired       Boolean?
-  expectedLitterSize            Int?
+  statusReason                               String?
+  depositOverrideAmountCents                 Int?
+  depositOverrideRequired                    Boolean?
+  expectedLitterSize                         Int?
   /// Optional reason/note provided when archiving the plan
-  archiveReason                 String?
-  animalAccesses                AnimalAccess[]             @relation("AnimalAccessBreedingPlan")
-  Attachments                   Attachment[]
-  BreedingAttempts              BreedingAttempt[]
-  breedingBooking               BreedingBooking?
-  breedingAgreements            BreedingDataAgreement[]    @relation("BreedingAgreementPlan")
-  breedingEventsLog             BreedingEvent[]
-  groupMember                   BreedingGroupMember?       @relation("GroupMemberPlan")
-  breedingMilestones            BreedingMilestone[]
-  committedByUser               User?                      @relation("CommittedByUser", fields: [committedByUserId], references: [id])
-  dam                           Animal?                    @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
-  organization                  Organization?              @relation(fields: [organizationId, tenantId], references: [id, tenantId])
-  ovulationTestResult           TestResult?                @relation("OvulationAnchor", fields: [ovulationTestResultId], references: [id])
-  program                       MktListingBreedingProgram? @relation(fields: [programId], references: [id])
-  sire                          Animal?                    @relation("PlanSire", fields: [sireId], references: [id])
-  tenant                        Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  buyers                        BreedingPlanBuyer[]
-  Events                        BreedingPlanEvent[]
-  Expense                       Expense[]
-  foalingOutcome                FoalingOutcome?
-  Invoice                       Invoice[]
-  Litter                        Litter?
-  offspringGroup                OffspringGroup?
-  Parties                       PlanParty[]
-  PregnancyChecks               PregnancyCheck[]
-  supplementSchedules           SupplementSchedule[]
-  TagAssignments                TagAssignment[]
-  TestResults                   TestResult[]
-  Waitlist                      WaitlistEntry[]
+  archiveReason                              String?
+  countBorn                                  Int?
+  countLive                                  Int?
+  countStillborn                             Int?
+  countMale                                  Int?
+  countFemale                                Int?
+  countWeaned                                Int?
+  countPlaced                                Int?
+  listingSlug                                String?
+  listingTitle                               String?
+  listingDescription                         String?
+  marketplaceDefaultPriceCents               Int?
+  marketplaceStatus                          String?                       @default("DRAFT")
+  depositRequired                            Boolean?                      @default(false)
+  depositAmountCents                         Int?
+  coverImageUrl                              String?
+  themeName                                  String?
+  placementSchedulingPolicy                  Json?
+  Animal_Animal_breedingPlanIdToBreedingPlan Animal[]                      @relation("Animal_breedingPlanIdToBreedingPlan")
+  animalAccesses                             AnimalAccess[]                @relation("AnimalAccessBreedingPlan")
+  Attachments                                Attachment[]
+  BreedingAttempts                           BreedingAttempt[]
+  breedingBooking                            BreedingBooking?
+  breedingAgreements                         BreedingDataAgreement[]       @relation("BreedingAgreementPlan")
+  breedingEventsLog                          BreedingEvent[]
+  groupMember                                BreedingGroupMember?          @relation("GroupMemberPlan")
+  breedingMilestones                         BreedingMilestone[]
+  committedByUser                            User?                         @relation("CommittedByUser", fields: [committedByUserId], references: [id])
+  dam                                        Animal?                       @relation("PlanDam", fields: [damId], references: [id], onDelete: Restrict)
+  organization                               Organization?                 @relation(fields: [organizationId, tenantId], references: [id, tenantId])
+  ovulationTestResult                        TestResult?                   @relation("OvulationAnchor", fields: [ovulationTestResultId], references: [id])
+  program                                    MktListingBreedingProgram?    @relation(fields: [programId], references: [id])
+  sire                                       Animal?                       @relation("PlanSire", fields: [sireId], references: [id])
+  tenant                                     Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  buyers                                     BreedingPlanBuyer[]
+  Events                                     BreedingPlanEvent[]
+  BreedingPlanTempLog                        BreedingPlanTempLog[]
+  Contract                                   Contract[]
+  Document                                   Document[]
+  Expense                                    Expense[]
+  FeedingPlan                                FeedingPlan[]
+  FeedingRecord                              FeedingRecord[]
+  foalingOutcome                             FoalingOutcome?
+  FoodChange                                 FoodChange[]
+  Invoice                                    Invoice[]
+  Litter                                     Litter?
+  LitterEvent                                LitterEvent[]
+  Offspring                                  Offspring[]
+  Parties                                    PlanParty[]
+  PregnancyChecks                            PregnancyCheck[]
+  RearingProtocolAssignment                  RearingProtocolAssignment[]
+  SchedulingAvailabilityBlock                SchedulingAvailabilityBlock[]
+  supplementSchedules                        SupplementSchedule[]
+  TagAssignments                             TagAssignment[]
+  TestResults                                TestResult[]
+  Waitlist                                   WaitlistEntry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -2103,29 +2122,33 @@ model BreedingPlan {
 }
 
 model BreedingPlanBuyer {
-  id                    Int                    @id @default(autoincrement())
-  tenantId              Int
-  planId                Int
-  waitlistEntryId       Int?
-  partyId               Int?
-  stage                 BreedingPlanBuyerStage @default(POSSIBLE_MATCH)
-  matchScore            Int?
-  matchReasons          Json?
-  assignedAt            DateTime?
-  assignedByPartyId     Int?
-  priority              Int?
-  offspringGroupBuyerId Int?
-  offspringId           Int?
-  notes                 String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  buyerId               Int?
-  buyer                 Buyer?                 @relation("BreedingPlanBuyerCRM", fields: [buyerId], references: [id])
-  party                 Party?                 @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id])
-  plan                  BreedingPlan           @relation(fields: [planId], references: [id], onDelete: Cascade)
-  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waitlistEntry         WaitlistEntry?         @relation(fields: [waitlistEntryId], references: [id])
-  Invoice               Invoice?
+  id                 Int                    @id @default(autoincrement())
+  tenantId           Int
+  planId             Int
+  waitlistEntryId    Int?
+  partyId            Int?
+  stage              BreedingPlanBuyerStage @default(POSSIBLE_MATCH)
+  matchScore         Int?
+  matchReasons       Json?
+  assignedAt         DateTime?
+  assignedByPartyId  Int?
+  priority           Int?
+  offspringId        Int?
+  notes              String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  buyerId            Int?
+  placementRank      Int?
+  optedOutAt         DateTime?              @db.Timestamptz(6)
+  optedOutReason     String?
+  optedOutBy         String?                @db.VarChar(20)
+  depositDisposition String?                @db.VarChar(30)
+  buyer              Buyer?                 @relation("BreedingPlanBuyerCRM", fields: [buyerId], references: [id])
+  party              Party?                 @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id])
+  plan               BreedingPlan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  waitlistEntry      WaitlistEntry?         @relation(fields: [waitlistEntryId], references: [id])
+  Invoice            Invoice?
 
   @@index([tenantId])
   @@index([planId])
@@ -2352,6 +2375,13 @@ model FoalingOutcome {
   foalPhotoUrls         Json?
   createdAt             DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
+  wasCSection           Boolean                   @default(false)
+  cSectionReason        String?
+  placentaCount         Int?
+  damRecoveryNotes      String?
+  totalBorn             Int?
+  bornAlive             Int?
+  stillborn             Int?
   breedingPlan          BreedingPlan              @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
   tenant                Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -2420,118 +2450,9 @@ model BreedingMilestone {
   @@schema("public")
 }
 
-model OffspringGroup {
-  id                           Int                           @id @default(autoincrement())
-  tenantId                     Int
-  planId                       Int?                          @unique
-  linkState                    OffspringLinkState            @default(linked)
-  linkReason                   OffspringLinkReason?
-  species                      Species
-  damId                        Int?
-  sireId                       Int?
-  name                         String?
-  expectedBirthOn              DateTime?
-  actualBirthOn                DateTime?
-  countBorn                    Int?
-  countLive                    Int?
-  countStillborn               Int?
-  countMale                    Int?
-  countFemale                  Int?
-  countWeaned                  Int?
-  countPlaced                  Int?
-  weanedAt                     DateTime?
-  placementStartAt             DateTime?
-  placementCompletedAt         DateTime?
-  coverImageUrl                String?
-  themeName                    String?
-  notes                        String?
-  data                         Json?
-  createdAt                    DateTime                      @default(now())
-  updatedAt                    DateTime                      @updatedAt
-  listingSlug                  String?
-  listingTitle                 String?
-  listingDescription           String?
-  marketplaceDefaultPriceCents Int?
-  placementSchedulingPolicy    Json?
-  archivedAt                   DateTime?
-  deletedAt                    DateTime?
-  status                       MarketplaceListingStatus      @default(DRAFT)
-  depositRequired              Boolean                       @default(false)
-  depositAmountCents           Int?
-  AnimalsLegacy                Animal[]                      @relation("OffspringGroupPuppiesLegacy")
-  Attachment                   Attachment[]
-  Campaign                     Campaign[]
-  Contract                     Contract[]
-  Document                     Document[]
-  Expense                      Expense[]
-  FeedingPlan                  FeedingPlan[]
-  FeedingRecord                FeedingRecord[]
-  FoodChange                   FoodChange[]
-  Invoice                      Invoice[]
-  Offspring                    Offspring[]                   @relation("GroupOffspring")
-  dam                          Animal?                       @relation("OffspringDam", fields: [damId], references: [id], onDelete: Restrict)
-  plan                         BreedingPlan?                 @relation(fields: [planId], references: [id])
-  sire                         Animal?                       @relation("OffspringSire", fields: [sireId], references: [id])
-  tenant                       Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  groupBuyerLinks              OffspringGroupBuyer[]         @relation("GroupBuyerGroup")
-  Events                       OffspringGroupEvent[]
-  rearingAssignments           RearingProtocolAssignment[]
-  schedulingBlocks             SchedulingAvailabilityBlock[] @relation("GroupSchedulingBlocks")
-  Tags                         TagAssignment[]
-  Task                         Task[]
-  Waitlist                     WaitlistEntry[]
-
-  @@unique([tenantId, listingSlug])
-  @@index([tenantId])
-  @@index([tenantId, species, expectedBirthOn])
-  @@index([tenantId, damId, actualBirthOn])
-  @@index([sireId])
-  @@index([linkState])
-  @@index([placementStartAt])
-  @@index([placementCompletedAt])
-  @@index([status])
-  @@index([deletedAt])
-  @@schema("public")
-}
-
-model OffspringGroupBuyer {
-  id                 Int            @id @default(autoincrement())
-  tenantId           Int
-  groupId            Int
-  buyerPartyId       Int?
-  waitlistEntryId    Int?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  placementRank      Int?
-  buyerId            Int?
-  stage              String         @default("PENDING") @db.VarChar(50)
-  optedOutAt         DateTime?      @db.Timestamptz(6)
-  optedOutReason     String?
-  optedOutBy         String?        @db.VarChar(20)
-  depositDisposition String?        @db.VarChar(30)
-  notes              String?
-  Invoice            Invoice?
-  buyer              Buyer?         @relation("OffspringGroupBuyerCRM", fields: [buyerId], references: [id])
-  buyerParty         Party?         @relation("OffspringGroupBuyerParty", fields: [buyerPartyId], references: [id])
-  group              OffspringGroup @relation("GroupBuyerGroup", fields: [groupId], references: [id], onDelete: Cascade)
-  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waitlistEntry      WaitlistEntry? @relation("GroupBuyerWaitlistEntry", fields: [waitlistEntryId], references: [id])
-
-  @@unique([groupId, waitlistEntryId])
-  @@index([tenantId])
-  @@index([groupId])
-  @@index([buyerPartyId])
-  @@index([tenantId, buyerPartyId])
-  @@index([waitlistEntryId])
-  @@index([buyerId])
-  @@index([stage])
-  @@schema("public")
-}
-
 model Offspring {
   id                       Int                           @id @default(autoincrement())
   tenantId                 Int
-  groupId                  Int
   name                     String?
   species                  Species
   breed                    String?
@@ -2581,6 +2502,7 @@ model Offspring {
   isExtraNeeds             Boolean                       @default(false)
   neonatalFeedingMethod    NeonatalFeedingMethod?
   neonatalHealthStatus     NeonatalHealthStatus?
+  breedingPlanId           Int
   rearingCompletions       ActivityCompletion[]
   microchipRegistrations   AnimalMicrochipRegistration[] @relation("OffspringMicrochipRegistrations")
   rearingAssessments       AssessmentResult[]
@@ -2593,9 +2515,9 @@ model Offspring {
   Invoices                 Invoice[]
   NeonatalCareEntries      NeonatalCareEntry[]
   NeonatalInterventions    NeonatalIntervention[]
+  BreedingPlan             BreedingPlan                  @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   buyerParty               Party?                        @relation("OffspringBuyerParty", fields: [buyerPartyId], references: [id])
   dam                      Animal?                       @relation("OffspringIndividualDam", fields: [damId], references: [id])
-  group                    OffspringGroup                @relation("GroupOffspring", fields: [groupId], references: [id], onDelete: Cascade)
   promotedAnimal           Animal?                       @relation("PromotedAnimal", fields: [promotedAnimalId], references: [id])
   sire                     Animal?                       @relation("OffspringIndividualSire", fields: [sireId], references: [id])
   tenant                   Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -2612,7 +2534,6 @@ model Offspring {
   WaitlistAllocations      WaitlistEntry[]               @relation("WaitlistAllocationOffspring")
 
   @@index([tenantId])
-  @@index([groupId])
   @@index([tenantId, status])
   @@index([tenantId, lifeState])
   @@index([tenantId, placementState])
@@ -2624,6 +2545,7 @@ model Offspring {
   @@index([placedAt])
   @@index([tenantId, damId])
   @@index([tenantId, sireId])
+  @@index([breedingPlanId])
   @@schema("public")
 }
 
@@ -2752,7 +2674,6 @@ model WaitlistEntry {
   tenantId             Int
   planId               Int?
   litterId             Int?
-  offspringGroupId     Int?
   clientPartyId        Int?
   speciesPref          Species?
   breedPrefs           Json?
@@ -2789,14 +2710,12 @@ model WaitlistEntry {
   planBuyerLinks       BreedingPlanBuyer[]
   contracts            Contract[]
   depositInvoice       Invoice?                   @relation("WaitlistDepositInvoice")
-  groupBuyerLinks      OffspringGroupBuyer[]      @relation("GroupBuyerWaitlistEntry")
   TagAssignment        TagAssignment[]
   animal               Animal?                    @relation("WaitlistAllocation", fields: [animalId], references: [id])
   buyer                Buyer?                     @relation("WaitlistEntryCRM", fields: [buyerId], references: [id])
   clientParty          Party?                     @relation("WaitlistParty", fields: [clientPartyId], references: [id])
   damPref              Animal?                    @relation("WaitlistDamPref", fields: [damPrefId], references: [id])
   litter               Litter?                    @relation(fields: [litterId], references: [id])
-  offspringGroup       OffspringGroup?            @relation(fields: [offspringGroupId], references: [id])
   offspring            Offspring?                 @relation("WaitlistAllocationOffspring", fields: [offspringId], references: [id])
   plan                 BreedingPlan?              @relation(fields: [planId], references: [id])
   program              MktListingBreedingProgram? @relation(fields: [programId], references: [id])
@@ -2806,7 +2725,6 @@ model WaitlistEntry {
   @@index([tenantId])
   @@index([planId])
   @@index([litterId])
-  @@index([offspringGroupId])
   @@index([offspringId])
   @@index([programId])
   @@index([clientPartyId])
@@ -2820,30 +2738,8 @@ model WaitlistEntry {
   @@schema("public")
 }
 
-model OffspringGroupEvent {
-  id               Int            @id @default(autoincrement())
-  tenantId         Int
-  offspringGroupId Int
-  type             String
-  occurredAt       DateTime
-  field            String?
-  before           Json?
-  after            Json?
-  notes            String?
-  recordedByUserId String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  offspringGroup   OffspringGroup @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
-  recordedByUser   User?          @relation(fields: [recordedByUserId], references: [id])
-  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
-  @@index([offspringGroupId, type, occurredAt])
-  @@schema("public")
-}
-
 model LitterEvent {
-  id               Int      @id @default(autoincrement())
+  id               Int           @id @default(autoincrement())
   tenantId         Int
   litterId         Int
   type             String
@@ -2853,11 +2749,13 @@ model LitterEvent {
   after            Json?
   notes            String?
   recordedByUserId String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  litter           Litter   @relation(fields: [litterId], references: [id], onDelete: Cascade)
-  recordedByUser   User?    @relation(fields: [recordedByUserId], references: [id])
-  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  breedingPlanId   Int?
+  BreedingPlan     BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  litter           Litter        @relation(fields: [litterId], references: [id], onDelete: Cascade)
+  recordedByUser   User?         @relation(fields: [recordedByUserId], references: [id])
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([litterId, type, occurredAt])
@@ -2890,7 +2788,6 @@ model Attachment {
   expense           Expense?            @relation("AttachmentExpense", fields: [expenseId], references: [id])
   invoice           Invoice?            @relation("AttachmentInvoice", fields: [invoiceId], references: [id])
   litter            Litter?             @relation(fields: [litterId], references: [id])
-  offspringGroup    OffspringGroup?     @relation(fields: [offspringGroupId], references: [id])
   offspring         Offspring?          @relation(fields: [offspringId], references: [id])
   payment           Payment?            @relation("AttachmentPayment", fields: [paymentId], references: [id])
   plan              BreedingPlan?       @relation(fields: [planId], references: [id])
@@ -2995,7 +2892,6 @@ model Invoice {
   id                       Int                    @id @default(autoincrement())
   tenantId                 Int
   scope                    FinanceScope
-  groupId                  Int?
   offspringId              Int?
   clientPartyId            Int?
   animalId                 Int?
@@ -3045,8 +2941,6 @@ model Invoice {
   BreedingPlanBuyer        BreedingPlanBuyer?     @relation(fields: [breedingPlanBuyerId], references: [id])
   breedingPlan             BreedingPlan?          @relation(fields: [breedingPlanId], references: [id])
   clientParty              Party?                 @relation("InvoiceParty", fields: [clientPartyId], references: [id])
-  group                    OffspringGroup?        @relation(fields: [groupId], references: [id])
-  OffspringGroupBuyer      OffspringGroupBuyer?   @relation(fields: [offspringGroupBuyerId], references: [id])
   offspring                Offspring?             @relation(fields: [offspringId], references: [id])
   tenant                   Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   waitlistEntry            WaitlistEntry?         @relation("WaitlistDepositInvoice", fields: [waitlistEntryId], references: [id])
@@ -3059,10 +2953,8 @@ model Invoice {
   @@index([tenantId])
   @@index([tenantId, clientPartyId, status])
   @@index([tenantId, offspringId])
-  @@index([tenantId, groupId])
   @@index([tenantId, animalId])
   @@index([tenantId, breedingPlanId])
-  @@index([scope, groupId])
   @@index([scope, offspringId])
   @@index([status])
   @@index([clientPartyId])
@@ -3135,36 +3027,33 @@ model Payment {
 /// * Expense tracking for business operations
 /// * Can be anchored to breeding plans, offspring groups, animals, or general operations
 model Expense {
-  id               Int             @id @default(autoincrement())
-  tenantId         Int
-  amountCents      Int
-  currency         String          @default("USD")
-  incurredAt       DateTime
-  category         ExpenseCategory
-  description      String?
-  vendorPartyId    Int?
-  breedingPlanId   Int?
-  offspringGroupId Int?
-  animalId         Int?
-  notes            String?
-  data             Json?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  foodProductId    Int?
-  quantityUnit     String?
-  quantityValue    Float?
-  Attachments      Attachment[]    @relation("AttachmentExpense")
-  animal           Animal?         @relation(fields: [animalId], references: [id])
-  breedingPlan     BreedingPlan?   @relation(fields: [breedingPlanId], references: [id])
-  foodProduct      FoodProduct?    @relation(fields: [foodProductId], references: [id])
-  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id])
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  vendorParty      Party?          @relation("ExpenseVendor", fields: [vendorPartyId], references: [id])
+  id             Int             @id @default(autoincrement())
+  tenantId       Int
+  amountCents    Int
+  currency       String          @default("USD")
+  incurredAt     DateTime
+  category       ExpenseCategory
+  description    String?
+  vendorPartyId  Int?
+  breedingPlanId Int?
+  animalId       Int?
+  notes          String?
+  data           Json?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  foodProductId  Int?
+  quantityUnit   String?
+  quantityValue  Float?
+  Attachments    Attachment[]    @relation("AttachmentExpense")
+  animal         Animal?         @relation(fields: [animalId], references: [id])
+  breedingPlan   BreedingPlan?   @relation(fields: [breedingPlanId], references: [id])
+  foodProduct    FoodProduct?    @relation(fields: [foodProductId], references: [id])
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendorParty    Party?          @relation("ExpenseVendor", fields: [vendorPartyId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, incurredAt])
   @@index([tenantId, breedingPlanId])
-  @@index([tenantId, offspringGroupId])
   @@index([tenantId, animalId])
   @@index([tenantId, vendorPartyId])
   @@index([tenantId, category])
@@ -3252,7 +3141,6 @@ model Campaign {
   data             Json?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
-  group            OffspringGroup?       @relation(fields: [offspringGroupId], references: [id])
   tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   Attributions     CampaignAttribution[]
 
@@ -3526,7 +3414,7 @@ model Draft {
 }
 
 model Task {
-  id               Int             @id @default(autoincrement())
+  id               Int        @id @default(autoincrement())
   tenantId         Int
   scope            TaskScope
   groupId          Int?
@@ -3534,14 +3422,13 @@ model Task {
   title            String
   notes            String?
   dueAt            DateTime?
-  status           TaskStatus      @default(open)
+  status           TaskStatus @default(open)
   assignedToUserId String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  assignedToUser   User?           @relation(fields: [assignedToUserId], references: [id])
-  group            OffspringGroup? @relation(fields: [groupId], references: [id])
-  offspring        Offspring?      @relation(fields: [offspringId], references: [id])
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  assignedToUser   User?      @relation(fields: [assignedToUserId], references: [id])
+  offspring        Offspring? @relation(fields: [offspringId], references: [id])
+  tenant           Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([scope, groupId])
@@ -3584,7 +3471,6 @@ model Document {
   animalId           Int?
   ownershipChangeId  Int?
   offspringId        Int?
-  groupId            Int?
   invoiceId          Int?                       @unique
   contractId         Int?
   title              String
@@ -3606,13 +3492,14 @@ model Document {
   updatedAt          DateTime                   @updatedAt
   watermarkEnabled   Boolean                    @default(false)
   partyId            Int?
+  breedingPlanId     Int?
   titleLinks         AnimalTitleDocument[]
   traitEntries       AnimalTraitEntry[]
   traitValueLinks    AnimalTraitValueDocument[]
   competitionLinks   CompetitionEntryDocument[]
   animal             Animal?                    @relation(fields: [animalId], references: [id])
+  BreedingPlan       BreedingPlan?              @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   contract           Contract?                  @relation(fields: [contractId], references: [id])
-  group              OffspringGroup?            @relation(fields: [groupId], references: [id])
   invoice            Invoice?                   @relation(fields: [invoiceId], references: [id])
   offspring          Offspring?                 @relation(fields: [offspringId], references: [id])
   ownershipChange    AnimalOwnershipChange?     @relation(fields: [ownershipChangeId], references: [id])
@@ -3624,7 +3511,6 @@ model Document {
 
   @@index([tenantId])
   @@index([scope, offspringId])
-  @@index([scope, groupId])
   @@index([scope, invoiceId])
   @@index([scope, contractId])
   @@index([kind])
@@ -3741,7 +3627,6 @@ model Contract {
   tenantId           Int
   templateId         Int?
   offspringId        Int?
-  groupId            Int?
   invoiceId          Int?              @unique
   title              String
   status             ContractStatus    @default(draft)
@@ -3757,8 +3642,9 @@ model Contract {
   updatedAt          DateTime          @updatedAt
   animalId           Int?
   waitlistEntryId    Int?
+  breedingPlanId     Int?
   animal             Animal?           @relation("ContractAnimal", fields: [animalId], references: [id])
-  group              OffspringGroup?   @relation(fields: [groupId], references: [id])
+  BreedingPlan       BreedingPlan?     @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   invoice            Invoice?          @relation(fields: [invoiceId], references: [id])
   offspring          Offspring?        @relation(fields: [offspringId], references: [id])
   template           ContractTemplate? @relation(fields: [templateId], references: [id])
@@ -3771,7 +3657,6 @@ model Contract {
 
   @@index([tenantId])
   @@index([offspringId])
-  @@index([groupId])
   @@index([animalId])
   @@index([waitlistEntryId])
   @@index([invoiceId])
@@ -4057,8 +3942,8 @@ model SchedulingAvailabilityBlock {
   createdByUserId           String?
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
-  offspringGroupId          Int?
-  offspringGroup            OffspringGroup?          @relation("GroupSchedulingBlocks", fields: [offspringGroupId], references: [id])
+  breedingPlanId            Int?
+  BreedingPlan              BreedingPlan?            @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   template                  SchedulingEventTemplate? @relation(fields: [templateId], references: [id])
   tenant                    Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   slots                     SchedulingSlot[]
@@ -4067,7 +3952,7 @@ model SchedulingAvailabilityBlock {
   @@index([tenantId, status])
   @@index([tenantId, startAt])
   @@index([templateId])
-  @@index([offspringGroupId])
+  @@index([breedingPlanId])
   @@schema("public")
 }
 
@@ -5332,31 +5217,30 @@ model BlockedEmail {
 /// * Buyer - A prospective horse purchaser
 /// * Links to Party for unified contact management (notes, events, activity all inherited)
 model Buyer {
-  id                   Int                   @id @default(autoincrement())
-  tenantId             Int
-  partyId              Int                   @unique
-  status               BuyerStatus           @default(ACTIVE)
-  source               String?               @db.VarChar(100)
-  budget               Decimal?              @db.Decimal(12, 2)
-  budgetCurrency       String                @default("USD") @db.Char(3)
-  notes                String?
-  preferredBreeds      String[]
-  preferredUses        String[]
-  preferredAgeMin      Int?
-  preferredAgeMax      Int?
-  preferredSex         Sex?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  archivedAt           DateTime?
-  breedingPlanBuyers   BreedingPlanBuyer[]   @relation("BreedingPlanBuyerCRM")
-  party                Party                 @relation("BuyerParty", fields: [partyId], references: [id])
-  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  interests            BuyerInterest[]
-  tasks                BuyerTask[]           @relation("BuyerTasks")
-  deals                Deal[]
-  offspringGroupBuyers OffspringGroupBuyer[] @relation("OffspringGroupBuyerCRM")
-  tagAssignments       TagAssignment[]
-  waitlistEntries      WaitlistEntry[]       @relation("WaitlistEntryCRM")
+  id                 Int                 @id @default(autoincrement())
+  tenantId           Int
+  partyId            Int                 @unique
+  status             BuyerStatus         @default(ACTIVE)
+  source             String?             @db.VarChar(100)
+  budget             Decimal?            @db.Decimal(12, 2)
+  budgetCurrency     String              @default("USD") @db.Char(3)
+  notes              String?
+  preferredBreeds    String[]
+  preferredUses      String[]
+  preferredAgeMin    Int?
+  preferredAgeMax    Int?
+  preferredSex       Sex?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  archivedAt         DateTime?
+  breedingPlanBuyers BreedingPlanBuyer[] @relation("BreedingPlanBuyerCRM")
+  party              Party               @relation("BuyerParty", fields: [partyId], references: [id])
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  interests          BuyerInterest[]
+  tasks              BuyerTask[]         @relation("BuyerTasks")
+  deals              Deal[]
+  tagAssignments     TagAssignment[]
+  waitlistEntries    WaitlistEntry[]     @relation("WaitlistEntryCRM")
 
   @@index([tenantId])
   @@index([partyId])
@@ -5798,10 +5682,10 @@ model FeedingPlan {
   notes             String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
-  offspringGroupId  Int?
+  breedingPlanId    Int?
   animal            Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  BreedingPlan      BreedingPlan?   @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   foodProduct       FoodProduct     @relation(fields: [foodProductId], references: [id])
-  offspringGroup    OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
   tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   feedingRecords    FeedingRecord[]
   foodChangesTo     FoodChange[]    @relation("FoodChangeNewPlan")
@@ -5810,10 +5694,8 @@ model FeedingPlan {
   @@index([tenantId])
   @@index([tenantId, animalId])
   @@index([tenantId, animalId, isActive])
-  @@index([tenantId, offspringGroupId])
-  @@index([tenantId, offspringGroupId, isActive])
   @@index([animalId, startDate])
-  @@index([offspringGroupId, startDate])
+  @@index([tenantId, breedingPlanId], map: "FeedingPlan_breedingPlanId_idx")
   @@schema("public")
 }
 
@@ -5821,34 +5703,33 @@ model FeedingPlan {
 /// * FeedingRecord - Individual feeding log entries
 /// * Tracks actual feedings, skipped meals, appetite scores
 model FeedingRecord {
-  id               Int             @id @default(autoincrement())
-  tenantId         Int
-  animalId         Int?
-  feedingPlanId    Int?
-  foodProductId    Int?
-  fedAt            DateTime
-  portionOz        Float?
-  costCents        Int?
-  skipped          Boolean         @default(false)
-  skipReason       String?
-  appetiteScore    Int?
-  expenseId        Int?            @unique
-  notes            String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  offspringGroupId Int?
-  animal           Animal?         @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  feedingPlan      FeedingPlan?    @relation(fields: [feedingPlanId], references: [id])
-  foodProduct      FoodProduct?    @relation(fields: [foodProductId], references: [id])
-  offspringGroup   OffspringGroup? @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id             Int           @id @default(autoincrement())
+  tenantId       Int
+  animalId       Int?
+  feedingPlanId  Int?
+  foodProductId  Int?
+  fedAt          DateTime
+  portionOz      Float?
+  costCents      Int?
+  skipped        Boolean       @default(false)
+  skipReason     String?
+  appetiteScore  Int?
+  expenseId      Int?          @unique
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  breedingPlanId Int?
+  animal         Animal?       @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  BreedingPlan   BreedingPlan? @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  feedingPlan    FeedingPlan?  @relation(fields: [feedingPlanId], references: [id])
+  foodProduct    FoodProduct?  @relation(fields: [foodProductId], references: [id])
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([tenantId, animalId])
   @@index([tenantId, animalId, fedAt])
-  @@index([tenantId, offspringGroupId])
-  @@index([tenantId, offspringGroupId, fedAt])
   @@index([fedAt])
+  @@index([tenantId, breedingPlanId], map: "FeedingRecord_breedingPlanId_idx")
   @@schema("public")
 }
 
@@ -5856,33 +5737,31 @@ model FeedingRecord {
 /// * FoodChange - Records food transitions with outcomes
 /// * Tracks why food changed, transition protocol, and success rating
 model FoodChange {
-  id               Int              @id @default(autoincrement())
-  tenantId         Int
-  animalId         Int?
-  previousPlanId   Int?
-  newPlanId        Int
-  changeDate       DateTime
-  changeReason     FoodChangeReason
-  reasonDetails    String?
-  transitionDays   Int?
-  transitionNotes  String?
-  reactions        String?
-  digestiveNotes   String?
-  overallSuccess   SuccessRating?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  offspringGroupId Int?
-  animal           Animal?          @relation(fields: [animalId], references: [id], onDelete: Cascade)
-  newPlan          FeedingPlan      @relation("FoodChangeNewPlan", fields: [newPlanId], references: [id], onDelete: Cascade)
-  offspringGroup   OffspringGroup?  @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
-  previousPlan     FeedingPlan?     @relation("FoodChangePrevPlan", fields: [previousPlanId], references: [id])
-  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id              Int              @id @default(autoincrement())
+  tenantId        Int
+  animalId        Int?
+  previousPlanId  Int?
+  newPlanId       Int
+  changeDate      DateTime
+  changeReason    FoodChangeReason
+  reasonDetails   String?
+  transitionDays  Int?
+  transitionNotes String?
+  reactions       String?
+  digestiveNotes  String?
+  overallSuccess  SuccessRating?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  breedingPlanId  Int?
+  animal          Animal?          @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  BreedingPlan    BreedingPlan?    @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  newPlan         FeedingPlan      @relation("FoodChangeNewPlan", fields: [newPlanId], references: [id], onDelete: Cascade)
+  previousPlan    FeedingPlan?     @relation("FoodChangePrevPlan", fields: [previousPlanId], references: [id])
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([tenantId, animalId])
-  @@index([tenantId, offspringGroupId])
   @@index([animalId, changeDate])
-  @@index([offspringGroupId, changeDate])
   @@schema("public")
 }
 
@@ -6546,7 +6425,6 @@ model RearingProtocolActivity {
 model RearingProtocolAssignment {
   id                     Int                           @id @default(autoincrement())
   tenantId               Int
-  offspringGroupId       Int?
   protocolId             Int
   protocolVersion        Int
   protocolSnapshot       Json?
@@ -6569,24 +6447,23 @@ model RearingProtocolAssignment {
   handoffSnapshot        Json?
   handoffToUserId        String?
   offspringId            Int?
+  breedingPlanId         Int?
   completions            ActivityCompletion[]
   assessments            AssessmentResult[]
   overrides              AssignmentOffspringOverride[]
   exceptions             OffspringProtocolException[]
   certificates           RearingCertificate[]
   animal                 Animal?                       @relation("AnimalProtocolAssignment", fields: [animalId], references: [id], onDelete: Cascade)
+  BreedingPlan           BreedingPlan?                 @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   handoffByUser          User?                         @relation("ProtocolHandoffInitiator", fields: [handoffByUserId], references: [id])
   handoffToUser          User?                         @relation("ProtocolHandoffRecipient", fields: [handoffToUserId], references: [id])
-  offspringGroup         OffspringGroup?               @relation(fields: [offspringGroupId], references: [id], onDelete: Cascade)
   offspring              Offspring?                    @relation("OffspringProtocolAssignment", fields: [offspringId], references: [id], onDelete: Cascade)
   protocol               RearingProtocol               @relation(fields: [protocolId], references: [id])
   tenant                 Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([offspringGroupId, protocolId])
   @@unique([offspringId, protocolId])
   @@unique([animalId, protocolId])
   @@index([tenantId])
-  @@index([offspringGroupId])
   @@index([offspringId])
   @@index([animalId])
   @@index([protocolId])
@@ -7131,6 +7008,23 @@ model international_waitlist {
   @@index([country], map: "idx_intl_waitlist_country")
   @@index([notified_at], map: "idx_intl_waitlist_notified_at")
   @@schema("marketplace")
+}
+
+model BreedingPlanTempLog {
+  id           Int          @id @default(autoincrement())
+  planId       Int
+  tenantId     Int
+  recordedAt   DateTime     @db.Timestamptz(3)
+  temperatureF Decimal      @db.Decimal(5, 2)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime
+  BreedingPlan BreedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  Tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@index([tenantId])
+  @@schema("public")
 }
 enum PartyType {
   CONTACT
@@ -7701,6 +7595,9 @@ enum BreedingPlanStatus {
   CYCLE
   UNSUCCESSFUL
   ON_HOLD
+  PLAN_COMPLETE
+  BORN
+  DISSOLVED
 
   @@schema("public")
 }
@@ -7937,6 +7834,19 @@ enum BreedingPlanBuyerStage {
   INQUIRY
   ASSIGNED
   MATCHED_TO_OFFSPRING
+  DEPOSIT_NEEDED
+  DEPOSIT_PAID
+  AWAITING_PICK
+  MATCH_PROPOSED
+  COMPLETED
+  DECLINED
+  WITHDRAWN
+  PENDING
+  MATCHED
+  OPTED_OUT
+  VISIT_SCHEDULED
+  PICKUP_SCHEDULED
+  WINDOW_EXPIRED
 
   @@schema("public")
 }
@@ -8043,29 +7953,6 @@ enum RevokedBy {
   CHILD_OWNER
   PARENT_OWNER
   SYSTEM
-
-  @@schema("public")
-}
-
-/// *
-/// * Offspring Group linking state
-enum OffspringLinkState {
-  linked
-  orphan
-  pending
-
-  @@schema("public")
-}
-
-enum OffspringLinkReason {
-  legacy_import
-  rescue
-  accidental
-  third_party
-  cobreeder
-  placeholder
-  historical
-  other
 
   @@schema("public")
 }

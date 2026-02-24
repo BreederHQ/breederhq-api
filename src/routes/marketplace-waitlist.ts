@@ -618,6 +618,8 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           tenant: {
             select: {
               name: true,
+              stripeConnectAccountId: true,
+              stripeConnectPayoutsEnabled: true,
               billing: {
                 select: {
                   stripeCustomerId: true,
@@ -694,7 +696,6 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       const cancelUrl = `${baseUrl}/inquiries?tab=waitlist&payment=canceled`;
 
       // 8) Create Stripe checkout session
-      // If breeder has Stripe Connect, use destination charges
       const checkoutConfig: any = {
         mode: "payment",
         line_items: lineItems,
@@ -715,6 +716,14 @@ const marketplaceWaitlistRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           },
         },
       };
+
+      // Route payment to breeder's Stripe Connect account if available
+      const tenant = invoice.tenant as any;
+      if (tenant.stripeConnectAccountId && tenant.stripeConnectPayoutsEnabled) {
+        checkoutConfig.payment_intent_data.transfer_data = {
+          destination: tenant.stripeConnectAccountId,
+        };
+      }
 
       const session = await getStripe().checkout.sessions.create(checkoutConfig);
 

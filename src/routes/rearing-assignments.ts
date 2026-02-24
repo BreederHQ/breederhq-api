@@ -68,13 +68,16 @@ const assignmentInclude = {
       },
     },
   },
-  offspringGroup: {
+  BreedingPlan: {
     select: {
       id: true,
       name: true,
       species: true,
-      actualBirthOn: true,
-      expectedBirthOn: true,
+      birthDateActual: true,
+      expectedBirthDate: true,
+      tenant: {
+        select: { name: true },
+      },
     },
   },
 };
@@ -83,7 +86,7 @@ const assignmentInclude = {
 
 const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ─────────────────────────────────────────────────────────────────────────────
-  // GET /offspring-groups/:groupId/rearing-assignments - List assignments for group
+  // GET /offspring-groups/:groupId/rearing-assignments - List assignments for group (breedingPlan)
   // ─────────────────────────────────────────────────────────────────────────────
   app.get("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
     try {
@@ -97,17 +100,17 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(400).send({ error: "invalid_group_id" });
       }
 
-      // Verify group belongs to tenant
-      const group = await prisma.offspringGroup.findFirst({
-        where: { id: groupId, tenantId, deletedAt: null },
+      // Verify breedingPlan belongs to tenant (groupId now maps to breedingPlanId)
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: groupId, tenantId },
       });
 
-      if (!group) {
+      if (!plan) {
         return reply.code(404).send({ error: "group_not_found" });
       }
 
       const assignments = await prisma.rearingProtocolAssignment.findMany({
-        where: { offspringGroupId: groupId, tenantId },
+        where: { breedingPlanId: groupId, tenantId },
         include: assignmentInclude,
         orderBy: { createdAt: "desc" },
       });
@@ -120,7 +123,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // POST /offspring-groups/:groupId/rearing-assignments - Assign protocol to group
+  // POST /offspring-groups/:groupId/rearing-assignments - Assign protocol to group (breedingPlan)
   // ─────────────────────────────────────────────────────────────────────────────
   app.post("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
     try {
@@ -163,12 +166,12 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(400).send({ error: "invalid_protocol_id" });
       }
 
-      // Verify group belongs to tenant
-      const group = await prisma.offspringGroup.findFirst({
-        where: { id: groupId, tenantId, deletedAt: null },
+      // Verify breedingPlan belongs to tenant (groupId now maps to breedingPlanId)
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: groupId, tenantId },
       });
 
-      if (!group) {
+      if (!plan) {
         return reply.code(404).send({ error: "group_not_found" });
       }
 
@@ -216,7 +219,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
       // Check for existing assignment (use protocol.id which is always the numeric id)
       const existingAssignment = await prisma.rearingProtocolAssignment.findFirst({
-        where: { offspringGroupId: groupId, protocolId: protocol.id },
+        where: { breedingPlanId: groupId, protocolId: protocol.id },
       });
 
       if (existingAssignment) {
@@ -245,7 +248,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return tx.rearingProtocolAssignment.create({
           data: {
             tenantId,
-            offspringGroupId: groupId,
+            breedingPlanId: groupId,
             protocolId: protocol.id,
             protocolVersion: protocol.version,
             protocolSnapshot: protocol as any, // Store full protocol JSON
@@ -440,7 +443,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
               },
             },
           },
-          offspringGroup: {
+          BreedingPlan: {
             include: {
               tenant: {
                 select: { name: true },
@@ -467,9 +470,9 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         });
       }
 
-      // Verify offspring belongs to the assignment's group
+      // Verify offspring belongs to the assignment's breeding plan
       const offspring = await prisma.offspring.findFirst({
-        where: { id: offspringId, groupId: assignment.offspringGroupId!, tenantId },
+        where: { id: offspringId, breedingPlanId: assignment.breedingPlanId!, tenantId },
         include: {
           buyerParty: {
             include: {
@@ -572,7 +575,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
               offspringId,
               offspringName: offspring.name ?? `Offspring #${offspring.id}`,
               protocolName: assignment.protocol?.name ?? "Unknown Protocol",
-              breederName: assignment.offspringGroup?.tenant?.name ?? "Unknown Breeder",
+              breederName: assignment.BreedingPlan?.tenant?.name ?? "Unknown Breeder",
               certificateType: "BREEDER_PHASE",
               stageCompleted: handoffFromStage,
               stageData: handoffSnapshot,

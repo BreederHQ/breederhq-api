@@ -49,7 +49,6 @@ function expenseDTO(e: any) {
     description: e.description,
     vendorPartyId: e.vendorPartyId,
     breedingPlanId: e.breedingPlanId,
-    offspringGroupId: e.offspringGroupId,
     animalId: e.animalId,
     foodProductId: e.foodProductId,
     quantityValue: e.quantityValue,
@@ -75,7 +74,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Validate anchors (optional for expenses, but if provided must be only one)
       const anchors: ExpenseAnchors = {
         breedingPlanId: parseIntOrNull(body.breedingPlanId),
-        offspringGroupId: parseIntOrNull(body.offspringGroupId),
         animalId: parseIntOrNull(body.animalId),
       };
       validateExpenseAnchors(anchors);
@@ -107,7 +105,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
           description: body.description || null,
           vendorPartyId: parseIntOrNull(body.vendorPartyId),
           breedingPlanId: anchors.breedingPlanId,
-          offspringGroupId: anchors.offspringGroupId,
           animalId: anchors.animalId,
           foodProductId: parseIntOrNull(body.foodProductId),
           quantityValue: parseFloatOrNull(body.quantityValue),
@@ -146,20 +143,17 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (query.category) where.category = query.category;
       if (query.vendorPartyId) where.vendorPartyId = parseIntOrNull(query.vendorPartyId);
       if (query.breedingPlanId) where.breedingPlanId = parseIntOrNull(query.breedingPlanId);
-      if (query.offspringGroupId) where.offspringGroupId = parseIntOrNull(query.offspringGroupId);
       if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
 
       // Anchored/unanchored filters
       if (query.anchoredOnly === "true" || query.anchoredOnly === "1") {
         where.OR = [
           { breedingPlanId: { not: null } },
-          { offspringGroupId: { not: null } },
           { animalId: { not: null } },
         ];
       }
       if (query.unanchoredOnly === "true" || query.unanchoredOnly === "1") {
         where.breedingPlanId = null;
-        where.offspringGroupId = null;
         where.animalId = null;
       }
 

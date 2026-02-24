@@ -371,7 +371,7 @@ export async function refreshMatchingPlansForEntry(
   // otherwise match against ALL active plans for the tenant (parking-lot entries)
   const planWhere: any = {
     tenantId,
-    status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+    status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
     deletedAt: null,
   };
   if (entry.programId) {
@@ -449,7 +449,7 @@ export async function refreshMatchingPlansForEntries(
   // 3. Batch-fetch all relevant active plans
   const planWhere: any = {
     tenantId,
-    status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+    status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
     deletedAt: null,
   };
   if (!hasParkingLot && programIds.length > 0) {

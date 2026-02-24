@@ -8,6 +8,7 @@
 
 import prisma from "../prisma.js";
 import { updateMareReproductiveHistory } from "./mare-reproductive-history-service.js";
+import { calculateGroupExpectedDates } from "./breeding-plan-lifecycle-service.js";
 
 // Date utility functions - use UTC to avoid timezone shift issues
 function startOfDayUTC(date: Date): Date {
@@ -48,11 +49,7 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
     include: {
       dam: true,
       sire: true,
-      offspringGroup: {
-        include: {
-          Offspring: true,
-        },
-      },
+      Offspring: true,
       foalingOutcome: true,
       breedingMilestones: {
         orderBy: { scheduledDate: "asc" },
@@ -83,7 +80,7 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
         isCompleted: m.isCompleted,
         daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
       })),
-      offspring: plan.offspringGroup?.Offspring || [],
+      offspring: plan.Offspring || [],
       outcome: plan.foalingOutcome || null,
     };
   }
@@ -122,13 +119,19 @@ export async function getFoalingTimeline(breedingPlanId: number, tenantId: numbe
       isCompleted: m.isCompleted,
       daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
     })),
-    offspring: plan.offspringGroup?.Offspring || [],
+    offspring: plan.Offspring || [],
     outcome: plan.foalingOutcome || null,
   };
 }
 
 /**
- * Record actual foaling date and create offspring
+ * Record actual foaling/birth date and create offspring.
+ *
+ * This is the full birth recording side effect chain:
+ *   1. Validate birth date (not future, not before breed date)
+ *   2. Advance plan to PLAN_COMPLETE + write expected post-birth dates
+ *   3. Create offspring records (linked via breedingPlanId)
+ *   4. Create event log
  */
 export async function recordFoaling(params: {
   breedingPlanId: number;
@@ -145,7 +148,7 @@ export async function recordFoaling(params: {
   const { breedingPlanId, tenantId, actualBirthDate, foals, userId } = params;
 
   return await prisma.$transaction(async (tx) => {
-    // 1. Fetch breeding plan with dam info
+    // ── Step 1: Validate ────────────────────────────────────────────────
     const plan = await tx.breedingPlan.findFirst({
       where: { id: breedingPlanId, tenantId },
       include: { dam: true },
@@ -153,54 +156,38 @@ export async function recordFoaling(params: {
 
     if (!plan) throw new Error("Breeding plan not found");
 
-    // Validate: breedDateActual must be set before recording birth
     if (!plan.breedDateActual) {
       throw new Error("Cannot record birth date: the breeding date (breedDateActual) must be recorded first.");
     }
 
-    // 2. Update breeding plan
+    if (actualBirthDate > new Date()) {
+      throw new Error("Birth date cannot be in the future");
+    }
+
+    if (plan.breedDateActual && actualBirthDate < plan.breedDateActual) {
+      throw new Error("Birth date cannot be before breed date");
+    }
+
+    // ── Step 2: Advance plan to PLAN_COMPLETE + write expected dates ────
+    const postBirthDates = calculateGroupExpectedDates(actualBirthDate, plan.species);
     await tx.breedingPlan.update({
       where: { id: breedingPlanId },
       data: {
         birthDateActual: actualBirthDate,
-        status: "BIRTHED",
+        status: "PLAN_COMPLETE",
+        expectedWeaned: postBirthDates.expectedWeanedAt,
+        expectedPlacementStart: postBirthDates.expectedPlacementStartAt,
+        expectedPlacementCompleted: postBirthDates.expectedPlacementCompletedAt,
       },
     });
 
-    // 3. Create or update offspring group
-    let offspringGroup = await tx.offspringGroup.findFirst({
-      where: { planId: breedingPlanId },
-    });
-
-    if (offspringGroup) {
-      offspringGroup = await tx.offspringGroup.update({
-        where: { id: offspringGroup.id },
-        data: { actualBirthOn: actualBirthDate },
-      });
-    } else {
-      const year = new Date().getFullYear();
-      const damName = plan.dam?.name || "Mare";
-      offspringGroup = await tx.offspringGroup.create({
-        data: {
-          tenantId,
-          planId: breedingPlanId,
-          species: plan.species,
-          damId: plan.damId,
-          sireId: plan.sireId,
-          name: `${damName} ${year}`,
-          expectedBirthOn: plan.expectedBirthDate,
-          actualBirthOn: actualBirthDate,
-        },
-      });
-    }
-
-    // 4. Create offspring records
+    // ── Step 3: Create offspring records ─────────────────────────────────
     const offspring = await Promise.all(
       foals.map((foal) =>
         tx.offspring.create({
           data: {
             tenantId,
-            groupId: offspringGroup!.id,
+            breedingPlanId,
             species: plan.species,
             sex: foal.sex,
             color: foal.color,
@@ -209,25 +196,30 @@ export async function recordFoaling(params: {
             birthWeight: foal.birthWeight,
             status: "NEWBORN",
             lifeState: "ALIVE",
-          },
+          } as any,
         })
       )
     );
 
-    // 5. Create event log
+    // ── Step 4: Create event log ────────────────────────────────────────
     await tx.breedingPlanEvent.create({
       data: {
         tenantId,
         planId: breedingPlanId,
         type: "foaling_recorded",
         occurredAt: actualBirthDate,
-        label: "Foaling Recorded",
-        notes: `${foals.length} foal(s) born`,
+        label: "Birth Recorded",
+        notes: `${foals.length} offspring born. Plan advanced to PLAN_COMPLETE.`,
         recordedByUserId: userId,
+        data: {
+          offspringCount: foals.length,
+          expectedWeanedAt: postBirthDates.expectedWeanedAt.toISOString(),
+          expectedPlacementStartAt: postBirthDates.expectedPlacementStartAt.toISOString(),
+        },
       },
     });
 
-    return { plan, offspringGroup, offspring };
+    return { plan, offspring };
   });
 }
 
@@ -245,6 +237,17 @@ export async function addFoalingOutcome(params: {
   placentaPassed?: boolean;
   placentaPassedMinutes?: number;
   mareCondition?: "EXCELLENT" | "GOOD" | "FAIR" | "POOR" | "VETERINARY_CARE_REQUIRED";
+  postFoalingHeatDate?: Date | string;
+  postFoalingHeatNotes?: string;
+  readyForRebreeding?: boolean;
+  rebredDate?: Date | string;
+  wasCSection?: boolean;
+  cSectionReason?: string;
+  placentaCount?: number;
+  damRecoveryNotes?: string;
+  totalBorn?: number;
+  bornAlive?: number;
+  stillborn?: number;
   userId: string;
 }) {
   const { breedingPlanId, tenantId, ...outcomeData } = params;
@@ -775,11 +778,7 @@ export async function getBirthTimeline(breedingPlanId: number, tenantId: number)
     include: {
       dam: true,
       sire: true,
-      offspringGroup: {
-        include: {
-          Offspring: true,
-        },
-      },
+      Offspring: true,
       foalingOutcome: true,
       breedingMilestones: {
         orderBy: { scheduledDate: "asc" },
@@ -821,7 +820,7 @@ export async function getBirthTimeline(breedingPlanId: number, tenantId: number)
         notes: m.notes,
         daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
       })),
-      offspring: plan.offspringGroup?.Offspring || [],
+      offspring: plan.Offspring || [],
       outcome: plan.foalingOutcome || null,
     };
   }
@@ -863,7 +862,7 @@ export async function getBirthTimeline(breedingPlanId: number, tenantId: number)
       notes: m.notes,
       daysUntil: differenceInDays(startOfDayUTC(m.scheduledDate), today),
     })),
-    offspring: plan.offspringGroup?.Offspring || [],
+    offspring: plan.Offspring || [],
     outcome: plan.foalingOutcome || null,
   };
 }

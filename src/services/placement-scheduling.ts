@@ -32,7 +32,7 @@ export type PlacementBlockedCode =
   | "NO_PLACEMENT_RANK";
 
 export interface PlacementBlockedContext {
-  offspringGroupId: number;
+  breedingPlanId: number;
   eventId?: string;
   placementWindowStartAt?: string;
   placementWindowEndAt?: string;
@@ -164,13 +164,13 @@ export function validatePlacementSchedulingPolicy(policy: PlacementSchedulingPol
 }
 
 export function buildPlacementBlockedContext(
-  offspringGroupId: number,
+  breedingPlanId: number,
   window: PlacementWindow | null,
   serverNow: Date,
   eventId?: string
 ): PlacementBlockedContext {
   const ctx: PlacementBlockedContext = {
-    offspringGroupId,
+    breedingPlanId,
     serverNow: serverNow.toISOString(),
   };
   if (eventId) ctx.eventId = eventId;
@@ -185,6 +185,6 @@ export function getPlacementBlockedMessage(code: PlacementBlockedCode): string {
   switch (code) {
     case "PLACEMENT_WINDOW_NOT_OPEN": return "Your scheduling window has not opened yet.";
     case "PLACEMENT_WINDOW_CLOSED": return "Your scheduling window has closed.";
-    case "NO_PLACEMENT_RANK": return "You do not have a placement rank for this group.";
+    case "NO_PLACEMENT_RANK": return "You do not have a placement rank for this plan.";
   }
 }

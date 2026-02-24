@@ -611,7 +611,20 @@ CREATE TYPE public."BreedingPlanBuyerStage" AS ENUM (
     'POSSIBLE_MATCH',
     'INQUIRY',
     'ASSIGNED',
-    'MATCHED_TO_OFFSPRING'
+    'MATCHED_TO_OFFSPRING',
+    'DEPOSIT_NEEDED',
+    'DEPOSIT_PAID',
+    'AWAITING_PICK',
+    'MATCH_PROPOSED',
+    'COMPLETED',
+    'DECLINED',
+    'WITHDRAWN',
+    'PENDING',
+    'MATCHED',
+    'OPTED_OUT',
+    'VISIT_SCHEDULED',
+    'PICKUP_SCHEDULED',
+    'WINDOW_EXPIRED'
 );
 
 
@@ -633,7 +646,10 @@ CREATE TYPE public."BreedingPlanStatus" AS ENUM (
     'CANCELED',
     'CYCLE',
     'UNSUCCESSFUL',
-    'ON_HOLD'
+    'ON_HOLD',
+    'PLAN_COMPLETE',
+    'BORN',
+    'DISSOLVED'
 );
 
 
@@ -1900,33 +1916,6 @@ CREATE TYPE public."OffspringKeeperIntent" AS ENUM (
 CREATE TYPE public."OffspringLifeState" AS ENUM (
     'ALIVE',
     'DECEASED'
-);
-
-
---
--- Name: OffspringLinkReason; Type: TYPE; Schema: public; Owner: -
---
-
-CREATE TYPE public."OffspringLinkReason" AS ENUM (
-    'legacy_import',
-    'rescue',
-    'accidental',
-    'third_party',
-    'cobreeder',
-    'placeholder',
-    'historical',
-    'other'
-);
-
-
---
--- Name: OffspringLinkState; Type: TYPE; Schema: public; Owner: -
---
-
-CREATE TYPE public."OffspringLinkState" AS ENUM (
-    'linked',
-    'orphan',
-    'pending'
 );
 
 
@@ -4093,7 +4082,6 @@ CREATE TABLE public."Animal" (
     "canonicalBreedId" integer,
     "customBreedId" integer,
     "litterId" integer,
-    "offspringGroupId" integer,
     "collarColorId" text,
     "collarColorName" text,
     "collarColorHex" text,
@@ -4135,7 +4123,8 @@ CREATE TABLE public."Animal" (
     "tattooNumber" text,
     "networkSearchVisible" boolean DEFAULT true NOT NULL,
     "coverImageUrl" text,
-    nickname text
+    nickname text,
+    "breedingPlanId" integer
 );
 
 
@@ -6173,7 +6162,24 @@ CREATE TABLE public."BreedingPlan" (
     "depositOverrideAmountCents" integer,
     "depositOverrideRequired" boolean,
     "expectedLitterSize" integer,
-    "archiveReason" text
+    "archiveReason" text,
+    "countBorn" integer,
+    "countLive" integer,
+    "countStillborn" integer,
+    "countMale" integer,
+    "countFemale" integer,
+    "countWeaned" integer,
+    "countPlaced" integer,
+    "listingSlug" text,
+    "listingTitle" text,
+    "listingDescription" text,
+    "marketplaceDefaultPriceCents" integer,
+    "marketplaceStatus" text DEFAULT 'DRAFT'::text,
+    "depositRequired" boolean DEFAULT false,
+    "depositAmountCents" integer,
+    "coverImageUrl" text,
+    "themeName" text,
+    "placementSchedulingPolicy" jsonb
 );
 
 
@@ -6193,12 +6199,16 @@ CREATE TABLE public."BreedingPlanBuyer" (
     "assignedAt" timestamp(3) without time zone,
     "assignedByPartyId" integer,
     priority integer,
-    "offspringGroupBuyerId" integer,
     "offspringId" integer,
     notes text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "buyerId" integer
+    "buyerId" integer,
+    "placementRank" integer,
+    "optedOutAt" timestamp with time zone,
+    "optedOutReason" text,
+    "optedOutBy" character varying(20),
+    "depositDisposition" character varying(30)
 );
 
 
@@ -6259,6 +6269,42 @@ CREATE SEQUENCE public."BreedingPlanEvent_id_seq"
 --
 
 ALTER SEQUENCE public."BreedingPlanEvent_id_seq" OWNED BY public."BreedingPlanEvent".id;
+
+
+--
+-- Name: BreedingPlanTempLog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."BreedingPlanTempLog" (
+    id integer NOT NULL,
+    "planId" integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "recordedAt" timestamp(3) with time zone NOT NULL,
+    "temperatureF" numeric(5,2) NOT NULL,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: BreedingPlanTempLog_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."BreedingPlanTempLog_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: BreedingPlanTempLog_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."BreedingPlanTempLog_id_seq" OWNED BY public."BreedingPlanTempLog".id;
 
 
 --
@@ -6951,7 +6997,6 @@ CREATE TABLE public."Contract" (
     "tenantId" integer NOT NULL,
     "templateId" integer,
     "offspringId" integer,
-    "groupId" integer,
     "invoiceId" integer,
     title text NOT NULL,
     status public."ContractStatus" DEFAULT 'draft'::public."ContractStatus" NOT NULL,
@@ -6966,7 +7011,8 @@ CREATE TABLE public."Contract" (
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
     "animalId" integer,
-    "waitlistEntryId" integer
+    "waitlistEntryId" integer,
+    "breedingPlanId" integer
 );
 
 
@@ -7387,7 +7433,6 @@ CREATE TABLE public."Document" (
     "animalId" integer,
     "ownershipChangeId" integer,
     "offspringId" integer,
-    "groupId" integer,
     "invoiceId" integer,
     "contractId" integer,
     title text NOT NULL,
@@ -7408,7 +7453,8 @@ CREATE TABLE public."Document" (
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
     "watermarkEnabled" boolean DEFAULT false NOT NULL,
-    "partyId" integer
+    "partyId" integer,
+    "breedingPlanId" integer
 );
 
 
@@ -7684,7 +7730,6 @@ CREATE TABLE public."Expense" (
     description text,
     "vendorPartyId" integer,
     "breedingPlanId" integer,
-    "offspringGroupId" integer,
     "animalId" integer,
     notes text,
     data jsonb,
@@ -7843,7 +7888,7 @@ CREATE TABLE public."FeedingPlan" (
     notes text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "offspringGroupId" integer
+    "breedingPlanId" integer
 );
 
 
@@ -7887,7 +7932,7 @@ CREATE TABLE public."FeedingRecord" (
     notes text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "offspringGroupId" integer
+    "breedingPlanId" integer
 );
 
 
@@ -8028,7 +8073,14 @@ CREATE TABLE public."FoalingOutcome" (
     "rebredDate" timestamp(3) without time zone,
     "foalPhotoUrls" jsonb,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "wasCSection" boolean DEFAULT false NOT NULL,
+    "cSectionReason" text,
+    "placentaCount" integer,
+    "damRecoveryNotes" text,
+    "totalBorn" integer,
+    "bornAlive" integer,
+    stillborn integer
 );
 
 
@@ -8072,7 +8124,7 @@ CREATE TABLE public."FoodChange" (
     "overallSuccess" public."SuccessRating",
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "offspringGroupId" integer
+    "breedingPlanId" integer
 );
 
 
@@ -8458,7 +8510,6 @@ CREATE TABLE public."Invoice" (
     id integer NOT NULL,
     "tenantId" integer NOT NULL,
     scope public."FinanceScope" NOT NULL,
-    "groupId" integer,
     "offspringId" integer,
     "clientPartyId" integer,
     "animalId" integer,
@@ -8756,7 +8807,8 @@ CREATE TABLE public."LitterEvent" (
     notes text,
     "recordedByUserId" text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "breedingPlanId" integer
 );
 
 
@@ -9418,7 +9470,6 @@ ALTER SEQUENCE public."Notification_id_seq" OWNED BY public."Notification".id;
 CREATE TABLE public."Offspring" (
     id integer NOT NULL,
     "tenantId" integer NOT NULL,
-    "groupId" integer NOT NULL,
     name text,
     species public."Species" NOT NULL,
     breed text,
@@ -9467,7 +9518,8 @@ CREATE TABLE public."Offspring" (
     "birthWeightOz" double precision,
     "isExtraNeeds" boolean DEFAULT false NOT NULL,
     "neonatalFeedingMethod" public."NeonatalFeedingMethod",
-    "neonatalHealthStatus" public."NeonatalHealthStatus"
+    "neonatalHealthStatus" public."NeonatalHealthStatus",
+    "breedingPlanId" integer NOT NULL
 );
 
 
@@ -9594,154 +9646,6 @@ CREATE SEQUENCE public."OffspringEvent_id_seq"
 --
 
 ALTER SEQUENCE public."OffspringEvent_id_seq" OWNED BY public."OffspringEvent".id;
-
-
---
--- Name: OffspringGroup; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."OffspringGroup" (
-    id integer NOT NULL,
-    "tenantId" integer NOT NULL,
-    "planId" integer,
-    "linkState" public."OffspringLinkState" DEFAULT 'linked'::public."OffspringLinkState" NOT NULL,
-    "linkReason" public."OffspringLinkReason",
-    species public."Species" NOT NULL,
-    "damId" integer,
-    "sireId" integer,
-    name text,
-    "expectedBirthOn" timestamp(3) without time zone,
-    "actualBirthOn" timestamp(3) without time zone,
-    "countBorn" integer,
-    "countLive" integer,
-    "countStillborn" integer,
-    "countMale" integer,
-    "countFemale" integer,
-    "countWeaned" integer,
-    "countPlaced" integer,
-    "weanedAt" timestamp(3) without time zone,
-    "placementStartAt" timestamp(3) without time zone,
-    "placementCompletedAt" timestamp(3) without time zone,
-    "coverImageUrl" text,
-    "themeName" text,
-    notes text,
-    data jsonb,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL,
-    "listingSlug" text,
-    "listingTitle" text,
-    "listingDescription" text,
-    "marketplaceDefaultPriceCents" integer,
-    "placementSchedulingPolicy" jsonb,
-    "archivedAt" timestamp(3) without time zone,
-    "deletedAt" timestamp(3) without time zone,
-    status public."MarketplaceListingStatus" DEFAULT 'DRAFT'::public."MarketplaceListingStatus" NOT NULL,
-    "depositRequired" boolean DEFAULT false NOT NULL,
-    "depositAmountCents" integer
-);
-
-
---
--- Name: OffspringGroupBuyer; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."OffspringGroupBuyer" (
-    id integer NOT NULL,
-    "tenantId" integer NOT NULL,
-    "groupId" integer NOT NULL,
-    "buyerPartyId" integer,
-    "waitlistEntryId" integer,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL,
-    "placementRank" integer,
-    "buyerId" integer,
-    stage character varying(50) DEFAULT 'PENDING'::character varying NOT NULL,
-    "optedOutAt" timestamp with time zone,
-    "optedOutReason" text,
-    "optedOutBy" character varying(20),
-    "depositDisposition" character varying(30),
-    notes text
-);
-
-
---
--- Name: OffspringGroupBuyer_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."OffspringGroupBuyer_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: OffspringGroupBuyer_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."OffspringGroupBuyer_id_seq" OWNED BY public."OffspringGroupBuyer".id;
-
-
---
--- Name: OffspringGroupEvent; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."OffspringGroupEvent" (
-    id integer NOT NULL,
-    "tenantId" integer NOT NULL,
-    "offspringGroupId" integer NOT NULL,
-    type text NOT NULL,
-    "occurredAt" timestamp(3) without time zone NOT NULL,
-    field text,
-    before jsonb,
-    after jsonb,
-    notes text,
-    "recordedByUserId" text,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
-);
-
-
---
--- Name: OffspringGroupEvent_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."OffspringGroupEvent_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: OffspringGroupEvent_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."OffspringGroupEvent_id_seq" OWNED BY public."OffspringGroupEvent".id;
-
-
---
--- Name: OffspringGroup_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."OffspringGroup_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: OffspringGroup_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."OffspringGroup_id_seq" OWNED BY public."OffspringGroup".id;
 
 
 --
@@ -10806,7 +10710,6 @@ CREATE TABLE public."RearingProtocolActivity" (
 CREATE TABLE public."RearingProtocolAssignment" (
     id integer NOT NULL,
     "tenantId" integer NOT NULL,
-    "offspringGroupId" integer,
     "protocolId" integer NOT NULL,
     "protocolVersion" integer NOT NULL,
     "protocolSnapshot" jsonb,
@@ -10828,7 +10731,8 @@ CREATE TABLE public."RearingProtocolAssignment" (
     "handoffNotes" text,
     "handoffSnapshot" jsonb,
     "handoffToUserId" text,
-    "offspringId" integer
+    "offspringId" integer,
+    "breedingPlanId" integer
 );
 
 
@@ -11148,7 +11052,7 @@ CREATE TABLE public."SchedulingAvailabilityBlock" (
     "createdByUserId" text,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" timestamp(3) without time zone NOT NULL,
-    "offspringGroupId" integer
+    "breedingPlanId" integer
 );
 
 
@@ -11857,7 +11761,6 @@ CREATE TABLE public."TagAssignment" (
     "taggedPartyId" integer,
     "animalId" integer,
     "waitlistEntryId" integer,
-    "offspringGroupId" integer,
     "offspringId" integer,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "draftId" integer,
@@ -12056,7 +11959,9 @@ CREATE TABLE public."Tenant" (
     region text,
     "watermarkSettings" jsonb,
     "inquiryPermission" public."InquiryPermission" DEFAULT 'ANYONE'::public."InquiryPermission" NOT NULL,
-    "networkVisibility" public."NetworkVisibility" DEFAULT 'VISIBLE'::public."NetworkVisibility" NOT NULL
+    "networkVisibility" public."NetworkVisibility" DEFAULT 'VISIBLE'::public."NetworkVisibility" NOT NULL,
+    "invoicingMode" text DEFAULT 'manual'::text NOT NULL,
+    "paymentInstructions" text
 );
 
 
@@ -12603,7 +12508,6 @@ CREATE TABLE public."WaitlistEntry" (
     "tenantId" integer NOT NULL,
     "planId" integer,
     "litterId" integer,
-    "offspringGroupId" integer,
     "clientPartyId" integer,
     "speciesPref" public."Species",
     "breedPrefs" jsonb,
@@ -13548,6 +13452,13 @@ ALTER TABLE ONLY public."BreedingPlanEvent" ALTER COLUMN id SET DEFAULT nextval(
 
 
 --
+-- Name: BreedingPlanTempLog id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog" ALTER COLUMN id SET DEFAULT nextval('public."BreedingPlanTempLog_id_seq"'::regclass);
+
+
+--
 -- Name: BreedingProgramInquiry id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -14070,27 +13981,6 @@ ALTER TABLE ONLY public."OffspringDocument" ALTER COLUMN id SET DEFAULT nextval(
 --
 
 ALTER TABLE ONLY public."OffspringEvent" ALTER COLUMN id SET DEFAULT nextval('public."OffspringEvent_id_seq"'::regclass);
-
-
---
--- Name: OffspringGroup id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup" ALTER COLUMN id SET DEFAULT nextval('public."OffspringGroup_id_seq"'::regclass);
-
-
---
--- Name: OffspringGroupBuyer id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer" ALTER COLUMN id SET DEFAULT nextval('public."OffspringGroupBuyer_id_seq"'::regclass);
-
-
---
--- Name: OffspringGroupEvent id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupEvent" ALTER COLUMN id SET DEFAULT nextval('public."OffspringGroupEvent_id_seq"'::regclass);
 
 
 --
@@ -15162,6 +15052,14 @@ ALTER TABLE ONLY public."BreedingPlanEvent"
 
 
 --
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: BreedingPlan BreedingPlan_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15775,30 +15673,6 @@ ALTER TABLE ONLY public."OffspringDocument"
 
 ALTER TABLE ONLY public."OffspringEvent"
     ADD CONSTRAINT "OffspringEvent_pkey" PRIMARY KEY (id);
-
-
---
--- Name: OffspringGroupBuyer OffspringGroupBuyer_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_pkey" PRIMARY KEY (id);
-
-
---
--- Name: OffspringGroupEvent OffspringGroupEvent_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupEvent"
-    ADD CONSTRAINT "OffspringGroupEvent_pkey" PRIMARY KEY (id);
-
-
---
--- Name: OffspringGroup OffspringGroup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup"
-    ADD CONSTRAINT "OffspringGroup_pkey" PRIMARY KEY (id);
 
 
 --
@@ -17649,6 +17523,13 @@ CREATE INDEX "Animal_archived_idx" ON public."Animal" USING btree (archived);
 
 
 --
+-- Name: Animal_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Animal_breedingPlanId_idx" ON public."Animal" USING btree ("breedingPlanId");
+
+
+--
 -- Name: Animal_buyerPartyId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17681,13 +17562,6 @@ CREATE UNIQUE INDEX "Animal_exchangeCode_key" ON public."Animal" USING btree ("e
 --
 
 CREATE INDEX "Animal_litterId_idx" ON public."Animal" USING btree ("litterId");
-
-
---
--- Name: Animal_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Animal_offspringGroupId_idx" ON public."Animal" USING btree ("offspringGroupId");
 
 
 --
@@ -18538,6 +18412,20 @@ CREATE INDEX "BreedingPlanEvent_tenantId_idx" ON public."BreedingPlanEvent" USIN
 
 
 --
+-- Name: BreedingPlanTempLog_planId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanTempLog_planId_idx" ON public."BreedingPlanTempLog" USING btree ("planId");
+
+
+--
+-- Name: BreedingPlanTempLog_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanTempLog_tenantId_idx" ON public."BreedingPlanTempLog" USING btree ("tenantId");
+
+
+--
 -- Name: BreedingPlan_committedAt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18703,6 +18591,13 @@ CREATE UNIQUE INDEX "BreedingPlan_tenantId_code_key" ON public."BreedingPlan" US
 --
 
 CREATE INDEX "BreedingPlan_tenantId_idx" ON public."BreedingPlan" USING btree ("tenantId");
+
+
+--
+-- Name: BreedingPlan_tenantId_listingSlug_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "BreedingPlan_tenantId_listingSlug_key" ON public."BreedingPlan" USING btree ("tenantId", "listingSlug") WHERE ("listingSlug" IS NOT NULL);
 
 
 --
@@ -19238,13 +19133,6 @@ CREATE INDEX "Contract_expiresAt_idx" ON public."Contract" USING btree ("expires
 
 
 --
--- Name: Contract_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Contract_groupId_idx" ON public."Contract" USING btree ("groupId");
-
-
---
 -- Name: Contract_invoiceId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19546,13 +19434,6 @@ CREATE INDEX "Document_scope_contractId_idx" ON public."Document" USING btree (s
 
 
 --
--- Name: Document_scope_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Document_scope_groupId_idx" ON public."Document" USING btree (scope, "groupId");
-
-
---
 -- Name: Document_scope_invoiceId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19763,13 +19644,6 @@ CREATE INDEX "Expense_tenantId_incurredAt_idx" ON public."Expense" USING btree (
 
 
 --
--- Name: Expense_tenantId_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Expense_tenantId_offspringGroupId_idx" ON public."Expense" USING btree ("tenantId", "offspringGroupId");
-
-
---
 -- Name: Expense_tenantId_vendorPartyId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19868,10 +19742,10 @@ CREATE INDEX "FeedingPlan_animalId_startDate_idx" ON public."FeedingPlan" USING 
 
 
 --
--- Name: FeedingPlan_offspringGroupId_startDate_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: FeedingPlan_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "FeedingPlan_offspringGroupId_startDate_idx" ON public."FeedingPlan" USING btree ("offspringGroupId", "startDate");
+CREATE INDEX "FeedingPlan_breedingPlanId_idx" ON public."FeedingPlan" USING btree ("tenantId", "breedingPlanId");
 
 
 --
@@ -19896,17 +19770,10 @@ CREATE INDEX "FeedingPlan_tenantId_idx" ON public."FeedingPlan" USING btree ("te
 
 
 --
--- Name: FeedingPlan_tenantId_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: FeedingRecord_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "FeedingPlan_tenantId_offspringGroupId_idx" ON public."FeedingPlan" USING btree ("tenantId", "offspringGroupId");
-
-
---
--- Name: FeedingPlan_tenantId_offspringGroupId_isActive_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "FeedingPlan_tenantId_offspringGroupId_isActive_idx" ON public."FeedingPlan" USING btree ("tenantId", "offspringGroupId", "isActive");
+CREATE INDEX "FeedingRecord_breedingPlanId_idx" ON public."FeedingRecord" USING btree ("tenantId", "breedingPlanId");
 
 
 --
@@ -19942,20 +19809,6 @@ CREATE INDEX "FeedingRecord_tenantId_animalId_idx" ON public."FeedingRecord" USI
 --
 
 CREATE INDEX "FeedingRecord_tenantId_idx" ON public."FeedingRecord" USING btree ("tenantId");
-
-
---
--- Name: FeedingRecord_tenantId_offspringGroupId_fedAt_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "FeedingRecord_tenantId_offspringGroupId_fedAt_idx" ON public."FeedingRecord" USING btree ("tenantId", "offspringGroupId", "fedAt");
-
-
---
--- Name: FeedingRecord_tenantId_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "FeedingRecord_tenantId_offspringGroupId_idx" ON public."FeedingRecord" USING btree ("tenantId", "offspringGroupId");
 
 
 --
@@ -20036,13 +19889,6 @@ CREATE INDEX "FoodChange_animalId_changeDate_idx" ON public."FoodChange" USING b
 
 
 --
--- Name: FoodChange_offspringGroupId_changeDate_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "FoodChange_offspringGroupId_changeDate_idx" ON public."FoodChange" USING btree ("offspringGroupId", "changeDate");
-
-
---
 -- Name: FoodChange_tenantId_animalId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20054,13 +19900,6 @@ CREATE INDEX "FoodChange_tenantId_animalId_idx" ON public."FoodChange" USING btr
 --
 
 CREATE INDEX "FoodChange_tenantId_idx" ON public."FoodChange" USING btree ("tenantId");
-
-
---
--- Name: FoodChange_tenantId_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "FoodChange_tenantId_offspringGroupId_idx" ON public."FoodChange" USING btree ("tenantId", "offspringGroupId");
 
 
 --
@@ -20288,13 +20127,6 @@ CREATE UNIQUE INDEX "Invoice_offspringGroupBuyerId_key" ON public."Invoice" USIN
 
 
 --
--- Name: Invoice_scope_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Invoice_scope_groupId_idx" ON public."Invoice" USING btree (scope, "groupId");
-
-
---
 -- Name: Invoice_scope_offspringId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20334,13 +20166,6 @@ CREATE INDEX "Invoice_tenantId_breedingPlanId_idx" ON public."Invoice" USING btr
 --
 
 CREATE INDEX "Invoice_tenantId_clientPartyId_status_idx" ON public."Invoice" USING btree ("tenantId", "clientPartyId", status);
-
-
---
--- Name: Invoice_tenantId_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Invoice_tenantId_groupId_idx" ON public."Invoice" USING btree ("tenantId", "groupId");
 
 
 --
@@ -20939,153 +20764,6 @@ CREATE INDEX "OffspringEvent_tenantId_idx" ON public."OffspringEvent" USING btre
 
 
 --
--- Name: OffspringGroupBuyer_buyerId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_buyerId_idx" ON public."OffspringGroupBuyer" USING btree ("buyerId");
-
-
---
--- Name: OffspringGroupBuyer_buyerPartyId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_buyerPartyId_idx" ON public."OffspringGroupBuyer" USING btree ("buyerPartyId");
-
-
---
--- Name: OffspringGroupBuyer_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_groupId_idx" ON public."OffspringGroupBuyer" USING btree ("groupId");
-
-
---
--- Name: OffspringGroupBuyer_groupId_waitlistEntryId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "OffspringGroupBuyer_groupId_waitlistEntryId_key" ON public."OffspringGroupBuyer" USING btree ("groupId", "waitlistEntryId");
-
-
---
--- Name: OffspringGroupBuyer_stage_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_stage_idx" ON public."OffspringGroupBuyer" USING btree (stage);
-
-
---
--- Name: OffspringGroupBuyer_tenantId_buyerPartyId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_tenantId_buyerPartyId_idx" ON public."OffspringGroupBuyer" USING btree ("tenantId", "buyerPartyId");
-
-
---
--- Name: OffspringGroupBuyer_tenantId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_tenantId_idx" ON public."OffspringGroupBuyer" USING btree ("tenantId");
-
-
---
--- Name: OffspringGroupBuyer_waitlistEntryId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupBuyer_waitlistEntryId_idx" ON public."OffspringGroupBuyer" USING btree ("waitlistEntryId");
-
-
---
--- Name: OffspringGroupEvent_offspringGroupId_type_occurredAt_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupEvent_offspringGroupId_type_occurredAt_idx" ON public."OffspringGroupEvent" USING btree ("offspringGroupId", type, "occurredAt");
-
-
---
--- Name: OffspringGroupEvent_tenantId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroupEvent_tenantId_idx" ON public."OffspringGroupEvent" USING btree ("tenantId");
-
-
---
--- Name: OffspringGroup_deletedAt_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_deletedAt_idx" ON public."OffspringGroup" USING btree ("deletedAt");
-
-
---
--- Name: OffspringGroup_linkState_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_linkState_idx" ON public."OffspringGroup" USING btree ("linkState");
-
-
---
--- Name: OffspringGroup_placementCompletedAt_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_placementCompletedAt_idx" ON public."OffspringGroup" USING btree ("placementCompletedAt");
-
-
---
--- Name: OffspringGroup_placementStartAt_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_placementStartAt_idx" ON public."OffspringGroup" USING btree ("placementStartAt");
-
-
---
--- Name: OffspringGroup_planId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "OffspringGroup_planId_key" ON public."OffspringGroup" USING btree ("planId");
-
-
---
--- Name: OffspringGroup_sireId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_sireId_idx" ON public."OffspringGroup" USING btree ("sireId");
-
-
---
--- Name: OffspringGroup_status_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_status_idx" ON public."OffspringGroup" USING btree (status);
-
-
---
--- Name: OffspringGroup_tenantId_damId_actualBirthOn_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_tenantId_damId_actualBirthOn_idx" ON public."OffspringGroup" USING btree ("tenantId", "damId", "actualBirthOn");
-
-
---
--- Name: OffspringGroup_tenantId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_tenantId_idx" ON public."OffspringGroup" USING btree ("tenantId");
-
-
---
--- Name: OffspringGroup_tenantId_listingSlug_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "OffspringGroup_tenantId_listingSlug_key" ON public."OffspringGroup" USING btree ("tenantId", "listingSlug");
-
-
---
--- Name: OffspringGroup_tenantId_species_expectedBirthOn_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "OffspringGroup_tenantId_species_expectedBirthOn_idx" ON public."OffspringGroup" USING btree ("tenantId", species, "expectedBirthOn");
-
-
---
 -- Name: OffspringInvoiceLink_invoiceId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21135,17 +20813,17 @@ CREATE INDEX "OffspringProtocolException_tenantId_idx" ON public."OffspringProto
 
 
 --
+-- Name: Offspring_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Offspring_breedingPlanId_idx" ON public."Offspring" USING btree ("breedingPlanId");
+
+
+--
 -- Name: Offspring_buyerPartyId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Offspring_buyerPartyId_idx" ON public."Offspring" USING btree ("buyerPartyId");
-
-
---
--- Name: Offspring_groupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Offspring_groupId_idx" ON public."Offspring" USING btree ("groupId");
 
 
 --
@@ -21793,24 +21471,17 @@ CREATE UNIQUE INDEX "RearingProtocolAssignment_animalId_protocolId_key" ON publi
 
 
 --
+-- Name: RearingProtocolAssignment_breedingPlanId_protocolId_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "RearingProtocolAssignment_breedingPlanId_protocolId_key" ON public."RearingProtocolAssignment" USING btree ("breedingPlanId", "protocolId") WHERE ("breedingPlanId" IS NOT NULL);
+
+
+--
 -- Name: RearingProtocolAssignment_handoffToUserId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "RearingProtocolAssignment_handoffToUserId_idx" ON public."RearingProtocolAssignment" USING btree ("handoffToUserId");
-
-
---
--- Name: RearingProtocolAssignment_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "RearingProtocolAssignment_offspringGroupId_idx" ON public."RearingProtocolAssignment" USING btree ("offspringGroupId");
-
-
---
--- Name: RearingProtocolAssignment_offspringGroupId_protocolId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "RearingProtocolAssignment_offspringGroupId_protocolId_key" ON public."RearingProtocolAssignment" USING btree ("offspringGroupId", "protocolId");
 
 
 --
@@ -22003,10 +21674,10 @@ CREATE INDEX "ReproductiveCycle_tenantId_idx" ON public."ReproductiveCycle" USIN
 
 
 --
--- Name: SchedulingAvailabilityBlock_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: SchedulingAvailabilityBlock_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "SchedulingAvailabilityBlock_offspringGroupId_idx" ON public."SchedulingAvailabilityBlock" USING btree ("offspringGroupId");
+CREATE INDEX "SchedulingAvailabilityBlock_breedingPlanId_idx" ON public."SchedulingAvailabilityBlock" USING btree ("breedingPlanId");
 
 
 --
@@ -22528,13 +22199,6 @@ CREATE INDEX "TagAssignment_messageThreadId_idx" ON public."TagAssignment" USING
 
 
 --
--- Name: TagAssignment_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "TagAssignment_offspringGroupId_idx" ON public."TagAssignment" USING btree ("offspringGroupId");
-
-
---
 -- Name: TagAssignment_offspringId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22588,13 +22252,6 @@ CREATE UNIQUE INDEX "TagAssignment_tagId_draftId_key" ON public."TagAssignment" 
 --
 
 CREATE UNIQUE INDEX "TagAssignment_tagId_messageThreadId_key" ON public."TagAssignment" USING btree ("tagId", "messageThreadId");
-
-
---
--- Name: TagAssignment_tagId_offspringGroupId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "TagAssignment_tagId_offspringGroupId_key" ON public."TagAssignment" USING btree ("tagId", "offspringGroupId");
 
 
 --
@@ -23120,13 +22777,6 @@ CREATE INDEX "WaitlistEntry_damPrefId_idx" ON public."WaitlistEntry" USING btree
 --
 
 CREATE INDEX "WaitlistEntry_litterId_idx" ON public."WaitlistEntry" USING btree ("litterId");
-
-
---
--- Name: WaitlistEntry_offspringGroupId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "WaitlistEntry_offspringGroupId_idx" ON public."WaitlistEntry" USING btree ("offspringGroupId");
 
 
 --
@@ -24163,6 +23813,14 @@ ALTER TABLE ONLY public."AnimalTraitValue"
 
 
 --
+-- Name: Animal Animal_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Animal"
+    ADD CONSTRAINT "Animal_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id);
+
+
+--
 -- Name: Animal Animal_buyerPartyId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24200,14 +23858,6 @@ ALTER TABLE ONLY public."Animal"
 
 ALTER TABLE ONLY public."Animal"
     ADD CONSTRAINT "Animal_litterId_fkey" FOREIGN KEY ("litterId") REFERENCES public."Litter"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Animal Animal_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Animal"
-    ADD CONSTRAINT "Animal_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -24320,14 +23970,6 @@ ALTER TABLE ONLY public."Attachment"
 
 ALTER TABLE ONLY public."Attachment"
     ADD CONSTRAINT "Attachment_litterId_fkey" FOREIGN KEY ("litterId") REFERENCES public."Litter"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Attachment Attachment_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Attachment"
-    ADD CONSTRAINT "Attachment_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -24851,6 +24493,22 @@ ALTER TABLE ONLY public."BreedingPlanEvent"
 
 
 --
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_planId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_planId_fkey" FOREIGN KEY ("planId") REFERENCES public."BreedingPlan"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: BreedingPlanTempLog BreedingPlanTempLog_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanTempLog"
+    ADD CONSTRAINT "BreedingPlanTempLog_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: BreedingPlan BreedingPlan_committedByUserId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25083,14 +24741,6 @@ ALTER TABLE ONLY public."CampaignAttribution"
 
 
 --
--- Name: Campaign Campaign_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Campaign"
-    ADD CONSTRAINT "Campaign_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
 -- Name: Campaign Campaign_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25235,11 +24885,11 @@ ALTER TABLE ONLY public."Contract"
 
 
 --
--- Name: Contract Contract_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: Contract Contract_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."Contract"
-    ADD CONSTRAINT "Contract_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+    ADD CONSTRAINT "Contract_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id);
 
 
 --
@@ -25459,19 +25109,19 @@ ALTER TABLE ONLY public."Document"
 
 
 --
+-- Name: Document Document_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Document"
+    ADD CONSTRAINT "Document_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id);
+
+
+--
 -- Name: Document Document_contractId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."Document"
     ADD CONSTRAINT "Document_contractId_fkey" FOREIGN KEY ("contractId") REFERENCES public."Contract"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Document Document_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Document"
-    ADD CONSTRAINT "Document_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -25619,14 +25269,6 @@ ALTER TABLE ONLY public."Expense"
 
 
 --
--- Name: Expense Expense_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Expense"
-    ADD CONSTRAINT "Expense_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
 -- Name: Expense Expense_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25659,19 +25301,19 @@ ALTER TABLE ONLY public."FeedingPlan"
 
 
 --
+-- Name: FeedingPlan FeedingPlan_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FeedingPlan"
+    ADD CONSTRAINT "FeedingPlan_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: FeedingPlan FeedingPlan_foodProductId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."FeedingPlan"
     ADD CONSTRAINT "FeedingPlan_foodProductId_fkey" FOREIGN KEY ("foodProductId") REFERENCES public."FoodProduct"(id) ON UPDATE CASCADE ON DELETE RESTRICT;
-
-
---
--- Name: FeedingPlan FeedingPlan_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."FeedingPlan"
-    ADD CONSTRAINT "FeedingPlan_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -25691,6 +25333,14 @@ ALTER TABLE ONLY public."FeedingRecord"
 
 
 --
+-- Name: FeedingRecord FeedingRecord_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FeedingRecord"
+    ADD CONSTRAINT "FeedingRecord_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: FeedingRecord FeedingRecord_feedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25704,14 +25354,6 @@ ALTER TABLE ONLY public."FeedingRecord"
 
 ALTER TABLE ONLY public."FeedingRecord"
     ADD CONSTRAINT "FeedingRecord_foodProductId_fkey" FOREIGN KEY ("foodProductId") REFERENCES public."FoodProduct"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: FeedingRecord FeedingRecord_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."FeedingRecord"
-    ADD CONSTRAINT "FeedingRecord_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -25787,19 +25429,19 @@ ALTER TABLE ONLY public."FoodChange"
 
 
 --
+-- Name: FoodChange FoodChange_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FoodChange"
+    ADD CONSTRAINT "FoodChange_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: FoodChange FoodChange_newPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."FoodChange"
     ADD CONSTRAINT "FoodChange_newPlanId_fkey" FOREIGN KEY ("newPlanId") REFERENCES public."FeedingPlan"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: FoodChange FoodChange_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."FoodChange"
-    ADD CONSTRAINT "FoodChange_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -25979,22 +25621,6 @@ ALTER TABLE ONLY public."Invoice"
 
 
 --
--- Name: Invoice Invoice_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Invoice"
-    ADD CONSTRAINT "Invoice_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Invoice Invoice_offspringGroupBuyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Invoice"
-    ADD CONSTRAINT "Invoice_offspringGroupBuyerId_fkey" FOREIGN KEY ("offspringGroupBuyerId") REFERENCES public."OffspringGroupBuyer"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
 -- Name: Invoice Invoice_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26048,6 +25674,14 @@ ALTER TABLE ONLY public."LinearAppraisal"
 
 ALTER TABLE ONLY public."LinearAppraisal"
     ADD CONSTRAINT "LinearAppraisal_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: LitterEvent LitterEvent_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."LitterEvent"
+    ADD CONSTRAINT "LitterEvent_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id);
 
 
 --
@@ -26411,102 +26045,6 @@ ALTER TABLE ONLY public."OffspringEvent"
 
 
 --
--- Name: OffspringGroupBuyer OffspringGroupBuyer_buyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_buyerId_fkey" FOREIGN KEY ("buyerId") REFERENCES public."Buyer"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroupBuyer OffspringGroupBuyer_buyerPartyId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_buyerPartyId_fkey" FOREIGN KEY ("buyerPartyId") REFERENCES public."Party"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroupBuyer OffspringGroupBuyer_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: OffspringGroupBuyer OffspringGroupBuyer_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: OffspringGroupBuyer OffspringGroupBuyer_waitlistEntryId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupBuyer"
-    ADD CONSTRAINT "OffspringGroupBuyer_waitlistEntryId_fkey" FOREIGN KEY ("waitlistEntryId") REFERENCES public."WaitlistEntry"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroupEvent OffspringGroupEvent_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupEvent"
-    ADD CONSTRAINT "OffspringGroupEvent_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: OffspringGroupEvent OffspringGroupEvent_recordedByUserId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupEvent"
-    ADD CONSTRAINT "OffspringGroupEvent_recordedByUserId_fkey" FOREIGN KEY ("recordedByUserId") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroupEvent OffspringGroupEvent_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroupEvent"
-    ADD CONSTRAINT "OffspringGroupEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: OffspringGroup OffspringGroup_damId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup"
-    ADD CONSTRAINT "OffspringGroup_damId_fkey" FOREIGN KEY ("damId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE RESTRICT;
-
-
---
--- Name: OffspringGroup OffspringGroup_planId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup"
-    ADD CONSTRAINT "OffspringGroup_planId_fkey" FOREIGN KEY ("planId") REFERENCES public."BreedingPlan"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroup OffspringGroup_sireId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup"
-    ADD CONSTRAINT "OffspringGroup_sireId_fkey" FOREIGN KEY ("sireId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: OffspringGroup OffspringGroup_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."OffspringGroup"
-    ADD CONSTRAINT "OffspringGroup_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
 -- Name: OffspringInvoiceLink OffspringInvoiceLink_invoiceId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26555,6 +26093,14 @@ ALTER TABLE ONLY public."OffspringProtocolException"
 
 
 --
+-- Name: Offspring Offspring_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Offspring"
+    ADD CONSTRAINT "Offspring_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: Offspring Offspring_buyerPartyId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26568,14 +26114,6 @@ ALTER TABLE ONLY public."Offspring"
 
 ALTER TABLE ONLY public."Offspring"
     ADD CONSTRAINT "Offspring_damId_fkey" FOREIGN KEY ("damId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Offspring Offspring_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Offspring"
-    ADD CONSTRAINT "Offspring_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -27003,6 +26541,14 @@ ALTER TABLE ONLY public."RearingProtocolAssignment"
 
 
 --
+-- Name: RearingProtocolAssignment RearingProtocolAssignment_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."RearingProtocolAssignment"
+    ADD CONSTRAINT "RearingProtocolAssignment_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: RearingProtocolAssignment RearingProtocolAssignment_handoffByUserId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27016,14 +26562,6 @@ ALTER TABLE ONLY public."RearingProtocolAssignment"
 
 ALTER TABLE ONLY public."RearingProtocolAssignment"
     ADD CONSTRAINT "RearingProtocolAssignment_handoffToUserId_fkey" FOREIGN KEY ("handoffToUserId") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: RearingProtocolAssignment RearingProtocolAssignment_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."RearingProtocolAssignment"
-    ADD CONSTRAINT "RearingProtocolAssignment_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -27155,11 +26693,11 @@ ALTER TABLE ONLY public."ReproductiveCycle"
 
 
 --
--- Name: SchedulingAvailabilityBlock SchedulingAvailabilityBlock_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: SchedulingAvailabilityBlock SchedulingAvailabilityBlock_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."SchedulingAvailabilityBlock"
-    ADD CONSTRAINT "SchedulingAvailabilityBlock_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+    ADD CONSTRAINT "SchedulingAvailabilityBlock_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id);
 
 
 --
@@ -27515,14 +27053,6 @@ ALTER TABLE ONLY public."TagAssignment"
 
 
 --
--- Name: TagAssignment TagAssignment_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."TagAssignment"
-    ADD CONSTRAINT "TagAssignment_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
 -- Name: TagAssignment TagAssignment_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27568,14 +27098,6 @@ ALTER TABLE ONLY public."Tag"
 
 ALTER TABLE ONLY public."Task"
     ADD CONSTRAINT "Task_assignedToUserId_fkey" FOREIGN KEY ("assignedToUserId") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
--- Name: Task Task_groupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Task"
-    ADD CONSTRAINT "Task_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -27859,14 +27381,6 @@ ALTER TABLE ONLY public."WaitlistEntry"
 
 
 --
--- Name: WaitlistEntry WaitlistEntry_offspringGroupId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."WaitlistEntry"
-    ADD CONSTRAINT "WaitlistEntry_offspringGroupId_fkey" FOREIGN KEY ("offspringGroupId") REFERENCES public."OffspringGroup"(id) ON UPDATE CASCADE ON DELETE SET NULL;
-
-
---
 -- Name: WaitlistEntry WaitlistEntry_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28027,4 +27541,18 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260220174928'),
     ('20260220185006'),
     ('20260220223214'),
-    ('20260221135145');
+    ('20260221135145'),
+    ('20260221232212'),
+    ('20260221232216'),
+    ('20260222141801'),
+    ('20260223142154'),
+    ('20260223142155'),
+    ('20260223152034'),
+    ('20260223172107'),
+    ('20260223182250'),
+    ('20260223190001'),
+    ('20260223190002'),
+    ('20260223190003'),
+    ('20260223200001'),
+    ('20260223200002'),
+    ('20260223210001');

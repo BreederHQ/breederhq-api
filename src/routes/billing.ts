@@ -18,6 +18,7 @@ import {
   getStripe,
 } from "../services/stripe-service.js";
 import prisma from "../prisma.js";
+import { createPaymentAndRecalculate, recalculateInvoiceBalance } from "../services/finance/payment-service.js";
 import { auditSuccess } from "../services/audit.js";
 import {
   sendPaymentFailedEmail,
@@ -561,24 +562,27 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 // Get the payment amount from the session
                 const amountPaid = session.amount_total || 0;
 
-                // Update invoice - record payment and mark as paid
+                // Create Payment record and recalculate balance (single source of truth)
+                await createPaymentAndRecalculate(prisma, {
+                  tenantId,
+                  invoiceId,
+                  amountCents: amountPaid,
+                  receivedAt: new Date(),
+                  methodType: "card",
+                  processor: "stripe",
+                  processorRef: session.payment_intent as string,
+                  status: "succeeded",
+                  notes: `Waitlist deposit via Stripe Checkout: ${session.id}`,
+                });
+
+                // Re-fetch invoice to get recalculated status
                 const invoice = await prisma.invoice.findUnique({
                   where: { id: invoiceId },
-                  select: { amountCents: true, balanceCents: true },
+                  select: { amountCents: true, balanceCents: true, status: true },
                 });
 
                 if (invoice) {
-                  const newBalanceCents = Math.max(0, Number(invoice.balanceCents) - amountPaid);
-                  const isPaid = newBalanceCents <= 0;
-
-                  await prisma.invoice.update({
-                    where: { id: invoiceId },
-                    data: {
-                      balanceCents: newBalanceCents,
-                      status: isPaid ? "paid" : "partially_paid",
-                      paidAt: isPaid ? new Date() : undefined,
-                    },
-                  });
+                  const isPaid = invoice.status === "paid";
 
                   // If linked to waitlist entry and fully paid, update deposit tracking and notify breeder
                   if (waitlistEntryId && isPaid) {
@@ -714,33 +718,26 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 });
 
                 if (invoice) {
-                  // Create payment record
-                  await prisma.payment.create({
-                    data: {
-                      tenantId,
-                      invoiceId,
-                      amountCents: amountPaid,
-                      receivedAt: new Date(),
-                      methodType: "card",
-                      processor: "stripe",
-                      processorRef: session.payment_intent as string,
-                      status: "succeeded",
-                      notes: `Stripe Checkout: ${session.id}`,
-                    },
+                  // Create Payment record and recalculate balance (single source of truth)
+                  await createPaymentAndRecalculate(prisma, {
+                    tenantId,
+                    invoiceId,
+                    amountCents: amountPaid,
+                    receivedAt: new Date(),
+                    methodType: "card",
+                    processor: "stripe",
+                    processorRef: session.payment_intent as string,
+                    status: "succeeded",
+                    notes: `Portal payment via Stripe Checkout: ${session.id}`,
                   });
 
-                  // Update invoice
-                  const newBalanceCents = Math.max(0, Number(invoice.balanceCents) - amountPaid);
-                  const isPaid = newBalanceCents <= 0;
-
-                  await prisma.invoice.update({
+                  // Re-fetch invoice to get recalculated status
+                  const updatedInvoice = await prisma.invoice.findUnique({
                     where: { id: invoiceId },
-                    data: {
-                      balanceCents: newBalanceCents,
-                      status: isPaid ? "paid" : "partially_paid",
-                      paidAt: isPaid ? new Date() : undefined,
-                    },
+                    select: { balanceCents: true, status: true },
                   });
+                  const isPaid = updatedInvoice?.status === "paid";
+                  const newBalanceCents = Number(updatedInvoice?.balanceCents ?? 0);
 
                   // Notify breeder of payment received
                   try {

@@ -425,68 +425,68 @@ export default async function breederMarketplaceRoutes(
     }
 
     try {
-      const [groups, total] = await Promise.all([
-        prisma.offspringGroup.findMany({
-          where,
+      // Query breedingPlan instead of offspringGroup (OGC-05 consolidation)
+      const planWhere: any = {
+        tenantId,
+        birthDateActual: { not: null },
+      };
+
+      if (published === "true") {
+        planWhere.marketplaceListed = true;
+      } else if (published === "false") {
+        planWhere.marketplaceListed = false;
+      }
+
+      if (programId) {
+        const progId = parseInt(programId, 10);
+        if (!isNaN(progId)) {
+          planWhere.programId = progId;
+        }
+      }
+
+      const [plans, total] = await Promise.all([
+        prisma.breedingPlan.findMany({
+          where: planWhere,
           orderBy: { createdAt: "desc" },
           skip,
           take: limit,
           include: {
             sire: true,
             dam: true,
-            plan: {
-              include: {
-                program: true,
-              },
-            },
-            Offspring: true, // Include offspring for breeding programs dashboard
+            program: true,
+            Offspring: true,
           },
         }),
-        prisma.offspringGroup.count({ where }),
+        prisma.breedingPlan.count({ where: planWhere }),
       ]);
 
-      // Get animal counts for each group
-      const groupIds = groups.map((g) => g.id);
-      const animalCounts = groupIds.length
-        ? await prisma.animal.groupBy({
-            by: ["offspringGroupId"],
-            where: { tenantId, offspringGroupId: { in: groupIds } },
-            _count: { _all: true },
-          })
-        : [];
-
-      const animalCountMap = new Map<number, number>();
-      for (const r of animalCounts) {
-        animalCountMap.set(Number(r.offspringGroupId), Number(r._count?._all ?? 0));
-      }
-
-      // Transform to response format
-      const items = groups.map((group: any) => ({
-        id: group.id,
-        listingSlug: group.listingSlug,
-        name: group.name,
-        species: group.species,
-        breedText: group.plan?.breedText ?? null,
-        breedingPlanId: group.planId ?? null,
-        actualBirthOn: group.actualBirthOn?.toISOString() ?? null,
-        expectedBirthOn: group.expectedBirthOn?.toISOString() ?? null,
-        published: group.published,
-        listingTitle: group.listingTitle,
-        listingDescription: group.listingDescription,
-        countLive: group.countLive,
-        countBorn: group.countBorn,
-        totalCount: animalCountMap.get(group.id) ?? 0,
-        availableCount: (group.Offspring || []).filter(
+      // Transform to response format (maintaining backward-compatible shape)
+      const items = plans.map((plan: any) => ({
+        id: plan.id,
+        listingSlug: plan.listingSlug ?? null,
+        name: plan.name,
+        species: plan.species,
+        breedText: plan.breedText ?? null,
+        breedingPlanId: plan.id,
+        actualBirthOn: plan.birthDateActual?.toISOString() ?? null,
+        expectedBirthOn: plan.expectedBirthDate?.toISOString() ?? null,
+        published: plan.marketplaceListed ?? false,
+        listingTitle: plan.listingTitle ?? plan.name,
+        listingDescription: plan.listingDescription ?? null,
+        countLive: plan.countLive,
+        countBorn: plan.countBorn,
+        totalCount: (plan.Offspring || []).length,
+        availableCount: (plan.Offspring || []).filter(
           (o: any) => o.keeperIntent === 'AVAILABLE' && o.marketplaceListed
         ).length,
-        createdAt: group.createdAt.toISOString(),
-        updatedAt: group.updatedAt.toISOString(),
-        sire: group.sire ? { id: group.sire.id, name: group.sire.name } : null,
-        dam: group.dam ? { id: group.dam.id, name: group.dam.name } : null,
-        breedingProgram: group.plan?.program
-          ? { id: group.plan.program.id, name: group.plan.program.name }
+        createdAt: plan.createdAt.toISOString(),
+        updatedAt: plan.updatedAt.toISOString(),
+        sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name } : null,
+        dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name } : null,
+        breedingProgram: plan.program
+          ? { id: plan.program.id, name: plan.program.name }
           : null,
-        offspring: group.Offspring ?? [], // Include offspring for breeding programs dashboard
+        offspring: plan.Offspring ?? [],
       }));
 
       return reply.send({
@@ -506,7 +506,7 @@ export default async function breederMarketplaceRoutes(
   });
 
   /**
-   * GET /offspring-groups/:id - Get single offspring group
+   * GET /offspring-groups/:id - Get single offspring group (now backed by breedingPlan)
    */
   app.get<{
     Params: { id: string };
@@ -520,7 +520,7 @@ export default async function breederMarketplaceRoutes(
     }
 
     try {
-      const group: any = await prisma.offspringGroup.findFirst({
+      const plan: any = await prisma.breedingPlan.findFirst({
         where: {
           id,
           tenantId,
@@ -528,22 +528,18 @@ export default async function breederMarketplaceRoutes(
         include: {
           sire: true,
           dam: true,
-          plan: {
-            include: {
-              program: true,
-            },
-          },
+          program: true,
           Offspring: true,
         },
       });
 
-      if (!group) {
+      if (!plan) {
         return reply.code(404).send({ error: "not_found" });
       }
 
       // Get linked animals
       const animals = await prisma.animal.findMany({
-        where: { offspringGroupId: group.id },
+        where: { breedingPlanId: plan.id },
         select: {
           id: true,
           name: true,
@@ -553,34 +549,34 @@ export default async function breederMarketplaceRoutes(
       });
 
       return reply.send({
-        id: group.id,
-        listingSlug: group.listingSlug,
-        name: group.name,
-        species: group.species,
-        breedText: group.plan?.breedText ?? null,
-        actualBirthOn: group.actualBirthOn?.toISOString() ?? null,
-        expectedBirthOn: group.expectedBirthOn?.toISOString() ?? null,
-        published: group.published,
-        listingTitle: group.listingTitle,
-        listingDescription: group.listingDescription,
-        marketplaceDefaultPriceCents: group.marketplaceDefaultPriceCents,
-        countBorn: group.countBorn,
-        countLive: group.countLive,
-        countStillborn: group.countStillborn,
-        countMale: group.countMale,
-        countFemale: group.countFemale,
-        countWeaned: group.countWeaned,
-        countPlaced: group.countPlaced,
-        coverImageUrl: group.coverImageUrl,
-        notes: group.notes,
-        createdAt: group.createdAt.toISOString(),
-        updatedAt: group.updatedAt.toISOString(),
-        sire: group.sire ? { id: group.sire.id, name: group.sire.name, photoUrl: group.sire.photoUrl } : null,
-        dam: group.dam ? { id: group.dam.id, name: group.dam.name, photoUrl: group.dam.photoUrl } : null,
-        breedingProgram: group.plan?.program
-          ? { id: group.plan.program.id, name: group.plan.program.name }
+        id: plan.id,
+        listingSlug: plan.listingSlug ?? null,
+        name: plan.name,
+        species: plan.species,
+        breedText: plan.breedText ?? null,
+        actualBirthOn: plan.birthDateActual?.toISOString() ?? null,
+        expectedBirthOn: plan.expectedBirthDate?.toISOString() ?? null,
+        published: plan.marketplaceListed ?? false,
+        listingTitle: plan.listingTitle ?? plan.name,
+        listingDescription: plan.listingDescription ?? null,
+        marketplaceDefaultPriceCents: plan.marketplaceDefaultPriceCents ?? null,
+        countBorn: plan.countBorn,
+        countLive: plan.countLive,
+        countStillborn: plan.countStillborn,
+        countMale: plan.countMale ?? null,
+        countFemale: plan.countFemale ?? null,
+        countWeaned: plan.countWeaned ?? null,
+        countPlaced: plan.countPlaced,
+        coverImageUrl: plan.coverImageUrl ?? null,
+        notes: plan.notes,
+        createdAt: plan.createdAt.toISOString(),
+        updatedAt: plan.updatedAt.toISOString(),
+        sire: plan.sire ? { id: plan.sire.id, name: plan.sire.name, photoUrl: plan.sire.photoUrl } : null,
+        dam: plan.dam ? { id: plan.dam.id, name: plan.dam.name, photoUrl: plan.dam.photoUrl } : null,
+        breedingProgram: plan.program
+          ? { id: plan.program.id, name: plan.program.name }
           : null,
-        offspring: group.Offspring,
+        offspring: plan.Offspring,
         animals,
       });
     } catch (err: any) {
@@ -853,12 +849,6 @@ export default async function breederMarketplaceRoutes(
             plan: {
               include: {
                 program: true,
-              },
-            },
-            offspringGroup: {
-              select: {
-                id: true,
-                name: true,
               },
             },
           },

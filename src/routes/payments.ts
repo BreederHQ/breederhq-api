@@ -8,6 +8,8 @@ import {
   IdempotencyConflictError,
 } from "../services/finance/idempotency.js";
 import { createPaymentAndRecalculate } from "../services/finance/payment-service.js";
+import { renderPaymentReceiptEmail, renderBreederPaymentNotification } from "../services/email-templates.js";
+import { sendEmail } from "../services/email-service.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -109,6 +111,84 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Store idempotency key
       await storeIdempotencyKey(prisma, tenantId, idempotencyKey, requestHash, result);
+
+      // Fire-and-forget: send payment notification emails
+      (async () => {
+        try {
+          const invoice = await prisma.invoice.findUnique({
+            where: { id: invoiceId },
+            select: {
+              invoiceNumber: true,
+              amountCents: true,
+              balanceCents: true,
+              status: true,
+              clientParty: { select: { name: true, email: true } },
+              tenant: {
+                select: {
+                  name: true,
+                  primaryEmail: true,
+                  slug: true,
+                },
+              },
+            },
+          });
+
+          if (!invoice?.clientParty?.email || !invoice.tenant) return;
+
+          const isPaid = invoice.status === "paid";
+
+          // 1. Receipt email to buyer
+          const receipt = renderPaymentReceiptEmail({
+            invoiceNumber: invoice.invoiceNumber || `INV-${invoiceId}`,
+            paymentAmountCents: amountCents,
+            totalCents: Number(invoice.amountCents),
+            remainingBalanceCents: Number(invoice.balanceCents),
+            clientName: invoice.clientParty.name || "Client",
+            tenantName: invoice.tenant.name || "Breeder",
+            methodType: body.methodType,
+            receivedAt,
+            portalUrl: invoice.tenant.slug
+              ? `${process.env.PORTAL_BASE_URL || "https://portal.breederhq.com"}/t/${invoice.tenant.slug}/financials`
+              : undefined,
+          });
+
+          await sendEmail({
+            tenantId,
+            to: invoice.clientParty.email,
+            subject: receipt.subject,
+            html: receipt.html,
+            text: receipt.text,
+            templateKey: "payment_receipt",
+            relatedInvoiceId: invoiceId,
+            category: "transactional",
+          });
+
+          // 2. Notification email to breeder
+          if (invoice.tenant.primaryEmail) {
+            const notification = renderBreederPaymentNotification({
+              invoiceNumber: invoice.invoiceNumber || `INV-${invoiceId}`,
+              paymentAmountCents: amountCents,
+              remainingBalanceCents: Number(invoice.balanceCents),
+              clientName: invoice.clientParty.name || "Client",
+              tenantName: invoice.tenant.name || "Breeder",
+              isPaid,
+            });
+
+            await sendEmail({
+              tenantId,
+              to: invoice.tenant.primaryEmail,
+              subject: notification.subject,
+              html: notification.html,
+              text: notification.text,
+              templateKey: "breeder_payment_notification",
+              relatedInvoiceId: invoiceId,
+              category: "transactional",
+            });
+          }
+        } catch (emailErr) {
+          req.log?.warn?.({ err: emailErr }, "Payment notification email failed (non-blocking)");
+        }
+      })();
 
       return reply.code(201).send(result);
     } catch (err) {
@@ -222,7 +302,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Anchor filters
       if (body.animalId) invoiceWhere.animalId = parseIntOrNull(body.animalId);
-      if (body.offspringGroupId) invoiceWhere.groupId = parseIntOrNull(body.offspringGroupId);
       if (body.breedingPlanId) invoiceWhere.breedingPlanId = parseIntOrNull(body.breedingPlanId);
       if (body.clientPartyId) invoiceWhere.clientPartyId = parseIntOrNull(body.clientPartyId);
 

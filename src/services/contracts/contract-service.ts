@@ -132,7 +132,7 @@ export async function buildRenderContext(
       animal: true,
       offspring: {
         include: {
-          group: {
+          BreedingPlan: {
             include: {
               dam: true,
               sire: true,
@@ -222,8 +222,8 @@ export async function buildRenderContext(
     };
 
     // If no animal but offspring has parents, use dam info
-    if (!context.animal && contract.offspring.group?.dam) {
-      const dam = contract.offspring.group.dam;
+    if (!context.animal && contract.offspring.BreedingPlan?.dam) {
+      const dam = contract.offspring.BreedingPlan.dam;
       context.animal = {
         name: dam.name,
         breed: dam.breed || "",

@@ -575,18 +575,19 @@ const marketplaceBreedersRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       availableOffspringCounts.map((a) => [a.tenantId, (a._count as { id: number }).id])
     );
 
-    // Batch fetch upcoming litters (OffspringGroup with expectedBirthOn within 90 days)
+    // Batch fetch upcoming litters (BreedingPlan with expectedBirthDate within 90 days)
     const ninetyDaysFromNow = new Date();
     ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
-    const upcomingLitters = await prisma.offspringGroup.groupBy({
+    const upcomingLitters = await prisma.breedingPlan.groupBy({
       by: ["tenantId"],
       where: {
         tenantId: { in: tenantIds },
-        expectedBirthOn: {
+        expectedBirthDate: {
           gte: new Date(),
           lte: ninetyDaysFromNow,
         },
-        archivedAt: null,
+        birthDateActual: null,
+        status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
       },
       _count: { id: true },
     });

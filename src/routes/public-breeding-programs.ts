@@ -41,33 +41,26 @@ function toParentSummaryDTO(animal: any) {
   };
 }
 
-// Offspring group summary
-function toOffspringGroupSummaryDTO(group: any) {
-  if (!group) return null;
-  const countBorn = group.countBorn ?? group._count?.Offspring ?? 0;
-  const countPlaced = group.countPlaced ?? 0;
-  const countReserved = group.countReserved ?? 0;
-  return {
-    id: group.id,
-    countBorn,
-    countAvailable: Math.max(0, countBorn - countPlaced - countReserved),
-    countReserved,
-    countPlaced,
-  };
-}
-
 // Linked plan summary for program detail
 function toLinkedPlanDTO(plan: any) {
+  const countBorn = plan.countBorn ?? 0;
+  const countPlaced = plan.countPlaced ?? 0;
+  const countLive = plan.countLive ?? 0;
   return {
     id: plan.id,
     name: plan.name || plan.nickname || `Plan #${plan.id}`,
     status: plan.status,
-    expectedBirthDate: plan.expectedBirthDate || plan.offspringGroup?.expectedBirthOn || null,
-    actualBirthDate: plan.birthDateActual || plan.offspringGroup?.actualBirthOn || null,
+    expectedBirthDate: plan.expectedBirthDate || null,
+    actualBirthDate: plan.birthDateActual || null,
     dam: toParentSummaryDTO(plan.dam),
     sire: toParentSummaryDTO(plan.sire),
-    offspringGroup: toOffspringGroupSummaryDTO(plan.offspringGroup),
-    coverImageUrl: plan.offspringGroup?.coverImageUrl || null,
+    offspringGroup: countBorn > 0 ? {
+      id: plan.id,
+      countBorn,
+      countAvailable: Math.max(0, countLive - countPlaced),
+      countPlaced,
+    } : null,
+    coverImageUrl: plan.coverImageUrl || null,
   };
 }
 
@@ -83,30 +76,29 @@ function getProgramSettings(program: any) {
 }
 
 function toPublicProgramDTO(program: any) {
-  // Compute stats from related data
+  // Compute stats from related data (now directly on breedingPlan)
   const plans = program.breedingPlans || [];
-  const allGroups = plans.flatMap((p: any) => (p.offspringGroup ? [p.offspringGroup] : []));
 
   const activePlans = plans.filter(
     (p: any) => p.status && !["COMPLETED", "CANCELLED", "ARCHIVED"].includes(String(p.status).toUpperCase())
   );
 
   const now = new Date();
-  const upcomingLitters = allGroups.filter((g: any) => {
-    const expected = g.expectedBirthOn ? new Date(g.expectedBirthOn) : null;
-    return expected && expected > now && !g.actualBirthOn;
+  const upcomingLitters = plans.filter((p: any) => {
+    const expected = p.expectedBirthDate ? new Date(p.expectedBirthDate) : null;
+    return expected && expected > now && !p.birthDateActual;
   });
 
-  const availableLitters = allGroups.filter((g: any) => {
-    const born = g.actualBirthOn;
-    const placed = g.countPlaced ?? 0;
-    const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+  const availableLitters = plans.filter((p: any) => {
+    const born = p.birthDateActual;
+    const placed = p.countPlaced ?? 0;
+    const total = p.countLive ?? p.countBorn ?? 0;
     return born && placed < total;
   });
 
-  const totalAvailable = availableLitters.reduce((sum: number, g: any) => {
-    const placed = g.countPlaced ?? 0;
-    const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+  const totalAvailable = availableLitters.reduce((sum: number, p: any) => {
+    const placed = p.countPlaced ?? 0;
+    const total = p.countLive ?? p.countBorn ?? 0;
     return sum + Math.max(0, total - placed);
   }, 0);
 
@@ -233,7 +225,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
           },
           breedingPlans: {
             where: {
-              status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
             },
             select: {
               id: true,
@@ -242,6 +234,10 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
               status: true,
               expectedBirthDate: true,
               birthDateActual: true,
+              countBorn: true,
+              countLive: true,
+              countPlaced: true,
+              coverImageUrl: true,
               dam: {
                 select: {
                   id: true,
@@ -258,20 +254,6 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
                   photoUrl: true,
                   breed: true,
                   sex: true,
-                },
-              },
-              offspringGroup: {
-                select: {
-                  id: true,
-                  expectedBirthOn: true,
-                  actualBirthOn: true,
-                  countBorn: true,
-                  countLive: true,
-                  countPlaced: true,
-                  coverImageUrl: true,
-                  _count: {
-                    select: { Offspring: true },
-                  },
                 },
               },
             },
@@ -356,18 +338,11 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
               select: {
                 id: true,
                 status: true,
-                offspringGroup: {
-                  select: {
-                    expectedBirthOn: true,
-                    actualBirthOn: true,
-                    countBorn: true,
-                    countLive: true,
-                    countPlaced: true,
-                    _count: {
-                      select: { Offspring: true },
-                    },
-                  },
-                },
+                expectedBirthDate: true,
+                birthDateActual: true,
+                countBorn: true,
+                countLive: true,
+                countPlaced: true,
               },
             },
           },
@@ -375,27 +350,26 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         prisma.mktListingBreedingProgram.count({ where }),
       ]);
 
-      // Transform to summary DTOs with stats
+      // Transform to summary DTOs with stats (data now on breedingPlan directly)
       const items = programs.map((program) => {
         const plans = program.breedingPlans || [];
-        const allGroups = plans.flatMap((p) => (p.offspringGroup ? [p.offspringGroup] : []));
 
         const now = new Date();
-        const upcomingLitters = allGroups.filter((g) => {
-          const expected = g.expectedBirthOn ? new Date(g.expectedBirthOn) : null;
-          return expected && expected > now && !g.actualBirthOn;
+        const upcomingLitters = plans.filter((p) => {
+          const expected = p.expectedBirthDate ? new Date(p.expectedBirthDate) : null;
+          return expected && expected > now && !p.birthDateActual;
         });
 
-        const availableLitters = allGroups.filter((g) => {
-          const born = g.actualBirthOn;
-          const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+        const availableLitters = plans.filter((p) => {
+          const born = p.birthDateActual;
+          const placed = p.countPlaced ?? 0;
+          const total = p.countLive ?? p.countBorn ?? 0;
           return born && placed < total;
         });
 
-        const totalAvailable = availableLitters.reduce((sum, g) => {
-          const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+        const totalAvailable = availableLitters.reduce((sum, p) => {
+          const placed = p.countPlaced ?? 0;
+          const total = p.countLive ?? p.countBorn ?? 0;
           return sum + Math.max(0, total - placed);
         }, 0);
 
@@ -538,7 +512,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         where: {
           id: planIdNum,
           programId: program.id,
-          status: { notIn: ["COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
+          status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"] },
         },
         include: {
           dam: {
@@ -561,33 +535,29 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
               birthDate: true,
             },
           },
-          offspringGroup: {
-            include: {
-              Offspring: {
-                where: {
-                  marketplaceListed: true,
-                },
+          Offspring: {
+            where: {
+              marketplaceListed: true,
+            },
+            select: {
+              id: true,
+              name: true,
+              sex: true,
+              status: true,
+              collarColorName: true,
+              collarColorHex: true,
+              priceCents: true,
+              Attachments: {
+                take: 1,
+                orderBy: { createdAt: "asc" },
                 select: {
                   id: true,
-                  name: true,
-                  sex: true,
-                  status: true,
-                  collarColorName: true,
-                  collarColorHex: true,
-                  priceCents: true,
-                  Attachments: {
-                    take: 1,
-                    orderBy: { createdAt: "asc" },
-                    select: {
-                      id: true,
-                      storageKey: true,
-                      kind: true,
-                    },
-                  },
+                  storageKey: true,
+                  kind: true,
                 },
-                orderBy: { createdAt: "asc" },
               },
             },
+            orderBy: { createdAt: "asc" },
           },
           Attachments: {
             where: {
@@ -622,8 +592,8 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         timeline.push({ event: "BORN", date: plan.birthDateActual.toISOString(), completed: true });
       }
 
-      // Transform offspring with photo URLs
-      const offspring = (plan.offspringGroup?.Offspring || []).map((o: any) => {
+      // Transform offspring with photo URLs (now directly on breedingPlan)
+      const offspring = (plan.Offspring || []).map((o: any) => {
         const firstAttachment = o.Attachments?.[0];
         return {
           id: o.id,
@@ -662,11 +632,11 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         timeline,
         media,
         offspring,
-        offspringGroup: plan.offspringGroup ? {
-          id: plan.offspringGroup.id,
-          countBorn: plan.offspringGroup.countBorn ?? 0,
-          countAvailable: Math.max(0, (plan.offspringGroup.countBorn ?? 0) - (plan.offspringGroup.countPlaced ?? 0)),
-          countPlaced: plan.offspringGroup.countPlaced ?? 0,
+        offspringGroup: (plan.countBorn ?? 0) > 0 ? {
+          id: plan.id,
+          countBorn: plan.countBorn ?? 0,
+          countAvailable: Math.max(0, (plan.countBorn ?? 0) - (plan.countPlaced ?? 0)),
+          countPlaced: plan.countPlaced ?? 0,
         } : null,
         // Default settings until schema supports per-program customization
         displayMode: "curated" as const,

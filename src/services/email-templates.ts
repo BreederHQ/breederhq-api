@@ -353,3 +353,285 @@ ${tenantName}
 
   return { subject, html, text };
 }
+
+// ---------- Payment Notification Email Templates ----------
+
+export interface PaymentReceiptParams {
+  invoiceNumber: string;
+  paymentAmountCents: number;
+  totalCents: number;
+  remainingBalanceCents: number;
+  clientName: string;
+  tenantName: string;
+  methodType?: string | null;
+  receivedAt: Date;
+  portalUrl?: string;
+  currency?: string;
+}
+
+/**
+ * Payment receipt email sent to the buyer/client after a payment is recorded.
+ */
+export function renderPaymentReceiptEmail(params: PaymentReceiptParams): { subject: string; html: string; text: string } {
+  const {
+    invoiceNumber,
+    paymentAmountCents,
+    totalCents,
+    remainingBalanceCents,
+    clientName,
+    tenantName,
+    methodType,
+    receivedAt,
+    portalUrl,
+    currency = "USD",
+  } = params;
+
+  const paymentAmount = (paymentAmountCents / 100).toFixed(2);
+  const total = (totalCents / 100).toFixed(2);
+  const remaining = (remainingBalanceCents / 100).toFixed(2);
+  const dateStr = new Date(receivedAt).toLocaleDateString();
+  const isPaid = remainingBalanceCents <= 0;
+
+  const subject = `Payment received for Invoice ${invoiceNumber}`;
+
+  const text = `
+Hi ${clientName},
+
+Your payment of ${currency} ${paymentAmount} for invoice ${invoiceNumber} has been received.
+
+Invoice Total: ${currency} ${total}
+Payment Amount: ${currency} ${paymentAmount}
+${isPaid ? "Status: Paid in Full" : `Remaining Balance: ${currency} ${remaining}`}
+Date: ${dateStr}
+${methodType ? `Method: ${methodType}` : ""}
+
+${portalUrl ? `View your invoices: ${portalUrl}` : ""}
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Payment Received",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph(
+        `Your payment of ${emailAccent(`${currency} ${paymentAmount}`)} for invoice ${emailAccent(invoiceNumber)} has been received.`
+      ),
+      emailDetailRows([
+        { label: "Invoice", value: invoiceNumber },
+        { label: "Payment Amount", value: `${currency} ${paymentAmount}` },
+        { label: "Invoice Total", value: `${currency} ${total}` },
+        ...(isPaid
+          ? [{ label: "Status", value: "Paid in Full" }]
+          : [{ label: "Remaining Balance", value: `${currency} ${remaining}` }]),
+        { label: "Date", value: dateStr },
+        ...(methodType ? [{ label: "Method", value: methodType }] : []),
+      ]),
+      isPaid
+        ? emailInfoCard(emailParagraph("This invoice is now paid in full. Thank you!"), { borderColor: "green" })
+        : "",
+      portalUrl ? emailButton("View Invoices", portalUrl) : "",
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+export interface BreederPaymentNotificationParams {
+  invoiceNumber: string;
+  paymentAmountCents: number;
+  remainingBalanceCents: number;
+  clientName: string;
+  tenantName: string;
+  isPaid: boolean;
+  currency?: string;
+}
+
+/**
+ * Payment notification email sent to the breeder when a payment is recorded.
+ */
+export function renderBreederPaymentNotification(params: BreederPaymentNotificationParams): { subject: string; html: string; text: string } {
+  const {
+    invoiceNumber,
+    paymentAmountCents,
+    remainingBalanceCents,
+    clientName,
+    tenantName,
+    isPaid,
+    currency = "USD",
+  } = params;
+
+  const paymentAmount = (paymentAmountCents / 100).toFixed(2);
+  const remaining = (remainingBalanceCents / 100).toFixed(2);
+
+  const subject = isPaid
+    ? `Invoice ${invoiceNumber} paid in full by ${clientName}`
+    : `Payment received on Invoice ${invoiceNumber} from ${clientName}`;
+
+  const text = `
+${clientName} made a payment of ${currency} ${paymentAmount} on invoice ${invoiceNumber}.
+
+${isPaid ? "This invoice is now paid in full." : `Remaining balance: ${currency} ${remaining}`}
+
+— ${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Payment Received",
+    footerOrgName: tenantName,
+    body: [
+      emailParagraph(
+        `${emailAccent(clientName)} made a payment of ${emailAccent(`${currency} ${paymentAmount}`)} on invoice ${emailAccent(invoiceNumber)}.`
+      ),
+      isPaid
+        ? emailInfoCard(emailParagraph("This invoice is now paid in full."), { borderColor: "green" })
+        : emailDetailRows([
+            { label: "Remaining Balance", value: `${currency} ${remaining}` },
+          ]),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+// ---------- Overdue Invoice Reminder Email Templates ----------
+
+export interface OverdueReminderParams {
+  invoiceNumber: string;
+  amountCents: number;
+  balanceCents: number;
+  dueAt: Date;
+  daysOverdue: number;
+  clientName: string;
+  tenantName: string;
+  paymentMode: "stripe" | "manual";
+  portalUrl?: string;
+  paymentInstructions?: string | null;
+  currency?: string;
+}
+
+/**
+ * Overdue invoice reminder sent to the buyer/client.
+ */
+export function renderOverdueReminderEmail(params: OverdueReminderParams): { subject: string; html: string; text: string } {
+  const {
+    invoiceNumber,
+    balanceCents,
+    dueAt,
+    daysOverdue,
+    clientName,
+    tenantName,
+    paymentMode,
+    portalUrl,
+    paymentInstructions,
+    currency = "USD",
+  } = params;
+
+  const balance = (balanceCents / 100).toFixed(2);
+  const dueDate = new Date(dueAt).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const subject = `Payment Reminder: Invoice ${invoiceNumber} is ${daysOverdue} day${daysOverdue !== 1 ? "s" : ""} overdue`;
+
+  const paymentInfo = paymentMode === "stripe" && portalUrl
+    ? `Pay online: ${portalUrl}`
+    : paymentInstructions
+      ? `Payment instructions:\n${paymentInstructions}`
+      : `Please contact ${tenantName} for payment details.`;
+
+  const text = `
+Hi ${clientName},
+
+This is a friendly reminder that invoice ${invoiceNumber} is now ${daysOverdue} day${daysOverdue !== 1 ? "s" : ""} past due.
+
+Outstanding Balance: ${currency} ${balance}
+Due Date: ${dueDate}
+
+${paymentInfo}
+
+If you've already sent payment, please disregard this notice.
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Payment Reminder",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph(
+        `This is a friendly reminder that invoice ${emailAccent(invoiceNumber)} is now ${emailAccent(`${daysOverdue} day${daysOverdue !== 1 ? "s" : ""}`)} past due.`
+      ),
+      emailDetailRows([
+        { label: "Invoice", value: invoiceNumber },
+        { label: "Outstanding Balance", value: `${currency} ${balance}` },
+        { label: "Due Date", value: dueDate },
+        { label: "Days Overdue", value: String(daysOverdue) },
+      ]),
+      paymentMode === "stripe" && portalUrl
+        ? emailButton("Pay Now", portalUrl, "orange")
+        : paymentInstructions
+          ? emailInfoCard(
+              [
+                emailHeading("Payment Instructions"),
+                `<p style="color: #e5e5e5; margin: 0; white-space: pre-wrap;">${paymentInstructions}</p>`,
+              ].join("\n"),
+              { borderColor: "yellow" },
+            )
+          : emailParagraph(`Please contact ${tenantName} for payment details.`),
+      emailParagraph("If you've already sent payment, please disregard this notice."),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+export interface BreederOverdueSummaryParams {
+  tenantName: string;
+  overdueCount: number;
+  totalOverdueCents: number;
+  currency?: string;
+}
+
+/**
+ * Daily summary to breeder about their overdue invoices.
+ */
+export function renderBreederOverdueSummary(params: BreederOverdueSummaryParams): { subject: string; html: string; text: string } {
+  const {
+    tenantName,
+    overdueCount,
+    totalOverdueCents,
+    currency = "USD",
+  } = params;
+
+  const total = (totalOverdueCents / 100).toFixed(2);
+
+  const subject = `${overdueCount} overdue invoice${overdueCount !== 1 ? "s" : ""} — ${currency} ${total} outstanding`;
+
+  const text = `
+You have ${overdueCount} overdue invoice${overdueCount !== 1 ? "s" : ""} totaling ${currency} ${total}.
+
+Reminder emails have been sent to the respective clients.
+
+— ${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Overdue Invoice Summary",
+    footerOrgName: tenantName,
+    body: [
+      emailParagraph(
+        `You have ${emailAccent(String(overdueCount))} overdue invoice${overdueCount !== 1 ? "s" : ""} totaling ${emailAccent(`${currency} ${total}`)}.`
+      ),
+      emailParagraph("Reminder emails have been sent to the respective clients."),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}

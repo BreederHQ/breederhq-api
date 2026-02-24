@@ -172,7 +172,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           mareReproductiveHistory: true,
           breedingPlansAsDam: {
             where: {
-              status: { notIn: ["COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
             },
             orderBy: { createdAt: "desc" },
             take: 1,
@@ -450,8 +450,8 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         }
 
         yearlyStats[year].total++;
-        // Count as live foal if plan completed successfully (BIRTHED, WEANED, COMPLETE)
-        if (["BIRTHED", "WEANED", "COMPLETE"].includes(foaling.status)) {
+        // Count as live foal if plan completed successfully (BIRTHED or PLAN_COMPLETE)
+        if (["BIRTHED", "PLAN_COMPLETE", "WEANED", "COMPLETE"].includes(foaling.status)) {
           yearlyStats[year].live++;
         }
         if (foaling.foalingOutcome?.hadComplications) {
@@ -731,7 +731,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         include: {
           breedingPlansAsSire: {
             where: {
-              status: { notIn: ["COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
             },
             include: {
               dam: { select: { id: true, name: true } },

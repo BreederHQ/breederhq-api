@@ -60,6 +60,8 @@ async function assertBreedingPlanInTenant(planId: number, tenantId: number) {
       breedDateActual: true,
       expectedBirthDate: true,
       birthDateActual: true,
+      // DEPRECATED: Post-birth dates no longer written to plan (Phase 4).
+      // Reads remain as fallback for supplement scheduling until Phase 6 column drop.
       expectedWeaned: true,
       weanedDateActual: true,
     },

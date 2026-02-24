@@ -8,9 +8,15 @@ let s3Client: S3Client | null = null;
 
 export function getS3Client(): S3Client {
   if (!s3Client) {
-    const region = process.env.AWS_REGION || "us-east-1";
+    const region = process.env.S3_REGION || process.env.AWS_REGION || "us-east-1";
+    const bucket = process.env.S3_BUCKET || "(not set)";
+    const cdnDomain = process.env.CDN_DOMAIN || "(not set)";
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+    console.log(
+      `[S3] Initializing client — region=${region} (S3_REGION=${process.env.S3_REGION || "unset"}, AWS_REGION=${process.env.AWS_REGION || "unset"}) bucket=${bucket} cdn=${cdnDomain}`
+    );
 
     if (!accessKeyId || !secretAccessKey) {
       throw new Error(
@@ -20,6 +26,7 @@ export function getS3Client(): S3Client {
 
     s3Client = new S3Client({
       region,
+      followRegionRedirects: true,
       credentials: {
         accessKeyId,
         secretAccessKey,
@@ -46,6 +53,6 @@ export function getCdnDomain(): string {
   }
   // Fallback to S3 direct URL
   const bucket = getS3Bucket();
-  const region = process.env.AWS_REGION || "us-east-1";
+  const region = process.env.S3_REGION || process.env.AWS_REGION || "us-east-1";
   return `${bucket}.s3.${region}.amazonaws.com`;
 }

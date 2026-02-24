@@ -17,7 +17,6 @@ import prisma from "../prisma.js";
 import { getTosStatus } from "../services/tos-service.js";
 import {
   resolveTenantFromProgramSlug,
-  resolveOffspringGroupListing,
   resolveAnimalListing,
   isValidSlug,
   normalizeSlug,
@@ -25,10 +24,8 @@ import {
 import {
   toPublicProgramDTO,
   toPublicProgramSummaryDTO,
-  toPublicOffspringGroupListingDTO,
   toPublicOffspringDTO,
   toPublicAnimalListingDTO,
-  toOffspringGroupSummaryDTO,
   toAnimalListingSummaryDTO,
   type PublicListingSummaryDTO,
   type PublicProgramSummaryDTO,
@@ -1320,18 +1317,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       return reply.code(404).send({ error: "not_found" });
     }
 
-    // Build where clause - only LIVE groups from this breeder
-    // IMPORTANT: Offspring groups must have a parent BreedingProgram with status=LIVE
-    // This enforces the hierarchy: BreedingProgram (LIVE) → BreedingPlan → OffspringGroup
+    // Build where clause - only marketplace-listed plans from this breeder
+    // Enforces hierarchy: BreedingProgram (LIVE) -> BreedingPlan (marketplace-listed)
     const where: any = {
       tenantId: resolved.tenantId,
-      status: "LIVE",
       listingSlug: { not: null },
-      // Require the parent breeding program to be LIVE
-      plan: {
-        program: {
-          status: "LIVE",
-        },
+      program: {
+        status: "LIVE",
       },
     };
 
@@ -1339,19 +1331,20 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       where.species = species.toUpperCase();
     }
 
-    const [groups, total] = await Promise.all([
-      prisma.offspringGroup.findMany({
+    const [plans, total] = await Promise.all([
+      prisma.breedingPlan.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { actualBirthOn: "desc" },
+        orderBy: { birthDateActual: "desc" },
         select: {
+          id: true,
           listingSlug: true,
           listingTitle: true,
           listingDescription: true,
           species: true,
-          expectedBirthOn: true,
-          actualBirthOn: true,
+          expectedBirthDate: true,
+          birthDateActual: true,
           coverImageUrl: true,
           marketplaceDefaultPriceCents: true,
           dam: {
@@ -1371,12 +1364,30 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.offspringGroup.count({ where }),
+      prisma.breedingPlan.count({ where }),
     ]);
 
-    const items = groups.map((g) =>
-      toPublicOffspringGroupListingDTO(g, org.programSlug || "", org.name)
-    );
+    // Map plans to listing DTOs with backward-compatible shape
+    const items = plans.map((p) => {
+      const available = (p.Offspring || []).filter(
+        (o: any) => o.marketplaceListed && o.keeperIntent === "AVAILABLE"
+      );
+      return {
+        listingSlug: p.listingSlug,
+        title: p.listingTitle || p.species,
+        description: p.listingDescription,
+        species: p.species,
+        expectedBirthOn: p.expectedBirthDate,
+        actualBirthOn: p.birthDateActual,
+        coverImageUrl: p.coverImageUrl,
+        availableCount: available.length,
+        dam: p.dam ? { name: p.dam.name, photoUrl: p.dam.photoUrl, breed: p.dam.breed } : null,
+        sire: p.sire ? { name: p.sire.name, photoUrl: p.sire.photoUrl, breed: p.sire.breed } : null,
+        breeder: { slug: org.programSlug || "", name: org.name },
+        priceMinCents: p.marketplaceDefaultPriceCents ? Number(p.marketplaceDefaultPriceCents) : null,
+        priceMaxCents: p.marketplaceDefaultPriceCents ? Number(p.marketplaceDefaultPriceCents) : null,
+      };
+    });
 
     return reply.send({ items, total, page, limit });
   });
@@ -1401,36 +1412,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      const listingResolved = await resolveOffspringGroupListing(
-        prisma,
-        resolved.tenantId,
-        listingSlug
-      );
-      if (!listingResolved) {
-        return reply.code(404).send({ error: "not_found" });
-      }
-
-      // Get organization for programName
-      const org = await prisma.organization.findUnique({
-        where: { id: resolved.organizationId },
-        select: { name: true, programSlug: true },
-      });
-
-      if (!org) {
-        return reply.code(404).send({ error: "not_found" });
-      }
-
-      const group = await prisma.offspringGroup.findUnique({
-        where: { id: listingResolved.groupId },
-        select: {
-          listingSlug: true,
-          listingTitle: true,
-          listingDescription: true,
-          species: true,
-          expectedBirthOn: true,
-          actualBirthOn: true,
-          coverImageUrl: true,
-          marketplaceDefaultPriceCents: true,
+      // OGC-05: Resolve listing slug to breedingPlan
+      const plan = await prisma.breedingPlan.findFirst({
+        where: {
+          tenantId: resolved.tenantId,
+          listingSlug: listingSlug,
+        },
+        include: {
           dam: {
             select: { name: true, photoUrl: true, breed: true },
           },
@@ -1439,7 +1427,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
           Offspring: {
             where: {
-              // Only include listed offspring that are alive
               marketplaceListed: true,
               lifeState: "ALIVE",
             },
@@ -1460,17 +1447,40 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         },
       });
 
-      if (!group) {
+      if (!plan) {
         return reply.code(404).send({ error: "not_found" });
       }
 
-      const listing = toPublicOffspringGroupListingDTO(
-        group,
-        org.programSlug || "",
-        org.name
+      // Get organization for breeder info
+      const org = await prisma.organization.findUnique({
+        where: { id: resolved.organizationId },
+        select: { name: true, programSlug: true },
+      });
+
+      if (!org) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      const available = (plan.Offspring || []).filter(
+        (o: any) => o.marketplaceListed && o.keeperIntent === "AVAILABLE"
       );
-      const offspring = (group.Offspring || []).map((o) =>
-        toPublicOffspringDTO(o, group.marketplaceDefaultPriceCents)
+      const listing = {
+        listingSlug: plan.listingSlug,
+        title: plan.listingTitle || plan.species,
+        description: plan.listingDescription,
+        species: plan.species,
+        expectedBirthOn: plan.expectedBirthDate,
+        actualBirthOn: plan.birthDateActual,
+        coverImageUrl: plan.coverImageUrl,
+        availableCount: available.length,
+        dam: plan.dam ? { name: plan.dam.name, photoUrl: plan.dam.photoUrl, breed: plan.dam.breed } : null,
+        sire: plan.sire ? { name: plan.sire.name, photoUrl: plan.sire.photoUrl, breed: plan.sire.breed } : null,
+        breeder: { slug: org.programSlug || "", name: org.name },
+        priceMinCents: plan.marketplaceDefaultPriceCents ? Number(plan.marketplaceDefaultPriceCents) : null,
+        priceMaxCents: plan.marketplaceDefaultPriceCents ? Number(plan.marketplaceDefaultPriceCents) : null,
+      };
+      const offspring = (plan.Offspring || []).map((o) =>
+        toPublicOffspringDTO(o)
       );
 
       return reply.send({ ...listing, offspring });
@@ -1743,20 +1753,18 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       }
 
       if (listingType === "offspring_group") {
-        const listingResolved = await resolveOffspringGroupListing(
-          prisma,
-          resolved.tenantId,
-          listingSlug
-        );
-        if (!listingResolved) {
-          return reply.code(404).send({ error: "listing_not_found" });
-        }
-        // Get listing title for subject
-        const group = await prisma.offspringGroup.findUnique({
-          where: { id: listingResolved.groupId },
+        // OGC-05: Resolve listing slug via breedingPlan
+        const plan = await prisma.breedingPlan.findFirst({
+          where: {
+            tenantId: resolved.tenantId,
+            listingSlug: listingSlug,
+          },
           select: { listingTitle: true },
         });
-        listingTitle = group?.listingTitle || null;
+        if (!plan) {
+          return reply.code(404).send({ error: "listing_not_found" });
+        }
+        listingTitle = (plan as any).listingTitle || null;
       } else if (listingType === "animal") {
         const listingResolved = await resolveAnimalListing(
           prisma,
@@ -1951,7 +1959,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "PLAN_COMPLETE"] },
                 },
               },
             },
@@ -2147,17 +2155,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     const { species, breed, search, location } = req.query;
     const { page, limit, skip } = parsePaging(req.query);
 
-    // Build where clause - only LIVE groups from published breeders
-    // IMPORTANT: Offspring groups must have a parent BreedingProgram with status=LIVE
-    // This enforces the hierarchy: BreedingProgram (LIVE) → BreedingPlan → OffspringGroup
+    // Build where clause - only marketplace-listed plans from published breeders
+    // Enforces hierarchy: BreedingProgram (LIVE) -> BreedingPlan (marketplace-listed)
     const where: any = {
-      status: "LIVE",
       listingSlug: { not: null },
-      // Require the parent breeding program to be LIVE
-      plan: {
-        program: {
-          status: "LIVE",
-        },
+      program: {
+        status: "LIVE",
       },
       tenant: {
         organizations: {
@@ -2184,8 +2187,6 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     // Filter by breed (check dam or sire breed)
     if (breed && breed.trim()) {
-      // Note: This will override the search OR clause if both are present
-      // In practice, users typically use one or the other
       where.OR = [
         { dam: { breed: { contains: breed.trim(), mode: "insensitive" } } },
         { sire: { breed: { contains: breed.trim(), mode: "insensitive" } } },
@@ -2212,9 +2213,9 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     }
 
     const [groups, total] = await prisma.$transaction([
-      prisma.offspringGroup.findMany({
+      prisma.breedingPlan.findMany({
         where,
-        orderBy: [{ actualBirthOn: "desc" }, { expectedBirthOn: "desc" }, { createdAt: "desc" }],
+        orderBy: [{ birthDateActual: "desc" }, { expectedBirthDate: "desc" }, { createdAt: "desc" }],
         skip,
         take: limit,
         select: {
@@ -2223,8 +2224,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           listingTitle: true,
           listingDescription: true,
           species: true,
-          expectedBirthOn: true,
-          actualBirthOn: true,
+          expectedBirthDate: true,
+          birthDateActual: true,
           coverImageUrl: true,
           marketplaceDefaultPriceCents: true,
           dam: {
@@ -2261,7 +2262,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           },
         },
       }),
-      prisma.offspringGroup.count({ where }),
+      prisma.breedingPlan.count({ where }),
     ]);
 
     const rawItems = groups.map((g) => {
@@ -2283,8 +2284,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         description: g.listingDescription,
         species: g.species,
         breed: g.dam?.breed || g.sire?.breed || null,
-        expectedBirthOn: g.expectedBirthOn,
-        actualBirthOn: g.actualBirthOn,
+        expectedBirthOn: g.expectedBirthDate,
+        actualBirthOn: g.birthDateActual,
         coverImageUrl: g.coverImageUrl,
         availableCount,
         priceMinCents: minPrice,
@@ -2575,7 +2576,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             select: {
               breedingPlans: {
                 where: {
-                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "WEANED", "PLACEMENT"] },
+                  status: { in: ["CYCLE", "COMMITTED", "BRED", "BIRTHED", "PLAN_COMPLETE"] },
                 },
               },
             },
@@ -2809,21 +2810,18 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
               };
             }
           } else if (boost.listingType === "BREEDING_LISTING") {
-            const group = await prisma.offspringGroup.findUnique({
+            // OGC-05: Breeding listings now backed by breedingPlan
+            const plan = await prisma.breedingPlan.findUnique({
               where: { id: boost.listingId },
               select: {
-                id: true, status: true, listingSlug: true, listingTitle: true,
-                plan: {
+                id: true, listingSlug: true, listingTitle: true,
+                program: {
                   select: {
-                    program: {
+                    tenant: {
                       select: {
-                        tenant: {
-                          select: {
-                            organizations: {
-                              where: { isPublicProgram: true }, take: 1,
-                              select: { programSlug: true, name: true },
-                            },
-                          },
+                        organizations: {
+                          where: { isPublicProgram: true }, take: 1,
+                          select: { programSlug: true, name: true },
                         },
                       },
                     },
@@ -2831,12 +2829,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
                 },
               },
             });
-            const org = group?.plan?.program?.tenant?.organizations?.[0];
-            if (group && group.status === "LIVE" && org?.programSlug) {
+            const org = plan?.program?.tenant?.organizations?.[0];
+            if (plan && plan.listingSlug && org?.programSlug) {
               item = {
-                id: group.id,
+                id: plan.id,
                 listingType: boost.listingType,
-                title: group.listingTitle || "Breeding Listing",
+                title: (plan as any).listingTitle || "Breeding Listing",
                 subtitle: org.name,
                 imageUrl: null,
                 href: `/marketplace/breeders/${org.programSlug}`,

@@ -174,13 +174,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           offspring: {
-            group: {
-              groupBuyerLinks: {
-                some: {
-                  buyerPartyId: partyId,
-                },
-              },
-            },
+            buyerPartyId: partyId,
           },
           fileId: {
             not: null,
@@ -247,19 +241,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Find the document via the same access path used by /portal/documents list endpoint
-      // OffspringDocument -> Offspring -> Group -> GroupBuyerLinks -> buyerPartyId
+      // OffspringDocument -> Offspring -> buyerPartyId
       const offspringDocument = await prisma.offspringDocument.findFirst({
         where: {
           tenantId,
           fileId,
           offspring: {
-            group: {
-              groupBuyerLinks: {
-                some: {
-                  buyerPartyId: partyId,
-                },
-              },
-            },
+            buyerPartyId: partyId,
           },
         },
         include: {
@@ -334,24 +322,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -371,14 +359,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const placements = offspring.map((o) => ({
         id: o.id,
-        offspringGroupId: o.group.id,
-        offspringGroupCode: o.group.name || `Group-${o.group.id}`,
-        offspringGroupLabel: o.group.name,
-        birthDate: o.group.actualBirthOn ? o.group.actualBirthOn.toISOString() : o.bornAt?.toISOString() || null,
-        species: o.group.species,
+        breedingPlanId: o.BreedingPlan?.id ?? null,
+        breedingPlanName: o.BreedingPlan?.name ?? null,
+        birthDate: o.BreedingPlan?.birthDateActual ? o.BreedingPlan.birthDateActual.toISOString() : o.bornAt?.toISOString() || null,
+        species: o.species,
         breed: o.breed,
-        dam: o.group.dam,
-        sire: o.group.sire,
+        dam: o.dam,
+        sire: o.sire,
         offspring: {
           id: o.id,
           name: o.name || "Unnamed",
@@ -419,24 +406,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -460,15 +447,15 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         name: offspring.name || "Unnamed",
         sex: offspring.sex,
         breed: offspring.breed,
-        species: offspring.group.species,
-        birthDate: offspring.group.actualBirthOn
-          ? offspring.group.actualBirthOn.toISOString()
+        species: offspring.species,
+        birthDate: offspring.BreedingPlan?.birthDateActual
+          ? offspring.BreedingPlan.birthDateActual.toISOString()
           : offspring.bornAt?.toISOString() || null,
         placementStatus: mapOffspringStateToPlacementStatus(offspring),
-        dam: offspring.group.dam,
-        sire: offspring.group.sire,
-        groupId: offspring.group.id,
-        groupName: offspring.group.name,
+        dam: offspring.dam,
+        sire: offspring.sire,
+        breedingPlanId: offspring.BreedingPlan?.id ?? null,
+        breedingPlanName: offspring.BreedingPlan?.name ?? null,
         contractSignedAt: offspring.contractSignedAt?.toISOString() || null,
         paidInFullAt: offspring.paidInFullAt?.toISOString() || null,
         pickupAt: offspring.pickupAt?.toISOString() || null,
@@ -499,24 +486,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -536,14 +523,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const placements = offspring.map((o) => ({
         id: o.id,
-        offspringGroupId: o.group.id,
-        offspringGroupCode: o.group.name || `Group-${o.group.id}`,
-        offspringGroupLabel: o.group.name,
-        birthDate: o.group.actualBirthOn ? o.group.actualBirthOn.toISOString() : o.bornAt?.toISOString() || null,
-        species: o.group.species,
+        breedingPlanId: o.BreedingPlan?.id ?? null,
+        breedingPlanName: o.BreedingPlan?.name ?? null,
+        birthDate: o.BreedingPlan?.birthDateActual ? o.BreedingPlan.birthDateActual.toISOString() : o.bornAt?.toISOString() || null,
+        species: o.species,
         breed: o.breed,
-        dam: o.group.dam,
-        sire: o.group.sire,
+        dam: o.dam,
+        sire: o.sire,
         offspring: {
           id: o.id,
           name: o.name || "Unnamed",
@@ -664,6 +650,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       const { tenantId, partyId } = await requireClientPartyScope(req);
 
+      // Fetch tenant invoicing settings to expose paymentMode
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          invoicingMode: true,
+          paymentInstructions: true,
+          stripeConnectAccountId: true,
+          stripeConnectPayoutsEnabled: true,
+        } as any,
+      }) as any;
+
+      const isStripeReady = !!(
+        tenant?.stripeConnectAccountId &&
+        tenant?.stripeConnectPayoutsEnabled &&
+        tenant?.invoicingMode === "stripe"
+      );
+      const paymentMode = isStripeReady ? "stripe" : "manual";
+
       // Get offspring IDs for this party
       const partyOffspring = await prisma.offspring.findMany({
         where: {
@@ -742,7 +746,11 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         };
       });
 
-      return reply.send({ invoices: result });
+      return reply.send({
+        invoices: result,
+        paymentMode,
+        paymentInstructions: paymentMode === "manual" ? (tenant?.paymentInstructions || null) : null,
+      });
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to list portal invoices");
       return reply.code(500).send({ error: "failed_to_load" });
@@ -880,6 +888,55 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /**
+   * GET /api/v1/portal/invoices/:id/pdf
+   * Download invoice PDF. For Stripe invoices, redirects to Stripe PDF URL.
+   * Otherwise generates a platform PDF.
+   */
+  app.get<{ Params: { id: string } }>("/portal/invoices/:id/pdf", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const invoiceId = parseInt(req.params.id, 10);
+
+      if (isNaN(invoiceId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Verify ownership
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, tenantId, clientPartyId: partyId },
+        select: { stripeInvoiceId: true },
+      });
+
+      if (!invoice) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Stripe PDF redirect
+      if (invoice.stripeInvoiceId) {
+        try {
+          const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+          const pdfUrl = await tenantInvoiceStripe.getTenantInvoicePdfUrl(tenantId, invoiceId);
+          return reply.redirect(pdfUrl);
+        } catch {
+          // Fall through to generate our own PDF
+        }
+      }
+
+      // Generate platform PDF
+      const { generateInvoicePdf } = await import("../services/finance/invoice-pdf-builder.js");
+      const { buffer, filename } = await generateInvoicePdf(invoiceId, tenantId);
+
+      return reply
+        .header("Content-Type", "application/pdf")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(Buffer.from(buffer));
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to generate portal invoice PDF");
+      return reply.code(500).send({ error: "pdf_generation_failed" });
+    }
+  });
+
+  /**
    * POST /api/v1/portal/invoices/:id/checkout
    * Creates a Stripe Checkout session for paying an invoice
    *
@@ -940,18 +997,32 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "Invoice has no balance due" });
       }
 
-      // Get tenant info for URLs and Stripe Connect
+      // Get tenant info for URLs, Stripe Connect, and invoicing mode
       const tenant = await prisma.tenant.findUnique({
         where: { id: tenantId },
         select: {
           slug: true,
           name: true,
           stripeConnectAccountId: true,
+          stripeConnectPayoutsEnabled: true,
+          invoicingMode: true,
         } as any,
       }) as any;
 
       if (!tenant?.slug) {
         return reply.code(500).send({ error: "Tenant configuration error" });
+      }
+
+      // Guard: only allow checkout when tenant is in stripe invoicing mode with active Connect
+      if (
+        tenant.invoicingMode !== "stripe" ||
+        !tenant.stripeConnectAccountId ||
+        !tenant.stripeConnectPayoutsEnabled
+      ) {
+        return reply.code(400).send({
+          error: "online_payment_unavailable",
+          message: "This breeder does not accept online payments.",
+        });
       }
 
       // Build success/cancel URLs

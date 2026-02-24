@@ -267,7 +267,7 @@ export async function scanBreedingTimeline(): Promise<BreedingAlert[]> {
       archived: false,
       deletedAt: null,
       status: {
-        notIn: ["COMPLETE", "CANCELED"],
+        notIn: ["PLAN_COMPLETE", "COMPLETE", "CANCELED", "UNSUCCESSFUL"],
       },
       OR: [
         // Heat cycle expected

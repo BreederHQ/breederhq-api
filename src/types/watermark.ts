@@ -47,7 +47,6 @@ export type PublicImageType =
   | "animalProfile"
   | "breedingProgramCover"
   | "breedingProgramGallery"
-  | "offspringGroupCover"
   | "serviceListingBanner"
   | "serviceGallery"
   | "breederBanner"
@@ -57,7 +56,6 @@ export type PublicImageTypes = {
   animalProfile: boolean;
   breedingProgramCover: boolean;
   breedingProgramGallery: boolean;
-  offspringGroupCover: boolean;
   serviceListingBanner: boolean;
   serviceGallery: boolean;
   breederBanner: boolean;
@@ -77,7 +75,6 @@ export const DEFAULT_PUBLIC_IMAGE_SETTINGS: PublicImageWatermarkSettings = {
     animalProfile: true,
     breedingProgramCover: true,
     breedingProgramGallery: true,
-    offspringGroupCover: true,
     serviceListingBanner: false,
     serviceGallery: false,
     breederBanner: false,

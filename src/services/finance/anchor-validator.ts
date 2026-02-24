@@ -6,7 +6,6 @@
  *
  * Supported anchors:
  * - offspringId
- * - offspringGroupId
  * - animalId
  * - breedingPlanId
  * - serviceCode (for general services - not an FK)
@@ -14,7 +13,6 @@
 
 export interface InvoiceAnchors {
   offspringId?: number | null;
-  offspringGroupId?: number | null;
   animalId?: number | null;
   breedingPlanId?: number | null;
   serviceCode?: string | null;
@@ -22,7 +20,6 @@ export interface InvoiceAnchors {
 
 export interface ExpenseAnchors {
   breedingPlanId?: number | null;
-  offspringGroupId?: number | null;
   animalId?: number | null;
 }
 
@@ -36,7 +33,6 @@ export interface ExpenseAnchors {
 export function validateInvoiceAnchors(anchors: InvoiceAnchors): void {
   const anchorKeys: (keyof InvoiceAnchors)[] = [
     "offspringId",
-    "offspringGroupId",
     "animalId",
     "breedingPlanId",
     "serviceCode",
@@ -48,7 +44,7 @@ export function validateInvoiceAnchors(anchors: InvoiceAnchors): void {
 
   if (providedAnchors.length === 0) {
     throw new Error(
-      "Invoice must have exactly one anchor: offspringId, offspringGroupId, animalId, breedingPlanId, or serviceCode"
+      "Invoice must have exactly one anchor: offspringId, animalId, breedingPlanId, or serviceCode"
     );
   }
 
@@ -69,7 +65,6 @@ export function validateInvoiceAnchors(anchors: InvoiceAnchors): void {
 export function validateExpenseAnchors(anchors: ExpenseAnchors): void {
   const anchorKeys: (keyof ExpenseAnchors)[] = [
     "breedingPlanId",
-    "offspringGroupId",
     "animalId",
   ];
 
@@ -93,7 +88,6 @@ export function validateExpenseAnchors(anchors: ExpenseAnchors): void {
  */
 export function determineInvoiceScope(anchors: InvoiceAnchors): string {
   if (anchors.offspringId) return "offspring";
-  if (anchors.offspringGroupId) return "group";
   if (anchors.animalId) return "contact"; // Animal sales use contact scope
   if (anchors.breedingPlanId) return "contact"; // Breeding services use contact scope
   if (anchors.serviceCode) return "general";
