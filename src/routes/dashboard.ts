@@ -105,12 +105,14 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         }),
 
-        // Offspring groups currently in care (birthed but not all placed)
-        prisma.offspringGroup.count({
+        // Breeding plans with born offspring still in care (birthed but not all placed)
+        prisma.breedingPlan.count({
           where: {
             tenantId,
-            actualBirthOn: { not: null },
-            placementCompletedAt: null,
+            archived: false,
+            birthDateActual: { not: null },
+            placementCompletedDateActual: null,
+            status: { in: ["BIRTHED", "BORN", "WEANED", "PLACEMENT"] },
           },
         }),
 
@@ -162,7 +164,6 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: "open",
         },
         include: {
-          group: { select: { id: true, name: true } },
           offspring: { select: { id: true, name: true } },
         },
         take: 5,
@@ -174,10 +175,8 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           severity: "warning",
           title: "Overdue Task",
           message: `${task.title}: was due ${task.dueAt?.toLocaleDateString()}`,
-          actionLabel: task.groupId ? "View Group" : "View Task",
-          actionHref: task.groupId ? `/offspring/${task.groupId}` : `/tasks`,
-          entityType: task.groupId ? "offspring" : undefined,
-          entityId: task.groupId ? String(task.groupId) : undefined,
+          actionLabel: "View Task",
+          actionHref: `/tasks`,
           dismissible: true,
           createdAt: task.createdAt?.toISOString() || now.toISOString(),
         });
@@ -345,21 +344,18 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: "open",
         },
         include: {
-          group: { select: { id: true, name: true } },
           offspring: { select: { id: true, name: true } },
         },
       });
 
       for (const task of tasks) {
         const isOverdue = task.dueAt && task.dueAt < new Date();
-        const entityName = task.group?.name || task.offspring?.name || "";
+        const entityName = task.offspring?.name || "";
         agenda.push({
           id: `task-${task.id}`,
           kind: "reminder",
           title: entityName ? `${entityName}: ${task.title}` : task.title,
           scheduledAt: task.dueAt?.toISOString() || dayStart.toISOString(),
-          entityType: task.groupId ? "offspring" : undefined,
-          entityId: task.groupId ? String(task.groupId) : undefined,
           completed: false,
           severity: isOverdue ? "critical" : "normal",
         });
@@ -391,23 +387,24 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      // Get placements scheduled for today
-      const placements = await prisma.offspringGroup.findMany({
+      // Get placements scheduled for today (breeding plans entering placement phase)
+      const placements = await prisma.breedingPlan.findMany({
         where: {
           tenantId,
-          placementStartAt: { gte: dayStart, lte: dayEnd },
-          placementCompletedAt: null,
+          archived: false,
+          placementStartDateActual: { gte: dayStart, lte: dayEnd },
+          placementCompletedDateActual: null,
         },
       });
 
-      for (const group of placements) {
+      for (const plan of placements) {
         agenda.push({
-          id: `placement-${group.id}`,
+          id: `placement-${plan.id}`,
           kind: "placement",
-          title: `${group.name || "Offspring group"}: Placement day`,
-          scheduledAt: group.placementStartAt?.toISOString() || dayStart.toISOString(),
-          entityType: "offspring",
-          entityId: String(group.id),
+          title: `${plan.name || "Breeding plan"}: Placement day`,
+          scheduledAt: plan.placementStartDateActual?.toISOString() || dayStart.toISOString(),
+          entityType: "plan",
+          entityId: String(plan.id),
           completed: false,
           severity: "important",
         });
@@ -496,11 +493,13 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "missing_tenant" });
       }
 
-      const groups = await prisma.offspringGroup.findMany({
+      const plans = await prisma.breedingPlan.findMany({
         where: {
           tenantId,
-          actualBirthOn: { not: null },
-          placementCompletedAt: null,
+          archived: false,
+          birthDateActual: { not: null },
+          placementCompletedDateActual: null,
+          status: { in: ["BIRTHED", "BORN", "WEANED", "PLACEMENT"] },
         },
         include: {
           dam: { select: { id: true, name: true } },
@@ -513,20 +512,20 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           },
         },
-        orderBy: { actualBirthOn: "desc" },
+        orderBy: { birthDateActual: "desc" },
         take: 10,
       });
 
-      const summaries = groups.map((group) => {
-        const total = group.Offspring?.length || 0;
-        const placed = group.Offspring?.filter((o) => o.status === "PLACED").length || 0;
-        const reserved = group.Offspring?.filter((o) => o.placementState === "RESERVED").length || 0;
+      const summaries = plans.map((plan) => {
+        const total = plan.Offspring?.length || 0;
+        const placed = plan.Offspring?.filter((o) => o.status === "PLACED").length || 0;
+        const reserved = plan.Offspring?.filter((o) => o.placementState === "RESERVED").length || 0;
         const available = total - placed - reserved;
 
         // Calculate age in weeks
         let ageWeeks: number | null = null;
-        if (group.actualBirthOn) {
-          const diffMs = Date.now() - new Date(group.actualBirthOn).getTime();
+        if (plan.birthDateActual) {
+          const diffMs = Date.now() - new Date(plan.birthDateActual).getTime();
           ageWeeks = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 7));
         }
 
@@ -536,12 +535,12 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (placed >= total * 0.8) status = "nearly_complete";
 
         return {
-          id: group.id,
-          identifier: group.name || `Group ${group.id}`,
-          damName: group.dam?.name || "Unknown",
-          sireName: group.sire?.name || "Unknown",
-          species: group.species || "Dog",
-          birthedAt: group.actualBirthOn?.toISOString() || null,
+          id: plan.id,
+          identifier: plan.name || `Plan ${plan.id}`,
+          damName: plan.dam?.name || "Unknown",
+          sireName: plan.sire?.name || "Unknown",
+          species: plan.species || "Dog",
+          birthedAt: plan.birthDateActual?.toISOString() || null,
           ageWeeks,
           counts: { total, placed, available, reserved },
           financialSummary: {
@@ -685,10 +684,10 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       // Average litter size
-      const groupsWithOffspring = await prisma.offspringGroup.findMany({
+      const plansWithOffspring = await prisma.breedingPlan.findMany({
         where: {
           tenantId,
-          actualBirthOn: { gte: windowStart },
+          birthDateActual: { gte: windowStart },
         },
         include: {
           _count: { select: { Offspring: true } },
@@ -696,10 +695,10 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       const avgLitterSize =
-        groupsWithOffspring.length > 0
+        plansWithOffspring.length > 0
           ? Math.round(
-              (groupsWithOffspring.reduce((sum, g) => sum + (g._count?.Offspring || 0), 0) /
-                groupsWithOffspring.length) *
+              (plansWithOffspring.reduce((sum, p) => sum + (p._count?.Offspring || 0), 0) /
+                plansWithOffspring.length) *
                 10
             ) / 10
           : 0;
@@ -793,26 +792,28 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      // Get recent offspring group updates
-      const recentGroups = await prisma.offspringGroup.findMany({
-        where: { tenantId },
+      // Get recent breeding plan updates related to offspring
+      const recentPlansWithBirths = await prisma.breedingPlan.findMany({
+        where: {
+          tenantId,
+          birthDateActual: { not: null },
+        },
         orderBy: { updatedAt: "desc" },
         take: limit,
         select: {
           id: true,
           name: true,
           updatedAt: true,
-          actualBirthOn: true,
+          birthDateActual: true,
         },
       });
 
-      for (const group of recentGroups) {
-        const action = group.actualBirthOn ? "birth recorded" : "updated";
+      for (const plan of recentPlansWithBirths) {
         feed.push({
-          id: `group-${group.id}`,
-          when: group.updatedAt?.toISOString() || new Date().toISOString(),
-          text: `Offspring group "${group.name || "Unknown"}" ${action}`,
-          link: `/offspring/${group.id}`,
+          id: `plan-birth-${plan.id}`,
+          when: plan.updatedAt?.toISOString() || new Date().toISOString(),
+          text: `Breeding plan "${plan.name || "Unknown"}" birth recorded`,
+          link: `/breeding/${plan.id}`,
         });
       }
 
@@ -1128,18 +1129,18 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const today = startOfDay(new Date());
       const todayEnd = endOfDay(new Date());
 
-      // Get active protocol assignments with their groups and protocols
+      // Get active protocol assignments with their breeding plans and protocols
       const assignments = await prisma.rearingProtocolAssignment.findMany({
         where: {
           tenantId,
           status: "ACTIVE",
         },
         include: {
-          offspringGroup: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
               _count: { select: { Offspring: true } },
             },
@@ -1183,9 +1184,9 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Calculate current stage and progress for each assignment
       const protocols = assignments.map((assignment) => {
-        const group = assignment.offspringGroup;
-        if (!group) return null;
-        const birthDate = group.actualBirthOn;
+        const plan = assignment.BreedingPlan;
+        if (!plan) return null;
+        const birthDate = plan.birthDateActual;
         const ageInDays = birthDate
           ? Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24))
           : 0;
@@ -1228,10 +1229,10 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           id: assignment.id,
           protocolId: assignment.protocol.id,
           protocolName: assignment.protocol.name,
-          groupId: group.id,
-          groupName: group.name || `Litter ${group.id}`,
-          species: group.species,
-          offspringCount: group._count?.Offspring || 0,
+          breedingPlanId: plan.id,
+          breedingPlanName: plan.name || `Plan ${plan.id}`,
+          species: plan.species,
+          offspringCount: plan._count?.Offspring || 0,
           ageInDays,
           currentStage: currentStage
             ? {
@@ -1300,11 +1301,11 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sex: true,
               status: true,
               placementState: true,
-              group: {
+              species: true,
+              BreedingPlan: {
                 select: {
                   id: true,
                   name: true,
-                  species: true,
                 },
               },
             },
@@ -1327,7 +1328,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Filter to only dog species and process scores
       const dogAssessments = assessments.filter(
-        (a) => a.offspring?.group?.species === "DOG"
+        (a) => a.offspring?.species === "DOG"
       );
 
       // Calculate placement recommendation based on scores
@@ -1423,8 +1424,8 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           offspringId: assessment.offspring?.id,
           offspringName: assessment.offspring?.name || "Unknown",
           sex: assessment.offspring?.sex,
-          groupId: assessment.offspring?.group?.id,
-          groupName: assessment.offspring?.group?.name,
+          groupId: assessment.offspring?.BreedingPlan?.id,
+          groupName: assessment.offspring?.BreedingPlan?.name,
           assessedAt: assessment.assessedAt.toISOString(),
           assessmentType: assessment.assessmentType,
           scores,
@@ -1440,17 +1441,17 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           species: "DOG",
-          group: {
-            placementCompletedAt: null,
+          BreedingPlan: {
+            placementCompletedDateActual: null,
           },
           rearingAssessments: { none: {} },
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
             },
           },
         },
@@ -1461,11 +1462,11 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id: o.id,
         name: o.name || `Offspring ${o.id}`,
         sex: o.sex,
-        groupId: o.group.id,
-        groupName: o.group.name,
-        ageInDays: o.group.actualBirthOn
+        groupId: o.BreedingPlan?.id,
+        groupName: o.BreedingPlan?.name,
+        ageInDays: o.BreedingPlan?.birthDateActual
           ? Math.floor(
-              (Date.now() - new Date(o.group.actualBirthOn).getTime()) /
+              (Date.now() - new Date(o.BreedingPlan.birthDateActual).getTime()) /
                 (1000 * 60 * 60 * 24)
             )
           : null,

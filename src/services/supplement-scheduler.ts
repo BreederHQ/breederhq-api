@@ -58,10 +58,9 @@ function startOfDay(date: Date): Date {
  * Get the anchor date from a breeding plan based on the anchor event type.
  * Prefers actual dates over expected dates when available.
  *
- * DEPRECATED FIELDS: expectedWeaned, weanedDateActual are no longer written
- * to BreedingPlan (post-birth dates now live on OffspringGroup).
- * These reads remain as fallbacks for historical data until the columns are
- * dropped in a future migration (Phase 6).
+ * DEPRECATED FIELDS: expectedWeaned, weanedDateActual are legacy columns
+ * on BreedingPlan. These reads remain as fallbacks for historical data
+ * until the columns are dropped in a future migration.
  */
 export function getAnchorDate(
   event: BreedingCycleAnchorEvent,
@@ -86,7 +85,6 @@ export function getAnchorDate(
       return plan.birthDateActual ?? plan.expectedBirthDate ?? null;
     case "WEANED_DATE":
       // DEPRECATED: Reads from BreedingPlan for historical data only.
-      // New weaned dates are on OffspringGroup.expectedWeanedAt / weanedAt.
       return plan.weanedDateActual ?? plan.expectedWeaned ?? null;
     default:
       return null;

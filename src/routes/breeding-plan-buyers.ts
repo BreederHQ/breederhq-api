@@ -7,7 +7,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
 import {
-  findPossibleMatches,
   refreshPlanMatches,
 } from "../services/plan-buyer-matching.js";
 import type {
@@ -21,7 +20,7 @@ import type {
   AssignBuyerResponse,
   ApplyCreditRequest,
 } from "../types/breeding-plan-buyer.js";
-import { BreedingPlanBuyerStage } from "@prisma/client";
+
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -109,7 +108,6 @@ function toBuyerDTO(record: any): BreedingPlanBuyerDTO {
     assignedAt: record.assignedAt?.toISOString() || null,
     assignedByPartyId: record.assignedByPartyId,
     priority: record.priority,
-    offspringGroupBuyerId: record.offspringGroupBuyerId,
     offspringId: record.offspringId,
     depositInvoiceId: record.Invoice?.id ?? null,
     depositInvoiceStatus: record.Invoice?.status ?? null,
@@ -560,89 +558,6 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
         });
 
         reply.send({ assigned: updated.count });
-      } catch (err) {
-        const { status, payload } = errorReply(err);
-        reply.status(status).send(payload);
-      }
-    }
-  );
-
-  /**
-   * POST /breeding/plans/:planId/buyers/send-to-offspring-group
-   * Copy assigned buyers to OffspringGroupBuyer when group is created.
-   */
-  app.post<{ Params: { planId: string } }>(
-    "/breeding/plans/:planId/buyers/send-to-offspring-group",
-    async (req, reply) => {
-      try {
-        const tenantId = Number((req as any).tenantId);
-        const planId = toNum(req.params.planId);
-        if (!planId) return reply.code(400).send({ error: "bad_plan_id" });
-
-        // Get the plan's offspring group
-        const plan = await prisma.breedingPlan.findFirst({
-          where: { id: planId, tenantId },
-          include: { offspringGroup: true },
-        });
-        if (!plan) return reply.code(404).send({ error: "plan_not_found" });
-        if (!plan.offspringGroup) {
-          return reply.code(400).send({ error: "no_offspring_group" });
-        }
-
-        const groupId = plan.offspringGroup.id;
-
-        // Get assigned buyers from the plan
-        const planBuyers = await prisma.breedingPlanBuyer.findMany({
-          where: { planId, tenantId, stage: "ASSIGNED" },
-          orderBy: { priority: "asc" },
-        });
-
-        let created = 0;
-        let skipped = 0;
-
-        for (const buyer of planBuyers) {
-          // Check if already exists in offspring group
-          const existingGroupBuyer = await prisma.offspringGroupBuyer.findFirst({
-            where: {
-              groupId,
-              OR: [
-                buyer.waitlistEntryId ? { waitlistEntryId: buyer.waitlistEntryId } : {},
-                buyer.partyId ? { buyerPartyId: buyer.partyId } : {},
-              ].filter((o) => Object.keys(o).length > 0),
-            },
-          });
-
-          if (existingGroupBuyer) {
-            skipped++;
-            // Link the plan buyer to existing group buyer
-            await prisma.breedingPlanBuyer.update({
-              where: { id: buyer.id },
-              data: { offspringGroupBuyerId: existingGroupBuyer.id },
-            });
-          } else {
-            // Create new offspring group buyer
-            const groupBuyer = await prisma.offspringGroupBuyer.create({
-              data: {
-                tenantId,
-                groupId,
-                buyerPartyId: buyer.partyId,
-                waitlistEntryId: buyer.waitlistEntryId,
-                placementRank: buyer.priority,
-                stage: "PENDING",
-              },
-            });
-
-            // Update plan buyer with the link
-            await prisma.breedingPlanBuyer.update({
-              where: { id: buyer.id },
-              data: { offspringGroupBuyerId: groupBuyer.id },
-            });
-
-            created++;
-          }
-        }
-
-        reply.send({ created, skipped, offspringGroupId: groupId });
       } catch (err) {
         const { status, payload } = errorReply(err);
         reply.status(status).send(payload);

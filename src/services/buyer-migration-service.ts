@@ -1,7 +1,7 @@
 // src/services/buyer-migration-service.ts
 // Buyer CRM Integration Service - Migrates old buyer systems to new CRM
 //
-// This service bridges the OLD buyer systems (BreedingPlanBuyer, OffspringGroupBuyer, WaitlistEntry)
+// This service bridges the OLD buyer systems (BreedingPlanBuyer, WaitlistEntry)
 // with the NEW Buyer CRM system (P4/P5).
 //
 // Old systems reference buyers via partyId/clientPartyId
@@ -27,7 +27,6 @@ export interface MigrationResult {
 
 export interface FullMigrationResult {
   breedingPlanBuyers: MigrationResult;
-  offspringGroupBuyers: MigrationResult;
   waitlistEntries: MigrationResult;
   buyersCreated: number;
 }
@@ -206,83 +205,6 @@ export async function migrateBreedingPlanBuyers(
 }
 
 /**
- * Migrates all OffspringGroupBuyer records for a tenant to link to Buyer CRM.
- *
- * For each OffspringGroupBuyer:
- * 1. If already has buyerId, skip
- * 2. Resolve the Party (via buyerPartyId or waitlistEntry.clientPartyId)
- * 3. Find or create a Buyer for that Party
- * 4. Set the buyerId on the OffspringGroupBuyer
- */
-export async function migrateOffspringGroupBuyers(
-  tenantId: number
-): Promise<MigrationResult> {
-  const result: MigrationResult = {
-    total: 0,
-    migrated: 0,
-    alreadyLinked: 0,
-    skipped: 0,
-    errors: [],
-  };
-
-  const groupBuyers = await prisma.offspringGroupBuyer.findMany({
-    where: { tenantId },
-    select: {
-      id: true,
-      buyerPartyId: true,
-      waitlistEntryId: true,
-      buyerId: true,
-    },
-  });
-
-  result.total = groupBuyers.length;
-
-  for (const groupBuyer of groupBuyers) {
-    try {
-      // Already linked
-      if (groupBuyer.buyerId) {
-        result.alreadyLinked++;
-        continue;
-      }
-
-      // Resolve party ID (buyerPartyId takes precedence)
-      let partyId = groupBuyer.buyerPartyId;
-
-      if (!partyId && groupBuyer.waitlistEntryId) {
-        const waitlistEntry = await prisma.waitlistEntry.findUnique({
-          where: { id: groupBuyer.waitlistEntryId },
-          select: { clientPartyId: true },
-        });
-        partyId = waitlistEntry?.clientPartyId || null;
-      }
-
-      if (!partyId) {
-        result.skipped++;
-        continue;
-      }
-
-      // Find or create buyer
-      const buyer = await findOrCreateBuyer(tenantId, partyId, "OffspringGroupBuyer");
-
-      // Link to buyer
-      await prisma.offspringGroupBuyer.update({
-        where: { id: groupBuyer.id },
-        data: { buyerId: buyer.id },
-      });
-
-      result.migrated++;
-    } catch (err) {
-      result.errors.push({
-        id: groupBuyer.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  return result;
-}
-
-/**
  * Migrates all WaitlistEntry records for a tenant to link to Buyer CRM.
  *
  * For each WaitlistEntry:
@@ -377,9 +299,8 @@ export async function migrateWaitlistEntries(
 /**
  * Runs full buyer migration for a tenant.
  *
- * Migrates all three old buyer systems to link to the new Buyer CRM:
+ * Migrates old buyer systems to link to the new Buyer CRM:
  * - BreedingPlanBuyer
- * - OffspringGroupBuyer
  * - WaitlistEntry
  *
  * This is idempotent - can be run multiple times safely.
@@ -395,7 +316,6 @@ export async function runFullBuyerMigration(
   // Run migrations in order (waitlist first since others may reference it)
   const waitlistResult = await migrateWaitlistEntries(tenantId);
   const planBuyerResult = await migrateBreedingPlanBuyers(tenantId);
-  const groupBuyerResult = await migrateOffspringGroupBuyers(tenantId);
 
   // Count buyers after
   const buyersAfter = await prisma.buyer.count({
@@ -404,7 +324,6 @@ export async function runFullBuyerMigration(
 
   return {
     breedingPlanBuyers: planBuyerResult,
-    offspringGroupBuyers: groupBuyerResult,
     waitlistEntries: waitlistResult,
     buyersCreated: buyersAfter - buyersBefore,
   };
@@ -419,7 +338,6 @@ export async function runFullBuyerMigration(
  *
  * Returns all the old-system records linked to this buyer:
  * - BreedingPlanBuyer records (interest in breeding plans)
- * - OffspringGroupBuyer records (interest in offspring groups)
  * - WaitlistEntry records (waitlist positions)
  */
 export async function getBuyerConnections(buyerId: number) {
@@ -441,7 +359,7 @@ export async function getBuyerConnections(buyerId: number) {
           },
         },
       },
-      // Breeding plan buyers (old system)
+      // Breeding plan buyers
       breedingPlanBuyers: {
         include: {
           plan: {
@@ -456,21 +374,7 @@ export async function getBuyerConnections(buyerId: number) {
         },
         orderBy: { createdAt: "desc" },
       },
-      // Offspring group buyers (old system)
-      offspringGroupBuyers: {
-        include: {
-          group: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              _count: { select: { Offspring: true } },
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      },
-      // Waitlist entries (old system)
+      // Waitlist entries
       waitlistEntries: {
         include: {
           plan: { select: { id: true, name: true } },
@@ -489,22 +393,18 @@ export async function getBuyerConnections(buyerId: number) {
 /**
  * Checks migration status for a tenant.
  *
- * Returns counts of linked vs unlinked records for each old buyer system.
+ * Returns counts of linked vs unlinked records for each buyer system.
  */
 export async function getMigrationStatus(tenantId: number) {
   const [
     planBuyersTotal,
     planBuyersLinked,
-    groupBuyersTotal,
-    groupBuyersLinked,
     waitlistTotal,
     waitlistLinked,
     buyersTotal,
   ] = await Promise.all([
     prisma.breedingPlanBuyer.count({ where: { tenantId } }),
     prisma.breedingPlanBuyer.count({ where: { tenantId, buyerId: { not: null } } }),
-    prisma.offspringGroupBuyer.count({ where: { tenantId } }),
-    prisma.offspringGroupBuyer.count({ where: { tenantId, buyerId: { not: null } } }),
     prisma.waitlistEntry.count({ where: { tenantId } }),
     prisma.waitlistEntry.count({ where: { tenantId, buyerId: { not: null } } }),
     prisma.buyer.count({ where: { tenantId } }),
@@ -520,12 +420,6 @@ export async function getMigrationStatus(tenantId: number) {
       unlinked: planBuyersTotal - planBuyersLinked,
       percentage: planBuyersTotal > 0 ? Math.round((planBuyersLinked / planBuyersTotal) * 100) : 100,
     },
-    offspringGroupBuyers: {
-      total: groupBuyersTotal,
-      linked: groupBuyersLinked,
-      unlinked: groupBuyersTotal - groupBuyersLinked,
-      percentage: groupBuyersTotal > 0 ? Math.round((groupBuyersLinked / groupBuyersTotal) * 100) : 100,
-    },
     waitlistEntries: {
       total: waitlistTotal,
       linked: waitlistLinked,
@@ -533,10 +427,10 @@ export async function getMigrationStatus(tenantId: number) {
       percentage: waitlistTotal > 0 ? Math.round((waitlistLinked / waitlistTotal) * 100) : 100,
     },
     overallPercentage:
-      planBuyersTotal + groupBuyersTotal + waitlistTotal > 0
+      planBuyersTotal + waitlistTotal > 0
         ? Math.round(
-            ((planBuyersLinked + groupBuyersLinked + waitlistLinked) /
-              (planBuyersTotal + groupBuyersTotal + waitlistTotal)) *
+            ((planBuyersLinked + waitlistLinked) /
+              (planBuyersTotal + waitlistTotal)) *
               100
           )
         : 100,

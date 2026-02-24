@@ -39,7 +39,7 @@ export interface FoodProductFilters {
 
 export interface FeedingPlanFilters {
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   foodProductId?: number;
   isActive?: boolean;
   page?: number;
@@ -48,7 +48,7 @@ export interface FeedingPlanFilters {
 
 export interface FeedingRecordFilters {
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   feedingPlanId?: number;
   dateFrom?: string;
   dateTo?: string;
@@ -59,7 +59,7 @@ export interface FeedingRecordFilters {
 
 export interface FoodChangeFilters {
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   changeReason?: FoodChangeReason;
   dateFrom?: string;
   dateTo?: string;
@@ -106,7 +106,7 @@ export interface UpdateFoodProductInput {
 
 export interface CreateFeedingPlanInput {
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   foodProductId: number;
   portionOz: number;
   feedingsPerDay?: number;
@@ -118,7 +118,7 @@ export interface CreateFeedingPlanInput {
 
 export interface LogFeedingInput {
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   feedingPlanId?: number;
   foodProductId?: number;
   fedAt: string;
@@ -132,7 +132,7 @@ export interface LogFeedingInput {
 export interface ChangeFoodInput {
   currentPlanId?: number;
   animalId?: number;
-  offspringGroupId?: number;
+  breedingPlanId?: number;
   newFoodProductId: number;
   newPortionOz: number;
   newFeedingsPerDay?: number;
@@ -361,11 +361,11 @@ export async function listFeedingPlans(
   tenantId: number,
   filters: FeedingPlanFilters = {}
 ): Promise<PaginatedResult<FeedingPlan & { foodProduct: FoodProduct }>> {
-  const { animalId, offspringGroupId, foodProductId, isActive, page = 1, limit = 50 } = filters;
+  const { animalId, breedingPlanId, foodProductId, isActive, page = 1, limit = 50 } = filters;
 
   const where: any = { tenantId };
   if (animalId) where.animalId = animalId;
-  if (offspringGroupId) where.offspringGroupId = offspringGroupId;
+  if (breedingPlanId) where.breedingPlanId = breedingPlanId;
   if (foodProductId) where.foodProductId = foodProductId;
   if (typeof isActive === "boolean") where.isActive = isActive;
 
@@ -402,16 +402,16 @@ export async function getActivePlanForAnimal(
 }
 
 /**
- * Get the active feeding plan for an offspring group.
+ * Get the active feeding plan for a breeding plan.
  */
-export async function getActivePlanForOffspringGroup(
+export async function getActivePlanForBreedingPlan(
   tenantId: number,
-  offspringGroupId: number
+  breedingPlanId: number
 ): Promise<(FeedingPlan & { foodProduct: FoodProduct }) | null> {
   return prisma.feedingPlan.findFirst({
     where: {
       tenantId,
-      offspringGroupId,
+      breedingPlanId,
       isActive: true,
       endDate: null,
     },
@@ -420,7 +420,7 @@ export async function getActivePlanForOffspringGroup(
 }
 
 /**
- * Create a new feeding plan for an animal or offspring group.
+ * Create a new feeding plan for an animal or breeding plan.
  * Automatically ends any existing active plan.
  */
 export async function createFeedingPlan(
@@ -435,15 +435,15 @@ export async function createFeedingPlan(
     if (!animal) {
       throw Object.assign(new Error("Animal not found"), { statusCode: 404 });
     }
-  } else if (input.offspringGroupId) {
-    const group = await prisma.offspringGroup.findFirst({
-      where: { id: input.offspringGroupId, tenantId },
+  } else if (input.breedingPlanId) {
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { id: input.breedingPlanId, tenantId },
     });
-    if (!group) {
-      throw Object.assign(new Error("Offspring group not found"), { statusCode: 404 });
+    if (!plan) {
+      throw Object.assign(new Error("Breeding plan not found"), { statusCode: 404 });
     }
   } else {
-    throw Object.assign(new Error("Either animalId or offspringGroupId is required"), { statusCode: 400 });
+    throw Object.assign(new Error("Either animalId or breedingPlanId is required"), { statusCode: 400 });
   }
 
   // Verify food product exists and belongs to tenant
@@ -459,7 +459,7 @@ export async function createFeedingPlan(
   if (input.animalId) {
     endWhere.animalId = input.animalId;
   } else {
-    endWhere.offspringGroupId = input.offspringGroupId;
+    endWhere.breedingPlanId = input.breedingPlanId;
   }
   await prisma.feedingPlan.updateMany({
     where: endWhere,
@@ -471,7 +471,7 @@ export async function createFeedingPlan(
     data: {
       tenantId,
       animalId: input.animalId ?? null,
-      offspringGroupId: input.offspringGroupId ?? null,
+      breedingPlanId: input.breedingPlanId ?? null,
       foodProductId: input.foodProductId,
       portionOz: input.portionOz,
       feedingsPerDay: input.feedingsPerDay ?? 2,
@@ -548,11 +548,11 @@ export async function listFeedingRecords(
   tenantId: number,
   filters: FeedingRecordFilters = {}
 ): Promise<PaginatedResult<FeedingRecord & { foodProduct: FoodProduct | null }>> {
-  const { animalId, offspringGroupId, feedingPlanId, dateFrom, dateTo, skipped, page = 1, limit = 50 } = filters;
+  const { animalId, breedingPlanId, feedingPlanId, dateFrom, dateTo, skipped, page = 1, limit = 50 } = filters;
 
   const where: any = { tenantId };
   if (animalId) where.animalId = animalId;
-  if (offspringGroupId) where.offspringGroupId = offspringGroupId;
+  if (breedingPlanId) where.breedingPlanId = breedingPlanId;
   if (feedingPlanId) where.feedingPlanId = feedingPlanId;
   if (typeof skipped === "boolean") where.skipped = skipped;
 
@@ -591,15 +591,15 @@ export async function logFeeding(
     if (!animal) {
       throw Object.assign(new Error("Animal not found"), { statusCode: 404 });
     }
-  } else if (input.offspringGroupId) {
-    const group = await prisma.offspringGroup.findFirst({
-      where: { id: input.offspringGroupId, tenantId },
+  } else if (input.breedingPlanId) {
+    const plan = await prisma.breedingPlan.findFirst({
+      where: { id: input.breedingPlanId, tenantId },
     });
-    if (!group) {
-      throw Object.assign(new Error("Offspring group not found"), { statusCode: 404 });
+    if (!plan) {
+      throw Object.assign(new Error("Breeding plan not found"), { statusCode: 404 });
     }
   } else {
-    throw Object.assign(new Error("Either animalId or offspringGroupId is required"), { statusCode: 400 });
+    throw Object.assign(new Error("Either animalId or breedingPlanId is required"), { statusCode: 400 });
   }
 
   // Get plan info for food product reference
@@ -620,7 +620,7 @@ export async function logFeeding(
     data: {
       tenantId,
       animalId: input.animalId ?? null,
-      offspringGroupId: input.offspringGroupId ?? null,
+      breedingPlanId: input.breedingPlanId ?? null,
       feedingPlanId: input.feedingPlanId,
       foodProductId,
       fedAt: new Date(input.fedAt),
@@ -690,11 +690,11 @@ export async function listFoodChanges(
   tenantId: number,
   filters: FoodChangeFilters = {}
 ): Promise<PaginatedResult<FoodChange>> {
-  const { animalId, offspringGroupId, changeReason, dateFrom, dateTo, page = 1, limit = 50 } = filters;
+  const { animalId, breedingPlanId, changeReason, dateFrom, dateTo, page = 1, limit = 50 } = filters;
 
   const where: any = { tenantId };
   if (animalId) where.animalId = animalId;
-  if (offspringGroupId) where.offspringGroupId = offspringGroupId;
+  if (breedingPlanId) where.breedingPlanId = breedingPlanId;
   if (changeReason) where.changeReason = changeReason;
 
   if (dateFrom || dateTo) {
@@ -738,14 +738,14 @@ export async function getFoodChangeHistory(
 }
 
 /**
- * Get food change history for an offspring group.
+ * Get food change history for a breeding plan.
  */
-export async function getFoodChangeHistoryForOffspringGroup(
+export async function getFoodChangeHistoryForBreedingPlan(
   tenantId: number,
-  offspringGroupId: number
+  breedingPlanId: number
 ): Promise<FoodChange[]> {
   return prisma.foodChange.findMany({
-    where: { tenantId, offspringGroupId },
+    where: { tenantId, breedingPlanId },
     orderBy: [{ changeDate: "desc" }],
     include: {
       previousPlan: { include: { foodProduct: true } },
@@ -755,7 +755,7 @@ export async function getFoodChangeHistoryForOffspringGroup(
 }
 
 /**
- * Change food for an animal or offspring group - creates new plan and records the change.
+ * Change food for an animal or breeding plan - creates new plan and records the change.
  */
 export async function changeFoodForAnimal(
   tenantId: number,
@@ -764,7 +764,7 @@ export async function changeFoodForAnimal(
   // Get current plan if provided
   let currentPlan: FeedingPlan | null = null;
   let animalId = input.animalId ?? undefined;
-  let offspringGroupId = input.offspringGroupId ?? undefined;
+  let breedingPlanId = input.breedingPlanId ?? undefined;
 
   if (input.currentPlanId) {
     currentPlan = await prisma.feedingPlan.findFirst({
@@ -772,13 +772,13 @@ export async function changeFoodForAnimal(
     });
     if (currentPlan) {
       animalId = currentPlan.animalId ?? undefined;
-      offspringGroupId = currentPlan.offspringGroupId ?? undefined;
+      breedingPlanId = currentPlan.breedingPlanId ?? undefined;
     }
   }
 
-  // Require either animalId or offspringGroupId
-  if (!animalId && !offspringGroupId) {
-    throw Object.assign(new Error("Either animalId or offspringGroupId is required"), { statusCode: 400 });
+  // Require either animalId or breedingPlanId
+  if (!animalId && !breedingPlanId) {
+    throw Object.assign(new Error("Either animalId or breedingPlanId is required"), { statusCode: 400 });
   }
 
   // End current plan if exists
@@ -794,7 +794,7 @@ export async function changeFoodForAnimal(
     data: {
       tenantId,
       animalId: animalId ?? null,
-      offspringGroupId: offspringGroupId ?? null,
+      breedingPlanId: breedingPlanId ?? null,
       foodProductId: input.newFoodProductId,
       portionOz: input.newPortionOz,
       feedingsPerDay: input.newFeedingsPerDay ?? 2,
@@ -811,7 +811,7 @@ export async function changeFoodForAnimal(
     data: {
       tenantId,
       animalId: animalId ?? null,
-      offspringGroupId: offspringGroupId ?? null,
+      breedingPlanId: breedingPlanId ?? null,
       previousPlanId: currentPlan?.id ?? null,
       newPlanId: newPlan.id,
       changeDate: new Date(input.startDate),
@@ -916,7 +916,7 @@ export async function getNutritionSummary(
 
 /**
  * Get cost breakdown by animal for a period.
- * Note: Only includes records linked to animals, not offspring groups.
+ * Note: Only includes records linked to animals, not breeding plans.
  */
 export async function getCostByAnimal(
   tenantId: number,
@@ -1019,7 +1019,7 @@ export default {
   // Feeding Plans
   listFeedingPlans,
   getActivePlanForAnimal,
-  getActivePlanForOffspringGroup,
+  getActivePlanForBreedingPlan,
   createFeedingPlan,
   updateFeedingPlan,
   endFeedingPlan,
@@ -1033,7 +1033,7 @@ export default {
   // Food Changes
   listFoodChanges,
   getFoodChangeHistory,
-  getFoodChangeHistoryForOffspringGroup,
+  getFoodChangeHistoryForBreedingPlan,
   changeFoodForAnimal,
   updateFoodChange,
 

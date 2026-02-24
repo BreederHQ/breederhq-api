@@ -26,11 +26,7 @@ export async function updateMareReproductiveHistory(
     },
     include: {
       foalingOutcome: true,
-      offspringGroup: {
-        include: {
-          Offspring: true,
-        },
-      },
+      Offspring: true,
     },
     orderBy: {
       birthDateActual: "desc",
@@ -53,8 +49,8 @@ export async function updateMareReproductiveHistory(
 
   for (const plan of completedBreedings) {
     // Count live foals
-    if (plan.offspringGroup?.Offspring) {
-      totalLiveFoals += plan.offspringGroup.Offspring.filter(
+    if (plan.Offspring) {
+      totalLiveFoals += plan.Offspring.filter(
         (o) => o.lifeState === "ALIVE"
       ).length;
     }
@@ -220,16 +216,12 @@ export async function getMareDetailedFoalingHistory(mareId: number, tenantId: nu
           name: true,
         },
       },
-      offspringGroup: {
-        include: {
-          Offspring: {
-            select: {
-              id: true,
-              sex: true,
-              healthStatus: true,
-              lifeState: true,
-            },
-          },
+      Offspring: {
+        select: {
+          id: true,
+          sex: true,
+          healthStatus: true,
+          lifeState: true,
         },
       },
     },
@@ -244,9 +236,9 @@ export async function getMareDetailedFoalingHistory(mareId: number, tenantId: nu
     breedDate: plan.breedDateActual,
     birthDate: plan.birthDateActual,
     sire: plan.sire,
-    foalCount: plan.offspringGroup?.Offspring.length || 0,
+    foalCount: plan.Offspring?.length || 0,
     liveFoalCount:
-      plan.offspringGroup?.Offspring.filter((o) => o.lifeState === "ALIVE").length || 0,
+      plan.Offspring?.filter((o) => o.lifeState === "ALIVE").length || 0,
     outcome: plan.foalingOutcome
       ? {
           hadComplications: plan.foalingOutcome.hadComplications,
@@ -309,11 +301,7 @@ export async function getFoalingAnalytics(tenantId: number, options?: { year?: n
       foalingOutcome: true,
       dam: { select: { id: true, name: true } },
       sire: { select: { id: true, name: true } },
-      offspringGroup: {
-        include: {
-          Offspring: { select: { id: true, lifeState: true, sex: true } },
-        },
-      },
+      Offspring: { select: { id: true, lifeState: true, sex: true } },
     },
     orderBy: { birthDateActual: "desc" },
   });
@@ -353,7 +341,7 @@ export async function getFoalingAnalytics(tenantId: number, options?: { year?: n
     const isThisYear = birthYear === targetYear;
 
     // Count live foals
-    const liveFoals = plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE") ?? [];
+    const liveFoals = plan.Offspring?.filter((o) => o.lifeState === "ALIVE") ?? [];
     totalLiveFoals += liveFoals.length;
     if (isThisYear) {
       totalFoalsThisYear += liveFoals.length;
@@ -418,7 +406,7 @@ export async function getFoalingAnalytics(tenantId: number, options?: { year?: n
       mareStats[plan.dam.id] = { id: plan.dam.id, name: plan.dam.name, foalings: 0, liveFoals: 0 };
     }
     mareStats[plan.dam.id].foalings++;
-    mareStats[plan.dam.id].liveFoals += plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
+    mareStats[plan.dam.id].liveFoals += plan.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
   }
   const topMares = Object.values(mareStats)
     .sort((a, b) => b.foalings - a.foalings)
@@ -432,7 +420,7 @@ export async function getFoalingAnalytics(tenantId: number, options?: { year?: n
       sireStats[plan.sire.id] = { id: plan.sire.id, name: plan.sire.name, foalings: 0, liveFoals: 0 };
     }
     sireStats[plan.sire.id].foalings++;
-    sireStats[plan.sire.id].liveFoals += plan.offspringGroup?.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
+    sireStats[plan.sire.id].liveFoals += plan.Offspring?.filter((o) => o.lifeState === "ALIVE").length ?? 0;
   }
   const topSires = Object.values(sireStats)
     .sort((a, b) => b.foalings - a.foalings)

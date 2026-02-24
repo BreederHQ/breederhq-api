@@ -34,18 +34,6 @@ function auditCtx(req: any, tenantId: number): AuditContext {
 
 /* ───────────────────────── errors ───────────────────────── */
 
-class InvoicePartyNotGroupBuyerError extends Error {
-  offspringGroupId: number;
-  billToPartyId: number;
-
-  constructor(offspringGroupId: number, billToPartyId: number) {
-    super("Bill-to party is not assigned as a buyer for this offspring group");
-    this.name = "InvoicePartyNotGroupBuyerError";
-    this.offspringGroupId = offspringGroupId;
-    this.billToPartyId = billToPartyId;
-  }
-}
-
 /* ───────────────────────── helpers ───────────────────────── */
 
 function parseIntOrNull(v: unknown): number | null {
@@ -65,17 +53,6 @@ function errorReply(err: unknown) {
   if (err instanceof IdempotencyConflictError) {
     return { status: 409, payload: { error: "idempotency_conflict", detail: any?.message } };
   }
-  if (err instanceof InvoicePartyNotGroupBuyerError) {
-    return {
-      status: 422,
-      payload: {
-        error: "INVOICE_PARTY_NOT_GROUP_BUYER",
-        offspringGroupId: any.offspringGroupId,
-        billToPartyId: any.billToPartyId,
-        message: "Bill-to party is not assigned as a buyer for this offspring group",
-      },
-    };
-  }
   const code = any?.code;
   if (code === "P2002") {
     return { status: 409, payload: { error: "duplicate", detail: any?.meta?.target } };
@@ -93,7 +70,6 @@ function invoiceDTO(inv: any) {
     invoiceNumber: inv.invoiceNumber,
     scope: inv.scope,
     offspringId: inv.offspringId,
-    offspringGroupId: inv.groupId,
     animalId: inv.animalId,
     breedingPlanId: inv.breedingPlanId,
     clientPartyId: inv.clientPartyId,
@@ -241,7 +217,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Validate anchors
       const anchors: InvoiceAnchors = {
         offspringId: parseIntOrNull(body.offspringId),
-        offspringGroupId: parseIntOrNull(body.offspringGroupId),
         animalId: parseIntOrNull(body.animalId),
         breedingPlanId: parseIntOrNull(body.breedingPlanId),
         serviceCode: body.serviceCode || null,
@@ -299,22 +274,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "invalid_amountCents" });
       }
 
-      // Offspring Group context: enforce buyer-only billing
-      // When offspringGroupId is present, clientPartyId must be an assigned buyer for that group
-      if (anchors.offspringGroupId) {
-        const buyerAssignment = await prisma.offspringGroupBuyer.findFirst({
-          where: {
-            groupId: anchors.offspringGroupId,
-            buyerPartyId: clientPartyId,
-            // Note: buyer status (Missed/Inactive) is currently allowed per spec
-            // Add status check here if business decides to block inactive buyers
-          },
-        });
-        if (!buyerAssignment) {
-          throw new InvoicePartyNotGroupBuyerError(anchors.offspringGroupId, clientPartyId);
-        }
-      }
-
       // Generate invoice number and create in transaction
       const result = await prisma.$transaction(async (tx: any) => {
         const invoiceNumber = await generateInvoiceNumber(tx, tenantId);
@@ -329,7 +288,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
             invoiceNumber,
             scope,
             offspringId: anchors.offspringId,
-            groupId: anchors.offspringGroupId,
             animalId: anchors.animalId,
             breedingPlanId: anchors.breedingPlanId,
             breedingPlanBuyerId: breedingPlanBuyerId || null,
@@ -443,7 +401,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (query.clientPartyId) where.clientPartyId = parseIntOrNull(query.clientPartyId);
       }
       if (query.offspringId) where.offspringId = parseIntOrNull(query.offspringId);
-      if (query.offspringGroupId) where.groupId = parseIntOrNull(query.offspringGroupId);
       if (query.animalId) where.animalId = parseIntOrNull(query.animalId);
       if (query.breedingPlanId) where.breedingPlanId = parseIntOrNull(query.breedingPlanId);
 

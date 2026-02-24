@@ -306,25 +306,21 @@ export async function getNeonatalDashboard(
   planId: number,
   tenantId: number
 ): Promise<NeonatalDashboardData> {
-  // Get the breeding plan with offspring group
+  // Get the breeding plan with offspring
   const plan = await prisma.breedingPlan.findFirst({
     where: { id: planId, tenantId },
     include: {
-      offspringGroup: {
+      Offspring: {
+        where: { archivedAt: null },
         include: {
-          Offspring: {
-            where: { archivedAt: null },
-            include: {
-              NeonatalCareEntries: {
-                orderBy: { recordedAt: "desc" },
-                take: 1,
-              },
-              _count: {
-                select: {
-                  NeonatalCareEntries: true,
-                  NeonatalInterventions: true,
-                },
-              },
+          NeonatalCareEntries: {
+            orderBy: { recordedAt: "desc" },
+            take: 1,
+          },
+          _count: {
+            select: {
+              NeonatalCareEntries: true,
+              NeonatalInterventions: true,
             },
           },
         },
@@ -355,7 +351,7 @@ export async function getNeonatalDashboard(
     where: {
       tenantId,
       offspring: {
-        group: { planId },
+        breedingPlanId: planId,
       },
       followUpNeeded: true,
     },
@@ -367,7 +363,7 @@ export async function getNeonatalDashboard(
   });
 
   // Map offspring data
-  const offspring = (plan.offspringGroup?.Offspring || []).map((o) => {
+  const offspring = (plan.Offspring || []).map((o) => {
     const latestEntry = o.NeonatalCareEntries[0] || null;
     return {
       id: o.id,

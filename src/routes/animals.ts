@@ -3746,17 +3746,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const offspring = await prisma.offspring.findMany({
         where: {
           tenantId,
-          group: {
-            species: "SHEEP",
-          },
+          species: "SHEEP",
           bornAt: Object.keys(dateFilters).length > 0 ? dateFilters : undefined,
         },
         include: {
-          group: {
-            select: {
-              species: true,
-            },
-          },
           promotedAnimal: {
             select: {
               id: true,
@@ -4090,12 +4083,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         sireId: true,
         dam: { select: { id: true, name: true } },
         sire: { select: { id: true, name: true } },
-        group: {
+        BreedingPlan: {
           select: {
             id: true,
             name: true,
-            actualBirthOn: true,
-            expectedBirthOn: true,
+            birthDateActual: true,
+            expectedBirthDate: true,
           },
         },
         collarColorName: true,
@@ -4119,10 +4112,10 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         otherParent: animal.sex === "FEMALE"
           ? (o.sire ? { id: o.sire.id, name: o.sire.name } : null)
           : (o.dam ? { id: o.dam.id, name: o.dam.name } : null),
-        group: o.group ? {
-          id: o.group.id,
-          name: o.group.name,
-          birthDate: o.group.actualBirthOn?.toISOString() ?? o.group.expectedBirthOn?.toISOString() ?? null,
+        group: o.BreedingPlan ? {
+          id: o.BreedingPlan.id,
+          name: o.BreedingPlan.name,
+          birthDate: o.BreedingPlan.birthDateActual?.toISOString() ?? o.BreedingPlan.expectedBirthDate?.toISOString() ?? null,
         } : null,
         collarColor: o.collarColorName || o.collarColorHex || null,
       })),

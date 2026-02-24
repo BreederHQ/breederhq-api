@@ -174,13 +174,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: {
           tenantId,
           offspring: {
-            group: {
-              groupBuyerLinks: {
-                some: {
-                  buyerPartyId: partyId,
-                },
-              },
-            },
+            buyerPartyId: partyId,
           },
           fileId: {
             not: null,
@@ -247,19 +241,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Find the document via the same access path used by /portal/documents list endpoint
-      // OffspringDocument -> Offspring -> Group -> GroupBuyerLinks -> buyerPartyId
+      // OffspringDocument -> Offspring -> buyerPartyId
       const offspringDocument = await prisma.offspringDocument.findFirst({
         where: {
           tenantId,
           fileId,
           offspring: {
-            group: {
-              groupBuyerLinks: {
-                some: {
-                  buyerPartyId: partyId,
-                },
-              },
-            },
+            buyerPartyId: partyId,
           },
         },
         include: {
@@ -334,24 +322,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -371,14 +359,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const placements = offspring.map((o) => ({
         id: o.id,
-        offspringGroupId: o.group.id,
-        offspringGroupCode: o.group.name || `Group-${o.group.id}`,
-        offspringGroupLabel: o.group.name,
-        birthDate: o.group.actualBirthOn ? o.group.actualBirthOn.toISOString() : o.bornAt?.toISOString() || null,
-        species: o.group.species,
+        breedingPlanId: o.BreedingPlan?.id ?? null,
+        breedingPlanName: o.BreedingPlan?.name ?? null,
+        birthDate: o.BreedingPlan?.birthDateActual ? o.BreedingPlan.birthDateActual.toISOString() : o.bornAt?.toISOString() || null,
+        species: o.species,
         breed: o.breed,
-        dam: o.group.dam,
-        sire: o.group.sire,
+        dam: o.dam,
+        sire: o.sire,
         offspring: {
           id: o.id,
           name: o.name || "Unnamed",
@@ -419,24 +406,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -460,15 +447,15 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         name: offspring.name || "Unnamed",
         sex: offspring.sex,
         breed: offspring.breed,
-        species: offspring.group.species,
-        birthDate: offspring.group.actualBirthOn
-          ? offspring.group.actualBirthOn.toISOString()
+        species: offspring.species,
+        birthDate: offspring.BreedingPlan?.birthDateActual
+          ? offspring.BreedingPlan.birthDateActual.toISOString()
           : offspring.bornAt?.toISOString() || null,
         placementStatus: mapOffspringStateToPlacementStatus(offspring),
-        dam: offspring.group.dam,
-        sire: offspring.group.sire,
-        groupId: offspring.group.id,
-        groupName: offspring.group.name,
+        dam: offspring.dam,
+        sire: offspring.sire,
+        breedingPlanId: offspring.BreedingPlan?.id ?? null,
+        breedingPlanName: offspring.BreedingPlan?.name ?? null,
         contractSignedAt: offspring.contractSignedAt?.toISOString() || null,
         paidInFullAt: offspring.paidInFullAt?.toISOString() || null,
         pickupAt: offspring.pickupAt?.toISOString() || null,
@@ -499,24 +486,24 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           buyerPartyId: partyId,
         },
         include: {
-          group: {
+          BreedingPlan: {
             select: {
               id: true,
               name: true,
-              actualBirthOn: true,
+              birthDateActual: true,
               species: true,
-              dam: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-              sire: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
+            },
+          },
+          dam: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sire: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
@@ -536,14 +523,13 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const placements = offspring.map((o) => ({
         id: o.id,
-        offspringGroupId: o.group.id,
-        offspringGroupCode: o.group.name || `Group-${o.group.id}`,
-        offspringGroupLabel: o.group.name,
-        birthDate: o.group.actualBirthOn ? o.group.actualBirthOn.toISOString() : o.bornAt?.toISOString() || null,
-        species: o.group.species,
+        breedingPlanId: o.BreedingPlan?.id ?? null,
+        breedingPlanName: o.BreedingPlan?.name ?? null,
+        birthDate: o.BreedingPlan?.birthDateActual ? o.BreedingPlan.birthDateActual.toISOString() : o.bornAt?.toISOString() || null,
+        species: o.species,
         breed: o.breed,
-        dam: o.group.dam,
-        sire: o.group.sire,
+        dam: o.dam,
+        sire: o.sire,
         offspring: {
           id: o.id,
           name: o.name || "Unnamed",

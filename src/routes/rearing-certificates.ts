@@ -107,7 +107,7 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         where: { id: assignmentId, tenantId },
         include: {
           protocol: true,
-          offspringGroup: {
+          BreedingPlan: {
             include: {
               tenant: {
                 select: { name: true },
@@ -143,11 +143,11 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         }
       }
 
-      // Verify offspring - check both group-level and individual-level assignments
+      // Verify offspring - check both plan-level and individual-level assignments
       let offspring;
-      if (assignment.offspringGroupId) {
+      if (assignment.breedingPlanId) {
         offspring = await prisma.offspring.findFirst({
-          where: { id: offspringId, groupId: assignment.offspringGroupId, tenantId },
+          where: { id: offspringId, breedingPlanId: assignment.breedingPlanId, tenantId },
         });
       } else if (assignment.offspringId) {
         offspring = await prisma.offspring.findFirst({
@@ -197,7 +197,7 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
           offspringId,
           offspringName: offspring.name ?? `Offspring #${offspring.id}`,
           protocolName: assignment.protocol?.name ?? "Unknown Protocol",
-          breederName: assignment.offspringGroup?.tenant?.name ?? "Unknown Breeder",
+          breederName: assignment.BreedingPlan?.tenant?.name ?? "Unknown Breeder",
           certificateType: certificateType as any,
           stageCompleted: stageCompleted ?? (certificateType === "BREEDER_PHASE" ? 3 : null),
           stageData,

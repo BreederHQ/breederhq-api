@@ -1,12 +1,11 @@
 /**
  * Archive Validation Service
  *
- * Validates whether a breeding plan and its linked offspring group
- * are ready for archival. Returns blockers (must fix) and warnings (advisory).
+ * Validates whether a breeding plan is ready for archival.
+ * Returns blockers (must fix) and warnings (advisory).
  *
  * Key Design Decisions:
  * - Deceased offspring (lifeState = DECEASED) are excluded from placement validation
- * - Plan + OffspringGroup always archive together (no option to separate)
  * - Health records are advisory only (never block)
  * - Validation rules can be customized per organization via TenantSetting
  */
@@ -70,9 +69,7 @@ export interface ArchiveReadinessResponse {
   };
   checks: ValidationCheckResult[];
   healthRecordsAdvisory: HealthRecordsAdvisory;
-  offspringGroup: {
-    id: number;
-    name: string | null;
+  offspringSummary: {
     totalOffspring: number;
     livingOffspring: number;
     deceasedOffspring: number;
@@ -163,58 +160,28 @@ export async function checkArchiveReadiness(
     select: {
       id: true,
       name: true,
-      offspringGroup: {
+      placementCompletedDateActual: true,
+      countPlaced: true,
+      Offspring: {
+        where: { archivedAt: null },
         select: {
           id: true,
           name: true,
-          placementCompletedAt: true,
-          countPlaced: true,
-          Offspring: {
-            where: { archivedAt: null },
-            select: {
-              id: true,
-              name: true,
-              sex: true,
-              lifeState: true,
-              placementState: true,
-              keeperIntent: true,
-              paperworkState: true,
-              buyerPartyId: true,
-              collarColorName: true,
-              collarColorHex: true,
-            },
-          },
-          Waitlist: {
-            select: {
-              id: true,
-              status: true,
-              clientPartyId: true,
-            },
-          },
-          Invoice: {
-            where: { deletedAt: null },
-            select: {
-              id: true,
-              invoiceNumber: true,
-              status: true,
-              balanceCents: true,
-              clientPartyId: true,
-            },
-          },
-          Contract: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-            },
-          },
-          Task: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-            },
-          },
+          sex: true,
+          lifeState: true,
+          placementState: true,
+          keeperIntent: true,
+          paperworkState: true,
+          buyerPartyId: true,
+          collarColorName: true,
+          collarColorHex: true,
+        },
+      },
+      Waitlist: {
+        select: {
+          id: true,
+          status: true,
+          clientPartyId: true,
         },
       },
       Invoice: {
@@ -227,6 +194,13 @@ export async function checkArchiveReadiness(
           clientPartyId: true,
         },
       },
+      Contract: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+        },
+      },
     },
   });
 
@@ -234,7 +208,21 @@ export async function checkArchiveReadiness(
     throw new Error("Plan not found");
   }
 
-  const group = plan.offspringGroup;
+  const hasOffspring = plan.Offspring && plan.Offspring.length > 0;
+
+  // Fetch tasks associated with the plan's offspring
+  const offspringIds = plan.Offspring?.map(o => o.id) ?? [];
+  const planTasks = offspringIds.length > 0 ? await prisma.task.findMany({
+    where: {
+      tenantId,
+      offspringId: { in: offspringIds },
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+    },
+  }) : [];
 
   // Helper to add a check result based on configured severity
   const addCheck = (
@@ -261,8 +249,8 @@ export async function checkArchiveReadiness(
   // Run Validation Checks
   // ─────────────────────────────────────────────────────────────────────────
 
-  if (group) {
-    const offspring = group.Offspring || [];
+  if (hasOffspring) {
+    const offspring = plan.Offspring || [];
     const livingOffspring = offspring.filter((o) => o.lifeState !== "DECEASED");
 
     // 1. UNPLACED_OFFSPRING - All living offspring must be placed
@@ -318,12 +306,12 @@ export async function checkArchiveReadiness(
         : `${incompletePaperwork.length} offspring have incomplete paperwork`
     );
 
-    // 4. MISSING_PLACEMENT_COMPLETED_DATE - Group must have placement completed date
+    // 4. MISSING_PLACEMENT_COMPLETED_DATE - Plan must have placement completed date
     addCheck(
       "MISSING_PLACEMENT_COMPLETED_DATE",
       "group",
-      !!group.placementCompletedAt,
-      group.placementCompletedAt
+      !!plan.placementCompletedDateActual,
+      plan.placementCompletedDateActual
         ? "Placement completed date is set"
         : "Placement completed date has not been set"
     );
@@ -340,9 +328,9 @@ export async function checkArchiveReadiness(
     const totalAccountedFor = actualPlacedCount + keptCount;
 
     const countMatches =
-      group.countPlaced === null ||
-      group.countPlaced === actualPlacedCount ||
-      group.countPlaced === totalAccountedFor;
+      plan.countPlaced === null ||
+      plan.countPlaced === actualPlacedCount ||
+      plan.countPlaced === totalAccountedFor;
 
     addCheck(
       "OFFSPRING_COUNT_MISMATCH",
@@ -350,131 +338,129 @@ export async function checkArchiveReadiness(
       countMatches,
       countMatches
         ? "Offspring counts are reconciled"
-        : `Count mismatch: recorded ${group.countPlaced} placed but found ${actualPlacedCount} placed (${keptCount} kept)`
-    );
-
-    // 6. PENDING_WAITLIST_ENTRIES - All waitlist entries must be resolved
-    const terminalWaitlistStatuses = ["COMPLETED", "CANCELED", "REJECTED"];
-    const pendingWaitlist = (group.Waitlist || []).filter(
-      (w) => !terminalWaitlistStatuses.includes(w.status)
-    );
-    addCheck(
-      "PENDING_WAITLIST_ENTRIES",
-      "waitlist",
-      pendingWaitlist.length === 0,
-      pendingWaitlist.length === 0
-        ? "All waitlist entries are resolved"
-        : `${pendingWaitlist.length} waitlist entries are still pending`,
-      pendingWaitlist.length > 0
-        ? pendingWaitlist.map((w) => ({
-            type: "waitlist_entry" as const,
-            id: w.id,
-            label: `Waitlist #${w.id} (${w.status})`,
-          }))
-        : undefined
-    );
-
-    // 7. OPEN_TASKS - No open tasks
-    const openTasks = (group.Task || []).filter(
-      (t) => t.status === "open" || t.status === "in_progress"
-    );
-    addCheck(
-      "OPEN_TASKS",
-      "tasks",
-      openTasks.length === 0,
-      openTasks.length === 0
-        ? "All tasks are complete"
-        : `${openTasks.length} tasks are still open or in progress`,
-      openTasks.length > 0
-        ? openTasks.map((t) => ({
-            type: "task" as const,
-            id: t.id,
-            label: t.title || `Task #${t.id}`,
-          }))
-        : undefined
-    );
-
-    // Combine invoices from group and plan for financial checks
-    const allInvoices = [...(group.Invoice || []), ...(plan.Invoice || [])];
-
-    // 8. UNPAID_INVOICE - All invoices must be in terminal state
-    const terminalInvoiceStatuses = ["paid", "void", "cancelled", "refunded"];
-    const unpaidInvoices = allInvoices.filter(
-      (i) => !terminalInvoiceStatuses.includes(i.status)
-    );
-    addCheck(
-      "UNPAID_INVOICE",
-      "financial",
-      unpaidInvoices.length === 0,
-      unpaidInvoices.length === 0
-        ? "All invoices are in a terminal state"
-        : `${unpaidInvoices.length} invoices are not paid or resolved`,
-      unpaidInvoices.length > 0
-        ? unpaidInvoices.map((i) => ({
-            type: "invoice" as const,
-            id: i.id,
-            label: i.invoiceNumber || `Invoice #${i.id}`,
-            amount: Number(i.balanceCents) || 0,
-          }))
-        : undefined
-    );
-
-    // 9. OUTSTANDING_BALANCE - No invoices with outstanding balance
-    const withBalance = allInvoices.filter(
-      (i) => Number(i.balanceCents) > 0 && i.status !== "void" && i.status !== "cancelled"
-    );
-    addCheck(
-      "OUTSTANDING_BALANCE",
-      "financial",
-      withBalance.length === 0,
-      withBalance.length === 0
-        ? "No outstanding balances"
-        : `${withBalance.length} invoices have outstanding balances`,
-      withBalance.length > 0
-        ? withBalance.map((i) => ({
-            type: "invoice" as const,
-            id: i.id,
-            label: i.invoiceNumber || `Invoice #${i.id}`,
-            amount: Number(i.balanceCents),
-          }))
-        : undefined
-    );
-
-    // 10. UNSIGNED_CONTRACT - All contracts must be signed or voided
-    const terminalContractStatuses = ["signed", "voided"];
-    const unsignedContracts = (group.Contract || []).filter(
-      (c) => !terminalContractStatuses.includes(c.status)
-    );
-    addCheck(
-      "UNSIGNED_CONTRACT",
-      "contracts",
-      unsignedContracts.length === 0,
-      unsignedContracts.length === 0
-        ? "All contracts are signed or voided"
-        : `${unsignedContracts.length} contracts are not signed`,
-      unsignedContracts.length > 0
-        ? unsignedContracts.map((c) => ({
-            type: "contract" as const,
-            id: c.id,
-            label: c.title || `Contract #${c.id}`,
-          }))
-        : undefined
+        : `Count mismatch: recorded ${plan.countPlaced} placed but found ${actualPlacedCount} placed (${keptCount} kept)`
     );
   } else {
-    // No offspring group - most checks pass by default
+    // No offspring - most checks pass by default
     addCheck(
       "UNPLACED_OFFSPRING",
       "offspring",
       true,
-      "No offspring group linked to this plan"
+      "No offspring linked to this plan"
     );
     addCheck(
       "MISSING_PLACEMENT_COMPLETED_DATE",
       "group",
       true,
-      "No offspring group linked to this plan"
+      "No offspring linked to this plan"
     );
   }
+
+  // 6. PENDING_WAITLIST_ENTRIES - All waitlist entries must be resolved
+  const terminalWaitlistStatuses = ["COMPLETED", "CANCELED", "REJECTED"];
+  const pendingWaitlist = (plan.Waitlist || []).filter(
+    (w) => !terminalWaitlistStatuses.includes(w.status)
+  );
+  addCheck(
+    "PENDING_WAITLIST_ENTRIES",
+    "waitlist",
+    pendingWaitlist.length === 0,
+    pendingWaitlist.length === 0
+      ? "All waitlist entries are resolved"
+      : `${pendingWaitlist.length} waitlist entries are still pending`,
+    pendingWaitlist.length > 0
+      ? pendingWaitlist.map((w) => ({
+          type: "waitlist_entry" as const,
+          id: w.id,
+          label: `Waitlist #${w.id} (${w.status})`,
+        }))
+      : undefined
+  );
+
+  // 7. OPEN_TASKS - No open tasks
+  const openTasks = planTasks.filter(
+    (t) => t.status === "open" || t.status === "in_progress"
+  );
+  addCheck(
+    "OPEN_TASKS",
+    "tasks",
+    openTasks.length === 0,
+    openTasks.length === 0
+      ? "All tasks are complete"
+      : `${openTasks.length} tasks are still open or in progress`,
+    openTasks.length > 0
+      ? openTasks.map((t) => ({
+          type: "task" as const,
+          id: t.id,
+          label: t.title || `Task #${t.id}`,
+        }))
+      : undefined
+  );
+
+  // 8. UNPAID_INVOICE - All invoices must be in terminal state
+  const allInvoices = plan.Invoice || [];
+  const terminalInvoiceStatuses = ["paid", "void", "cancelled", "refunded"];
+  const unpaidInvoices = allInvoices.filter(
+    (i) => !terminalInvoiceStatuses.includes(i.status)
+  );
+  addCheck(
+    "UNPAID_INVOICE",
+    "financial",
+    unpaidInvoices.length === 0,
+    unpaidInvoices.length === 0
+      ? "All invoices are in a terminal state"
+      : `${unpaidInvoices.length} invoices are not paid or resolved`,
+    unpaidInvoices.length > 0
+      ? unpaidInvoices.map((i) => ({
+          type: "invoice" as const,
+          id: i.id,
+          label: i.invoiceNumber || `Invoice #${i.id}`,
+          amount: Number(i.balanceCents) || 0,
+        }))
+      : undefined
+  );
+
+  // 9. OUTSTANDING_BALANCE - No invoices with outstanding balance
+  const withBalance = allInvoices.filter(
+    (i) => Number(i.balanceCents) > 0 && i.status !== "void" && i.status !== "cancelled"
+  );
+  addCheck(
+    "OUTSTANDING_BALANCE",
+    "financial",
+    withBalance.length === 0,
+    withBalance.length === 0
+      ? "No outstanding balances"
+      : `${withBalance.length} invoices have outstanding balances`,
+    withBalance.length > 0
+      ? withBalance.map((i) => ({
+          type: "invoice" as const,
+          id: i.id,
+          label: i.invoiceNumber || `Invoice #${i.id}`,
+          amount: Number(i.balanceCents),
+        }))
+      : undefined
+  );
+
+  // 10. UNSIGNED_CONTRACT - All contracts must be signed or voided
+  const terminalContractStatuses = ["signed", "voided"];
+  const unsignedContracts = (plan.Contract || []).filter(
+    (c) => !terminalContractStatuses.includes(c.status)
+  );
+  addCheck(
+    "UNSIGNED_CONTRACT",
+    "contracts",
+    unsignedContracts.length === 0,
+    unsignedContracts.length === 0
+      ? "All contracts are signed or voided"
+      : `${unsignedContracts.length} contracts are not signed`,
+    unsignedContracts.length > 0
+      ? unsignedContracts.map((c) => ({
+          type: "contract" as const,
+          id: c.id,
+          label: c.title || `Contract #${c.id}`,
+        }))
+      : undefined
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Health Records Advisory (non-blocking)
@@ -486,8 +472,8 @@ export async function checkArchiveReadiness(
     totalHealthRecords: 0,
   };
 
-  if (group && group.Offspring.length > 0) {
-    const offspringIds = group.Offspring.map((o) => o.id);
+  if (hasOffspring) {
+    const offspringIds = plan.Offspring.map((o) => o.id);
 
     // Get health record counts per offspring
     const healthCounts = await prisma.healthEvent.groupBy({
@@ -503,7 +489,7 @@ export async function checkArchiveReadiness(
       healthCounts.map((h) => [h.offspringId, h._count.id])
     );
 
-    const livingOffspring = group.Offspring.filter(
+    const livingOffspring = plan.Offspring.filter(
       (o) => o.lifeState !== "DECEASED"
     );
     const missingRecords = livingOffspring
@@ -548,15 +534,13 @@ export async function checkArchiveReadiness(
     },
     checks,
     healthRecordsAdvisory,
-    offspringGroup: group
+    offspringSummary: hasOffspring
       ? {
-          id: group.id,
-          name: group.name,
-          totalOffspring: group.Offspring.length,
-          livingOffspring: group.Offspring.filter(
+          totalOffspring: plan.Offspring.length,
+          livingOffspring: plan.Offspring.filter(
             (o) => o.lifeState !== "DECEASED"
           ).length,
-          deceasedOffspring: group.Offspring.filter(
+          deceasedOffspring: plan.Offspring.filter(
             (o) => o.lifeState === "DECEASED"
           ).length,
         }

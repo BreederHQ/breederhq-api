@@ -11,7 +11,7 @@ interface ChainNode {
 
 /**
  * Build the inheritance chain from a specific level/entity up to the program level
- * Example: offspring(123) → group(45) → plan(6) → program('german-shepherds')
+ * Example: offspring(123) → plan(6) → program('german-shepherds')
  */
 export async function buildInheritanceChain(
   level: BreedingRuleLevel,
@@ -25,57 +25,7 @@ export async function buildInheritanceChain(
       const offspring = await prisma.offspring.findUnique({
         where: { id: Number(id), tenantId },
         include: {
-          group: {
-            include: {
-              plan: {
-                include: {
-                  sire: true,
-                  dam: true
-                }
-              }
-            }
-          }
-        }
-      });
-
-      if (offspring) {
-        chain.push({ level: 'OFFSPRING', id: offspring.id });
-
-        if (offspring.group) {
-          chain.push({ level: 'GROUP', id: offspring.group.id });
-
-          if (offspring.group.plan) {
-            const plan = offspring.group.plan;
-            chain.push({ level: 'PLAN', id: plan.id });
-
-            // Find program via species/breed match
-            // Get species from sire or dam
-            const species = plan.sire?.species || plan.dam?.species;
-            if (species) {
-              // Find breeding program that matches species and optionally breed
-              const program = await prisma.mktListingBreedingProgram.findFirst({
-                where: {
-                  tenantId,
-                  species,
-                  // Could also match breedId if we want stricter matching
-                }
-              });
-
-              if (program) {
-                chain.push({ level: 'PROGRAM', id: program.slug });
-              }
-            }
-          }
-        }
-      }
-      break;
-    }
-
-    case 'GROUP': {
-      const group = await prisma.offspringGroup.findUnique({
-        where: { id: Number(id), tenantId },
-        include: {
-          plan: {
+          BreedingPlan: {
             include: {
               sire: true,
               dam: true
@@ -84,17 +34,23 @@ export async function buildInheritanceChain(
         }
       });
 
-      if (group) {
-        chain.push({ level: 'GROUP', id: group.id });
+      if (offspring) {
+        chain.push({ level: 'OFFSPRING', id: offspring.id });
 
-        if (group.plan) {
-          const plan = group.plan;
+        if (offspring.BreedingPlan) {
+          const plan = offspring.BreedingPlan;
           chain.push({ level: 'PLAN', id: plan.id });
 
+          // Find program via species/breed match
+          // Get species from sire or dam
           const species = plan.sire?.species || plan.dam?.species;
           if (species) {
+            // Find breeding program that matches species and optionally breed
             const program = await prisma.mktListingBreedingProgram.findFirst({
-              where: { tenantId, species }
+              where: {
+                tenantId,
+                species,
+              }
             });
 
             if (program) {
@@ -192,7 +148,7 @@ export async function getEffectiveRules(
   const effectiveRules: BreedingProgramRule[] = [];
 
   for (const [ruleType, rules] of rulesByType.entries()) {
-    // Sort by specificity (offspring > group > plan > program)
+    // Sort by specificity (offspring > plan > program)
     const sorted = sortBySpecificity(rules, chain);
 
     // Most specific (closest to leaf) wins
@@ -237,7 +193,7 @@ function sortBySpecificity(
  */
 export async function executeRule(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number,
   triggeredBy: 'user_action' | 'cron_job' | 'webhook'
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
@@ -320,7 +276,7 @@ export async function executeRule(
  */
 async function executeAutoListAvailable(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
   if (entityType !== 'offspring') {
@@ -422,14 +378,11 @@ export async function executeAllRulesForEntity(
 
   for (const rule of rules) {
     // Determine entity type and ID based on level
-    let entityType: 'offspring' | 'group' | 'plan';
+    let entityType: 'offspring' | 'plan';
     let entityId: number;
 
     if (level === 'OFFSPRING') {
       entityType = 'offspring';
-      entityId = Number(id);
-    } else if (level === 'GROUP') {
-      entityType = 'group';
       entityId = Number(id);
     } else if (level === 'PLAN') {
       entityType = 'plan';
@@ -459,7 +412,7 @@ export async function executeAllRulesForEntity(
  */
 async function executeAutoUnlistOnStatusChange(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
   if (entityType !== 'offspring') {
@@ -507,7 +460,7 @@ async function executeAutoUnlistOnStatusChange(
  */
 async function executeDefaultPriceBySex(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
   if (entityType !== 'offspring') {
@@ -577,7 +530,7 @@ async function executeDefaultPriceBySex(
  */
 async function executeHidePhotosUntilAge(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
   // This rule is passive - it's checked when rendering, not executed
@@ -595,7 +548,7 @@ async function executeHidePhotosUntilAge(
  */
 async function executeAcceptInquiries(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
   // This rule is passive - it's checked when handling inquiries
@@ -613,13 +566,13 @@ async function executeAcceptInquiries(
  */
 async function executeNotifyWaitlistOnPhotos(
   rule: BreedingProgramRule,
-  entityType: 'offspring' | 'group' | 'plan',
+  entityType: 'offspring' | 'plan',
   entityId: number
 ): Promise<{ success: boolean; action?: string; changes?: any; error?: string }> {
-  if (entityType !== 'offspring' && entityType !== 'group') {
+  if (entityType !== 'offspring') {
     return {
       success: false,
-      error: 'notify_waitlist_on_photos rule only applies to offspring and groups'
+      error: 'notify_waitlist_on_photos rule only applies to offspring'
     };
   }
 
@@ -637,7 +590,7 @@ async function executeNotifyWaitlistOnPhotos(
 
   // In a real implementation, this would:
   // 1. Check if enough photos exist
-  // 2. Find all waitlist members for this offspring/group
+  // 2. Find all waitlist members for this offspring
   // 3. Send email notifications
   // 4. Track who was notified to avoid duplicates
 

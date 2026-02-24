@@ -7,11 +7,9 @@
 
 import type {
   Organization,
-  OffspringGroup,
   Offspring,
   Animal,
   MktListingIndividualAnimal,
-  Breed,
   AnimalRegistryIdentifier,
   Registry,
   AnimalTraitValue,
@@ -85,111 +83,6 @@ export function toPublicProgramSummaryDTO(
 }
 
 // ============================================================================
-// Public Offspring Group Listing DTO
-// ============================================================================
-
-export interface PublicOffspringGroupListingDTO {
-  slug: string;
-  title: string | null;
-  description: string | null;
-  species: string;
-  breed: string | null;
-  expectedBirthOn: string | null;
-  actualBirthOn: string | null;
-  countAvailable: number;
-  dam: {
-    name: string;
-    photoUrl: string | null;
-    breed: string | null;
-  } | null;
-  sire: {
-    name: string;
-    photoUrl: string | null;
-    breed: string | null;
-  } | null;
-  coverImageUrl: string | null;
-  priceRange: { min: number; max: number } | null;
-  programSlug: string;
-  programName: string;
-}
-
-type OffspringGroupWithRelations = Pick<
-  OffspringGroup,
-  | "listingSlug"
-  | "listingTitle"
-  | "listingDescription"
-  | "species"
-  | "expectedBirthOn"
-  | "actualBirthOn"
-  | "coverImageUrl"
-  | "marketplaceDefaultPriceCents"
-> & {
-  dam?: Pick<Animal, "name" | "photoUrl" | "breed"> | null;
-  sire?: Pick<Animal, "name" | "photoUrl" | "breed"> | null;
-  Offspring?: Array<Pick<Offspring, "priceCents" | "keeperIntent" | "placementState" | "marketplaceListed" | "marketplacePriceCents">>;
-  tenant?: { organizations?: Array<Pick<Organization, "programSlug" | "name">> };
-};
-
-export function toPublicOffspringGroupListingDTO(
-  group: OffspringGroupWithRelations,
-  programSlug: string,
-  programName: string
-): PublicOffspringGroupListingDTO {
-  // Filter to only listed offspring
-  const listedOffspring = (group.Offspring || []).filter((o) => o.marketplaceListed === true);
-
-  // Count available offspring (listed + available + unassigned)
-  const available = listedOffspring.filter(
-    (o) => o.keeperIntent === "AVAILABLE" && o.placementState === "UNASSIGNED"
-  );
-  const countAvailable = available.length;
-
-  // Calculate price range from available offspring with derived prices
-  const prices = available
-    .map((o) => o.marketplacePriceCents ?? group.marketplaceDefaultPriceCents ?? o.priceCents)
-    .filter((p): p is number => p != null && p > 0);
-  const priceRange =
-    prices.length > 0
-      ? { min: Math.min(...prices), max: Math.max(...prices) }
-      : null;
-
-  // Derive breed from dam
-  const breed = group.dam?.breed || null;
-
-  return {
-    slug: group.listingSlug || "",
-    title: group.listingTitle || null,
-    description: group.listingDescription || null,
-    species: group.species,
-    breed,
-    expectedBirthOn: group.expectedBirthOn?.toISOString().slice(0, 10) || null,
-    actualBirthOn: group.actualBirthOn?.toISOString().slice(0, 10) || null,
-    countAvailable,
-    dam: group.dam
-      ? {
-          name: group.dam.name,
-          // SECURITY: Transform to auth-gated asset URL
-          photoUrl: toAssetUrl(group.dam.photoUrl, "dam_photo"),
-          breed: group.dam.breed || null,
-        }
-      : null,
-    sire: group.sire
-      ? {
-          name: group.sire.name,
-          // SECURITY: Transform to auth-gated asset URL
-          photoUrl: toAssetUrl(group.sire.photoUrl, "sire_photo"),
-          breed: group.sire.breed || null,
-        }
-      : null,
-    // SECURITY: Transform to auth-gated asset URL
-    coverImageUrl: toAssetUrl(group.coverImageUrl, "offspring_group_cover"),
-    priceRange,
-    programSlug,
-    programName,
-  };
-}
-
-// ============================================================================
 // Public Offspring DTO
 // ============================================================================
 
@@ -217,8 +110,7 @@ type OffspringWithFields = Pick<
 >;
 
 export function toPublicOffspringDTO(
-  offspring: OffspringWithFields,
-  groupDefaultPriceCents?: number | null
+  offspring: OffspringWithFields
 ): PublicOffspringDTO {
   // Derive status from state fields
   let status: "available" | "reserved" | "placed";
@@ -233,8 +125,8 @@ export function toPublicOffspringDTO(
     status = "available";
   }
 
-  // Derive price: offspring override > group default > offspring base price
-  const derivedPrice = offspring.marketplacePriceCents ?? groupDefaultPriceCents ?? offspring.priceCents ?? null;
+  // Derive price: offspring marketplace override > offspring base price
+  const derivedPrice = offspring.marketplacePriceCents ?? offspring.priceCents ?? null;
 
   return {
     id: offspring.id,
@@ -433,7 +325,7 @@ export function toPublicAnimalListingDTO(
 // ============================================================================
 
 export interface PublicListingSummaryDTO {
-  type: "offspring_group" | "animal";
+  type: "animal";
   slug: string;
   intent: string | null;  // For animal listings
   headline: string | null;  // For animal listings
@@ -443,49 +335,6 @@ export interface PublicListingSummaryDTO {
   photoUrl: string | null;
   priceRange: { min: number; max: number } | null;
   priceDisplay: string | null;  // Derived display string for animal listings
-}
-
-export function toOffspringGroupSummaryDTO(
-  group: OffspringGroupWithRelations
-): PublicListingSummaryDTO {
-  // Filter to only listed offspring
-  const listedOffspring = (group.Offspring || []).filter((o) => o.marketplaceListed === true);
-  const available = listedOffspring.filter(
-    (o) => o.keeperIntent === "AVAILABLE" && o.placementState === "UNASSIGNED"
-  );
-  const prices = available
-    .map((o) => o.marketplacePriceCents ?? group.marketplaceDefaultPriceCents ?? o.priceCents)
-    .filter((p): p is number => p != null && p > 0);
-  const priceRange =
-    prices.length > 0
-      ? { min: Math.min(...prices), max: Math.max(...prices) }
-      : null;
-
-  // Derive price display for offspring groups
-  let priceDisplay: string | null = null;
-  if (priceRange) {
-    if (priceRange.min === priceRange.max) {
-      priceDisplay = (priceRange.min / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-    } else {
-      const min = (priceRange.min / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-      const max = (priceRange.max / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-      priceDisplay = `${min} - ${max}`;
-    }
-  }
-
-  return {
-    type: "offspring_group",
-    slug: group.listingSlug || "",
-    intent: null,  // Not applicable to offspring groups
-    headline: null,  // Not applicable to offspring groups
-    title: group.listingTitle || null,
-    species: group.species,
-    breed: group.dam?.breed || null,
-    // SECURITY: Transform to auth-gated asset URL
-    photoUrl: toAssetUrl(group.coverImageUrl, "offspring_group_cover"),
-    priceRange,
-    priceDisplay,
-  };
 }
 
 export function toAnimalListingSummaryDTO(

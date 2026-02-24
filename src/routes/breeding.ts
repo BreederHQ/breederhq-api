@@ -1,291 +1,6 @@
-// [OG-SERVICE-START] Offspring Groups domain logic, inline factory to avoid extra files.
-import { Prisma, type PrismaClient, OffspringGroup, BreedingPlan, Animal, BreedingPlanStatus } from "@prisma/client";
+import { Prisma, type PrismaClient, BreedingPlan, Animal, BreedingPlanStatus } from "@prisma/client";
 import { resolvePartyId } from "../services/party-resolver.js";
 
-function __og_addDays(d: Date, days: number): Date {
-  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return dt;
-}
-function __og_coerceISODateOnly(v: Date | string): Date {
-  const dt = new Date(v);
-  if (Number.isNaN(dt.getTime())) throw new Error("invalid date: " + v);
-  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
-}
-function __og_safeSeasonLabel(date: Date): string {
-  const m = date.getUTCMonth();
-  if (m <= 1) return "Winter " + date.getUTCFullYear();
-  if (m <= 4) return "Spring " + date.getUTCFullYear();
-  if (m <= 7) return "Summer " + date.getUTCFullYear();
-  if (m <= 10) return "Fall " + date.getUTCFullYear();
-  return "Winter " + (date.getUTCFullYear() + 1);
-}
-function __og_compactName(name: string): string {
-  const n = String(name || "").trim();
-  if (!n) return "";
-  return n.replace(/\s+/g, " ");
-}
-
-type __OG_EventInput = {
-  tenantId: number;
-  groupId: number;
-  type: "LINK" | "UNLINK" | "CHANGE" | "NOTE" | "STATUS_OVERRIDE" | "BUYER_MOVE";
-  field?: string | null;
-  before?: unknown;
-  after?: unknown;
-  notes?: string | null;
-  actorId?: string | null;
-};
-
-type __OG_Authorizer = { ensureAdmin(tenantId: number, actorId: string): Promise<void> };
-
-import prismaClient from "../prisma.js";
-
-const __og_authorizer: __OG_Authorizer = {
-  async ensureAdmin(tenantId: number, actorId: string): Promise<void> {
-    if (!actorId) throw new Error("Actor ID required for admin operations");
-
-    const membership = await prismaClient.tenantMembership.findFirst({
-      where: {
-        tenantId,
-        userId: actorId,
-        role: { in: ["OWNER", "ADMIN"] },
-      },
-    });
-
-    if (!membership) {
-      throw new Error("Admin access required for this operation");
-    }
-  },
-};
-
-export function __makeOffspringGroupsService({
-  prisma,
-  authorizer,
-}: { prisma: PrismaClient | Prisma.TransactionClient; authorizer?: __OG_Authorizer }) {
-  const db = prisma as Prisma.TransactionClient;
-
-  function expectedBirthFromPlan(plan: Pick<BreedingPlan, "expectedBirthDate" | "lockedOvulationDate">): Date | null {
-    if (plan.expectedBirthDate) return __og_coerceISODateOnly(plan.expectedBirthDate);
-    if (plan.lockedOvulationDate) return __og_addDays(__og_coerceISODateOnly(plan.lockedOvulationDate), 63);
-    return null;
-  }
-  function buildTentativeGroupName(plan: Pick<BreedingPlan, "name"> & { dam?: Pick<Animal, "name"> | null }, dt: Date): string {
-    if (plan.name && plan.name.trim()) return plan.name.trim();
-    const damName = __og_compactName(plan.dam?.name ?? "");
-    const season = __og_safeSeasonLabel(dt);
-    return [damName || "Unnamed Dam", season].join(" • ");
-  }
-
-  async function ensureGroupForBredPlan(args: { tenantId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
-    const { tenantId, planId, actorId } = args;
-
-    const plan = await db.breedingPlan.findFirst({
-      where: { id: planId, tenantId },
-      include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
-    });
-    if (!plan) throw new Error("plan not found for tenant");
-
-    const existing = await db.offspringGroup.findFirst({ where: { tenantId, planId } });
-    if (existing) return existing;
-
-    const expectedBirthOn = expectedBirthFromPlan(plan);
-    const name = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, expectedBirthOn ?? new Date());
-
-    const created = await db.offspringGroup.create({
-      data: {
-        tenantId,
-        planId: plan.id,
-        species: (plan.dam as any)?.species ?? (plan as any).species ?? "DOG",
-        damId: plan.damId ?? null,
-        sireId: plan.sireId ?? null,
-        linkState: "linked",
-        expectedBirthOn,
-        name,
-      },
-    });
-
-    await db.offspringGroupEvent.create({
-      data: {
-        tenantId,
-        offspringGroupId: created.id,
-        type: "LINK",
-        occurredAt: new Date(),
-        field: "planId",
-        before: Prisma.DbNull,
-        after: { planId: plan.id },
-        notes: `Group ensured for bred plan${actorId ? ` by ${actorId}` : ""}`,
-        recordedByUserId: null,
-      },
-    });
-
-    // Auto-populate offspring group buyers from assigned plan buyers
-    const planBuyers = await db.breedingPlanBuyer.findMany({
-      where: { planId, tenantId, stage: "ASSIGNED" },
-      orderBy: { priority: "asc" },
-    });
-
-    for (const buyer of planBuyers) {
-      try {
-        const groupBuyer = await db.offspringGroupBuyer.create({
-          data: {
-            tenantId,
-            groupId: created.id,
-            buyerPartyId: buyer.partyId,
-            waitlistEntryId: buyer.waitlistEntryId,
-            placementRank: buyer.priority,
-          },
-        });
-
-        // Update plan buyer with the link
-        await db.breedingPlanBuyer.update({
-          where: { id: buyer.id },
-          data: {
-            offspringGroupBuyerId: groupBuyer.id,
-            stage: "MATCHED_TO_OFFSPRING",
-          },
-        });
-      } catch (err) {
-        // Skip if buyer already exists in group (unique constraint)
-        console.warn(`[ensureGroupForBredPlan] Could not copy buyer ${buyer.id} to group: ${err}`);
-      }
-    }
-
-    return created;
-  }
-
-  async function linkGroupToPlan(args: { tenantId: number; groupId: number; planId: number; actorId: string }): Promise<OffspringGroup> {
-    const { tenantId, groupId, planId, actorId } = args;
-
-    const [group, plan] = await Promise.all([
-      db.offspringGroup.findFirst({ where: { id: groupId, tenantId } }),
-      db.breedingPlan.findFirst({
-        where: { id: planId, tenantId },
-        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
-      }),
-    ]);
-    if (!group) throw new Error("group not found for tenant");
-    if (!plan) throw new Error("plan not found for tenant");
-
-    const before = { ...group };
-    const patch: Prisma.OffspringGroupUncheckedUpdateInput = { planId: plan.id, linkState: "linked" };
-
-    if (!group.species) patch.species = (plan.dam as any)?.species ?? (plan as any).species ?? "DOG";
-    if (!group.damId && plan.damId) patch.damId = plan.damId;
-    if (!group.sireId && plan.sireId) patch.sireId = plan.sireId;
-    if (!group.expectedBirthOn) {
-      const exp = expectedBirthFromPlan(plan);
-      if (exp) patch.expectedBirthOn = exp;
-    }
-    if (!group.name) {
-      const exp = (patch as any).expectedBirthOn ?? expectedBirthFromPlan(plan) ?? new Date();
-      patch.name = buildTentativeGroupName({ name: plan.name, dam: plan.dam }, exp);
-    }
-
-    const updated = await db.offspringGroup.update({ where: { id: group.id }, data: patch });
-
-    await db.offspringGroupEvent.create({
-      data: {
-        tenantId,
-        offspringGroupId: group.id,
-        type: "LINK",
-        occurredAt: new Date(),
-        field: "planId",
-        before,
-        after: { ...updated },
-        notes: `Group linked to plan${actorId ? ` by ${actorId}` : ""}`,
-        recordedByUserId: null,
-      },
-    });
-
-    return updated;
-  }
-
-  async function unlinkGroup(args: { tenantId: number; groupId: number; actorId: string }): Promise<OffspringGroup> {
-    const { tenantId, groupId, actorId } = args;
-    if (authorizer) await authorizer.ensureAdmin(tenantId, actorId);
-
-    const group = await db.offspringGroup.findFirst({ where: { id: groupId, tenantId } });
-    if (!group) throw new Error("group not found for tenant");
-
-    const updated = await db.offspringGroup.update({
-      where: { id: group.id },
-      data: { planId: null, linkState: "orphan" },
-    });
-
-    await db.offspringGroupEvent.create({
-      data: {
-        tenantId,
-        offspringGroupId: group.id,
-        type: "UNLINK",
-        occurredAt: new Date(),
-        field: "planId",
-        before: { ...group },
-        after: { ...updated },
-        notes: "Group manually unlinked from plan",
-        recordedByUserId: null,
-      },
-    });
-
-    return updated;
-  }
-
-  async function getLinkSuggestions(args: { tenantId: number; groupId: number; limit?: number }) {
-    const { tenantId, groupId, limit = 10 } = args;
-
-    const [group, plans] = await Promise.all([
-      db.offspringGroup.findFirst({
-        where: { id: groupId, tenantId },
-        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
-      }),
-      db.breedingPlan.findMany({
-        where: { tenantId },
-        include: { dam: { select: { id: true, name: true, species: true } }, sire: { select: { id: true, name: true } } },
-      }),
-    ]);
-    if (!group) throw new Error("group not found for tenant");
-
-    const groupExp = group.expectedBirthOn ?? group.actualBirthOn ?? null;
-    const groupDamId = group.damId ?? null;
-    const groupSireId = group.sireId ?? null;
-    const groupSpecies = group.species ?? (group.dam as any)?.species ?? null;
-
-    const within7 = (d1: Date | null, d2: Date | null) => {
-      if (!d1 || !d2) return false;
-      const ms = Math.abs(__og_coerceISODateOnly(d1).getTime() - __og_coerceISODateOnly(d2).getTime());
-      return ms <= 7 * 24 * 60 * 60 * 1000;
-    };
-
-    return plans
-      .map((p) => {
-        let score = 10;
-        const pSpecies = (p.dam as any)?.species ?? (p as any).species ?? null;
-        if (groupSpecies && pSpecies && String(groupSpecies) === String(pSpecies)) score += 25;
-        if (groupDamId && p.damId && groupDamId === p.damId) score += 40;
-        const pExpected = p.expectedBirthDate
-          ? __og_coerceISODateOnly(p.expectedBirthDate as any)
-          : p.lockedOvulationDate
-            ? __og_addDays(__og_coerceISODateOnly(p.lockedOvulationDate as any), 63)
-            : null;
-        if (within7(groupExp, pExpected)) score += 20;
-        if (groupSireId && p.sireId && groupSireId === p.sireId) score += 5;
-
-        return {
-          planId: p.id,
-          planName: p.name ?? `Plan #${p.id}`,
-          expectedBirthDate: pExpected ?? null,
-          damName: p.dam?.name ?? null,
-          sireName: p.sire?.name ?? null,
-          matchScore: score,
-        };
-      })
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, limit);
-  }
-
-  return { ensureGroupForBredPlan, linkGroupToPlan, unlinkGroup, getLinkSuggestions };
-}
-// [OG-SERVICE-END]
 // src/routes/breeding.ts
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
@@ -328,6 +43,13 @@ import { checkArchiveReadiness } from "../services/archive-validation-service.js
 import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detection.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
 import { logEntityActivity } from "../services/activity-log.js";
+import {
+  advancePlanLifecycle,
+  rewindPlanLifecycle,
+  dissolvePlan,
+  autoAdvancePlanIfReady,
+  LifecycleError,
+} from "../services/breeding-plan-lifecycle-service.js";
 
 /* ───────────────────────── audit helper ───────────────────────── */
 
@@ -372,7 +94,7 @@ const ACTIVE_BREEDING_STATUSES = new Set([
   "BRED",
   "PREGNANT",
   "BIRTHED",
-  "PLAN_COMPLETE", // Plan lifecycle ends here — post-birth lifecycle moves to OffspringGroup
+  "PLAN_COMPLETE", // Terminal plan status
   "WEANED",        // Legacy: still supported for existing plans
   "PLACEMENT",     // Legacy: still supported for existing plans
 ]);
@@ -592,7 +314,6 @@ function includeFlags(qInclude: any) {
     sire: has("parents") ? true : false,
     organization: has("org") ? true : false,
     program: has("program") ? true : false,
-    offspringGroup: has("offspringgroup") || has("offspring") ? true : false,
     breedingMilestones: has("milestones") ? { orderBy: { scheduledDate: "asc" as const } } : false,
   };
 }
@@ -1016,7 +737,7 @@ const PlanStatus = new Set<string>([
   "BRED",
   "PREGNANT",
   "BIRTHED",
-  "PLAN_COMPLETE", // Terminal plan status — post-birth lifecycle is on OffspringGroup
+  "PLAN_COMPLETE", // Terminal plan status
   "WEANED",
   "PLACEMENT",
   "COMPLETE",
@@ -1252,9 +973,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : null,
         breedDateActual: b.breedDateActual ? new Date(b.breedDateActual) : null,
         birthDateActual: b.birthDateActual ? new Date(b.birthDateActual) : null,
-        // Post-birth date fields no longer written to plan (Phase 4 cleanup).
-        // weanedDateActual, placementStartDateActual, placementCompletedDateActual,
-        // completedDateActual now live exclusively on OffspringGroup.
+        // Post-birth date fields live on the plan directly.
 
         status: normalizedStatus,
         notes: b.notes ?? null,
@@ -1525,9 +1244,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         "hormoneTestingStartDateActual",
         "breedDateActual",
         "birthDateActual",
-        // Post-birth date fields removed from plan writes (Phase 4 cleanup, 2026-02-22).
-        // These fields are no longer written to BreedingPlan — post-birth lifecycle
-        // data now lives exclusively on OffspringGroup. Columns remain for reads only.
+        // Post-birth date fields on the plan.
+        "weanedDateActual",
+        "placementStartDateActual",
+        "placementCompletedDateActual",
+        "completedDateActual",
+        "expectedWeaned",
+        "expectedPlacementStart",
+        "expectedPlacementCompleted",
       ] as const;
 
       for (const k of dateKeys) {
@@ -1542,6 +1266,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           hormoneTestingStartDateActual: true,
           breedDateActual: true,
           birthDateActual: true,
+          weanedDateActual: true,
+          placementStartDateActual: true,
+          placementCompletedDateActual: true,
         },
       });
 
@@ -1619,33 +1346,43 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      // BUSINESS RULE: Cannot clear birthDateActual if offspring exist in linked offspring group
+      // BUSINESS RULE: Cannot clear birthDateActual if offspring exist for this plan
       if (b.birthDateActual === null) {
-        const linkedGroup = await prisma.offspringGroup.findFirst({
-          where: { planId: id, tenantId },
-          select: { id: true },
+        const offspringCount = await prisma.offspring.count({
+          where: { tenantId, breedingPlanId: id },
         });
-        if (linkedGroup) {
-          // Check for offspring in the Animal table (legacy)
-          const animalCount = await prisma.animal.count({
-            where: { tenantId, offspringGroupId: linkedGroup.id },
+        if (offspringCount > 0) {
+          return reply.code(400).send({
+            error: "cannot_clear_birth_date_with_offspring",
+            detail: "Cannot clear the actual birth date because offspring have already been added. Remove all offspring first before clearing this date.",
           });
-          // Check for offspring in the Offspring table
-          const offspringCount = await prisma.offspring.count({
-            where: { tenantId, groupId: linkedGroup.id },
-          });
-          if (animalCount > 0 || offspringCount > 0) {
-            return reply.code(400).send({
-              error: "cannot_clear_birth_date_with_offspring",
-              detail: "Cannot clear the actual birth date because offspring have already been added to the linked offspring group. Remove all offspring first before clearing this date.",
-            });
-          }
         }
       }
 
-      // Post-birth date dependency validations removed (Phase 4 cleanup, 2026-02-22).
-      // weanedDateActual, placementStartDateActual, placementCompletedDateActual are
-      // no longer managed on BreedingPlan — see OffspringGroup lifecycle service.
+      // Post-birth date dependency validations
+      // Cannot clear weanedDateActual if placementStartDateActual is set
+      if (b.weanedDateActual === null) {
+        const placementStartWillExist = b.placementStartDateActual !== null &&
+          (b.placementStartDateActual !== undefined || (existingPlanDates as any)?.placementStartDateActual);
+        if (placementStartWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual weaned date because the actual placement start date is recorded. Clear the downstream date first.",
+          });
+        }
+      }
+
+      // Cannot clear placementStartDateActual if placementCompletedDateActual is set
+      if (b.placementStartDateActual === null) {
+        const placementCompletedWillExist = b.placementCompletedDateActual !== null &&
+          (b.placementCompletedDateActual !== undefined || (existingPlanDates as any)?.placementCompletedDateActual);
+        if (placementCompletedWillExist) {
+          return reply.code(400).send({
+            error: "cannot_clear_date_with_downstream_date",
+            detail: "Cannot clear the actual placement start date because the actual placement completed date is recorded. Clear the downstream date first.",
+          });
+        }
+      }
 
       if (b.status !== undefined) {
         let s = normalizePlanStatus(b.status);
@@ -1663,9 +1400,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const effectiveBirthDate = data.birthDateActual !== undefined
           ? data.birthDateActual
           : (b.birthDateActual !== undefined ? (b.birthDateActual ? new Date(b.birthDateActual) : null) : undefined);
-        // Post-birth effective date computations removed (Phase 4 cleanup).
-        // weanedDateActual, placementStartDateActual, placementCompletedDateActual
-        // are no longer managed on BreedingPlan.
+        // Post-birth effective date computations
+        const effectiveWeanedDate = data.weanedDateActual !== undefined
+          ? data.weanedDateActual
+          : (b.weanedDateActual !== undefined ? (b.weanedDateActual ? new Date(b.weanedDateActual) : null) : undefined);
+        const effectivePlacementStartDate = data.placementStartDateActual !== undefined
+          ? data.placementStartDateActual
+          : (b.placementStartDateActual !== undefined ? (b.placementStartDateActual ? new Date(b.placementStartDateActual) : null) : undefined);
 
         // For status transitions, we need to check existing DB values too
         const existingPlan = await prisma.breedingPlan.findFirst({
@@ -1674,6 +1415,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             cycleStartDateActual: true,
             breedDateActual: true,
             birthDateActual: true,
+            weanedDateActual: true,
+            placementStartDateActual: true,
             ovulationConfirmed: true,
             reproAnchorMode: true,
           },
@@ -1691,21 +1434,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Check effective values (payload overrides existing)
         const effectiveDamId = data.damId !== undefined ? data.damId : existing.damId;
         const effectiveSireId = data.sireId !== undefined ? data.sireId : existing.sireId;
-        // Reject post-birth statuses that are now group-level only (Phase 4 cleanup).
         // Backward compat: map COMPLETE → PLAN_COMPLETE with deprecation log.
         if (s === "COMPLETE") {
           req.log?.warn?.({ planId: id, requestedStatus: s }, "DEPRECATED: COMPLETE status requested on plan — mapping to PLAN_COMPLETE. Use PLAN_COMPLETE directly.");
           s = "PLAN_COMPLETE";
         }
-        if (s === "WEANED" || s === "PLACEMENT") {
-          return reply.code(400).send({
-            error: "invalid_plan_status",
-            detail: `Status '${s}' is no longer valid for breeding plans. Post-birth lifecycle statuses are managed on OffspringGroup. Use PLAN_COMPLETE as the terminal plan status after birth.`,
-          });
+
+        // Post-birth statuses (BORN, WEANING, WEANED, PLACEMENT) are valid plan statuses.
+        // For direct status changes via PATCH, recommend using the lifecycle endpoints instead.
+        if (s === "BORN" || s === "WEANING" || s === "WEANED" || s === "PLACEMENT") {
+          req.log?.info?.({ planId: id, requestedStatus: s },
+            "Post-birth status set via PATCH. Consider using POST /breeding/plans/:id/advance-lifecycle instead.");
         }
 
         const POST_PLANNING = ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
-          "BRED", "PREGNANT", "BIRTHED", "PLAN_COMPLETE"];
+          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANING", "WEANED", "PLACEMENT", "PLAN_COMPLETE"];
         if (POST_PLANNING.includes(s) && (!effectiveDamId || !effectiveSireId)) {
           return reply.code(400).send({
             error: "dam_sire_required",
@@ -1742,10 +1485,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // BUSINESS RULE: Status regression validation
         // Define the progression order of statuses (index = progression level)
         // Note: CANCELED, UNSUCCESSFUL, ON_HOLD are terminal/semi-terminal statuses that can be set from any phase
-        // PLAN_COMPLETE is the terminal plan status — post-birth lifecycle is on OffspringGroup
+        // PLAN_COMPLETE is the terminal plan status
         const STATUS_ORDER = [
           "PLANNING", "CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
-          "BRED", "PREGNANT", "BIRTHED", "PLAN_COMPLETE"
+          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANING", "WEANED", "PLACEMENT", "PLAN_COMPLETE"
         ];
         const TERMINAL_STATUSES = ["CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
         const currentStatusIndex = STATUS_ORDER.indexOf(String(existing.status));
@@ -1793,23 +1536,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           // Cannot regress past BIRTHED if offspring exist
           if (currentStatusIndex >= STATUS_ORDER.indexOf("BIRTHED") && newStatusIndex < STATUS_ORDER.indexOf("BIRTHED")) {
-            const linkedGroup = await prisma.offspringGroup.findFirst({
-              where: { planId: id, tenantId },
-              select: { id: true },
+            const offspringCount = await prisma.offspring.count({
+              where: { tenantId, breedingPlanId: id },
             });
-            if (linkedGroup) {
-              const animalCount = await prisma.animal.count({
-                where: { tenantId, offspringGroupId: linkedGroup.id },
+            if (offspringCount > 0) {
+              return reply.code(400).send({
+                error: "cannot_regress_status_with_offspring",
+                detail: `Cannot change status from ${existing.status} to ${s} because offspring have already been added. Remove all offspring first before regressing the plan status.`,
               });
-              const offspringCount = await prisma.offspring.count({
-                where: { tenantId, groupId: linkedGroup.id },
-              });
-              if (animalCount > 0 || offspringCount > 0) {
-                return reply.code(400).send({
-                  error: "cannot_regress_status_with_offspring",
-                  detail: `Cannot change status from ${existing.status} to ${s} because offspring have already been added. Remove all offspring first before regressing the plan status.`,
-                });
-              }
             }
           }
 
@@ -1821,8 +1555,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               detail: `Cannot change status to ${s} while birthDateActual is recorded. Clear the birth date first.`,
             });
           }
-          // Post-birth date regression checks removed (Phase 4 cleanup).
-          // WEANED/PLACEMENT/COMPLETE are no longer plan-level statuses.
+          // Post-birth date regression checks
+          const finalWeanedDate = effectiveWeanedDate !== undefined ? effectiveWeanedDate : existingPlan?.weanedDateActual;
+          const finalPlacementStartDate = effectivePlacementStartDate !== undefined ? effectivePlacementStartDate : existingPlan?.placementStartDateActual;
+          if (newStatusIndex < STATUS_ORDER.indexOf("WEANED") && finalWeanedDate) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while weanedDateActual is recorded. Clear the weaned date first.`,
+            });
+          }
+          if (newStatusIndex < STATUS_ORDER.indexOf("PLACEMENT") && finalPlacementStartDate) {
+            return reply.code(400).send({
+              error: "cannot_regress_status_with_date",
+              detail: `Cannot change status to ${s} while placementStartDateActual is recorded. Clear the placement start date first.`,
+            });
+          }
         }
 
         data.status = s as any;
@@ -2042,70 +1789,24 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         req.log?.warn?.({ err: eventErr, planId: id }, "Failed to auto-create BreedingEvent records");
       }
 
-      // Ensure offspring group exists when plan reaches BRED status
-      // This is when breeding has actually occurred and offspring are expected
-      const isBredStatus = String(updated.status) === "BRED";
-      if (isBredStatus) {
-        try {
-          const ogSvc = __makeOffspringGroupsService({ prisma, authorizer: __og_authorizer });
-          await ogSvc.ensureGroupForBredPlan({
-            tenantId,
-            planId: id,
-            actorId: (req as any).user?.id ?? "system",
-          });
-        } catch (ogErr) {
-          // Log but don't fail the update - offspring group creation is secondary
-          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to ensure offspring group for bred plan");
-        }
-      }
 
-      // Delete offspring group when plan resets or moves to a terminal status.
-      // PLANNING is included because EndPlanModal "Reset" and PlanJourney "Try Again"
-      // both regress to PLANNING — the empty group created at BRED is no longer relevant.
-      const shouldCleanupGroup = ["PLANNING", "CYCLE", "UNSUCCESSFUL", "CANCELED"].includes(String(updated.status));
-      if (shouldCleanupGroup && statusChanged) {
-        try {
-          const group = await prisma.offspringGroup.findFirst({
-            where: { tenantId, planId: id },
-            select: { id: true },
-          });
-          if (group) {
-            // Safety check: do NOT delete if offspring animals or buyers are linked
-            const [animalCount, offspringCount, buyerCount] = await Promise.all([
-              prisma.animal.count({ where: { tenantId, offspringGroupId: group.id } }).catch(() => 0),
-              prisma.offspring.count({ where: { tenantId, groupId: group.id } }).catch(() => 0),
-              prisma.offspringGroupBuyer.count({ where: { tenantId, groupId: group.id } }).catch(() => 0),
-            ]);
-
-            if (animalCount === 0 && offspringCount === 0 && buyerCount === 0) {
-              // Delete events first (foreign key constraint)
-              await prisma.offspringGroupEvent.deleteMany({
-                where: { tenantId, offspringGroupId: group.id },
-              });
-              // Delete the group
-              await prisma.offspringGroup.delete({
-                where: { id: group.id },
-              });
-              req.log?.info?.({ planId: id, groupId: group.id }, "Deleted offspring group due to plan status change");
-            } else {
-              req.log?.warn?.(
-                { planId: id, groupId: group.id, animalCount, offspringCount, buyerCount },
-                "Skipped offspring group deletion — group has linked data",
-              );
-            }
+      // Auto-advance plan lifecycle if a date gate is now satisfied
+      {
+        const postBirthDateFields = [
+          "weanedDateActual", "placementStartDateActual", "placementCompletedDateActual",
+          "completedDateActual", "birthDateActual",
+        ];
+        const anyDateChanged = postBirthDateFields.some((f) => (data as any)[f] !== undefined);
+        if (anyDateChanged) {
+          try {
+            await prisma.$transaction(async (tx) => {
+              await autoAdvancePlanIfReady(tx, id, tenantId);
+            });
+          } catch (advanceErr) {
+            req.log?.warn?.({ err: advanceErr, planId: id }, "Auto-advance check failed (non-blocking)");
           }
-        } catch (ogErr) {
-          // Log but don't fail the update
-          req.log?.warn?.({ err: ogErr, planId: id }, "Failed to delete offspring group on status change");
         }
       }
-
-      // DUAL-WRITE BRIDGE REMOVED (Phase 4 cleanup, 2026-02-22)
-      // Post-birth dates (weanedDateActual, placementStartDateActual,
-      // placementCompletedDateActual, completedDateActual) are no longer written
-      // to BreedingPlan. All post-birth lifecycle data now lives exclusively
-      // on OffspringGroup. The columns remain on BreedingPlan for now (Phase 6
-      // will drop them) but are no longer actively written to.
 
       // Check for carrier × carrier lethal pairings when dam or sire changes
       let carrierRisk: { hasLethalRisk: boolean; hasWarnings: boolean; warnings: any[] } | null = null;
@@ -2257,8 +1958,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // NOTE: Offspring group creation has been moved to BRED phase (when breedDateActual is set)
-        // This commit endpoint only locks the cycle timeline; offspring groups are created when breeding occurs
+        // This commit endpoint only locks the cycle timeline
 
         // Sync animal breeding statuses for dam and sire
         if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId, tx);
@@ -2317,60 +2017,32 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const result = await prisma.$transaction(async (tx) => {
-        // Check for linked offspring group
-        const group = await tx.offspringGroup.findFirst({
-          where: { tenantId, planId: plan.id },
-          select: { id: true },
-        });
+        // Check for blockers before uncommitting
+        const blockers: any = {};
 
-        if (group) {
-          // Check for blockers in the offspring group
-          const blockers: any = {};
-
-          // Check for offspring
-          try {
-            const offspringCount = await tx.animal.count({
-              where: { tenantId, offspringGroupId: group.id },
-            });
-            if (offspringCount > 0) blockers.hasOffspring = true;
-          } catch (e) {
-            // Field may not exist, skip this check
-          }
-
-          // Check for buyers (via waitlist/reservations)
-          // Try both litterId (old) and offspringGroupId (new) for compatibility
-          try {
-            const buyersCount = await tx.waitlistEntry.count({
-              where: {
-                tenantId,
-                OR: [
-                  { offspringGroupId: group.id },
-                  { planId: plan.id },
-                ]
-              },
-            });
-            if (buyersCount > 0) blockers.hasBuyers = true;
-          } catch (e) {
-            // Table or field may not exist, skip this check
-          }
-
-          // If any blockers exist, return 409
-          if (Object.keys(blockers).length > 0) {
-            return { blocked: true, blockers };
-          }
-
-          // No blockers - safe to delete the group
-          try {
-            await tx.offspringGroupEvent.deleteMany({
-              where: { tenantId, offspringGroupId: group.id },
-            });
-          } catch (e) {
-            // Events may not exist, continue
-          }
-
-          await tx.offspringGroup.delete({
-            where: { id: group.id },
+        // Check for offspring linked to this plan
+        try {
+          const offspringCount = await tx.offspring.count({
+            where: { tenantId, breedingPlanId: plan.id },
           });
+          if (offspringCount > 0) blockers.hasOffspring = true;
+        } catch (e) {
+          // Table may not exist, skip this check
+        }
+
+        // Check for buyers (via waitlist/reservations)
+        try {
+          const buyersCount = await tx.waitlistEntry.count({
+            where: { tenantId, planId: plan.id },
+          });
+          if (buyersCount > 0) blockers.hasBuyers = true;
+        } catch (e) {
+          // Table or field may not exist, skip this check
+        }
+
+        // If any blockers exist, return 409
+        if (Object.keys(blockers).length > 0) {
+          return { blocked: true, blockers };
         }
 
         // Revert plan to PLANNING status
@@ -2393,7 +2065,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             label: "Plan uncommitted",
             data: {
               fromStatus: String(plan.status),
-              deletedGroupId: group?.id ?? null,
             },
             recordedByUserId: userId,
           },
@@ -2508,7 +2179,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       //
       // Note: Unknown flags (cycleStartDateUnknown, breedDateUnknown) act as placeholders
       // that allow advancing without the actual date (for surprise pregnancies).
-      // Post-birth lifecycle (WEANED, PLACEMENT, GROUP_COMPLETE) is on OffspringGroup.
+      // Post-birth lifecycle (WEANED, PLACEMENT) managed via plan date fields.
       type Phase = "PLANNING" | "CYCLE" | "BRED" | "BIRTHED" | "PLAN_COMPLETE";
       const PHASE_ORDER: Phase[] = ["PLANNING", "CYCLE", "BRED", "BIRTHED", "PLAN_COMPLETE"];
 
@@ -2565,7 +2236,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         PLANNING: null, // Can't rewind from PLANNING
 
         CYCLE: {
-          // Rewind CYCLE -> PLANNING: Clear lock fields, reset anchor mode, delete offspring group if exists
+          // Rewind CYCLE -> PLANNING: Clear lock fields, reset anchor mode
           targetPhase: "PLANNING",
           clearFields: {
             lockedCycleStart: null,
@@ -2592,37 +2263,25 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             status: BreedingPlanStatus.PLANNING,
           },
           validation: async () => {
-            // Check for offspring group blockers (same as uncommit)
-            const group = await prisma.offspringGroup.findFirst({
-              where: { tenantId, planId: plan.id },
-              select: { id: true },
+            const blockers: any = {};
+
+            // Check for offspring linked to this plan
+            const offspringCount = await prisma.offspring.count({
+              where: { tenantId, breedingPlanId: plan.id },
             });
-            if (group) {
-              const blockers: any = {};
-              // Check both Animal table (legacy) and Offspring table (post-OG-split)
-              const animalCount = await prisma.animal.count({
-                where: { tenantId, offspringGroupId: group.id },
-              });
-              const offspringCount = await prisma.offspring.count({
-                where: { tenantId, groupId: group.id },
-              });
-              if (animalCount > 0 || offspringCount > 0) blockers.hasOffspring = true;
+            if (offspringCount > 0) blockers.hasOffspring = true;
 
-              try {
-                const buyersCount = await prisma.waitlistEntry.count({
-                  where: {
-                    tenantId,
-                    OR: [{ offspringGroupId: group.id }, { planId: plan.id }],
-                  },
-                });
-                if (buyersCount > 0) blockers.hasBuyers = true;
-              } catch (e) {
-                // Table may not exist
-              }
+            try {
+              const buyersCount = await prisma.waitlistEntry.count({
+                where: { tenantId, planId: plan.id },
+              });
+              if (buyersCount > 0) blockers.hasBuyers = true;
+            } catch (e) {
+              // Table may not exist
+            }
 
-              if (Object.keys(blockers).length > 0) {
-                return { blocked: true, blockers };
-              }
+            if (Object.keys(blockers).length > 0) {
+              return { blocked: true, blockers };
             }
             return { blocked: false };
           },
@@ -2632,8 +2291,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           // Rewind BRED -> CYCLE: Clear cycle start date and/or ovulation data that advanced us to BRED
           // BRED phase = has cycle start OR ovulation confirmed, working on breed date
           // Also clear any breed date that may have been entered but not yet advanced
-          // NOTE: Offspring group is NOT deleted here - only when rewinding all the way to PLANNING
-          // This allows user to continue with the plan and use the existing offspring group
           targetPhase: "CYCLE",
           clearFields: {
             cycleStartDateActual: null,
@@ -2672,34 +2329,23 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         PLAN_COMPLETE: {
           // Rewind PLAN_COMPLETE -> BIRTHED: Clear birth date and revert plan status
-          // PLAN_COMPLETE means birth has been recorded and post-birth lifecycle is on the group
-          // Post-birth date fields on the plan are no longer written to (Phase 4 cleanup)
           targetPhase: "BIRTHED",
           clearFields: {
             birthDateActual: null,
             status: BreedingPlanStatus.BIRTHED,
           },
           validation: async () => {
-            // Cannot rewind if offspring exist in linked group
-            const linkedGroup = await prisma.offspringGroup.findFirst({
-              where: { planId: id, tenantId },
-              select: { id: true },
+            // Cannot rewind if offspring exist for this plan
+            const offspringCount = await prisma.offspring.count({
+              where: { tenantId, breedingPlanId: id },
             });
-            if (linkedGroup) {
-              const animalCount = await prisma.animal.count({
-                where: { tenantId, offspringGroupId: linkedGroup.id },
-              });
-              const offspringCount = await prisma.offspring.count({
-                where: { tenantId, groupId: linkedGroup.id },
-              });
-              if (animalCount > 0 || offspringCount > 0) {
-                return {
-                  blocked: true,
-                  error: "offspring_exist",
-                  detail: "Cannot rewind because offspring have been recorded in the linked offspring group. Remove all offspring first.",
-                  blockers: { hasOffspring: true },
-                };
-              }
+            if (offspringCount > 0) {
+              return {
+                blocked: true,
+                error: "offspring_exist",
+                detail: "Cannot rewind because offspring have been recorded for this plan. Remove all offspring first.",
+                blockers: { hasOffspring: true },
+              };
             }
             return { blocked: false };
           },
@@ -2730,27 +2376,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Execute the rewind in a transaction
       const result = await prisma.$transaction(async (tx) => {
-        // Special handling: Only delete offspring group when rewinding all the way to PLANNING
-        // For other rewinds, keep the group - user will likely continue with the plan
-        if (currentPhase === "CYCLE") {
-          const group = await tx.offspringGroup.findFirst({
-            where: { tenantId, planId: plan.id },
-            select: { id: true },
-          });
-          if (group) {
-            try {
-              await tx.offspringGroupEvent.deleteMany({
-                where: { tenantId, offspringGroupId: group.id },
-              });
-            } catch (e) {
-              // Events may not exist
-            }
-            await tx.offspringGroup.delete({
-              where: { id: group.id },
-            });
-          }
-        }
-
         // Update plan with cleared fields
         const updated = await tx.breedingPlan.update({
           where: { id: plan.id },
@@ -3488,7 +3113,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const userId = (req as any).user?.id ?? null;
 
-      // Get plan with dam/sire, status, and offspring group before restoring
+      // Get plan with dam/sire and status before restoring
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
         select: {
@@ -3496,27 +3121,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           damId: true,
           sireId: true,
           status: true,
-          offspringGroup: { select: { id: true } },
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
       const now = new Date();
 
-      // Restore both plan and offspring group in a transaction
+      // Restore plan in a transaction
       await prisma.$transaction(async (tx) => {
-        // Determine the appropriate status to restore to:
-        // - If plan has an offspring group, restore to PLAN_COMPLETE (post-birth lifecycle is on the group)
-        // - If plan was in PLAN_COMPLETE, restore to PLAN_COMPLETE
-        // - Otherwise fall back to PLAN_COMPLETE (post-birth statuses removed from plans in Phase 4)
-        let restoreStatus: string;
-        if (plan.offspringGroup?.id) {
-          restoreStatus = "PLAN_COMPLETE";
-        } else if (plan.status === "PLAN_COMPLETE") {
-          restoreStatus = "PLAN_COMPLETE";
-        } else {
-          restoreStatus = "PLAN_COMPLETE"; // All terminal plans use PLAN_COMPLETE
-        }
+        const restoreStatus = "PLAN_COMPLETE";
 
         await tx.breedingPlan.update({
           where: { id },
@@ -3527,19 +3140,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           },
         });
 
-        // Restore the offspring group if it exists
-        // Revert GROUP_COMPLETE to PLACEMENT so the group is active again
-        if (plan.offspringGroup?.id) {
-          await tx.offspringGroup.update({
-            where: { id: plan.offspringGroup.id },
-            data: {
-              archivedAt: null,
-              lifecycleStatus: "PLACEMENT", // Reopen group at placement phase
-              completedAt: null,
-            },
-          });
-        }
-
         // Create audit event
         await tx.breedingPlanEvent.create({
           data: {
@@ -3548,9 +3148,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             type: "UNARCHIVED",
             occurredAt: now,
             label: "Plan Restored",
-            notes: "Plan and offspring group restored from archive",
+            notes: "Plan restored from archive",
             data: {
-              groupId: plan.offspringGroup?.id ?? null,
               previousStatus: plan.status,
               restoredToStatus: restoreStatus,
             },
@@ -3579,7 +3178,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       reply.send({
         ok: true,
-        groupRestored: !!plan.offspringGroup?.id,
       });
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -3618,11 +3216,11 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * POST /breeding/plans/:id/complete-archive
    *
-   * Validates and archives a breeding plan along with its linked offspring group.
+   * Validates and archives a breeding plan.
    * This is the "complete" archival workflow that:
    * 1. Runs validation checks
    * 2. Blocks if there are blockers (unless force=true)
-   * 3. Archives both plan and offspring group together
+   * 3. Archives the plan
    * 4. Creates audit trail via BreedingPlanEvent
    */
   app.post("/breeding/plans/:id/complete-archive", async (req, reply) => {
@@ -3651,7 +3249,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      // Get plan with offspring group
+      // Get plan for archiving
       const plan = await prisma.breedingPlan.findFirst({
         where: { id, tenantId },
         select: {
@@ -3659,7 +3257,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           damId: true,
           sireId: true,
           status: true,
-          offspringGroup: { select: { id: true } },
         },
       });
 
@@ -3668,31 +3265,17 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const now = new Date();
       const archiveReason = body.reason || null;
 
-      // Archive both plan and offspring group in a transaction
+      // Archive the plan in a transaction
       await prisma.$transaction(async (tx) => {
-        // Archive the plan — use PLAN_COMPLETE if it has an offspring group, COMPLETE otherwise (legacy)
-        const archiveStatus = plan.offspringGroup?.id ? "PLAN_COMPLETE" : "COMPLETE";
         await tx.breedingPlan.update({
           where: { id },
           data: {
             archived: true,
             archiveReason,
-            status: archiveStatus as any,
+            status: "PLAN_COMPLETE" as any,
             completedDateActual: now,
           },
         });
-
-        // Archive the offspring group if it exists — also mark GROUP_COMPLETE
-        if (plan.offspringGroup?.id) {
-          await tx.offspringGroup.update({
-            where: { id: plan.offspringGroup.id },
-            data: {
-              archivedAt: now,
-              lifecycleStatus: "GROUP_COMPLETE",
-              completedAt: now,
-            },
-          });
-        }
 
         // Create audit event
         await tx.breedingPlanEvent.create({
@@ -3703,11 +3286,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             occurredAt: now,
             label: "Plan Completed and Archived",
             notes: archiveReason
-              ? `Plan and offspring group archived. Reason: ${archiveReason}`
-              : "Plan and offspring group archived",
+              ? `Plan archived. Reason: ${archiveReason}`
+              : "Plan archived",
             data: {
               archiveReason,
-              groupId: plan.offspringGroup?.id ?? null,
               previousStatus: plan.status,
               blockerCount: validation.summary.blockers,
               warningCount: validation.summary.warnings,
@@ -3740,7 +3322,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.send({
         ok: true,
         archived: true,
-        groupArchived: !!plan.offspringGroup?.id,
         validation,
       });
     } catch (err: any) {
@@ -3769,6 +3350,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           archived: true,
           deletedAt: true,
           breedDateActual: true,
+          birthDateActual: true,
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
@@ -3785,127 +3367,73 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const blockers: any = {};
       const blockerDetails: string[] = [];
 
-      // Check for linked offspring group and its dependencies
-      const group = await prisma.offspringGroup.findFirst({
-        where: { tenantId, planId: plan.id, deletedAt: null },
-        select: { id: true, actualBirthOn: true },
-      });
-
-      if (group) {
-        // 1. Check for offspring records (modern Offspring table)
-        try {
-          const offspringCount = await prisma.offspring.count({
-            where: { tenantId, groupId: group.id },
-          });
-          if (offspringCount > 0) {
-            blockers.hasOffspring = true;
-            blockerDetails.push(`${offspringCount} offspring record(s) exist in the linked offspring group`);
-          }
-        } catch (e) {
-          // Table may not exist in older schemas
+      // 1. Check for offspring records linked to this plan
+      try {
+        const offspringCount = await prisma.offspring.count({
+          where: { tenantId, breedingPlanId: plan.id },
+        });
+        if (offspringCount > 0) {
+          blockers.hasOffspring = true;
+          blockerDetails.push(`${offspringCount} offspring record(s) linked to this plan`);
         }
-
-        // 2. Check for legacy Animal offspring linked to the group
-        try {
-          const legacyOffspringCount = await prisma.animal.count({
-            where: { tenantId, offspringGroupId: group.id },
-          });
-          if (legacyOffspringCount > 0) {
-            blockers.hasLegacyOffspring = true;
-            blockerDetails.push(`${legacyOffspringCount} legacy animal offspring record(s) exist`);
-          }
-        } catch (e) {
-          // Field may not exist in schema
-        }
-
-        // 3. Check for offspring group buyers (NOT plan buyers - those are different)
-        try {
-          const groupBuyersCount = await prisma.offspringGroupBuyer.count({
-            where: { tenantId, groupId: group.id },
-          });
-          if (groupBuyersCount > 0) {
-            blockers.hasOffspringGroupBuyers = true;
-            blockerDetails.push(`${groupBuyersCount} buyer(s) assigned to the offspring group`);
-          }
-        } catch (e) {
-          // Table may not exist
-        }
-
-        // 4. Check for waitlist entries linked to offspring group
-        try {
-          const waitlistCount = await prisma.waitlistEntry.count({
-            where: { tenantId, offspringGroupId: group.id },
-          });
-          if (waitlistCount > 0) {
-            blockers.hasWaitlistEntries = true;
-            blockerDetails.push(`${waitlistCount} waitlist entry/entries linked to offspring group`);
-          }
-        } catch (e) {
-          // Field may not exist
-        }
-
-        // 5. Check for invoices linked to offspring group or offspring
-        try {
-          const invoiceCount = await prisma.invoice.count({
-            where: {
-              tenantId,
-              OR: [
-                { groupId: group.id },
-                {
-                  offspring: {
-                    groupId: group.id
-                  }
-                }
-              ]
-            },
-          });
-          if (invoiceCount > 0) {
-            blockers.hasInvoices = true;
-            blockerDetails.push(`${invoiceCount} invoice(s) linked to offspring or group`);
-          }
-        } catch (e) {
-          // Fields may not exist
-        }
-
-        // 6. Check for contracts/documents
-        try {
-          const contractCount = await prisma.offspringContract.count({
-            where: {
-              tenantId,
-              offspring: { groupId: group.id }
-            },
-          });
-          if (contractCount > 0) {
-            blockers.hasContracts = true;
-            blockerDetails.push(`${contractCount} contract(s) exist for offspring`);
-          }
-        } catch (e) {
-          // Table may not exist
-        }
-
-        try {
-          const documentCount = await prisma.offspringDocument.count({
-            where: {
-              tenantId,
-              offspring: { groupId: group.id }
-            },
-          });
-          if (documentCount > 0) {
-            blockers.hasDocuments = true;
-            blockerDetails.push(`${documentCount} document(s) exist for offspring`);
-          }
-        } catch (e) {
-          // Table may not exist
-        }
-
-        // 7. Check for actual birth date recorded (permanent milestone)
-        if (group.actualBirthOn) {
-          blockers.hasBirthDate = true;
-          blockerDetails.push('Actual birth date has been recorded');
-        }
+      } catch (e) {
+        // Table may not exist in older schemas
       }
 
-      // 8. Check for breeding plan buyers (BreedingPlanBuyer table)
+      // 2. Check for invoices linked to offspring of this plan
+      try {
+        const invoiceCount = await prisma.invoice.count({
+          where: {
+            tenantId,
+            offspring: { breedingPlanId: plan.id },
+          },
+        });
+        if (invoiceCount > 0) {
+          blockers.hasInvoices = true;
+          blockerDetails.push(`${invoiceCount} invoice(s) linked to offspring`);
+        }
+      } catch (e) {
+        // Fields may not exist
+      }
+
+      // 3. Check for contracts/documents linked to offspring of this plan
+      try {
+        const contractCount = await prisma.offspringContract.count({
+          where: {
+            tenantId,
+            offspring: { breedingPlanId: plan.id },
+          },
+        });
+        if (contractCount > 0) {
+          blockers.hasContracts = true;
+          blockerDetails.push(`${contractCount} contract(s) exist for offspring`);
+        }
+      } catch (e) {
+        // Table may not exist
+      }
+
+      try {
+        const documentCount = await prisma.offspringDocument.count({
+          where: {
+            tenantId,
+            offspring: { breedingPlanId: plan.id },
+          },
+        });
+        if (documentCount > 0) {
+          blockers.hasDocuments = true;
+          blockerDetails.push(`${documentCount} document(s) exist for offspring`);
+        }
+      } catch (e) {
+        // Table may not exist
+      }
+
+      // 4. Check for actual birth date recorded on the plan
+      if (plan.birthDateActual) {
+        blockers.hasBirthDate = true;
+        blockerDetails.push('Actual birth date has been recorded');
+      }
+
+      // 5. Check for breeding plan buyers (BreedingPlanBuyer table)
       try {
         const planBuyersCount = await prisma.breedingPlanBuyer.count({
           where: { tenantId, planId: plan.id },
@@ -3918,14 +3446,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Table may not exist
       }
 
-      // 9. Check for waitlist entries directly linked to plan (older pattern)
+      // 6. Check for waitlist entries linked to plan
       try {
         const planWaitlistCount = await prisma.waitlistEntry.count({
           where: { tenantId, planId: plan.id },
         });
         if (planWaitlistCount > 0) {
           blockers.hasPlanWaitlist = true;
-          blockerDetails.push(`${planWaitlistCount} waitlist entry/entries linked directly to plan`);
+          blockerDetails.push(`${planWaitlistCount} waitlist entry/entries linked to plan`);
         }
       } catch (e) {
         // Field may not exist
@@ -3944,18 +3472,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const now = new Date();
 
       // Safe to delete - no dependencies exist
-      await prisma.$transaction(async (tx) => {
-        // Soft delete the plan
-        await tx.breedingPlan.update({
-          where: { id },
-          data: { deletedAt: now, archived: true },
-        });
-
-        // Cascade soft delete to linked offspring groups (should be empty/unused)
-        await tx.offspringGroup.updateMany({
-          where: { planId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
+      await prisma.breedingPlan.update({
+        where: { id },
+        data: { deletedAt: now, archived: true },
       });
 
       // Sync animal breeding statuses (they may revert from BREEDING if no other active plans)
@@ -5410,7 +4929,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const tenantId = Number((req as any).tenantId);
 
-      const entries = await prismaClient.breedingPlanTempLog.findMany({
+      const entries = await prisma.breedingPlanTempLog.findMany({
         where: { planId: Number(id), tenantId },
         orderBy: { recordedAt: "desc" },
       });
@@ -5440,7 +4959,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.status(400).send({ error: "temperatureF must be between 90 and 110" });
       }
 
-      const entry = await prismaClient.breedingPlanTempLog.create({
+      const entry = await prisma.breedingPlanTempLog.create({
         data: {
           planId: Number(id),
           tenantId,
@@ -5455,7 +4974,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (body.temperatureF < 99.0) {
         try {
           // Find TEMPERATURE_DROP milestone and mark it complete if not already
-          const milestone = await prismaClient.breedingMilestone.findFirst({
+          const milestone = await prisma.breedingMilestone.findFirst({
             where: {
               breedingPlanId: Number(id),
               tenantId,
@@ -5464,7 +4983,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           });
           if (milestone) {
-            await prismaClient.breedingMilestone.update({
+            await prisma.breedingMilestone.update({
               where: { id: milestone.id },
               data: { completedDate: new Date(), isCompleted: true, updatedAt: new Date() },
             });
@@ -5498,7 +5017,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { id, entryId } = req.params as { id: string; entryId: string };
       const tenantId = Number((req as any).tenantId);
 
-      await prismaClient.breedingPlanTempLog.deleteMany({
+      await prisma.breedingPlanTempLog.deleteMany({
         where: {
           id: Number(entryId),
           planId: Number(id),
@@ -5737,6 +5256,236 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       reply.send(offspring);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ─── Plan Lifecycle Endpoints ─────────────────────────────────
+
+  // POST /breeding/plans/:id/advance-lifecycle
+  // Advances plan through post-birth statuses (BIRTHED → BORN → ... → PLAN_COMPLETE)
+  app.post("/breeding/plans/:id/advance-lifecycle", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as { targetStatus?: string };
+      const targetStatus = body.targetStatus?.toUpperCase() as any;
+
+      const updated = await advancePlanLifecycle(prisma, planId, tenantId, targetStatus || undefined);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "lifecycle_advanced",
+        category: "status",
+        title: `Plan lifecycle advanced to ${updated.status}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send(updated);
+    } catch (err) {
+      if (err instanceof LifecycleError) {
+        const statusMap: Record<string, number> = {
+          GROUP_NOT_FOUND: 404,
+          CANNOT_ADVANCE_DISSOLVED: 409,
+          ALREADY_COMPLETE: 409,
+          INVALID_STATUS: 400,
+          NO_NEXT_STATUS: 400,
+          INVALID_TARGET: 400,
+          BIRTH_DATE_REQUIRED: 400,
+          NO_LIVE_OFFSPRING: 400,
+          WEANED_DATE_REQUIRED: 400,
+          PLACEMENT_START_REQUIRED: 400,
+          OFFSPRING_NOT_PLACED: 409,
+          INVALID_TRANSITION: 400,
+        };
+        return reply.status(statusMap[err.code] ?? 400).send({ error: err.code, detail: err.message });
+      }
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/rewind-lifecycle
+  // Rewinds plan to previous status
+  app.post("/breeding/plans/:id/rewind-lifecycle", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const updated = await rewindPlanLifecycle(prisma, planId, tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "lifecycle_rewound",
+        category: "status",
+        title: `Plan lifecycle rewound to ${updated.status}`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send(updated);
+    } catch (err) {
+      if (err instanceof LifecycleError) {
+        const statusMap: Record<string, number> = {
+          GROUP_NOT_FOUND: 404,
+          CANNOT_REWIND_PENDING: 400,
+          CANNOT_REWIND_DISSOLVED: 409,
+          CANNOT_REWIND: 400,
+        };
+        return reply.status(statusMap[err.code] ?? 400).send({ error: err.code, detail: err.message });
+      }
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/dissolve
+  // Sets plan to DISSOLVED (all offspring deceased)
+  app.post("/breeding/plans/:id/dissolve", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const updated = await dissolvePlan(prisma, planId, tenantId);
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "lifecycle_dissolved",
+        category: "status",
+        title: "Plan dissolved — all offspring deceased",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send(updated);
+    } catch (err) {
+      if (err instanceof LifecycleError) {
+        const statusMap: Record<string, number> = {
+          GROUP_NOT_FOUND: 404,
+          LIVE_OFFSPRING_EXIST: 409,
+        };
+        return reply.status(statusMap[err.code] ?? 400).send({ error: err.code, detail: err.message });
+      }
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ─── Plan Marketplace Endpoints ─────────────────────────────
+
+  // POST /breeding/plans/:id/marketplace/publish
+  // Sets plan marketplaceStatus = 'LIVE' and all offspring marketplaceListed = true
+  app.post("/breeding/plans/:id/marketplace/publish", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const body = (req.body || {}) as { marketplaceDefaultPriceCents?: number | null };
+
+      // Verify plan exists
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: planId, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Update plan marketplace status
+      await prisma.breedingPlan.update({
+        where: { id: planId },
+        data: { marketplaceStatus: "LIVE" },
+      });
+
+      // Find offspring linked to this plan and mark as listed
+      const eligibleOffspring = await prisma.offspring.findMany({
+        where: { tenantId, breedingPlanId: planId, lifeState: "ALIVE" },
+        select: { id: true },
+      });
+
+      let listedCount = 0;
+      if (eligibleOffspring.length > 0) {
+        await prisma.offspring.updateMany({
+          where: { id: { in: eligibleOffspring.map((o) => o.id) } },
+          data: { marketplaceListed: true },
+        });
+        listedCount = eligibleOffspring.length;
+      }
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "marketplace_published",
+        category: "system",
+        title: `Plan published to marketplace (${listedCount} offspring listed)`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send({
+        ok: true,
+        planId,
+        defaultPriceCents: body.marketplaceDefaultPriceCents ?? null,
+        listedCount,
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/plans/:id/marketplace/unpublish
+  // Sets plan marketplaceStatus = 'DRAFT' and all offspring marketplaceListed = false
+  app.post("/breeding/plans/:id/marketplace/unpublish", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      // Verify plan exists
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: planId, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Update plan marketplace status
+      await prisma.breedingPlan.update({
+        where: { id: planId },
+        data: { marketplaceStatus: "DRAFT" },
+      });
+
+      // Mark all offspring linked to this plan as not listed
+      await prisma.offspring.updateMany({
+        where: { tenantId, breedingPlanId: planId },
+        data: { marketplaceListed: false },
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: planId,
+        kind: "marketplace_unpublished",
+        category: "system",
+        title: "Plan unpublished from marketplace",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send({ ok: true, planId });
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

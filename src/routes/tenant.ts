@@ -1959,11 +1959,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.paymentIntent.deleteMany({ where: { tenantId } });
 
         // Offspring
-        await tx.offspringGroupEvent.deleteMany({ where: { tenantId } });
-        await tx.offspringGroupBuyer.deleteMany({ where: { tenantId } });
         await tx.offspringEvent.deleteMany({ where: { tenantId } });
         await tx.offspring.deleteMany({ where: { tenantId } });
-        await tx.offspringGroup.deleteMany({ where: { tenantId } });
 
         // Breeding
         await tx.breedingMilestone.deleteMany({ where: { tenantId } });
@@ -2139,11 +2136,8 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.paymentIntent.deleteMany({ where: { tenantId } });
 
         // Offspring
-        await tx.offspringGroupEvent.deleteMany({ where: { tenantId } });
-        await tx.offspringGroupBuyer.deleteMany({ where: { tenantId } });
         await tx.offspringEvent.deleteMany({ where: { tenantId } });
         await tx.offspring.deleteMany({ where: { tenantId } });
-        await tx.offspringGroup.deleteMany({ where: { tenantId } });
 
         // Breeding
         await tx.breedingMilestone.deleteMany({ where: { tenantId } });

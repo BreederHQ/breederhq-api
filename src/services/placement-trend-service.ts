@@ -7,9 +7,7 @@
  * frontend can use the trend value instead of the static species default for
  * the extended-placement hatched band on the Gantt chart.
  *
- * Data sources (both queried, deduplicated):
- *   1. OffspringGroup  – current system (actively written)
- *   2. BreedingPlan    – legacy (no longer written, but may contain historical data)
+ * Data source: BreedingPlan (all placement data lives on the plan directly).
  */
 
 import prisma from "../prisma.js";
@@ -48,36 +46,13 @@ export async function getPlacementTrends(
   tenantId: number,
   threshold = 5,
 ): Promise<PlacementTrendsResult> {
-  // --- Source 1: OffspringGroup (current) ---
-  const groups = await prisma.offspringGroup.findMany({
-    where: {
-      tenantId,
-      actualBirthOn: { not: null },
-      placementCompletedAt: { not: null },
-      deletedAt: null,
-    },
-    select: {
-      species: true,
-      actualBirthOn: true,
-      placementCompletedAt: true,
-      planId: true,
-    },
-  });
-
-  // --- Source 2: BreedingPlan (legacy fallback) ---
-  // Exclude plans already represented by an OffspringGroup to avoid
-  // double-counting.
-  const linkedPlanIds = groups
-    .filter((g) => g.planId != null)
-    .map((g) => g.planId!);
-
-  const legacyPlans = await prisma.breedingPlan.findMany({
+  // Query BreedingPlan for all completed plans with birth + placement dates
+  const plans = await prisma.breedingPlan.findMany({
     where: {
       tenantId,
       birthDateActual: { not: null },
       placementCompletedDateActual: { not: null },
       deletedAt: null,
-      ...(linkedPlanIds.length > 0 ? { id: { notIn: linkedPlanIds } } : {}),
     },
     select: {
       species: true,
@@ -89,25 +64,13 @@ export async function getPlacementTrends(
   // --- Aggregate by species ---
   const daysBySpecies: Record<string, number[]> = {};
 
-  for (const g of groups) {
-    const birth = new Date(g.actualBirthOn!);
-    const placed = new Date(g.placementCompletedAt!);
-    const days = Math.round(
-      (placed.getTime() - birth.getTime()) / MS_PER_DAY,
-    );
-    // Sanity: exclude impossible values (negative or > 2 years)
-    if (days > 0 && days < 730) {
-      const sp = String(g.species);
-      (daysBySpecies[sp] ??= []).push(days);
-    }
-  }
-
-  for (const p of legacyPlans) {
+  for (const p of plans) {
     const birth = new Date(p.birthDateActual!);
     const placed = new Date(p.placementCompletedDateActual!);
     const days = Math.round(
       (placed.getTime() - birth.getTime()) / MS_PER_DAY,
     );
+    // Sanity: exclude impossible values (negative or > 2 years)
     if (days > 0 && days < 730) {
       const sp = String(p.species);
       (daysBySpecies[sp] ??= []).push(days);

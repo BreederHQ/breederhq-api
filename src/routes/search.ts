@@ -9,7 +9,6 @@ import prisma from "../prisma.js";
 type SearchEntityType =
   | "animal"
   | "breeding_plan"
-  | "offspring_group"
   | "breeding_program"
   | "contact"
   | "invoice"
@@ -58,7 +57,6 @@ function parseTypes(v: unknown): SearchEntityType[] | null {
   const validTypes: SearchEntityType[] = [
     "animal",
     "breeding_plan",
-    "offspring_group",
     "breeding_program",
     "contact",
     "invoice",
@@ -158,46 +156,6 @@ async function searchBreedingPlans(
       href: `/breeding/plans/${p.id}`,
     };
   });
-}
-
-async function searchOffspringGroups(
-  tenantId: number,
-  query: string,
-  limit: number
-): Promise<SearchResultItem[]> {
-  // Note: species is an enum, not searchable with contains
-  // Search by name or dam/sire names instead
-  const rows = await prisma.offspringGroup.findMany({
-    where: {
-      tenantId,
-      deletedAt: null,
-      OR: [
-        { name: { contains: query, mode: "insensitive" } },
-        { dam: { name: { contains: query, mode: "insensitive" } } },
-        { sire: { name: { contains: query, mode: "insensitive" } } },
-      ],
-    },
-    take: limit,
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      name: true,
-      species: true,
-      dam: { select: { name: true } },
-      sire: { select: { name: true } },
-      _count: { select: { Offspring: true } },
-    },
-  });
-
-  return rows.map((g) => ({
-    id: g.id,
-    type: "offspring_group" as const,
-    title: g.name || `${g.dam?.name ?? "Unknown"} × ${g.sire?.name ?? "TBD"}`,
-    subtitle: [g.species, g._count.Offspring ? `${g._count.Offspring} offspring` : null]
-      .filter(Boolean)
-      .join(" · "),
-    href: `/offspring/${g.id}`,
-  }));
 }
 
 async function searchBreedingPrograms(
@@ -694,7 +652,6 @@ const searchRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const allTypes: SearchEntityType[] = [
         "animal",
         "breeding_plan",
-        "offspring_group",
         "breeding_program",
         "contact",
         "invoice",
@@ -719,14 +676,6 @@ const searchRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         searchPromises.push(
           searchBreedingPlans(tenantId, q, limit).then((items) => ({
             type: "breeding_plan" as const,
-            items,
-          }))
-        );
-      }
-      if (typesToSearch.includes("offspring_group")) {
-        searchPromises.push(
-          searchOffspringGroups(tenantId, q, limit).then((items) => ({
-            type: "offspring_group" as const,
             items,
           }))
         );

@@ -188,7 +188,7 @@ export async function createStripeInvoiceForTenant(
   }
 
   // Determine if this is an animal-related invoice (for portal eligibility)
-  const hasAnimalContext = !!(invoice.animalId || invoice.offspringId || invoice.groupId || invoice.breedingPlanId || invoice.waitlistEntryId);
+  const hasAnimalContext = !!(invoice.animalId || invoice.offspringId || invoice.breedingPlanId || invoice.waitlistEntryId);
 
   // Create invoice on tenant's Stripe account (NO application_fee_amount)
   const stripeInvoice = await getStripe().invoices.create(

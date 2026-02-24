@@ -302,7 +302,6 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Anchor filters
       if (body.animalId) invoiceWhere.animalId = parseIntOrNull(body.animalId);
-      if (body.offspringGroupId) invoiceWhere.groupId = parseIntOrNull(body.offspringGroupId);
       if (body.breedingPlanId) invoiceWhere.breedingPlanId = parseIntOrNull(body.breedingPlanId);
       if (body.clientPartyId) invoiceWhere.clientPartyId = parseIntOrNull(body.clientPartyId);
 

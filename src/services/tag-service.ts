@@ -35,7 +35,6 @@ export async function createTagAssignment(params: {
   organizationId?: number;
   animalId?: number;
   waitlistEntryId?: number;
-  offspringGroupId?: number;
   offspringId?: number;
   documentId?: number;
 }): Promise<void> {
@@ -62,7 +61,6 @@ export async function createTagAssignment(params: {
   // Other entity types (not party-like, no mapping needed)
   if (params.animalId != null) data.animalId = params.animalId;
   if (params.waitlistEntryId != null) data.waitlistEntryId = params.waitlistEntryId;
-  if (params.offspringGroupId != null) data.offspringGroupId = params.offspringGroupId;
   if (params.offspringId != null) data.offspringId = params.offspringId;
   if (params.documentId != null) data.documentId = params.documentId;
 

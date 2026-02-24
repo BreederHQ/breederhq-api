@@ -938,36 +938,7 @@ const buyersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                   status: true,
                   sire: { select: { id: true, name: true, photoUrl: true } },
                   dam: { select: { id: true, name: true, photoUrl: true } },
-                  offspringGroup: {
-                    select: {
-                      id: true,
-                      name: true,
-                      _count: { select: { Offspring: true } },
-                    },
-                  },
-                },
-              },
-            },
-            orderBy: { createdAt: "desc" },
-          },
-          // Offspring group interests (old system)
-          offspringGroupBuyers: {
-            include: {
-              group: {
-                select: {
-                  id: true,
-                  name: true,
-                  status: true,
-                  plan: { select: { id: true, name: true } },
-                  Offspring: {
-                    select: {
-                      id: true,
-                      name: true,
-                      sex: true,
-                      status: true,
-                    },
-                    take: 10,
-                  },
+                  _count: { select: { Offspring: true } },
                 },
               },
             },
@@ -1017,14 +988,6 @@ const buyersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           createdAt: pb.createdAt,
           plan: pb.plan,
         })),
-        // Offspring group interests (old system)
-        offspringGroupInterests: buyer.offspringGroupBuyers.map((gb) => ({
-          id: gb.id,
-          type: "OFFSPRING_GROUP" as const,
-          placementRank: gb.placementRank,
-          createdAt: gb.createdAt,
-          group: gb.group,
-        })),
         // Waitlist positions (old system)
         waitlistPositions: buyer.waitlistEntries.map((w) => ({
           id: w.id,
@@ -1042,12 +1005,10 @@ const buyersRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         summary: {
           directInterests: buyer.interests.length,
           breedingPlanInterests: buyer.breedingPlanBuyers.length,
-          offspringGroupInterests: buyer.offspringGroupBuyers.length,
           waitlistPositions: buyer.waitlistEntries.length,
           total:
             buyer.interests.length +
             buyer.breedingPlanBuyers.length +
-            buyer.offspringGroupBuyers.length +
             buyer.waitlistEntries.length,
         },
       };

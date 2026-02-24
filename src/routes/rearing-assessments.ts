@@ -239,9 +239,9 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "assignment_not_found" });
       }
 
-      // Verify offspring belongs to the assignment's group
+      // Verify offspring belongs to the assignment's breeding plan
       const offspring = await prisma.offspring.findFirst({
-        where: { id: offspringId, groupId: assignment.offspringGroupId ?? undefined, tenantId },
+        where: { id: offspringId, breedingPlanId: assignment.breedingPlanId ?? undefined, tenantId },
       });
 
       if (!offspring) {

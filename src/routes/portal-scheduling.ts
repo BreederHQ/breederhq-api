@@ -3,7 +3,7 @@
 // All endpoints enforce requireClientPartyScope for party-based data isolation
 //
 // Endpoints:
-// GET  /api/v1/portal/scheduling/offspring-groups/:offspringGroupId/events - Discovery: list bookable events
+// GET  /api/v1/portal/scheduling/breeding-plans/:breedingPlanId/events - Discovery: list bookable events
 // GET  /api/v1/portal/scheduling/events/:eventId         - Get event context, rules, and status
 // GET  /api/v1/portal/scheduling/events/:eventId/slots   - List available slots
 // POST /api/v1/portal/scheduling/events/:eventId/book    - Book a slot (atomic)
@@ -124,8 +124,8 @@ interface DiscoveryEventItem {
 }
 
 interface DiscoveryResponse {
-  offspringGroupId: number;
-  offspringGroupName: string | null;
+  breedingPlanId: number;
+  breedingPlanName: string | null;
   events: DiscoveryEventItem[];
 }
 
@@ -258,30 +258,30 @@ function buildBlockedResponse(
 }
 
 /**
- * Check if a party is eligible to book scheduling for an offspring group.
- * Eligibility is based on OffspringGroupBuyer linkage.
+ * Check if a party is eligible to book scheduling for a breeding plan.
+ * Eligibility is based on BreedingPlanBuyer linkage.
  */
-async function isPartyEligibleForGroup(tenantId: number, partyId: number, offspringGroupId: number): Promise<boolean> {
-  const buyerLink = await prisma.offspringGroupBuyer.findFirst({
+async function isPartyEligibleForPlan(tenantId: number, partyId: number, breedingPlanId: number): Promise<boolean> {
+  const buyerLink = await prisma.breedingPlanBuyer.findFirst({
     where: {
       tenantId,
-      groupId: offspringGroupId,
-      buyerPartyId: partyId,
+      planId: breedingPlanId,
+      partyId: partyId,
     },
   });
   return !!buyerLink;
 }
 
 /**
- * Check if a party is eligible for a specific block (via offspringGroupId).
- * If block has no offspringGroupId, it's open to all portal parties.
+ * Check if a party is eligible for a specific block (via breedingPlanId).
+ * If block has no breedingPlanId, it's open to all portal parties.
  */
 async function isPartyEligibleForBlock(tenantId: number, partyId: number, block: any): Promise<boolean> {
-  if (!block.offspringGroupId) {
-    // No offspring group restriction - open to all
+  if (!block.breedingPlanId) {
+    // No breeding plan restriction - open to all
     return true;
   }
-  return isPartyEligibleForGroup(tenantId, partyId, block.offspringGroupId);
+  return isPartyEligibleForPlan(tenantId, partyId, block.breedingPlanId);
 }
 
 /**
@@ -290,10 +290,10 @@ async function isPartyEligibleForBlock(tenantId: number, partyId: number, block:
 async function getBuyerLinkWithRank(
   tenantId: number,
   partyId: number,
-  offspringGroupId: number
+  breedingPlanId: number
 ): Promise<{ placementRank: number | null } | null> {
-  const link = await prisma.offspringGroupBuyer.findFirst({
-    where: { tenantId, groupId: offspringGroupId, buyerPartyId: partyId },
+  const link = await prisma.breedingPlanBuyer.findFirst({
+    where: { tenantId, planId: breedingPlanId, partyId: partyId },
     select: { placementRank: true },
   });
   return link;
@@ -303,42 +303,43 @@ async function getBuyerLinkWithRank(
 
 const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
-   * GET /api/v1/portal/scheduling/offspring-groups/:offspringGroupId/events
-   * Discovery endpoint: lists bookable scheduling events for an offspring group.
-   * Party must be linked as a buyer (OffspringGroupBuyer) to access.
+   * GET /api/v1/portal/scheduling/breeding-plans/:breedingPlanId/events
+   * Discovery endpoint: lists bookable scheduling events for a breeding plan.
+   * Party must be linked as a buyer (BreedingPlanBuyer) to access.
+   * (Previously /offspring-groups/:id/events, now uses breedingPlanId)
    */
-  app.get<{ Params: { offspringGroupId: string } }>(
-    "/portal/scheduling/offspring-groups/:offspringGroupId/events",
+  app.get<{ Params: { breedingPlanId: string } }>(
+    "/portal/scheduling/breeding-plans/:breedingPlanId/events",
     async (req, reply) => {
       try {
         const { tenantId, partyId } = await requireClientPartyScope(req);
-        const offspringGroupId = parseInt(req.params.offspringGroupId, 10);
+        const breedingPlanId = parseInt(req.params.breedingPlanId, 10);
 
-        if (isNaN(offspringGroupId)) {
-          return reply.code(400).send({ error: "invalid_offspring_group_id" });
+        if (isNaN(breedingPlanId)) {
+          return reply.code(400).send({ error: "invalid_breeding_plan_id" });
         }
 
-        // 1. Verify offspring group exists and belongs to tenant
-        const group = await prisma.offspringGroup.findFirst({
-          where: { id: offspringGroupId, tenantId },
+        // 1. Verify breeding plan exists and belongs to tenant
+        const plan = await prisma.breedingPlan.findFirst({
+          where: { id: breedingPlanId, tenantId },
           select: { id: true, name: true },
         });
 
-        if (!group) {
-          return reply.code(404).send({ error: "offspring_group_not_found" });
+        if (!plan) {
+          return reply.code(404).send({ error: "breeding_plan_not_found" });
         }
 
         // 2. Verify party is eligible (linked as buyer)
-        const isEligible = await isPartyEligibleForGroup(tenantId, partyId, offspringGroupId);
+        const isEligible = await isPartyEligibleForPlan(tenantId, partyId, breedingPlanId);
         if (!isEligible) {
-          return reply.code(403).send({ error: "not_eligible", message: "You are not authorized to view scheduling for this group." });
+          return reply.code(403).send({ error: "not_eligible", message: "You are not authorized to view scheduling for this plan." });
         }
 
-        // 3. Find all OPEN blocks linked to this offspring group
+        // 3. Find all OPEN blocks linked to this breeding plan
         const blocks = await prisma.schedulingAvailabilityBlock.findMany({
           where: {
             tenantId,
-            offspringGroupId,
+            breedingPlanId,
             status: "OPEN",
           },
           include: {
@@ -401,8 +402,8 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
 
         const response: DiscoveryResponse = {
-          offspringGroupId,
-          offspringGroupName: group.name,
+          breedingPlanId,
+          breedingPlanName: plan.name,
           events,
         };
 
@@ -511,10 +512,10 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const eventStatus = block?.status ?? template?.status ?? "OPEN";
       const isOpen = eventStatus === "OPEN";
 
-      // Check eligibility based on offspringGroupId linkage
+      // Check eligibility based on breedingPlanId linkage
       let isEligible = true;
       let eligibilityReason: string | null = null;
-      if (block?.offspringGroupId) {
+      if (block?.breedingPlanId) {
         isEligible = await isPartyEligibleForBlock(tenantId, partyId, block);
         if (!isEligible) {
           eligibilityReason = "You are not authorized to book this appointment.";
@@ -586,7 +587,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
 
       // Build slot query based on event type
       let blockIds: number[] = [];
-      let offspringGroupId: number | null = null;
+      let breedingPlanId: number | null = null;
 
       if (parsed.type === "template") {
         // Get all open blocks for this template
@@ -596,19 +597,19 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
             templateId: parsed.id,
             status: "OPEN",
           },
-          select: { id: true, offspringGroupId: true },
+          select: { id: true, breedingPlanId: true },
         });
         blockIds = blocks.map((b) => b.id);
-        offspringGroupId = blocks[0]?.offspringGroupId ?? null;
+        breedingPlanId = blocks[0]?.breedingPlanId ?? null;
       } else {
         // Single block
         const block = await prisma.schedulingAvailabilityBlock.findFirst({
           where: { id: parsed.id, tenantId, status: "OPEN" },
-          select: { id: true, offspringGroupId: true },
+          select: { id: true, breedingPlanId: true },
         });
         if (block) {
           blockIds = [block.id];
-          offspringGroupId = block.offspringGroupId;
+          breedingPlanId = block.breedingPlanId;
         }
       }
 
@@ -616,22 +617,22 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         return reply.send({ slots: [] });
       }
 
-      // Check placement gating if there's an offspring group
-      if (offspringGroupId) {
-        const group = await prisma.offspringGroup.findFirst({
-          where: { id: offspringGroupId, tenantId },
+      // Check placement gating if there's a breeding plan
+      if (breedingPlanId) {
+        const plan = await prisma.breedingPlan.findFirst({
+          where: { id: breedingPlanId, tenantId },
           select: { placementSchedulingPolicy: true },
         });
-        if (group?.placementSchedulingPolicy) {
-          const policy = parsePlacementSchedulingPolicy(group.placementSchedulingPolicy);
+        if (plan?.placementSchedulingPolicy) {
+          const policy = parsePlacementSchedulingPolicy(plan.placementSchedulingPolicy as any);
           if (policy?.enabled) {
-            const buyerLink = await getBuyerLinkWithRank(tenantId, partyId, offspringGroupId);
+            const buyerLink = await getBuyerLinkWithRank(tenantId, partyId, breedingPlanId);
             const gatingResult = checkPlacementGating(policy, buyerLink?.placementRank ?? null);
             if (!gatingResult.allowed) {
               return reply.code(403).send({
                 code: gatingResult.code,
                 message: getPlacementBlockedMessage(gatingResult.code!),
-                context: buildPlacementBlockedContext(offspringGroupId, gatingResult.window, gatingResult.serverNow, eventId),
+                context: buildPlacementBlockedContext(breedingPlanId, gatingResult.window, gatingResult.serverNow, eventId),
               });
             }
           }
@@ -714,12 +715,12 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         if (parsed.type === "block") {
           const block = await prisma.schedulingAvailabilityBlock.findFirst({
             where: { id: parsed.id, tenantId },
-            select: { id: true, offspringGroupId: true },
+            select: { id: true, breedingPlanId: true },
           });
           if (!block) {
             return reply.code(404).send({ error: "event_not_found" });
           }
-          if (block.offspringGroupId) {
+          if (block.breedingPlanId) {
             const isEligible = await isPartyEligibleForBlock(tenantId, partyId, block);
             if (!isEligible) {
               return reply.code(403).send({ error: "not_eligible", message: "You are not authorized to book this appointment." });

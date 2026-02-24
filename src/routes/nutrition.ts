@@ -179,7 +179,6 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const query = req.query as {
       animalId?: string;
-      offspringGroupId?: string;
       foodProductId?: string;
       isActive?: string;
       page?: string;
@@ -188,7 +187,6 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const result = await nutritionService.listFeedingPlans(tenantId, {
       animalId: query.animalId ? parseInt(query.animalId, 10) : undefined,
-      offspringGroupId: query.offspringGroupId ? parseInt(query.offspringGroupId, 10) : undefined,
       foodProductId: query.foodProductId ? parseInt(query.foodProductId, 10) : undefined,
       isActive: parseBool(query.isActive),
       page: query.page ? parseInt(query.page, 10) : undefined,
@@ -199,14 +197,13 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /api/v1/nutrition/plans
-  // Create a new feeding plan (for animal or offspring group)
+  // Create a new feeding plan for an animal
   app.post("/nutrition/plans", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
     const body = req.body as {
-      animalId?: number;
-      offspringGroupId?: number;
+      animalId: number;
       foodProductId: number;
       portionOz: number;
       feedingsPerDay?: number;
@@ -216,12 +213,8 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       notes?: string;
     };
 
-    // Require either animalId OR offspringGroupId (but not both)
-    if (!body.animalId && !body.offspringGroupId) {
-      return reply.code(400).send({ error: { code: "target_required", message: "Either animalId or offspringGroupId is required" } });
-    }
-    if (body.animalId && body.offspringGroupId) {
-      return reply.code(400).send({ error: { code: "single_target_required", message: "Provide either animalId or offspringGroupId, not both" } });
+    if (!body.animalId) {
+      return reply.code(400).send({ error: { code: "animal_id_required", message: "animalId is required" } });
     }
     if (!body.foodProductId) {
       return reply.code(400).send({ error: { code: "food_product_id_required", message: "Food product ID is required" } });
@@ -350,7 +343,6 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const query = req.query as {
       animalId?: string;
-      offspringGroupId?: string;
       feedingPlanId?: string;
       dateFrom?: string;
       dateTo?: string;
@@ -361,7 +353,6 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const result = await nutritionService.listFeedingRecords(tenantId, {
       animalId: query.animalId ? parseInt(query.animalId, 10) : undefined,
-      offspringGroupId: query.offspringGroupId ? parseInt(query.offspringGroupId, 10) : undefined,
       feedingPlanId: query.feedingPlanId ? parseInt(query.feedingPlanId, 10) : undefined,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
@@ -374,14 +365,13 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // POST /api/v1/nutrition/records
-  // Log a feeding (for animal or offspring group)
+  // Log a feeding for an animal
   app.post("/nutrition/records", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
     const body = req.body as {
-      animalId?: number;
-      offspringGroupId?: number;
+      animalId: number;
       feedingPlanId?: number;
       foodProductId?: number;
       fedAt: string;
@@ -392,12 +382,8 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       notes?: string;
     };
 
-    // Require either animalId OR offspringGroupId (but not both)
-    if (!body.animalId && !body.offspringGroupId) {
-      return reply.code(400).send({ error: { code: "target_required", message: "Either animalId or offspringGroupId is required" } });
-    }
-    if (body.animalId && body.offspringGroupId) {
-      return reply.code(400).send({ error: { code: "single_target_required", message: "Provide either animalId or offspringGroupId, not both" } });
+    if (!body.animalId) {
+      return reply.code(400).send({ error: { code: "animal_id_required", message: "animalId is required" } });
     }
     if (!body.fedAt) {
       return reply.code(400).send({ error: { code: "fed_at_required", message: "Feeding time is required" } });
@@ -548,69 +534,6 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     const history = await nutritionService.getFoodChangeHistory(tenantId, animalId);
-    return reply.send({ changes: history });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OFFSPRING GROUP-SPECIFIC ROUTES
-  // ══════════════════════════════════════════════════════════════════════════
-
-  // GET /api/v1/offspring-groups/:groupId/nutrition/plan
-  // Get active feeding plan for an offspring group
-  app.get("/offspring-groups/:groupId/nutrition/plan", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
-
-    const groupId = parseIntStrict((req.params as { groupId: string }).groupId);
-    if (!groupId) {
-      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid offspring group ID" } });
-    }
-
-    const plan = await nutritionService.getActivePlanForOffspringGroup(tenantId, groupId);
-    return reply.send(plan);
-  });
-
-  // GET /api/v1/offspring-groups/:groupId/nutrition/records
-  // Get recent feeding records for an offspring group
-  app.get("/offspring-groups/:groupId/nutrition/records", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
-
-    const groupId = parseIntStrict((req.params as { groupId: string }).groupId);
-    if (!groupId) {
-      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid offspring group ID" } });
-    }
-
-    const query = req.query as {
-      dateFrom?: string;
-      dateTo?: string;
-      page?: string;
-      limit?: string;
-    };
-
-    const result = await nutritionService.listFeedingRecords(tenantId, {
-      offspringGroupId: groupId,
-      dateFrom: query.dateFrom,
-      dateTo: query.dateTo,
-      page: query.page ? parseInt(query.page, 10) : undefined,
-      limit: query.limit ? parseInt(query.limit, 10) : undefined,
-    });
-
-    return reply.send(result);
-  });
-
-  // GET /api/v1/offspring-groups/:groupId/nutrition/changes
-  // Get food change history for an offspring group
-  app.get("/offspring-groups/:groupId/nutrition/changes", async (req, reply) => {
-    const tenantId = await assertTenant(req, reply);
-    if (!tenantId) return;
-
-    const groupId = parseIntStrict((req.params as { groupId: string }).groupId);
-    if (!groupId) {
-      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid offspring group ID" } });
-    }
-
-    const history = await nutritionService.getFoodChangeHistoryForOffspringGroup(tenantId, groupId);
     return reply.send({ changes: history });
   });
 

@@ -66,40 +66,6 @@ export async function triggerOnOffspringPhotosAdded(
 }
 
 /**
- * Trigger rules when an offspring group is created
- */
-export async function triggerOnOffspringGroupCreated(
-  groupId: number,
-  tenantId: number
-): Promise<void> {
-  try {
-    await executeAllRulesForEntity('GROUP', groupId, tenantId, 'webhook');
-  } catch (error) {
-    console.error(`Failed to execute rules for offspring group ${groupId}:`, error);
-  }
-}
-
-/**
- * Trigger rules when an offspring group is updated
- */
-export async function triggerOnOffspringGroupUpdated(
-  groupId: number,
-  tenantId: number,
-  changedFields: string[]
-): Promise<void> {
-  try {
-    const relevantFields = ['expectedBirthDate', 'status', 'marketplaceListed'];
-    const hasRelevantChanges = changedFields.some(field => relevantFields.includes(field));
-
-    if (hasRelevantChanges) {
-      await executeAllRulesForEntity('GROUP', groupId, tenantId, 'webhook');
-    }
-  } catch (error) {
-    console.error(`Failed to execute rules for offspring group ${groupId}:`, error);
-  }
-}
-
-/**
  * Trigger rules when a breeding plan is created
  */
 export async function triggerOnBreedingPlanCreated(
@@ -134,34 +100,6 @@ export async function triggerOnBreedingPlanUpdated(
 }
 
 /**
- * Trigger rules for all offspring in a group
- * Useful when group-level settings change that should cascade to offspring
- */
-export async function triggerOnAllOffspringInGroup(
-  groupId: number,
-  tenantId: number
-): Promise<void> {
-  try {
-    const prisma = (await import('../prisma.js')).default;
-
-    const offspring = await prisma.offspring.findMany({
-      where: { groupId, tenantId },
-      select: { id: true }
-    });
-
-    // Execute rules for each offspring in parallel
-    await Promise.all(
-      offspring.map(o =>
-        executeAllRulesForEntity('OFFSPRING', o.id, tenantId, 'webhook')
-          .catch(err => console.error(`Failed to execute rules for offspring ${o.id}:`, err))
-      )
-    );
-  } catch (error) {
-    console.error(`Failed to trigger rules for offspring in group ${groupId}:`, error);
-  }
-}
-
-/**
  * Trigger rules for all offspring in a breeding plan
  * Useful when plan-level settings change that should cascade
  */
@@ -172,17 +110,10 @@ export async function triggerOnAllOffspringInPlan(
   try {
     const prisma = (await import('../prisma.js')).default;
 
-    const groups = await prisma.offspringGroup.findMany({
-      where: { planId, tenantId },
-      include: {
-        Offspring: {
-          select: { id: true }
-        }
-      }
+    const allOffspring = await prisma.offspring.findMany({
+      where: { breedingPlanId: planId, tenantId },
+      select: { id: true }
     });
-
-    // Flatten offspring from all groups
-    const allOffspring = groups.flatMap(g => g.Offspring);
 
     // Execute rules for each offspring in parallel
     await Promise.all(

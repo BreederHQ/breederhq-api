@@ -163,22 +163,23 @@ export default async function marketplaceSavedRoutes(
               };
             }
           } else if (item.listingType === "offspring_group" && item.listingId) {
-            const offspringGroup = await prisma.offspringGroup.findUnique({
+            // OGC-05: offspring_group listings now backed by breedingPlan
+            const plan = await prisma.breedingPlan.findUnique({
               where: { id: item.listingId },
               include: {
                 tenant: true,
               },
             });
-            if (offspringGroup) {
+            if (plan) {
               listing = {
-                title: offspringGroup.listingTitle || offspringGroup.name || "Unnamed Litter",
-                slug: offspringGroup.listingSlug,
-                coverImageUrl: offspringGroup.coverImageUrl,
-                status: offspringGroup.status === "LIVE" ? "live" : "draft",
-                isAvailable: offspringGroup.status === "LIVE",
-                priceCents: offspringGroup.marketplaceDefaultPriceCents ? Number(offspringGroup.marketplaceDefaultPriceCents) : null,
-                breederName: offspringGroup.tenant?.name,
-                breederSlug: offspringGroup.tenant?.slug,
+                title: (plan as any).listingTitle || plan.name || "Unnamed Litter",
+                slug: (plan as any).listingSlug,
+                coverImageUrl: plan.coverImageUrl,
+                status: (plan as any).marketplaceListed ? "live" : "draft",
+                isAvailable: !!(plan as any).marketplaceListed,
+                priceCents: (plan as any).marketplaceDefaultPriceCents ? Number((plan as any).marketplaceDefaultPriceCents) : null,
+                breederName: plan.tenant?.name,
+                breederSlug: plan.tenant?.slug,
               };
             }
           } else if (item.listingType === "individual_animal" && item.listingId) {
@@ -345,7 +346,8 @@ export default async function marketplaceSavedRoutes(
         });
         listingExists = !!listing && !listing.deletedAt;
       } else if (listingType === "offspring_group") {
-        const listing = await prisma.offspringGroup.findUnique({
+        // OGC-05: offspring_group listings now backed by breedingPlan
+        const listing = await prisma.breedingPlan.findUnique({
           where: { id: listingId },
           select: { id: true },
         });

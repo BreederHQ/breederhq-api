@@ -563,10 +563,7 @@ import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
-import offspringLifecycleRoutes from "./routes/offspring-lifecycle.js";
 import offspringDocumentsRoutes from "./routes/offspring-documents.js";
-import offspringGroupDocumentsRoutes from "./routes/offspring-group-documents.js";
-import offspringGroupBuyersRoutes from "./routes/offspring-group-buyers.js";
 import sessionRoutes from "./routes/session.js";
 import tagsRoutes from "./routes/tags.js";
 import tenantRoutes from "./routes/tenant.js";
@@ -1239,10 +1236,7 @@ app.register(
     api.register(titlesRoutes);        // /api/v1/animals/:animalId/titles, /api/v1/title-definitions
     api.register(competitionsRoutes);  // /api/v1/animals/:animalId/competitions, /api/v1/competitions/*
     api.register(offspringRoutes);     // /api/v1/offspring/*
-    api.register(offspringLifecycleRoutes); // /api/v1/offspring/:groupId/(advance-status|rewind-status|dates|milestones|batch-weights)
     api.register(offspringDocumentsRoutes); // /api/v1/offspring/individuals/:id/documents
-    api.register(offspringGroupDocumentsRoutes); // /api/v1/offspring/groups/:id/documents
-    api.register(offspringGroupBuyersRoutes); // /api/v1/offspring/groups/:id/buyers/* (Selection Board)
     api.register(waitlistRoutes);      // /api/v1/waitlist/*  <-- NEW global waitlist endpoints
 
     // Rearing Protocols

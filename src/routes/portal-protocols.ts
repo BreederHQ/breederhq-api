@@ -54,10 +54,10 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
               breed: true,
               bornAt: true,
               collarColorName: true,
-              group: {
+              BreedingPlan: {
                 select: {
                   name: true,
-                  actualBirthOn: true,
+                  birthDateActual: true,
                   dam: {
                     select: { id: true, name: true },
                   },
@@ -88,7 +88,7 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       // Build response with protocol progress
       const protocols = assignments.map((a) => {
         const birthDate =
-          a.offspring?.bornAt || a.offspring?.group?.actualBirthOn || null;
+          a.offspring?.bornAt || a.offspring?.BreedingPlan?.birthDateActual || null;
         const ageWeeks = birthDate
           ? Math.floor((Date.now() - new Date(birthDate).getTime()) / (7 * 24 * 60 * 60 * 1000))
           : null;
@@ -128,11 +128,11 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             birthDate: birthDate?.toISOString() || null,
             ageWeeks,
             collarColor: a.offspring?.collarColorName,
-            dam: a.offspring?.group?.dam,
-            sire: a.offspring?.group?.sire,
+            dam: a.offspring?.BreedingPlan?.dam,
+            sire: a.offspring?.BreedingPlan?.sire,
           },
           breeder: {
-            name: a.offspring?.group?.tenant?.name || "Unknown Breeder",
+            name: a.offspring?.BreedingPlan?.tenant?.name || "Unknown Breeder",
           },
           handoff: {
             at: a.handoffAt?.toISOString(),
@@ -208,10 +208,10 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
               breed: true,
               bornAt: true,
               collarColorName: true,
-              group: {
+              BreedingPlan: {
                 select: {
                   name: true,
-                  actualBirthOn: true,
+                  birthDateActual: true,
                   dam: {
                     select: { id: true, name: true },
                   },
@@ -304,7 +304,7 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       // Calculate current stage
       const birthDate =
         assignment.offspring?.bornAt ||
-        assignment.offspring?.group?.actualBirthOn;
+        assignment.offspring?.BreedingPlan?.birthDateActual;
       const ageWeeks = birthDate
         ? Math.floor(
             (Date.now() - new Date(birthDate).getTime()) / (7 * 24 * 60 * 60 * 1000)
@@ -342,11 +342,11 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             birthDate: birthDate?.toISOString() || null,
             ageWeeks,
             collarColor: assignment.offspring?.collarColorName,
-            dam: assignment.offspring?.group?.dam,
-            sire: assignment.offspring?.group?.sire,
+            dam: assignment.offspring?.BreedingPlan?.dam,
+            sire: assignment.offspring?.BreedingPlan?.sire,
           },
           breeder: {
-            name: assignment.offspring?.group?.tenant?.name || "Unknown Breeder",
+            name: assignment.offspring?.BreedingPlan?.tenant?.name || "Unknown Breeder",
           },
           handoff: {
             at: assignment.handoffAt?.toISOString(),
@@ -672,7 +672,7 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             select: {
               id: true,
               name: true,
-              group: {
+              BreedingPlan: {
                 select: {
                   tenant: {
                     select: { name: true },
@@ -750,7 +750,7 @@ const portalProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
             assignment.offspring?.name || `Offspring #${assignment.offspringId}`,
           protocolName: assignment.protocol?.name || "Unknown Protocol",
           breederName:
-            assignment.offspring?.group?.tenant?.name || "Unknown Breeder",
+            assignment.offspring?.BreedingPlan?.tenant?.name || "Unknown Breeder",
           certificateType: "BUYER_PHASE",
           stageCompleted: 8, // Full buyer phase (stages 4-8)
           stageData,

@@ -156,20 +156,9 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
                 status: true,
                 expectedBirthDate: true,
                 birthDateActual: true,
-                offspringGroup: {
-                  select: {
-                    id: true,
-                    expectedBirthOn: true,
-                    actualBirthOn: true,
-                    countBorn: true,
-                    countLive: true,
-                    countPlaced: true,
-                    status: true,
-                    _count: {
-                      select: { Offspring: true },
-                    },
-                  },
-                },
+                countBorn: true,
+                countLive: true,
+                countPlaced: true,
               },
             },
             _count: {
@@ -180,10 +169,9 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         prisma.mktListingBreedingProgram.count({ where }),
       ]);
 
-      // Compute summary stats for each program
+      // Compute summary stats for each program (data now on breedingPlan directly)
       const items = programs.map((program) => {
         const plans = program.breedingPlans || [];
-        const allGroups = plans.flatMap((p) => p.offspringGroup ? [p.offspringGroup] : []);
 
         // Count active plans (not completed/cancelled)
         const activePlans = plans.filter((p) =>
@@ -192,28 +180,28 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
 
         // Find upcoming litters (expected birth in the future)
         const now = new Date();
-        const upcomingLitters = allGroups.filter((g) => {
-          const expected = g.expectedBirthOn ? new Date(g.expectedBirthOn) : null;
-          return expected && expected > now && !g.actualBirthOn;
+        const upcomingLitters = plans.filter((p) => {
+          const expected = p.expectedBirthDate ? new Date(p.expectedBirthDate) : null;
+          return expected && expected > now && !p.birthDateActual;
         });
 
         // Find next expected birth date
         const nextExpectedBirth = upcomingLitters
-          .map((g) => g.expectedBirthOn)
+          .map((p) => p.expectedBirthDate)
           .filter(Boolean)
           .sort((a, b) => new Date(a!).getTime() - new Date(b!).getTime())[0] || null;
 
         // Count available offspring (born but not all placed)
-        const availableLitters = allGroups.filter((g) => {
-          const born = g.actualBirthOn;
-          const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
-          return born && placed < total;
+        const plansWithBirth = plans.filter((p) => p.birthDateActual);
+        const availableLitters = plansWithBirth.filter((p) => {
+          const placed = p.countPlaced ?? 0;
+          const total = p.countLive ?? p.countBorn ?? 0;
+          return placed < total;
         });
 
-        const totalAvailable = availableLitters.reduce((sum, g) => {
-          const placed = g.countPlaced ?? 0;
-          const total = g.countLive ?? g.countBorn ?? g._count?.Offspring ?? 0;
+        const totalAvailable = availableLitters.reduce((sum, p) => {
+          const placed = p.countPlaced ?? 0;
+          const total = p.countLive ?? p.countBorn ?? 0;
           return sum + Math.max(0, total - placed);
         }, 0);
 
@@ -225,7 +213,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           summary: {
             totalPlans: plans.length,
             activePlans: activePlans.length,
-            totalLitters: allGroups.length,
+            totalLitters: plansWithBirth.length,
             upcomingLitters: upcomingLitters.length,
             nextExpectedBirth,
             availableLitters: availableLitters.length,

@@ -1,13 +1,13 @@
 // src/services/buyer-offspring-automation.ts
 // Automates the connection of breeding plan buyers to born offspring
 //
+// OGC-02: Simplified to single buyer model (BreedingPlanBuyer only).
+// connectGroupBuyersToOffspring() removed — group buyers are now plan buyers.
+//
 // When offspring are recorded for a breeding plan:
 // 1. Find all BreedingPlanBuyer records for that plan
 // 2. For each buyer with an ASSIGNED stage, create BuyerInterest for the new animal
 // 3. Optionally create a Deal in INQUIRY stage
-//
-// This bridges the gap between "interested in a future breeding" and
-// "interested in a specific animal that was born"
 
 import prisma from "../prisma.js";
 import { findOrCreateBuyer } from "./buyer-migration-service.js";
@@ -45,18 +45,7 @@ export interface ConnectResult {
   errors: Array<{ buyerId: number; error: string }>;
 }
 
-export interface ConnectGroupBuyersParams {
-  /** The offspring group ID */
-  offspringGroupId: number;
-  /** The animal ID of the born offspring */
-  offspringAnimalId: number;
-  /** The tenant ID */
-  tenantId: number;
-  /** Create a Deal for each buyer (default: false) */
-  createDeals?: boolean;
-  /** The interest level to set (default: SERIOUS) */
-  interestLevel?: InterestLevel;
-}
+// OGC-02: ConnectGroupBuyersParams removed — no separate group buyer model
 
 // ────────────────────────────────────────────────────────────────────────────
 // Core Functions
@@ -222,156 +211,17 @@ export async function connectPlanBuyersToOffspring(
   return result;
 }
 
-/**
- * Connects all buyers from an offspring group to a newly born offspring.
- *
- * Similar to connectPlanBuyersToOffspring but uses OffspringGroupBuyer records.
- */
-export async function connectGroupBuyersToOffspring(
-  params: ConnectGroupBuyersParams
-): Promise<ConnectResult> {
-  const {
-    offspringGroupId,
-    offspringAnimalId,
-    tenantId,
-    createDeals = false,
-    interestLevel = "SERIOUS",
-  } = params;
-
-  const result: ConnectResult = {
-    buyersFound: 0,
-    interestsCreated: 0,
-    interestsSkipped: 0,
-    dealsCreated: 0,
-    errors: [],
-  };
-
-  // Get all group buyers
-  const groupBuyers = await prisma.offspringGroupBuyer.findMany({
-    where: {
-      tenantId,
-      groupId: offspringGroupId,
-    },
-    include: {
-      buyerParty: { select: { id: true, name: true } },
-      waitlistEntry: { select: { clientPartyId: true } },
-    },
-  });
-
-  result.buyersFound = groupBuyers.length;
-
-  // Verify the animal exists
-  const animal = await prisma.animal.findFirst({
-    where: { id: offspringAnimalId, tenantId },
-    select: { id: true, name: true },
-  });
-
-  if (!animal) {
-    throw new Error(`Animal id=${offspringAnimalId} not found in tenant ${tenantId}`);
-  }
-
-  for (const groupBuyer of groupBuyers) {
-    try {
-      // Resolve the party ID
-      let partyId = groupBuyer.buyerPartyId;
-      if (!partyId && groupBuyer.waitlistEntry?.clientPartyId) {
-        partyId = groupBuyer.waitlistEntry.clientPartyId;
-      }
-
-      if (!partyId) {
-        result.errors.push({
-          buyerId: groupBuyer.id,
-          error: "No party ID found",
-        });
-        continue;
-      }
-
-      // Get or create Buyer CRM record
-      let buyerId = groupBuyer.buyerId;
-      if (!buyerId) {
-        const buyer = await findOrCreateBuyer(tenantId, partyId, "OffspringGroupOffspring");
-        buyerId = buyer.id;
-
-        // Update the group buyer with the buyerId
-        await prisma.offspringGroupBuyer.update({
-          where: { id: groupBuyer.id },
-          data: { buyerId },
-        });
-      }
-
-      // Check if interest already exists
-      const existingInterest = await prisma.buyerInterest.findUnique({
-        where: {
-          buyerId_animalId: {
-            buyerId,
-            animalId: offspringAnimalId,
-          },
-        },
-      });
-
-      if (existingInterest) {
-        result.interestsSkipped++;
-      } else {
-        // Create BuyerInterest
-        await prisma.buyerInterest.create({
-          data: {
-            buyerId,
-            animalId: offspringAnimalId,
-            level: interestLevel,
-            notes: `Auto-linked from offspring group (group ID: ${offspringGroupId})`,
-          },
-        });
-        result.interestsCreated++;
-      }
-
-      // Optionally create Deal
-      if (createDeals) {
-        const existingDeal = await prisma.deal.findFirst({
-          where: {
-            tenantId,
-            buyerId,
-            animalId: offspringAnimalId,
-          },
-        });
-
-        if (!existingDeal) {
-          const buyerName = groupBuyer.buyerParty?.name || "Buyer";
-          const animalName = animal.name || "Offspring";
-
-          await prisma.deal.create({
-            data: {
-              tenantId,
-              buyerId,
-              animalId: offspringAnimalId,
-              name: `${buyerName} - ${animalName}`,
-              stage: "INQUIRY" as DealStage,
-              notes: `Auto-created from offspring group (group ID: ${offspringGroupId})`,
-            },
-          });
-          result.dealsCreated++;
-        }
-      }
-    } catch (err) {
-      result.errors.push({
-        buyerId: groupBuyer.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  return result;
-}
+// OGC-02: connectGroupBuyersToOffspring() REMOVED.
+// Group buyers are now BreedingPlanBuyer records — connectPlanBuyersToOffspring handles everything.
 
 /**
- * Connects all buyers from a breeding plan and its linked offspring groups
- * to a newly born offspring.
+ * Connects all buyers from a breeding plan to a newly born offspring.
  *
- * This is a convenience function that calls both connectPlanBuyersToOffspring
- * and connectGroupBuyersToOffspring.
+ * OGC-02: Simplified — just calls connectPlanBuyersToOffspring.
+ * The separate group buyers path has been eliminated.
  */
 export async function connectAllBuyersToOffspring(params: {
   breedingPlanId: number;
-  offspringGroupId?: number;
   offspringAnimalId: number;
   tenantId: number;
   createDeals?: boolean;
@@ -388,21 +238,10 @@ export async function connectAllBuyersToOffspring(params: {
     interestLevel: params.interestLevel,
   });
 
-  let groupResult: ConnectResult | null = null;
-
-  if (params.offspringGroupId) {
-    groupResult = await connectGroupBuyersToOffspring({
-      offspringGroupId: params.offspringGroupId,
-      offspringAnimalId: params.offspringAnimalId,
-      tenantId: params.tenantId,
-      createDeals: params.createDeals,
-      interestLevel: params.interestLevel,
-    });
-  }
-
+  // OGC-02: No separate group buyers path — return null for backward compat
   return {
     planBuyers: planResult,
-    groupBuyers: groupResult,
+    groupBuyers: null,
   };
 }
 
@@ -413,9 +252,9 @@ export async function connectAllBuyersToOffspring(params: {
 /**
  * Event handler for when an offspring is promoted to the Animal table.
  *
- * Call this when an Offspring record is promoted to Animal (e.g., when the
- * animal is weaned or registered). This will connect all relevant buyers
- * to the new Animal record.
+ * OGC-05: Uses offspring.breedingPlanId directly (OffspringGroup dropped).
+ * If the offspring has a linked plan, connect plan buyers.
+ * If not, return empty result.
  */
 export async function onOffspringPromotedToAnimal(params: {
   offspringId: number;
@@ -426,33 +265,19 @@ export async function onOffspringPromotedToAnimal(params: {
   planBuyers: ConnectResult;
   groupBuyers: ConnectResult | null;
 }> {
-  // Get the offspring to find the group and plan
+  // Get the offspring to find the plan
   const offspring = await prisma.offspring.findFirst({
     where: { id: params.offspringId, tenantId: params.tenantId },
-    include: {
-      group: {
-        include: {
-          plan: { select: { id: true } },
-        },
-      },
-    },
+    select: { id: true, breedingPlanId: true },
   });
 
   if (!offspring) {
     throw new Error(`Offspring id=${params.offspringId} not found`);
   }
 
-  const breedingPlanId = offspring.group.plan?.id;
+  const breedingPlanId = offspring.breedingPlanId;
   if (!breedingPlanId) {
-    // Offspring group might not be linked to a plan
-    // Just connect group buyers
-    const groupResult = await connectGroupBuyersToOffspring({
-      offspringGroupId: offspring.groupId,
-      offspringAnimalId: params.animalId,
-      tenantId: params.tenantId,
-      createDeals: params.createDeals,
-    });
-
+    // Offspring not linked to a plan — no buyers to connect
     return {
       planBuyers: {
         buyersFound: 0,
@@ -461,13 +286,12 @@ export async function onOffspringPromotedToAnimal(params: {
         dealsCreated: 0,
         errors: [],
       },
-      groupBuyers: groupResult,
+      groupBuyers: null,
     };
   }
 
   return connectAllBuyersToOffspring({
     breedingPlanId,
-    offspringGroupId: offspring.groupId,
     offspringAnimalId: params.animalId,
     tenantId: params.tenantId,
     createDeals: params.createDeals,
@@ -477,13 +301,10 @@ export async function onOffspringPromotedToAnimal(params: {
 /**
  * Event handler for when offspring are recorded for a breeding plan.
  *
- * Call this when recording the birth of offspring. If the offspring are
- * tracked in the Offspring table (not yet promoted to Animal), pass the
- * offspring IDs. The function will connect buyers to the relevant animals.
+ * OGC-02: Simplified — only uses plan buyers.
  */
 export async function onOffspringRecorded(params: {
   breedingPlanId: number;
-  offspringGroupId?: number;
   tenantId: number;
   /** Animal IDs if offspring were created directly as Animals */
   animalIds?: number[];
@@ -508,7 +329,6 @@ export async function onOffspringRecorded(params: {
     for (const animalId of params.animalIds) {
       const result = await connectAllBuyersToOffspring({
         breedingPlanId: params.breedingPlanId,
-        offspringGroupId: params.offspringGroupId,
         offspringAnimalId: animalId,
         tenantId: params.tenantId,
         createDeals: params.createDeals,
@@ -525,11 +345,6 @@ export async function onOffspringRecorded(params: {
   // Handle Offspring IDs (need to check if they have linked Animals)
   if (params.offspringIds?.length) {
     for (const offspringId of params.offspringIds) {
-      // Check if offspring is linked to an animal
-      // Note: Offspring don't directly link to Animal table yet in most cases
-      // This is a placeholder for when that link exists
-      // For now, we'll skip unless the offspring has been promoted
-
       // In current schema, offspring don't have animalId
       // They get promoted to Animal table separately
       // So we track that the offspring exists but don't create interest yet

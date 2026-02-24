@@ -71,48 +71,6 @@ export async function resolveTenantFromProgramSlug(
 }
 
 /**
- * Resolves tenant context from an offspring group listing slug within a program.
- * Returns null if not found or not published.
- *
- * IMPORTANT: Enforces the hierarchy: BreedingProgram (LIVE) → BreedingPlan → OffspringGroup
- * An offspring group is only resolvable if its parent BreedingProgram has status=LIVE.
- */
-export async function resolveOffspringGroupListing(
-  prisma: PrismaClient,
-  tenantId: number,
-  listingSlug: string
-): Promise<{ groupId: number } | null> {
-  if (!isValidSlug(listingSlug)) {
-    return null;
-  }
-
-  const normalized = normalizeSlug(listingSlug);
-
-  const group = await prisma.offspringGroup.findFirst({
-    where: {
-      tenantId,
-      listingSlug: normalized,
-      status: "LIVE",
-      // Require the parent breeding program to be LIVE
-      plan: {
-        program: {
-          status: "LIVE",
-        },
-      },
-    },
-    select: {
-      id: true,
-    },
-  });
-
-  if (!group) {
-    return null;
-  }
-
-  return { groupId: group.id };
-}
-
-/**
  * Resolves an animal public listing within a program.
  * Returns null if not found or not listed.
  */

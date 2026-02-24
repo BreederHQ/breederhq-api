@@ -1772,7 +1772,7 @@ export default async function marketplaceV2Routes(
         breeding: {
           enabled: privacy.showBreedingHistory,
           offspringCount: animal.childrenAsDam.length + animal.childrenAsSire.length,
-          // Could add litter count if we have OffspringGroup relation
+          // Litter count available via breedingPlan relation
         },
       };
 
