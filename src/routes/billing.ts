@@ -280,6 +280,12 @@ const billingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               id: true,
               name: true,
               features: true,
+              entitlements: {
+                select: {
+                  entitlementKey: true,
+                  limitValue: true,
+                },
+              },
             },
           },
           addOns: {

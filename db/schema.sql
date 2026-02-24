@@ -93,6 +93,20 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 
 
 --
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
+
+
+--
 -- Name: BreederVerificationTier; Type: TYPE; Schema: marketplace; Owner: -
 --
 
@@ -599,7 +613,11 @@ CREATE TYPE public."BreedingMethod" AS ENUM (
     'NATURAL',
     'AI_TCI',
     'AI_SI',
-    'AI_FROZEN'
+    'AI_FROZEN',
+    'AI_VAGINAL',
+    'AI_SURGICAL',
+    'AI_LAPAROSCOPIC',
+    'EMBRYO_TRANSFER'
 );
 
 
@@ -1086,7 +1104,8 @@ CREATE TYPE public."EntitlementKey" AS ENUM (
     'SMS_QUOTA',
     'DATA_EXPORT',
     'GENETICS_STANDARD',
-    'GENETICS_PRO'
+    'GENETICS_PRO',
+    'AI_ASSISTANT'
 );
 
 
@@ -8052,6 +8071,48 @@ ALTER SEQUENCE public."FiberProductionHistory_id_seq" OWNED BY public."FiberProd
 
 
 --
+-- Name: FoalingCheck; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."FoalingCheck" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "breedingPlanId" integer NOT NULL,
+    "checkedAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "checkedByUserId" text,
+    "udderDevelopment" text DEFAULT 'none'::text NOT NULL,
+    "vulvaRelaxation" text DEFAULT 'none'::text NOT NULL,
+    "tailHeadRelaxation" text DEFAULT 'none'::text NOT NULL,
+    temperature numeric(5,2),
+    "behaviorNotes" text[] DEFAULT '{}'::text[] NOT NULL,
+    "additionalNotes" text,
+    "foalingImminent" boolean DEFAULT false NOT NULL,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: FoalingCheck_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."FoalingCheck_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: FoalingCheck_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."FoalingCheck_id_seq" OWNED BY public."FoalingCheck".id;
+
+
+--
 -- Name: FoalingOutcome; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8429,6 +8490,88 @@ CREATE SEQUENCE public."HealthEvent_id_seq"
 --
 
 ALTER SEQUENCE public."HealthEvent_id_seq" OWNED BY public."HealthEvent".id;
+
+
+--
+-- Name: HelpArticleEmbedding; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."HelpArticleEmbedding" (
+    id integer NOT NULL,
+    slug text NOT NULL,
+    "chunkIndex" integer DEFAULT 0 NOT NULL,
+    title text NOT NULL,
+    module text NOT NULL,
+    tags text[] DEFAULT '{}'::text[] NOT NULL,
+    summary text,
+    "chunkText" text NOT NULL,
+    embedding public.vector(512) NOT NULL,
+    "contentHash" text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "indexedAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: HelpArticleEmbedding_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."HelpArticleEmbedding_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: HelpArticleEmbedding_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."HelpArticleEmbedding_id_seq" OWNED BY public."HelpArticleEmbedding".id;
+
+
+--
+-- Name: HelpQueryLog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."HelpQueryLog" (
+    id integer NOT NULL,
+    "userId" text NOT NULL,
+    "tenantId" integer NOT NULL,
+    query text NOT NULL,
+    response text,
+    "sourceSlugs" text[] DEFAULT '{}'::text[] NOT NULL,
+    "feedbackRating" smallint,
+    "feedbackText" text,
+    "modelUsed" text DEFAULT 'claude-haiku-4-5-20251001'::text NOT NULL,
+    "tokenCount" integer,
+    "latencyMs" integer,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: HelpQueryLog_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."HelpQueryLog_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: HelpQueryLog_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."HelpQueryLog_id_seq" OWNED BY public."HelpQueryLog".id;
 
 
 --
@@ -12390,6 +12533,40 @@ ALTER SEQUENCE public."UserEntitlement_id_seq" OWNED BY public."UserEntitlement"
 
 
 --
+-- Name: UserHelpPreference; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."UserHelpPreference" (
+    id integer NOT NULL,
+    "userId" text NOT NULL,
+    "toursCompleted" text[] DEFAULT '{}'::text[] NOT NULL,
+    "toursDismissed" text[] DEFAULT '{}'::text[] NOT NULL,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: UserHelpPreference_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."UserHelpPreference_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: UserHelpPreference_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."UserHelpPreference_id_seq" OWNED BY public."UserHelpPreference".id;
+
+
+--
 -- Name: UserNotificationPreferences; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13732,6 +13909,13 @@ ALTER TABLE ONLY public."FiberProductionHistory" ALTER COLUMN id SET DEFAULT nex
 
 
 --
+-- Name: FoalingCheck id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FoalingCheck" ALTER COLUMN id SET DEFAULT nextval('public."FoalingCheck_id_seq"'::regclass);
+
+
+--
 -- Name: FoalingOutcome id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -13792,6 +13976,20 @@ ALTER TABLE ONLY public."GlobalAnimalIdentity" ALTER COLUMN id SET DEFAULT nextv
 --
 
 ALTER TABLE ONLY public."HealthEvent" ALTER COLUMN id SET DEFAULT nextval('public."HealthEvent_id_seq"'::regclass);
+
+
+--
+-- Name: HelpArticleEmbedding id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpArticleEmbedding" ALTER COLUMN id SET DEFAULT nextval('public."HelpArticleEmbedding_id_seq"'::regclass);
+
+
+--
+-- Name: HelpQueryLog id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpQueryLog" ALTER COLUMN id SET DEFAULT nextval('public."HelpQueryLog_id_seq"'::regclass);
 
 
 --
@@ -14415,6 +14613,13 @@ ALTER TABLE ONLY public."UsageRecord" ALTER COLUMN id SET DEFAULT nextval('publi
 --
 
 ALTER TABLE ONLY public."UserEntitlement" ALTER COLUMN id SET DEFAULT nextval('public."UserEntitlement_id_seq"'::regclass);
+
+
+--
+-- Name: UserHelpPreference id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."UserHelpPreference" ALTER COLUMN id SET DEFAULT nextval('public."UserHelpPreference_id_seq"'::regclass);
 
 
 --
@@ -15380,6 +15585,14 @@ ALTER TABLE ONLY public."FiberProductionHistory"
 
 
 --
+-- Name: FoalingCheck FoalingCheck_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FoalingCheck"
+    ADD CONSTRAINT "FoalingCheck_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: FoalingOutcome FoalingOutcome_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15449,6 +15662,30 @@ ALTER TABLE ONLY public."GlobalAnimalIdentity"
 
 ALTER TABLE ONLY public."HealthEvent"
     ADD CONSTRAINT "HealthEvent_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: HelpArticleEmbedding HelpArticleEmbedding_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpArticleEmbedding"
+    ADD CONSTRAINT "HelpArticleEmbedding_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: HelpArticleEmbedding HelpArticleEmbedding_slug_chunkIndex_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpArticleEmbedding"
+    ADD CONSTRAINT "HelpArticleEmbedding_slug_chunkIndex_key" UNIQUE (slug, "chunkIndex");
+
+
+--
+-- Name: HelpQueryLog HelpQueryLog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpQueryLog"
+    ADD CONSTRAINT "HelpQueryLog_pkey" PRIMARY KEY (id);
 
 
 --
@@ -16249,6 +16486,22 @@ ALTER TABLE ONLY public."UsageSnapshot"
 
 ALTER TABLE ONLY public."UserEntitlement"
     ADD CONSTRAINT "UserEntitlement_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: UserHelpPreference UserHelpPreference_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."UserHelpPreference"
+    ADD CONSTRAINT "UserHelpPreference_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: UserHelpPreference UserHelpPreference_userId_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."UserHelpPreference"
+    ADD CONSTRAINT "UserHelpPreference_userId_key" UNIQUE ("userId");
 
 
 --
@@ -19861,6 +20114,27 @@ CREATE INDEX "FiberProductionHistory_tenantId_idx" ON public."FiberProductionHis
 
 
 --
+-- Name: FoalingCheck_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FoalingCheck_breedingPlanId_idx" ON public."FoalingCheck" USING btree ("breedingPlanId");
+
+
+--
+-- Name: FoalingCheck_checkedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FoalingCheck_checkedAt_idx" ON public."FoalingCheck" USING btree ("checkedAt");
+
+
+--
+-- Name: FoalingCheck_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FoalingCheck_tenantId_idx" ON public."FoalingCheck" USING btree ("tenantId");
+
+
+--
 -- Name: FoalingOutcome_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22997,6 +23271,48 @@ CREATE INDEX idx_email_send_log_retry ON public."EmailSendLog" USING btree (stat
 
 
 --
+-- Name: idx_help_article_embedding_module; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_help_article_embedding_module ON public."HelpArticleEmbedding" USING btree (module);
+
+
+--
+-- Name: idx_help_article_embedding_tags; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_help_article_embedding_tags ON public."HelpArticleEmbedding" USING gin (tags);
+
+
+--
+-- Name: idx_help_article_embedding_vector; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_help_article_embedding_vector ON public."HelpArticleEmbedding" USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='20');
+
+
+--
+-- Name: idx_help_query_log_tenantId; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "idx_help_query_log_tenantId" ON public."HelpQueryLog" USING btree ("tenantId");
+
+
+--
+-- Name: idx_help_query_log_userId; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "idx_help_query_log_userId" ON public."HelpQueryLog" USING btree ("userId");
+
+
+--
+-- Name: idx_help_query_log_user_day; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_help_query_log_user_day ON public."HelpQueryLog" USING btree ("userId", "createdAt");
+
+
+--
 -- Name: mkt_breeding_booking_animal_animalId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25405,6 +25721,22 @@ ALTER TABLE ONLY public."FiberProductionHistory"
 
 
 --
+-- Name: FoalingCheck FoalingCheck_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FoalingCheck"
+    ADD CONSTRAINT "FoalingCheck_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: FoalingCheck FoalingCheck_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FoalingCheck"
+    ADD CONSTRAINT "FoalingCheck_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: FoalingOutcome FoalingOutcome_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25562,6 +25894,14 @@ ALTER TABLE ONLY public."HealthEvent"
 
 ALTER TABLE ONLY public."HealthEvent"
     ADD CONSTRAINT "HealthEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: HelpQueryLog HelpQueryLog_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpQueryLog"
+    ADD CONSTRAINT "HelpQueryLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."User"(id) ON DELETE CASCADE;
 
 
 --
@@ -27277,6 +27617,14 @@ ALTER TABLE ONLY public."UserEntitlement"
 
 
 --
+-- Name: UserHelpPreference UserHelpPreference_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."UserHelpPreference"
+    ADD CONSTRAINT "UserHelpPreference_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."User"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: UserNotificationPreferences UserNotificationPreferences_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27555,4 +27903,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260223190003'),
     ('20260223200001'),
     ('20260223200002'),
-    ('20260223210001');
+    ('20260223210001'),
+    ('20260224130007'),
+    ('20260224140001'),
+    ('20260224140002'),
+    ('20260224181747'),
+    ('20260224200710');

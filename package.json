@@ -49,6 +49,7 @@
     "test:usage": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/api-testing/test-usage-api.ts",
     "test:genetics": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/api-testing/test-genetics-lab.ts",
     "db:dev:seed:validation": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/seeding/seed-validation-tenants/seed-dev.ts",
+    "db:dev:seed:kvs": "node scripts/development/run-with-env.js .env.dev.migrate npx tsx scripts/seeding/kvs-demo-tenant/seed-kvs-tenant.ts",
     "db:prod:seed:validation": "node scripts/development/run-with-env.js .env.prod.migrate npx tsx scripts/seeding/seed-validation-tenants/seed-prod.ts",
     "db:prod:seed:traits": "node scripts/development/run-with-env.js .env.prod.migrate npx tsx prisma/seed/seed-trait-definitions.ts",
     "db:prod:seed:contracts": "node scripts/development/run-with-env.js .env.prod.migrate npx tsx prisma/seed/seed-contract-templates.ts",
@@ -81,9 +82,13 @@
     "db:prod:push": "echo \"🚫 FORBIDDEN - Use: npm run db:prod:deploy\" && exit 1",
     "db:dev:migrate": "echo \"🚫 Prisma Migrate is REMOVED. Use: npm run db:new <name> then npm run db:dev:sync\" && exit 1",
     "db:dev:baseline": "echo \"🚫 Prisma Migrate is REMOVED. Baseline is managed by dbmate.\" && exit 1",
-    "db:prod:baseline": "echo \"🚫 Prisma Migrate is REMOVED. Baseline is managed by dbmate.\" && exit 1"
+    "db:prod:baseline": "echo \"🚫 Prisma Migrate is REMOVED. Baseline is managed by dbmate.\" && exit 1",
+    "help:index": "npx tsx scripts/help/index-help-articles.ts",
+    "help:index:dev": "npx tsx scripts/help/index-help-articles.ts --path ../breederhq/docs/help/articles",
+    "help:index:force": "npx tsx scripts/help/index-help-articles.ts --path ../breederhq/docs/help/articles --force"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@aws-sdk/client-s3": "^3.985.0",
     "@aws-sdk/client-secrets-manager": "^3.981.0",
     "@aws-sdk/s3-request-presigner": "^3.985.0",

@@ -82,7 +82,7 @@ function deriveBreedFromPlan(plan: any): string | null {
 /* ========= serializers ========= */
 
 function mapOffspringToAnimalLite(o: any) {
-  const plan = o.breedingPlan as any | undefined;
+  const plan = o.BreedingPlan as any | undefined;
 
   // Step 6D: Use Party-native fields directly
   const buyerParty = o.buyerParty;
@@ -433,7 +433,7 @@ export function normalizeOffspringState(
 /* ========= Prisma include shapes ========= */
 
 const OFFSPRING_PLAN_INCLUDE = {
-  breedingPlan: {
+  BreedingPlan: {
     select: {
       id: true,
       name: true,

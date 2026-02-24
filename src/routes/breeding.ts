@@ -1649,6 +1649,24 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         throw err;
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // OFFSPRING GUARD: Block status changes that would orphan offspring records
+      // The frontend hides these options after birth, but API must enforce independently
+      // ═══════════════════════════════════════════════════════════════════════════
+      const terminalStatuses = ["PLANNING", "CANCELED", "UNSUCCESSFUL"];
+      if (data.status && terminalStatuses.includes(String(data.status))) {
+        const offspringCount = await prisma.offspring.count({
+          where: { tenantId, breedingPlanId: id },
+        });
+        if (offspringCount > 0) {
+          return reply.code(409).send({
+            error: "status_change_blocked",
+            blockers: { hasOffspring: true },
+            detail: `Cannot change status to ${data.status} because ${offspringCount} offspring record(s) are linked to this plan. Remove offspring first.`,
+          });
+        }
+      }
+
       // Track dam/sire changes for status sync
       const damChanged = data.damId !== undefined;
       const sireChanged = data.sireId !== undefined;
@@ -2214,10 +2232,10 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // explicitly advanced yet (e.g., entered breed date but still in BRED status).
       // Rewind should respect where the user actually IS (stored status), not where they
       // COULD be based on entered data.
-      // However, if derived phase is LESS than stored status, use derived (data was cleared somehow).
+      // However, if derived phase is MORE ADVANCED than stored status, use derived (data is ahead somehow).
       const storedIdx = PHASE_ORDER.indexOf(storedStatus);
       const derivedIdx = PHASE_ORDER.indexOf(derivedPhase);
-      const currentPhase = storedIdx >= 0 && storedIdx <= derivedIdx ? storedStatus : derivedPhase;
+      const currentPhase = storedIdx >= 0 && storedIdx >= derivedIdx ? storedStatus : derivedPhase;
 
       // Cannot rewind from PLANNING - nothing to rewind
       if (currentPhase === "PLANNING") {

@@ -266,6 +266,9 @@ function isCsrfExempt(pathname: string, method: string): boolean {
   if (pathname === "/api/v1/portal/activate") return true;
   if (pathname.startsWith("/api/v1/portal/invites/") && pathname.endsWith("/accept")) return true;
 
+  // Help article indexing - called from CI/CD or admin scripts, verified by super-admin session check
+  if (pathname === "/api/v1/help/index") return true;
+
   // Stripe webhook - verified by Stripe signature, not CSRF
   if (pathname === "/api/v1/billing/webhooks/stripe") return true;
 
@@ -549,6 +552,7 @@ async function requireTenantMembership(
 }
 
 // ---------- Route imports ----------
+import helpRoutes from "./routes/help.js";
 import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
@@ -739,7 +743,8 @@ app.register(
     api.register(accountRoutes);                   // /api/v1/account/*
     api.register(tenantRoutes);                    // /api/v1/tenants/*
     api.register(portalRoutes);                    // /api/v1/portal/* (activation - no auth)
-    api.register(billingRoutes, { prefix: "/billing" }); // /api/v1/billing/webhooks/* (Stripe webhooks - no auth)
+    // NOTE: billingRoutes moved to tenant-scoped subtree (below) so req.tenantId is set properly.
+    // The Stripe webhook (/billing/webhooks/stripe) is bypassed in the tenant-scoped preHandler.
     api.register(settingsRoutes); // /api/v1/settings/* (user settings)
     api.register(websocketRoutes); // /api/v1/ws/* WebSocket for real-time messaging
     api.register(resendWebhooksRoutes, { prefix: "/webhooks/resend" }); // /api/v1/webhooks/resend/* (Resend inbound email)
@@ -848,6 +853,14 @@ app.register(
       const full = req.url || "/";
       const pathOnly = full.split("?")[0] || "/";
       const m = req.method.toUpperCase();
+
+      // Stripe webhook is public — verified via Stripe signature, not session auth
+      if (pathOnly.endsWith("/billing/webhooks/stripe")) {
+        (req as any).tenantId = null;
+        (req as any).userId = null;
+        (req as any).actorContext = "PUBLIC";
+        return;
+      }
 
       // Allow-list paths (works whether path has /api/v1 or not)
       const isSpeciesPath =
@@ -1145,6 +1158,7 @@ app.register(
       // For STAFF on PLATFORM, verify tenant membership (except for marketplace routes)
       if (surface === "PLATFORM" && resolved.context === "STAFF") {
         // Marketplace routes don't require tenant context - they're cross-tenant
+        // Super-admin global routes don't require tenant context either
         // Use exact prefix match to avoid bypassing tenant checks on unrelated routes
         const isMarketplacePath =
           pathOnly === "/marketplace" ||
@@ -1152,9 +1166,13 @@ app.register(
           pathOnly === "/api/v1/marketplace" ||
           pathOnly.startsWith("/api/v1/marketplace/");
 
-        if (!isMarketplacePath) {
+        // Super-admin routes that operate globally (not per-tenant)
+        const isSuperAdminGlobalPath =
+          pathOnly === "/api/v1/help/index";
+
+        if (!isMarketplacePath && !isSuperAdminGlobalPath) {
           if (!tId) {
-            // No tenant context → 403 (non-marketplace routes require tenant)
+            // No tenant context → 403 (non-marketplace, non-super-admin routes require tenant)
             await auditFailure(req, "AUTH_TENANT_CONTEXT_REQUIRED", {
               reason: "tenant_required_for_platform_route",
               surface,
@@ -1174,6 +1192,9 @@ app.register(
 
       (req as any).tenantId = tId;
     });
+
+    // Billing + subscription management (incl. Stripe checkout/portal/webhooks)
+    api.register(billingRoutes); // /api/v1/billing/* — routes self-prefix; webhook bypassed above
 
     // Dashboard Mission Control
     api.register(dashboardRoutes);       // /api/v1/dashboard/*
@@ -1274,6 +1295,7 @@ app.register(
     api.register(portalProtocolsRoutes); // /api/v1/portal/protocols/* Portal training protocol continuation
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
     api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
+    api.register(helpRoutes);          // /api/v1/help/* In-app help system (articles, AI chat, tours)
 
     // Register portal routes at tenant-prefixed paths for clean URL-based tenant context
     // This allows portal frontend to use /api/v1/t/:slug/portal/* URLs

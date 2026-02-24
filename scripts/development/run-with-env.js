@@ -376,14 +376,24 @@ EXAMPLE:
     await requireHumanConfirmation();
   }
 
-  // Log status (redacted)
+  // Log status (password redacted, host/db visible for verification)
+  function redactPassword(url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.password) parsed.password = '***';
+      return parsed.toString();
+    } catch {
+      return '[UNPARSEABLE URL]';
+    }
+  }
+
   console.log(`\n🔧 run-with-env: Loading environment from ${envFile}`);
   console.log('━'.repeat(60));
 
   for (const key of SENSITIVE_KEYS) {
     const value = mergedEnv[key];
     if (value && value.trim()) {
-      console.log(`  ${key}: [SET - REDACTED]`);
+      console.log(`  ${key}: ${redactPassword(value)}`);
     } else {
       console.log(`  ${key}: [NOT SET]`);
     }

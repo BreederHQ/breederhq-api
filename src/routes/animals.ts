@@ -8,7 +8,7 @@ import { checkQuota } from "../middleware/quota-enforcement.js";
 import { updateUsageSnapshot } from "../services/subscription/usage-service.js";
 import * as lineageService from "../services/lineage-service.js";
 import * as identityMatchingService from "../services/identity-matching-service.js";
-import type { IdentifierType, OwnerRole } from "@prisma/client";
+import type { IdentifierType, OwnerRole, OvulationMethod } from "@prisma/client";
 import { activeOnly } from "../utils/query-helpers.js";
 import { calculateCycleAnalysis } from "../services/cycle-analysis-service.js";
 import { uploadBuffer, deleteFile } from "../services/media-storage.js";
@@ -4844,6 +4844,22 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /**
+   * Derive ovulation confirmation method from test result kind.
+   * Used when a test indicates ovulation to set the correct method on the breeding plan.
+   */
+  function ovulationMethodFromKind(kind: string): OvulationMethod {
+    const map: Record<string, OvulationMethod> = {
+      FOLLICLE_EXAM: "ULTRASOUND",
+      PROGESTERONE_TEST: "PROGESTERONE_TEST",
+      LH_TEST: "LH_TEST",
+      VAGINAL_CYTOLOGY: "VAGINAL_CYTOLOGY",
+      PALPATION_EXAM: "PALPATION",
+      BEHAVIORAL_OBSERVATION: "VETERINARY_EXAM",
+    };
+    return map[kind] ?? "VETERINARY_EXAM";
+  }
+
+  /**
    * POST /animals/:id/test-results
    * Create a test result (e.g., follicle exam) for an animal
    * If indicatesOvulationDate is set and planId is provided, automatically updates the breeding plan's ovulation date
@@ -4935,7 +4951,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: b.planId },
           data: {
             ovulationConfirmed: indicatesOvulationDate,
-            ovulationConfirmedMethod: "ULTRASOUND",
+            ovulationConfirmedMethod: ovulationMethodFromKind(b.kind),
             ovulationTestResultId: created.id,
             ovulationConfidence: "HIGH",
           },
@@ -4993,7 +5009,8 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
 
     if (query.kind) {
-      where.kind = query.kind;
+      const kinds = (query.kind as string).split(",").map((k: string) => k.trim()).filter(Boolean);
+      where.kind = kinds.length === 1 ? kinds[0] : { in: kinds };
     }
 
     if (query.planId) {
@@ -5157,7 +5174,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             where: { id: anchoredPlan.id },
             data: {
               ovulationConfirmed: indicatesOvulationDate,
-              ovulationConfirmedMethod: indicatesOvulationDate ? "ULTRASOUND" : null,
+              ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
               ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
               ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
             },
@@ -5169,7 +5186,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: b.planId },
           data: {
             ovulationConfirmed: indicatesOvulationDate,
-            ovulationConfirmedMethod: "ULTRASOUND",
+            ovulationConfirmedMethod: ovulationMethodFromKind(b.kind),
             ovulationTestResultId: testResultId,
             ovulationConfidence: "HIGH",
           },

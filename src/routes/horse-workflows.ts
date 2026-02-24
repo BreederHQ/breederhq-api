@@ -41,59 +41,104 @@ function parsePaging(q: Record<string, unknown>) {
   return { page, limit, skip };
 }
 
+// Status priority for selecting the "most active" plan (lower index = higher priority)
+const STATUS_PRIORITY: string[] = [
+  "BRED",
+  "PREGNANT",
+  "CYCLE",
+  "COMMITTED",        // deprecated alias for CYCLE
+  "CYCLE_EXPECTED",
+  "HORMONE_TESTING",
+  "WEANING",
+  "BORN",
+  "BIRTHED",
+  "WEANED",
+  "PLACEMENT",
+  "PLANNING",
+  "ON_HOLD",
+];
+
+/** Select the most representative plan from a list using status priority then recency. */
+function pickActivePlan(plans: any[]): any | null {
+  if (!plans || plans.length === 0) return null;
+  return [...plans].sort((a, b) => {
+    const aPri = STATUS_PRIORITY.indexOf((a.status || "").toUpperCase());
+    const bPri = STATUS_PRIORITY.indexOf((b.status || "").toUpperCase());
+    const aIdx = aPri === -1 ? 999 : aPri;
+    const bIdx = bPri === -1 ? 999 : bPri;
+    if (aIdx !== bIdx) return aIdx - bIdx;
+    return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+  })[0];
+}
+
+// Numeric uterine edema grade → display label
+const EDEMA_LABELS: Record<number, string> = {
+  0: "none",
+  1: "mild",
+  2: "moderate",
+  3: "severe",
+  4: "marked",
+};
+
+/**
+ * Derive mare workflow status from the active breeding plan.
+ * Plan-driven: status comes from the breeding plan lifecycle, not from
+ * the reproductiveCycles table which tracked raw cycle observations.
+ */
 function deriveMareWorkflowStatus(
   plan: any,
-  hasCycle: boolean,
-  reproHistory: any,
-  breedingAvailability?: string | null
+  breedingAvailability?: string | null,
+  isBarren?: boolean | null,
 ): MareWorkflowStatus {
   const now = new Date();
 
-  // Check if recently foaled (within 30 days) - nursing
-  if (plan?.birthDateActual) {
-    const daysSinceBirth = daysBetween(new Date(plan.birthDateActual), now);
-    if (daysSinceBirth <= 30) {
-      return "nursing";
-    }
-    if (daysSinceBirth <= 60) {
-      return "resting";
-    }
+  if (!plan) {
+    // No active plan — check manual overrides
+    if (isBarren) return "barren";
+    if (breedingAvailability === "resting") return "resting";
+    return "open";
   }
 
-  // Check if pregnant with due date
-  if (plan?.status === "PREGNANT" && plan?.expectedBirthDate) {
-    const dueDate = new Date(plan.expectedBirthDate);
-    const daysUntilDue = daysBetween(now, dueDate);
+  const status = (plan.status || "PLANNING").toUpperCase();
 
-    if (daysUntilDue <= 30) {
-      return "foaling_soon";
+  // Active cycle monitoring → in_heat
+  if (["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING"].includes(status)) {
+    return "in_heat";
+  }
+
+  // Bred, awaiting pregnancy confirmation
+  if (status === "BRED") return "bred_waiting";
+
+  // Confirmed pregnant
+  if (status === "PREGNANT") {
+    if (plan.expectedBirthDate) {
+      const daysUntilDue = daysBetween(now, new Date(plan.expectedBirthDate));
+      if (daysUntilDue <= 30) return "foaling_soon";
     }
     return "pregnant";
   }
 
-  // Check if bred (awaiting confirmation)
-  if (plan?.status === "BRED" && plan?.breedDateActual) {
-    return "bred_waiting";
+  // Post-birth states — nursing or resting based on days since birth
+  if (["BIRTHED", "BORN", "WEANING"].includes(status)) {
+    if (plan.birthDateActual) {
+      const daysSinceBirth = daysBetween(new Date(plan.birthDateActual), now);
+      if (daysSinceBirth <= 30) return "nursing";
+      if (daysSinceBirth <= 60) return "resting";
+      // > 60 days post-birth: fall through to open/resting manual check
+    } else {
+      // Status is post-birth but no date recorded — default to nursing
+      return "nursing";
+    }
   }
 
-  // Check if barren (marked in reproductive history)
-  if (reproHistory?.isBarren) {
-    return "barren";
-  }
-
-  // Check if in heat (has active cycle)
-  if (hasCycle) {
-    return "in_heat";
-  }
-
-  // Check for manual status override (only applies when no active breeding activity)
-  // This allows breeders to manually toggle between "open" and "resting"
-  // Uses Animal.breedingAvailability for all species (generic field)
-  if (breedingAvailability === "resting") {
+  // Weaned / placement — mare has been through birth cycle, now resting
+  if (["WEANED", "PLACEMENT"].includes(status)) {
     return "resting";
   }
 
-  // Default: open
+  // PLANNING, terminal, or unknown status — check manual overrides
+  if (isBarren) return "barren";
+  if (breedingAvailability === "resting") return "resting";
   return "open";
 }
 
@@ -142,7 +187,8 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const sortBy = String(query.sortBy || "statusUpdatedAt");
       const sortOrder = String(query.sortOrder || "desc") as "asc" | "desc";
 
-      // Get all female horses for this tenant
+      // Get all female horses for this tenant.
+      // If a stallion filter is set, restrict to mares with active plans for that stallion.
       const mares = await prisma.animal.findMany({
         where: {
           tenantId,
@@ -153,6 +199,14 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           ...(searchFilter && {
             name: { contains: searchFilter, mode: "insensitive" as const },
           }),
+          ...(stallionIdFilter && {
+            breedingPlansAsDam: {
+              some: {
+                sireId: stallionIdFilter,
+                status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              },
+            },
+          }),
         },
         include: {
           mareReproductiveHistory: true,
@@ -161,53 +215,97 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
               status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
               ...(stallionIdFilter && { sireId: stallionIdFilter }),
             },
-            orderBy: { createdAt: "desc" },
-            take: 1,
+            orderBy: { updatedAt: "desc" },
             include: {
               sire: { select: { id: true, name: true } },
             },
           },
-          reproductiveCycles: {
-            orderBy: { cycleStart: "desc" },
-            take: 1,
-          },
         },
       });
 
-      // Process mares and derive status - match MareStatusEntry interface
+      // Batch-fetch most recent follicle exam per mare (avoids N+1 anti-pattern)
+      const mareIds = mares.map((m) => m.id);
+      const follicleExams = mareIds.length > 0
+        ? await prisma.testResult.findMany({
+            where: {
+              animalId: { in: mareIds },
+              kind: "FOLLICLE_EXAM",
+            },
+            orderBy: { collectedAt: "desc" },
+            select: { animalId: true, data: true, collectedAt: true },
+          })
+        : [];
+
+      // Build map: animalId → most recent exam (results are desc so first wins)
+      const latestExamByMare = new Map<number, { data: unknown; collectedAt: Date }>();
+      for (const exam of follicleExams) {
+        if (exam.animalId == null) continue;
+        if (!latestExamByMare.has(exam.animalId)) {
+          latestExamByMare.set(exam.animalId, exam);
+        }
+      }
+
+      // Process mares: derive status from breeding plans (plan-driven approach)
       const processedMares = mares.map((mare) => {
-        const plan = mare.breedingPlansAsDam[0];
-        const hasCycle = mare.reproductiveCycles.length > 0;
-        const lastCycle = mare.reproductiveCycles[0];
-        const reproductiveStatus = deriveMareWorkflowStatus(plan, hasCycle, mare.mareReproductiveHistory, mare.breedingAvailability);
+        const plan = pickActivePlan(mare.breedingPlansAsDam);
+        const reproductiveStatus = deriveMareWorkflowStatus(
+          plan,
+          mare.breedingAvailability,
+          mare.mareReproductiveHistory?.isBarren,
+        );
 
-        // Calculate cycle day if in heat
+        const planStatus = (plan?.status || "").toUpperCase();
+
+        // Cycle day — computed from plan.cycleStartDateActual (plan-driven)
         let currentCycleDay: number | undefined;
-        if (lastCycle?.cycleStart) {
-          currentCycleDay = daysBetween(new Date(lastCycle.cycleStart), new Date());
+        let isInBreedingWindow: boolean | undefined;
+        if (
+          plan?.cycleStartDateActual &&
+          ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING"].includes(planStatus)
+        ) {
+          currentCycleDay = Math.max(1, daysBetween(new Date(plan.cycleStartDateActual), new Date()));
+          // Horse optimal breeding window: days 4–6 of estrus
+          isInBreedingWindow = currentCycleDay >= 4 && currentCycleDay <= 6;
         }
 
-        // Calculate days to foaling if pregnant
+        // Days to foaling (only for pregnant/foaling_soon mares)
         let daysToFoaling: number | undefined;
-        if (plan?.expectedBirthDate) {
-          daysToFoaling = daysBetween(new Date(), new Date(plan.expectedBirthDate));
+        if (plan?.expectedBirthDate && planStatus === "PREGNANT") {
+          daysToFoaling = Math.max(0, daysBetween(new Date(), new Date(plan.expectedBirthDate)));
         }
+
+        // Follicle exam data from batch query
+        const latestExam = latestExamByMare.get(mare.id);
+        const examData = latestExam?.data as any;
+        const follicle = examData?.dominantFollicle;
+        const lastFollicleSize: number | undefined = follicle?.sizeMm ?? undefined;
+        const lastFollicleOvary: "LEFT" | "RIGHT" | undefined = follicle?.ovary ?? undefined;
+        const edemaNum = typeof examData?.uterineEdema === "number" ? examData.uterineEdema : null;
+        const lastUterineEdema = edemaNum != null ? (EDEMA_LABELS[edemaNum] || undefined) : undefined;
+        const lastExamDate = latestExam?.collectedAt?.toISOString();
 
         return {
           id: mare.id,
           name: mare.name,
-          registrationNumber: mare.microchip || undefined, // Use microchip as registration identifier
+          registrationNumber: mare.microchip || undefined,
           photoUrl: mare.photoUrl || undefined,
           reproductiveStatus,
           statusUpdatedAt: plan?.updatedAt?.toISOString() || mare.updatedAt.toISOString(),
           currentCycleDay,
-          lastHeatDate: lastCycle?.cycleStart?.toISOString(),
+          lastHeatDate: plan?.cycleStartDateActual?.toISOString(),
+          isInBreedingWindow,
+          breedingWindowStart: 4,  // horse standard: day 4 of estrus
+          breedingWindowEnd: 6,    // horse standard: day 6 of estrus
           assignedStallion: plan?.sire ? { id: plan.sire.id, name: plan.sire.name } : undefined,
           breedingPlanId: plan?.id,
           lastBreedingDate: plan?.breedDateActual?.toISOString(),
-          pregnancyConfirmedDate: plan?.status === "PREGNANT" ? plan?.updatedAt?.toISOString() : undefined, // Use plan update time as proxy
           expectedFoalingDate: plan?.expectedBirthDate?.toISOString(),
           daysToFoaling,
+          lastFollicleSize,
+          lastFollicleOvary,
+          lastUterineEdema,
+          lastExamDate,
+          noteCount: 0,
         };
       });
 
@@ -226,22 +324,25 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           case "status":
             comparison = a.reproductiveStatus.localeCompare(b.reproductiveStatus);
             break;
-          case "expectedDueDate":
+          case "expectedFoalingDate":
+          case "expectedDueDate": {
             const aDate = a.expectedFoalingDate ? new Date(a.expectedFoalingDate).getTime() : 0;
             const bDate = b.expectedFoalingDate ? new Date(b.expectedFoalingDate).getTime() : 0;
             comparison = aDate - bDate;
             break;
+          }
           case "statusUpdatedAt":
-          default:
+          default: {
             const aUpdate = a.statusUpdatedAt ? new Date(a.statusUpdatedAt).getTime() : 0;
             const bUpdate = b.statusUpdatedAt ? new Date(b.statusUpdatedAt).getTime() : 0;
             comparison = aUpdate - bUpdate;
             break;
+          }
         }
         return sortOrder === "desc" ? -comparison : comparison;
       });
 
-      // Calculate status counts - match MareWorkflowStatus type
+      // Calculate status counts
       const statusCounts: Record<MareWorkflowStatus, number> = {
         open: 0,
         in_heat: 0,
@@ -479,11 +580,15 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const targetDate = new Date(now);
       targetDate.setDate(targetDate.getDate() + daysOut);
 
-      // Valid MilestoneType values for pre-foaling signs
+      // Valid MilestoneType values for pre-foaling signs + manual watch sentinel
       const signMilestoneTypes = Object.keys(SIGN_URGENCY) as Array<
         "UDDER_DEVELOPMENT" | "WAX_APPEARANCE" | "VULVAR_RELAXATION" |
         "TAILHEAD_RELAXATION" | "UDDER_FULL" | "MILK_CALCIUM_TEST"
       >;
+      const fetchedMilestoneTypes = [
+        ...signMilestoneTypes,
+        "BEGIN_MONITORING" as const,
+      ];
 
       const plans = await prisma.breedingPlan.findMany({
         where: {
@@ -500,11 +605,12 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
               mareReproductiveHistory: true,
             },
           },
+          sire: {
+            select: { id: true, name: true },
+          },
           breedingMilestones: {
             where: {
-              milestoneType: {
-                in: signMilestoneTypes,
-              },
+              milestoneType: { in: fetchedMilestoneTypes },
             },
           },
         },
@@ -567,27 +673,92 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           highUrgencyCount++;
         }
 
-        // Check if on watch (manual flag or high urgency)
-        const isOnWatch = urgencyScore > 50 || observedSigns.length >= 3;
+        // Check if on watch: manual flag takes precedence, otherwise auto-derive from urgency
+        const manualWatchMilestone = plan.breedingMilestones.find(
+          (m) => m.notes === "FOALING_WATCH_MANUAL"
+        );
+        const isManualWatch = manualWatchMilestone?.isCompleted ?? false;
+        const isOnWatch = isManualWatch || urgencyScore > 50 || observedSigns.length >= 3;
         if (isOnWatch) onWatch++;
+
+        // Calculate gestation days from breed date
+        const breedDate = plan.breedDateActual;
+        const gestationDays = breedDate
+          ? daysBetween(new Date(breedDate), now)
+          : 0;
+
+        // Derive foalingIndicators from milestone signs
+        const udderMilestone = plan.breedingMilestones.find((m) => m.milestoneType === "UDDER_DEVELOPMENT");
+        const udderFullMilestone = plan.breedingMilestones.find((m) => m.milestoneType === "UDDER_FULL");
+        const waxMilestone = plan.breedingMilestones.find((m) => m.milestoneType === "WAX_APPEARANCE");
+        const vulvaMilestone = plan.breedingMilestones.find((m) => m.milestoneType === "VULVAR_RELAXATION");
+        const tailMilestone = plan.breedingMilestones.find((m) => m.milestoneType === "TAILHEAD_RELAXATION");
+
+        let udderDevelopment: "none" | "filling" | "full" | "waxing" = "none";
+        if (waxMilestone?.isCompleted) udderDevelopment = "waxing";
+        else if (udderFullMilestone?.isCompleted) udderDevelopment = "full";
+        else if (udderMilestone?.isCompleted) udderDevelopment = "filling";
+
+        const vulvaRelaxation: "none" | "slight" | "significant" =
+          vulvaMilestone?.isCompleted ? "significant" : "none";
+        const tailHeadRelaxation: "none" | "slight" | "significant" =
+          tailMilestone?.isCompleted ? "significant" : "none";
+
+        // Find the most recent check timestamp from any observed milestone
+        const lastCheckedMilestone = plan.breedingMilestones
+          .filter((m) => m.completedDate)
+          .sort((a, b) =>
+            new Date(b.completedDate!).getTime() - new Date(a.completedDate!).getTime()
+          )[0];
 
         return {
           id: plan.dam.id,
           name: plan.dam.name,
           photoUrl: plan.dam.photoUrl || undefined,
           breedingPlanId: plan.id,
-          daysUntilDue,
-          expectedDue: plan.expectedBirthDate.toISOString(),
-          signs,
+
+          // Breeding info
+          bredToStallion: plan.sire
+            ? { id: plan.sire.id, name: plan.sire.name }
+            : { id: 0, name: "Unknown" },
+          breedingDate: breedDate ? breedDate.toISOString() : "",
+          breedingMethod: "ai_fresh",
+
+          // Pregnancy timeline — use field names matching PreFoalingEntry
+          gestationDays,
+          expectedFoalingDate: plan.expectedBirthDate.toISOString(),
+          daysToFoaling: daysUntilDue,
+          pregnancyConfirmedDate: plan.updatedAt.toISOString(),
+
+          // Foaling indicators (derived from milestone signs)
+          foalingIndicators: {
+            udderDevelopment,
+            vulvaRelaxation,
+            tailHeadRelaxation,
+            behaviorChanges: [] as string[],
+            lastCheckedAt: lastCheckedMilestone?.completedDate
+              ? new Date(lastCheckedMilestone.completedDate).toISOString()
+              : undefined,
+            lastCheckedBy: undefined as string | undefined,
+          },
+
+          // Watch status
+          onFoalingWatch: isOnWatch,
+
+          // Location & history
+          currentLocation: "",
+          previousFoalings: 0,
+          averageGestation: undefined as number | undefined,
+
+          // Extra fields (not in PreFoalingEntry but useful for UI)
           urgencyScore,
-          isOnWatch,
           riskScore: plan.dam.mareReproductiveHistory?.riskScore || 0,
           riskFactors: plan.dam.mareReproductiveHistory?.riskFactors || [],
         };
       }).filter((m): m is NonNullable<typeof m> => m !== null);
 
       // Filter by onWatch if specified
-      let filteredMares = onWatchOnly ? mares.filter((m) => m.isOnWatch) : mares;
+      let filteredMares = onWatchOnly ? mares.filter((m) => m.onFoalingWatch) : mares;
 
       // Sort
       filteredMares.sort((a, b) => {
@@ -596,9 +767,11 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
             return a.name.localeCompare(b.name);
           case "urgencyScore":
             return b.urgencyScore - a.urgencyScore;
+          case "gestationDays":
+            return b.gestationDays - a.gestationDays;
           case "dueDate":
           default:
-            return a.daysUntilDue - b.daysUntilDue;
+            return a.daysToFoaling - b.daysToFoaling;
         }
       });
 
@@ -621,6 +794,272 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       });
     } catch (err) {
       console.error("Error fetching pre-foaling data:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * PATCH /api/v1/horses/:mareId/foaling-watch
+   * Toggle manual foaling watch on/off for a pregnant mare.
+   * State is stored as a BreedingMilestone with notes="FOALING_WATCH_MANUAL".
+   */
+  app.patch("/horses/:mareId/foaling-watch", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const mareId = Number((req.params as any).mareId);
+      if (!mareId) {
+        return reply.code(400).send({ error: "invalid_mare_id" });
+      }
+
+      const body = req.body as { onWatch: boolean; watchNotes?: string };
+      const { onWatch } = body;
+
+      // Find the active PREGNANT plan for this mare
+      const plan = await prisma.breedingPlan.findFirst({
+        where: {
+          tenantId,
+          damId: mareId,
+          status: "PREGNANT",
+          archived: false,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (!plan) {
+        return reply.code(404).send({ error: "no_active_pregnant_plan" });
+      }
+
+      // Upsert the manual watch milestone
+      const existing = await prisma.breedingMilestone.findFirst({
+        where: {
+          tenantId,
+          breedingPlanId: plan.id,
+          notes: "FOALING_WATCH_MANUAL",
+        },
+      });
+
+      if (existing) {
+        await prisma.breedingMilestone.update({
+          where: { id: existing.id },
+          data: {
+            isCompleted: onWatch,
+            completedDate: onWatch ? new Date() : null,
+          },
+        });
+      } else if (onWatch) {
+        await prisma.breedingMilestone.create({
+          data: {
+            tenantId,
+            breedingPlanId: plan.id,
+            milestoneType: "BEGIN_MONITORING",
+            scheduledDate: new Date(),
+            isCompleted: true,
+            completedDate: new Date(),
+            notes: "FOALING_WATCH_MANUAL",
+          },
+        });
+      }
+
+      return reply.send({ success: true, onWatch });
+    } catch (err) {
+      console.error("Error updating foaling watch:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * POST /api/v1/horses/:mareId/foaling-check
+   * Record a foaling check observation (physical signs + behavior) for a pregnant mare.
+   * Dual-writes to BreedingMilestone to keep urgency scoring current.
+   */
+  app.post("/horses/:mareId/foaling-check", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const mareId = Number((req.params as any).mareId);
+      if (!mareId) {
+        return reply.code(400).send({ error: "invalid_mare_id" });
+      }
+
+      const body = req.body as {
+        udderDevelopment?: string;
+        vulvaRelaxation?: string;
+        tailHeadRelaxation?: string;
+        temperature?: number;
+        behaviorNotes?: string[];
+        additionalNotes?: string;
+        foalingImminent?: boolean;
+        checkedAt?: string;
+      };
+
+      const udderDevelopment = body.udderDevelopment || "none";
+      const vulvaRelaxation = body.vulvaRelaxation || "none";
+      const tailHeadRelaxation = body.tailHeadRelaxation || "none";
+      const behaviorNotes = body.behaviorNotes || [];
+      const checkedAt = body.checkedAt ? new Date(body.checkedAt) : new Date();
+      const userId = (req as any).userId as string | undefined;
+
+      // Find the active PREGNANT plan for this mare
+      const plan = await prisma.breedingPlan.findFirst({
+        where: {
+          tenantId,
+          damId: mareId,
+          status: "PREGNANT",
+          archived: false,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (!plan) {
+        return reply.code(404).send({ error: "no_active_pregnant_plan" });
+      }
+
+      // Build milestone upserts — dual-write so urgency scoring stays accurate
+      type MilestoneUpsert = {
+        milestoneType: "UDDER_DEVELOPMENT" | "WAX_APPEARANCE" | "VULVAR_RELAXATION" | "TAILHEAD_RELAXATION" | "UDDER_FULL" | "MILK_CALCIUM_TEST";
+        completedDate: Date;
+      };
+
+      const milestoneUpdates: MilestoneUpsert[] = [];
+
+      if (udderDevelopment !== "none") {
+        milestoneUpdates.push({ milestoneType: "UDDER_DEVELOPMENT", completedDate: checkedAt });
+      }
+      if (udderDevelopment === "full" || udderDevelopment === "waxing") {
+        milestoneUpdates.push({ milestoneType: "UDDER_FULL", completedDate: checkedAt });
+      }
+      if (udderDevelopment === "waxing") {
+        milestoneUpdates.push({ milestoneType: "WAX_APPEARANCE", completedDate: checkedAt });
+      }
+      if (vulvaRelaxation !== "none") {
+        milestoneUpdates.push({ milestoneType: "VULVAR_RELAXATION", completedDate: checkedAt });
+      }
+      if (tailHeadRelaxation !== "none") {
+        milestoneUpdates.push({ milestoneType: "TAILHEAD_RELAXATION", completedDate: checkedAt });
+      }
+      if (behaviorNotes.includes("milk_dripping")) {
+        milestoneUpdates.push({ milestoneType: "MILK_CALCIUM_TEST", completedDate: checkedAt });
+      }
+
+      const now = new Date();
+
+      // Create the check record + upsert milestones in a transaction
+      const check = await prisma.$transaction(async (tx) => {
+        const created = await tx.foalingCheck.create({
+          data: {
+            tenantId,
+            breedingPlanId: plan.id,
+            checkedAt,
+            checkedByUserId: userId || null,
+            udderDevelopment,
+            vulvaRelaxation,
+            tailHeadRelaxation,
+            temperature: body.temperature != null ? body.temperature : null,
+            behaviorNotes,
+            additionalNotes: body.additionalNotes || null,
+            foalingImminent: body.foalingImminent ?? false,
+            updatedAt: now,
+          },
+        });
+
+        // Upsert each milestone sign — only advance forward (never un-complete)
+        for (const update of milestoneUpdates) {
+          const existing = await tx.breedingMilestone.findFirst({
+            where: { tenantId, breedingPlanId: plan.id, milestoneType: update.milestoneType },
+          });
+
+          if (existing) {
+            if (!existing.isCompleted) {
+              await tx.breedingMilestone.update({
+                where: { id: existing.id },
+                data: { isCompleted: true, completedDate: update.completedDate, updatedAt: now },
+              });
+            }
+          } else {
+            await tx.breedingMilestone.create({
+              data: {
+                tenantId,
+                breedingPlanId: plan.id,
+                milestoneType: update.milestoneType,
+                scheduledDate: checkedAt,
+                isCompleted: true,
+                completedDate: update.completedDate,
+                updatedAt: now,
+              },
+            });
+          }
+        }
+
+        return created;
+      });
+
+      return reply.code(201).send(check);
+    } catch (err) {
+      console.error("Error recording foaling check:", err);
+      return reply.code(500).send({ error: "internal_error" });
+    }
+  });
+
+  /**
+   * GET /api/v1/horses/:mareId/foaling-checks
+   * Returns paginated foaling check history for a mare's current pregnant plan,
+   * ordered most-recent first.
+   */
+  app.get("/horses/:mareId/foaling-checks", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) {
+        return reply.code(400).send({ error: "missing_tenant" });
+      }
+
+      const mareId = Number((req.params as any).mareId);
+      if (!mareId) {
+        return reply.code(400).send({ error: "invalid_mare_id" });
+      }
+
+      const query = req.query as Record<string, unknown>;
+      const limit = Math.min(Number(query.limit || 20), 100);
+      const offset = Number(query.offset || 0);
+
+      // Find the active PREGNANT plan for this mare
+      const plan = await prisma.breedingPlan.findFirst({
+        where: {
+          tenantId,
+          damId: mareId,
+          status: "PREGNANT",
+          archived: false,
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+
+      // No plan = no checks, return empty gracefully
+      if (!plan) {
+        return reply.send({ data: [], total: 0 });
+      }
+
+      const [checks, total] = await prisma.$transaction([
+        prisma.foalingCheck.findMany({
+          where: { breedingPlanId: plan.id, tenantId },
+          orderBy: { checkedAt: "desc" },
+          take: limit,
+          skip: offset,
+        }),
+        prisma.foalingCheck.count({
+          where: { breedingPlanId: plan.id, tenantId },
+        }),
+      ]);
+
+      return reply.send({ data: checks, total });
+    } catch (err) {
+      console.error("Error fetching foaling checks:", err);
       return reply.code(500).send({ error: "internal_error" });
     }
   });
