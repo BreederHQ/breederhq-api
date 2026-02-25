@@ -1,6 +1,6 @@
 // src/services/copilot/copilot-service.ts
 // Agentic loop orchestrator for the AI Copilot.
-// Non-streaming tool rounds with SSE event emission via async generator.
+// True streaming via anthropic.messages.stream() with SSE event emission.
 
 import type {
   MessageParam,
@@ -161,7 +161,8 @@ export interface CopilotChatOpts {
 
 /**
  * Stream a Copilot AI response over SSE.
- * Uses an agentic loop with non-streaming tool rounds.
+ * Uses an agentic loop with true streaming — text deltas stream to
+ * the client in real-time via anthropic.messages.stream().
  * The caller (route handler) writes yielded strings to reply.raw.
  */
 export async function* streamCopilotResponse(
@@ -250,7 +251,8 @@ export async function* streamCopilotResponse(
     const anthropic = getAnthropicClient();
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const response = await anthropic.messages.create({
+      // True streaming — text deltas arrive in real-time via SSE
+      const stream = await anthropic.messages.stream({
         model: COPILOT_MODEL,
         max_tokens: MAX_TOKENS,
         system: systemPrompt,
@@ -258,45 +260,38 @@ export async function* streamCopilotResponse(
         messages,
       });
 
+      // Stream text deltas to the client as they arrive
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_delta" &&
+          event.delta.type === "text_delta"
+        ) {
+          fullResponseText += event.delta.text;
+          yield sse({ type: "chunk", text: event.delta.text });
+        }
+      }
+
+      // Get the complete response for tool_use extraction + token counting
+      const response = await stream.finalMessage();
+
       totalInputTokens += response.usage?.input_tokens ?? 0;
       totalOutputTokens += response.usage?.output_tokens ?? 0;
 
-      const textBlocks = response.content.filter((b) => b.type === "text");
       const toolUseBlocks = response.content.filter(
         (b) => b.type === "tool_use"
       );
 
-      // ── End turn: yield final text as chunk SSEs ──
+      // ── End turn: text was already streamed in real-time ──
       if (
         response.stop_reason === "end_turn" ||
-        response.stop_reason === "max_tokens"
+        response.stop_reason === "max_tokens" ||
+        toolUseBlocks.length === 0
       ) {
-        for (const block of textBlocks) {
-          if (block.type === "text") {
-            fullResponseText += block.text;
-            // Split into ~100 char segments for smooth streaming feel
-            const text = block.text;
-            let pos = 0;
-            while (pos < text.length) {
-              const end = Math.min(pos + 100, text.length);
-              yield sse({ type: "chunk", text: text.slice(pos, end) });
-              pos = end;
-            }
-          }
-        }
         break;
       }
 
       // ── Tool use: execute handlers and continue loop ──
       if (response.stop_reason === "tool_use") {
-        // Yield any intermediate text (e.g., "Let me check that...")
-        for (const block of textBlocks) {
-          if (block.type === "text" && block.text.trim()) {
-            fullResponseText += block.text;
-            yield sse({ type: "chunk", text: block.text });
-          }
-        }
-
         // Append assistant message with full content to conversation
         messages.push({
           role: "assistant",
