@@ -7053,6 +7053,7 @@ model HelpArticleEmbedding {
   @@index([module], map: "idx_help_article_embedding_module")
   @@index([tags], map: "idx_help_article_embedding_tags", type: Gin)
   @@index([embedding], map: "idx_help_article_embedding_vector")
+  @@ignore
   @@schema("public")
 }
 

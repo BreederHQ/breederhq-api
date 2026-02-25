@@ -407,11 +407,12 @@ export default async function helpRoutes(
         .slice(0, 16);
 
       if (!force) {
-        const existing = await prisma.helpArticleEmbedding.findFirst({
-          where: { slug: article.slug, chunkIndex: 0 },
-          select: { contentHash: true },
-        });
-        if (existing?.contentHash === contentHash) {
+        // @@ignore on HelpArticleEmbedding (Unsupported vector col) → must use raw SQL
+        const existingRows = await prisma.$queryRaw<Array<{ contentHash: string }>>`
+          SELECT "contentHash" FROM "public"."HelpArticleEmbedding"
+          WHERE slug = ${article.slug} AND "chunkIndex" = 0
+          LIMIT 1`;
+        if (existingRows[0]?.contentHash === contentHash) {
           skipped++;
           continue;
         }
@@ -431,9 +432,8 @@ export default async function helpRoutes(
 
     // ── Pass 3: delete old rows and insert new ones ──
     for (const { article, contentHash, chunks, embeddingOffset } of workItems) {
-      await prisma.helpArticleEmbedding.deleteMany({
-        where: { slug: article.slug },
-      });
+      // @@ignore on HelpArticleEmbedding (Unsupported vector col) → must use raw SQL
+      await prisma.$executeRaw`DELETE FROM "public"."HelpArticleEmbedding" WHERE slug = ${article.slug}`;
 
       for (let i = 0; i < chunks.length; i++) {
         // Raw insert for pgvector column (Prisma doesn't support vector type natively)

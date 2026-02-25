@@ -418,14 +418,15 @@ EXAMPLE:
 
     // Lines/blocks to filter from Prisma db pull output
     const NOISE_PATTERNS = [
-      /^\s*-\s*Model:\s*"\w+",\s*field:\s*"\w+"$/,       // @map field enrichment lines
+      /^\s*-\s*Model:\s*"\w+",\s*field:\s*"\w+".*$/,       // @map field enrichment & unsupported type lines
       /^These fields were enriched with.*$/,                // @map header
+      /^These fields are not supported by Prisma Client.*$/,// unsupported-type header (e.g. vector)
       /^These models were enriched with.*$/,                // @@map header
       /^\s*-\s*"\w+"$/,                                     // @@map model list items
       /^These constraints are not supported.*$/,            // check constraint warnings
       /^\s*-\s*Model:\s*"\w+",\s*constraint:\s*"\w+"$/,    // check constraint items
       /^These objects have comments defined.*$/,            // database comment warnings
-      /^\s*-\s*Type:\s*"\w+",\s*name:\s*"\w+\.\w+"$/,     // comment items
+      /^\s*-\s*Type:\s*"\w+",\s*name:\s*"[\w.]+"$/,        // comment items (with or without schema prefix)
       /^Run prisma generate to generate Prisma Client\.$/,  // redundant hint (we run it next)
       /^Tip:.*$/,                                           // Prisma tips/ads
       /^\s*$/,                                              // blank lines in warning blocks
