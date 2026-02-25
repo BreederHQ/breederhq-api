@@ -804,6 +804,52 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // POST /invoices/:id/stripe/create-and-send - Create AND send Stripe invoice in one step
+  app.post("/invoices/:id/stripe/create-and-send", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = parseIntOrNull((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "invalid_id" });
+
+      const body = req.body as any;
+      const dueInDays = body?.dueInDays ? Number(body.dueInDays) : 7;
+
+      const tenantInvoiceStripe = await import("../services/tenant-invoice-stripe-service.js");
+
+      const canCreate = await tenantInvoiceStripe.canTenantCreateStripeInvoices(tenantId);
+      if (!canCreate) {
+        return reply.code(400).send({
+          error: "stripe_not_configured",
+          message: "Stripe Connect is not configured or payouts are not enabled.",
+        });
+      }
+
+      // Step 1: Create Stripe invoice from platform invoice
+      await tenantInvoiceStripe.createStripeInvoiceForTenant({
+        tenantId,
+        invoiceId: id,
+        dueInDays,
+      });
+
+      // Step 2: Send it immediately
+      const result = await tenantInvoiceStripe.sendTenantStripeInvoice(tenantId, id);
+
+      return reply.code(201).send({
+        success: true,
+        invoice: result,
+      });
+    } catch (err: any) {
+      if (err.message === "stripe_invoice_already_exists") {
+        return reply.code(409).send({ error: "stripe_invoice_exists", message: "A Stripe invoice already exists for this invoice." });
+      }
+      if (err.message === "client_email_required") {
+        return reply.code(400).send({ error: "client_email_required", message: "The invoice client must have an email address to send a Stripe invoice." });
+      }
+      const { status, payload } = errorReply(err);
+      return reply.code(status).send(payload);
+    }
+  });
+
   // POST /invoices/:id/stripe/void - Void Stripe invoice
   app.post("/invoices/:id/stripe/void", async (req, reply) => {
     try {

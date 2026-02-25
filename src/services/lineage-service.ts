@@ -20,6 +20,8 @@ export interface PedigreeNode {
   coiPercent: number | null;
   titlePrefix: string | null;
   titleSuffix: string | null;
+  sireId: number | null;
+  damId: number | null;
   // Achievement stats
   titleCount: number;
   competitionCount: number;
@@ -159,6 +161,8 @@ async function buildAncestorTree(
     coiPercent: animal.coiPercent,
     titlePrefix: animal.titlePrefix,
     titleSuffix: animal.titleSuffix,
+    sireId: animal.sireId,
+    damId: animal.damId,
     titleCount: animal._count?.titles ?? 0,
     competitionCount: animal._count?.competitionEntries ?? 0,
     hasVerifiedTitles: animal.hasVerifiedTitles ?? false,

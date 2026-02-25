@@ -57,6 +57,7 @@ model User {
   geneticNotificationSnoozes     GeneticNotificationSnooze[]
   geneticsDisclaimerAcceptances  GeneticsDisclaimerAcceptance[]
   HealthEvent                    HealthEvent[]
+  HelpQueryLog                   HelpQueryLog[]
   LitterEvent                    LitterEvent[]
   marketplaceBlocks              MarketplaceUserBlock[]          @relation("BlockedMarketplaceUser")
   marketplaceFlag                MarketplaceUserFlag?            @relation("MarketplaceUserFlagUser")
@@ -81,6 +82,7 @@ model User {
   defaultTenant                  Tenant?                         @relation(fields: [defaultTenantId], references: [id])
   party                          Party?                          @relation("UserParty", fields: [partyId], references: [id])
   entitlements                   UserEntitlement[]
+  UserHelpPreference             UserHelpPreference?
   notificationPreferences        UserNotificationPreferences?
   VerificationToken              VerificationToken[]
   devices                        Device[]
@@ -278,6 +280,7 @@ model Tenant {
   feedingRecords                  FeedingRecord[]
   fiberLabTests                   FiberLabTest[]
   fiberProductionHistory          FiberProductionHistory[]
+  FoalingCheck                    FoalingCheck[]
   foalingOutcomes                 FoalingOutcome[]
   foodChanges                     FoodChange[]
   foodProducts                    FoodProduct[]
@@ -2079,6 +2082,7 @@ model BreedingPlan {
   Expense                                    Expense[]
   FeedingPlan                                FeedingPlan[]
   FeedingRecord                              FeedingRecord[]
+  FoalingCheck                               FoalingCheck[]
   foalingOutcome                             FoalingOutcome?
   FoodChange                                 FoodChange[]
   Invoice                                    Invoice[]
@@ -6964,6 +6968,7 @@ model entity_activity {
 
   @@index([tenantId, createdAt(sort: Desc)], map: "idx_ea_tenant_created")
   @@index([tenantId, entityType, entityId, createdAt(sort: Desc)], map: "idx_ea_tenant_entity")
+  @@ignore
   @@schema("public")
 }
 
@@ -6988,6 +6993,7 @@ model entity_audit_log {
   @@index([changedBy, createdAt(sort: Desc)], map: "idx_eal_changed_by")
   @@index([tenantId, createdAt(sort: Desc)], map: "idx_eal_tenant_created")
   @@index([tenantId, entityType, entityId, createdAt(sort: Desc)], map: "idx_eal_tenant_entity")
+  @@ignore
   @@schema("public")
 }
 
@@ -7023,6 +7029,87 @@ model BreedingPlanTempLog {
   Tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([planId])
+  @@index([tenantId])
+  @@schema("public")
+}
+
+model HelpArticleEmbedding {
+  id          Int                   @id @default(autoincrement())
+  slug        String
+  chunkIndex  Int                   @default(0)
+  title       String
+  module      String
+  tags        String[]              @default([])
+  summary     String?
+  chunkText   String
+  embedding   Unsupported("vector")
+  contentHash String
+  metadata    Json                  @default("{}")
+  indexedAt   DateTime              @default(now()) @db.Timestamptz(6)
+  createdAt   DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime              @default(now()) @db.Timestamptz(6)
+
+  @@unique([slug, chunkIndex])
+  @@index([module], map: "idx_help_article_embedding_module")
+  @@index([tags], map: "idx_help_article_embedding_tags", type: Gin)
+  @@index([embedding], map: "idx_help_article_embedding_vector")
+  @@ignore
+  @@schema("public")
+}
+
+model HelpQueryLog {
+  id             Int      @id @default(autoincrement())
+  userId         String
+  tenantId       Int
+  query          String
+  response       String?
+  sourceSlugs    String[] @default([])
+  feedbackRating Int?     @db.SmallInt
+  feedbackText   String?
+  modelUsed      String   @default("claude-haiku-4-5-20251001")
+  tokenCount     Int?
+  latencyMs      Int?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tenantId], map: "idx_help_query_log_tenantId")
+  @@index([userId], map: "idx_help_query_log_userId")
+  @@index([userId, createdAt], map: "idx_help_query_log_user_day")
+  @@schema("public")
+}
+
+model UserHelpPreference {
+  id             Int      @id @default(autoincrement())
+  userId         String   @unique
+  toursCompleted String[] @default([])
+  toursDismissed String[] @default([])
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @db.Timestamptz(6)
+  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("public")
+}
+
+model FoalingCheck {
+  id                 Int          @id @default(autoincrement())
+  tenantId           Int
+  breedingPlanId     Int
+  checkedAt          DateTime     @default(now())
+  checkedByUserId    String?
+  udderDevelopment   String       @default("none")
+  vulvaRelaxation    String       @default("none")
+  tailHeadRelaxation String       @default("none")
+  temperature        Decimal?     @db.Decimal(5, 2)
+  behaviorNotes      String[]     @default([])
+  additionalNotes    String?
+  foalingImminent    Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime
+  BreedingPlan       BreedingPlan @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+  Tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([breedingPlanId])
+  @@index([checkedAt])
   @@index([tenantId])
   @@schema("public")
 }
@@ -7228,6 +7315,7 @@ enum EntitlementKey {
   DATA_EXPORT
   GENETICS_STANDARD
   GENETICS_PRO
+  AI_ASSISTANT
 
   @@schema("public")
 }
@@ -7660,6 +7748,10 @@ enum BreedingMethod {
   AI_TCI
   AI_SI
   AI_FROZEN
+  AI_VAGINAL
+  AI_SURGICAL
+  AI_LAPAROSCOPIC
+  EMBRYO_TRANSFER
 
   @@schema("public")
 }

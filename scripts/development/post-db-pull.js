@@ -9,6 +9,7 @@
  * Current fixes:
  *   1. Remove dbmate's schema_migrations table (managed by dbmate, not Prisma)
  *   2. Fix @@unique field order to match @relation field order (Prisma one-to-one validation)
+ *   3. Add @@ignore to models with DB-level comments (suppresses Prisma migration warnings)
  *
  * Usage: node scripts/development/post-db-pull.js
  */
@@ -65,7 +66,6 @@ content = content.replace(modelBlockRegex, (modelBlock) => {
       const uniqueFields = fieldListStr.split(',').map(f => f.trim());
       if (uniqueFields.length !== relFields.length) return uniqueMatch;
 
-      const uniqueSet = new Set(uniqueFields);
       const sameFields = uniqueFields.length === relSet.size &&
         uniqueFields.every(f => relSet.has(f));
 
@@ -80,6 +80,24 @@ content = content.replace(modelBlockRegex, (modelBlock) => {
   }
   return patched;
 });
+
+// ── Fix 3: Add @@ignore to models Prisma can't fully support ──────────────
+// Reasons a model may need @@ignore:
+//   • DB-level COMMENT ON TABLE/COLUMN metadata (entity_activity, entity_audit_log)
+//   • Unsupported column types like pgvector (HelpArticleEmbedding)
+// Since we use dbmate (not Prisma Migrate), these warnings are irrelevant.
+// @@ignore silences them. The tables remain fully usable via $queryRaw
+// and $executeRawUnsafe — only the generated Prisma Client types are skipped.
+const MODELS_TO_IGNORE = ['entity_activity', 'entity_audit_log', 'HelpArticleEmbedding'];
+
+for (const modelName of MODELS_TO_IGNORE) {
+  const modelPattern = new RegExp(`(model ${modelName}\\s*\\{)([\\s\\S]*?)(\\n\\})`);
+  content = content.replace(modelPattern, (match, open, body, close) => {
+    if (body.includes('@@ignore')) return match;
+    fixes.push(`Added @@ignore to ${modelName} (suppresses DB comment warning)`);
+    return `${open}${body}\n\n  @@ignore${close}`;
+  });
+}
 
 // ── Write & report ───────────────────────────────────────────────────────
 if (content !== original) {

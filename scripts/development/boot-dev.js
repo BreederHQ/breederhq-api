@@ -204,7 +204,7 @@ async function main() {
   // in the child tsx process; boot-dev.js itself is unaffected.
   const childEnv = { ...process.env };
   const existingNodeOptions = childEnv.NODE_OPTIONS || "";
-  childEnv.NODE_OPTIONS = [existingNodeOptions, "--no-deprecation"]
+  childEnv.NODE_OPTIONS = [existingNodeOptions, "--no-deprecation", "--max-old-space-size=4096"]
     .filter(Boolean)
     .join(" ");
 

@@ -849,8 +849,8 @@ export async function getInvoiceStripeStatus(
 ): Promise<{
   hasStripeInvoice: boolean;
   stripeInvoiceId: string | null;
-  paymentUrl: string | null;
-  pdfUrl: string | null;
+  stripeInvoiceUrl: string | null;
+  stripePdfUrl: string | null;
   stripeStatus: string | null;
 }> {
   const invoice = await prisma.invoice.findFirst({
@@ -872,8 +872,8 @@ export async function getInvoiceStripeStatus(
     return {
       hasStripeInvoice: false,
       stripeInvoiceId: null,
-      paymentUrl: null,
-      pdfUrl: null,
+      stripeInvoiceUrl: null,
+      stripePdfUrl: null,
       stripeStatus: null,
     };
   }
@@ -889,8 +889,8 @@ export async function getInvoiceStripeStatus(
     return {
       hasStripeInvoice: true,
       stripeInvoiceId: invoice.stripeInvoiceId,
-      paymentUrl: stripeInvoice.hosted_invoice_url || null,
-      pdfUrl: stripeInvoice.invoice_pdf || null,
+      stripeInvoiceUrl: stripeInvoice.hosted_invoice_url || null,
+      stripePdfUrl: stripeInvoice.invoice_pdf || null,
       stripeStatus: stripeInvoice.status || null,
     };
   } catch (err) {
@@ -898,8 +898,8 @@ export async function getInvoiceStripeStatus(
     return {
       hasStripeInvoice: true,
       stripeInvoiceId: invoice.stripeInvoiceId,
-      paymentUrl: null,
-      pdfUrl: null,
+      stripeInvoiceUrl: null,
+      stripePdfUrl: null,
       stripeStatus: null,
     };
   }

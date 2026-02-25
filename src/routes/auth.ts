@@ -792,7 +792,7 @@ If you didn't request this, you can safely ignore this email.
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       user = await prisma.user.create({
-        data: { email, name: "Dev User", isSuperAdmin: true, emailVerifiedAt: new Date() } as any,
+        data: { email, name: "Dev User", firstName: "Dev", lastName: "User", isSuperAdmin: true, emailVerifiedAt: new Date() } as any,
       });
     }
 
