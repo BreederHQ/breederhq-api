@@ -55,14 +55,17 @@ function checkBurst(userId: string): boolean {
 
 /**
  * Returns rate limit state for a user.
- * Limit comes from ProductEntitlement.limitValue for AI_ASSISTANT (admin-configurable).
+ * Limit comes from ProductEntitlement.limitValue for the given entitlement key.
+ * Defaults to AI_ASSISTANT for backward compatibility; pass "COPILOT" for copilot queries.
  */
 export async function getRateLimitState(
   userId: string,
-  tenantId: number
+  tenantId: number,
+  entitlementKey: "AI_ASSISTANT" | "COPILOT" = "AI_ASSISTANT"
 ): Promise<RateLimitState> {
   // Get configured daily limit from entitlement
-  const entitlement = await checkEntitlement(tenantId, "AI_ASSISTANT");
+  // Cast needed: COPILOT is added via migration but not yet in Prisma-generated enum
+  const entitlement = await checkEntitlement(tenantId, entitlementKey as any);
   const limit = entitlement.limitValue ?? 20; // default 20 if limitValue is null
 
   // Count queries today

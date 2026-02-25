@@ -7,7 +7,7 @@
  */
 
 import prisma from "../prisma.js";
-import { updateMareReproductiveHistory } from "./mare-reproductive-history-service.js";
+import { updateAnimalReproductiveHistory } from "./animal-reproductive-history-service.js";
 import { calculateGroupExpectedDates } from "./breeding-plan-lifecycle-service.js";
 
 // Date utility functions - use UTC to avoid timezone shift issues
@@ -236,9 +236,9 @@ export async function addFoalingOutcome(params: {
   veterinarianNotes?: string;
   placentaPassed?: boolean;
   placentaPassedMinutes?: number;
-  mareCondition?: "EXCELLENT" | "GOOD" | "FAIR" | "POOR" | "VETERINARY_CARE_REQUIRED";
-  postFoalingHeatDate?: Date | string;
-  postFoalingHeatNotes?: string;
+  damCondition?: "EXCELLENT" | "GOOD" | "FAIR" | "POOR" | "VETERINARY_CARE_REQUIRED";
+  postBirthHeatDate?: Date | string;
+  postBirthHeatNotes?: string;
   readyForRebreeding?: boolean;
   rebredDate?: Date | string;
   wasCSection?: boolean;
@@ -248,6 +248,9 @@ export async function addFoalingOutcome(params: {
   totalBorn?: number;
   bornAlive?: number;
   stillborn?: number;
+  maternalRating?: string;
+  milkProduction?: string;
+  mastitisHistory?: boolean;
   userId: string;
 }) {
   const { breedingPlanId, tenantId, ...outcomeData } = params;
@@ -269,14 +272,12 @@ export async function addFoalingOutcome(params: {
     update: outcomeData,
   });
 
-  // Update mare reproductive history if this is a horse breeding with a dam
-  if (plan.species === "HORSE" && plan.damId) {
+  // Update reproductive history for all species with a dam
+  if (plan.damId && plan.species) {
     try {
-      await updateMareReproductiveHistory(plan.damId, tenantId, breedingPlanId);
+      await updateAnimalReproductiveHistory(plan.damId, tenantId, breedingPlanId, plan.species);
     } catch (err) {
-      // Log the error but don't fail the outcome save
-      console.error("[Foaling] Failed to update mare reproductive history:", err);
-      // Note: History will be auto-generated when user views the mare's breeding history tab
+      console.error(`[Birth] Failed to update reproductive history for animal ${plan.damId}:`, err);
     }
   }
 

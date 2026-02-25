@@ -209,7 +209,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           }),
         },
         include: {
-          mareReproductiveHistory: true,
+          AnimalReproductiveHistory: true,
           breedingPlansAsDam: {
             where: {
               status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
@@ -251,7 +251,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         const reproductiveStatus = deriveMareWorkflowStatus(
           plan,
           mare.breedingAvailability,
-          mare.mareReproductiveHistory?.isBarren,
+          mare.AnimalReproductiveHistory?.isBarren,
         );
 
         const planStatus = (plan?.status || "").toUpperCase();
@@ -602,7 +602,7 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
         include: {
           dam: {
             include: {
-              mareReproductiveHistory: true,
+              AnimalReproductiveHistory: true,
             },
           },
           sire: {
@@ -752,8 +752,8 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
           // Extra fields (not in PreFoalingEntry but useful for UI)
           urgencyScore,
-          riskScore: plan.dam.mareReproductiveHistory?.riskScore || 0,
-          riskFactors: plan.dam.mareReproductiveHistory?.riskFactors || [],
+          riskScore: plan.dam.AnimalReproductiveHistory?.riskScore || 0,
+          riskFactors: plan.dam.AnimalReproductiveHistory?.riskFactors || [],
         };
       }).filter((m): m is NonNullable<typeof m> => m !== null);
 

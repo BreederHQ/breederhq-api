@@ -169,7 +169,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           status: { in: ["ACTIVE", "BREEDING"] },
         },
         include: {
-          mareReproductiveHistory: true,
+          AnimalReproductiveHistory: true,
           breedingPlansAsDam: {
             where: {
               status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
@@ -212,7 +212,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
 
       for (const mare of mares) {
         const plan = mare.breedingPlansAsDam[0];
-        const reproHistory = mare.mareReproductiveHistory;
+        const reproHistory = mare.AnimalReproductiveHistory;
         const hasCycle = mare.reproductiveCycles.length > 0;
 
         const { status, daysInStatus } = deriveMareStatus(plan, reproHistory, hasCycle);
@@ -636,7 +636,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           archived: false,
         },
         include: {
-          mareReproductiveHistory: true,
+          AnimalReproductiveHistory: true,
         },
       });
 
@@ -648,13 +648,13 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       let gestationCount = 0;
 
       const mareStats = mares
-        .filter((m) => m.mareReproductiveHistory)
+        .filter((m) => m.AnimalReproductiveHistory)
         .map((mare) => {
-          const history = mare.mareReproductiveHistory!;
+          const history = mare.AnimalReproductiveHistory!;
 
-          const lifetimeFoals = history.totalFoalings || 0;
-          const liveFoals = history.totalLiveFoals || 0;
-          const complications = history.totalComplicatedFoalings || 0;
+          const lifetimeFoals = history.totalBirths || 0;
+          const liveFoals = history.totalLiveOffspring || 0;
+          const complications = history.totalComplicatedBirths || 0;
 
           const successRate = lifetimeFoals > 0 ? Math.round((liveFoals / lifetimeFoals) * 100) : 0;
           const complicationRate =
@@ -677,7 +677,7 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
             complicationRate,
             riskScore: history.riskScore || 0,
             riskFactors: history.riskFactors || [],
-            lastFoalingDate: history.lastFoalingDate?.toISOString(),
+            lastFoalingDate: history.lastBirthDate?.toISOString(),
             status: mare.status?.toLowerCase() as "active" | "retired" | "rest",
           };
         });

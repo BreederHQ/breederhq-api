@@ -22,11 +22,16 @@ import {
   deleteBirthMilestones,
 } from "../services/breeding-foaling-service.js";
 import {
+  getAnimalReproductiveHistory,
+  getAnimalDetailedBirthHistory,
+  recalculateAnimalHistory,
+  getBirthAnalytics,
+  // Backward-compat re-exports for old route handlers
   getMareReproductiveHistory,
   getMareDetailedFoalingHistory,
   recalculateMareHistory,
   getFoalingAnalytics,
-} from "../services/mare-reproductive-history-service.js";
+} from "../services/animal-reproductive-history-service.js";
 import { getPlacementTrends } from "../services/placement-trend-service.js";
 import {
   createNeonatalCareEntry,
@@ -1418,7 +1423,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             weanedDateActual: true,
             placementStartDateActual: true,
             ovulationConfirmed: true,
+            ovulationConfirmedMethod: true,
             reproAnchorMode: true,
+            cycleStartDateUnknown: true,
           },
         });
 
@@ -1429,6 +1436,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const finalBirthDate = effectiveBirthDate !== undefined ? effectiveBirthDate : existingPlan?.birthDateActual;
         const finalOvulationConfirmed = existingPlan?.ovulationConfirmed;
         const isOvulationAnchor = existingPlan?.reproAnchorMode === "OVULATION";
+        const isCycleStartUnknown = b.cycleStartDateUnknown ?? existingPlan?.cycleStartDateUnknown ?? false;
 
         // VALIDATION: Dam and Sire must be set before advancing past PLANNING
         // Check effective values (payload overrides existing)
@@ -1459,7 +1467,13 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // Validate required dates for each status
         // When using ovulation anchors, ovulation confirmed date can substitute for cycle start
         // Induced ovulators (CAT, RABBIT, ALPACA, LLAMA) skip CYCLE phase and don't require cycle data for BRED
-        const hasRequiredCycleData = finalCycleStart || (isOvulationAnchor && finalOvulationConfirmed);
+        // cycleStartDateUnknown also satisfies the cycle data requirement (surprise pregnancy workflow)
+        // Also accept confirmed ovulation data (date + method) even if reproAnchorMode wasn't formally upgraded
+        const hasOvulationData = finalOvulationConfirmed && existingPlan?.ovulationConfirmedMethod;
+        const hasRequiredCycleData = finalCycleStart ||
+          isCycleStartUnknown ||
+          (isOvulationAnchor && finalOvulationConfirmed) ||
+          hasOvulationData;
         const speciesIsInducedOvulator = isInducedOvulator(existing.species ?? "");
         if (s === "BRED" && !speciesIsInducedOvulator && !hasRequiredCycleData) {
           return reply.code(400).send({
@@ -3523,6 +3537,60 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  /* ───────────── Bulk-delete exam results for a plan ───────────── */
+
+  /**
+   * DELETE /breeding/plans/:id/exam-results
+   * Deletes ALL TestResult records linked to this plan (any kind).
+   * Clears ovulationTestResultId FK first to avoid constraint issues.
+   */
+  app.delete("/breeding/plans/:id/exam-results", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: { id: true, tenantId: true, ovulationTestResultId: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Clear ovulation anchor FK so the linked exam can be deleted
+        if (plan.ovulationTestResultId) {
+          await tx.breedingPlan.update({
+            where: { id: plan.id },
+            data: { ovulationTestResultId: null },
+          });
+        }
+
+        // Delete all exam results linked to this plan
+        const deleted = await tx.testResult.deleteMany({
+          where: { planId: plan.id, tenantId },
+        });
+
+        return deleted.count;
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "BREEDING_PLAN",
+        entityId: id,
+        kind: "plan_exams_deleted",
+        category: "health",
+        title: `Deleted ${result} reproductive exam(s) for breeding plan`,
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send({ ok: true, deletedCount: result });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
   /* ───────────── Reproductive Cycles ───────────── */
 
   app.get("/breeding/cycles", async (req, reply) => {
@@ -4690,6 +4758,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DEPRECATED: Use /breeding/animals/:animalId/reproductive-history instead
   // GET /breeding/mares/:mareId/reproductive-history
   app.get("/breeding/mares/:mareId/reproductive-history", async (req, reply) => {
     try {
@@ -4710,6 +4779,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DEPRECATED: Use /breeding/animals/:animalId/birth-history instead
   // GET /breeding/mares/:mareId/foaling-history
   app.get("/breeding/mares/:mareId/foaling-history", async (req, reply) => {
     try {
@@ -4724,6 +4794,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DEPRECATED: Use /breeding/animals/:animalId/reproductive-history/recalculate instead
   // POST /breeding/mares/:mareId/reproductive-history/recalculate
   app.post("/breeding/mares/:mareId/reproductive-history/recalculate", async (req, reply) => {
     try {
@@ -4755,6 +4826,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // DEPRECATED: Use /breeding/birth-analytics instead
   // GET /breeding/foaling-analytics - Get aggregate foaling analytics
   app.get("/breeding/foaling-analytics", async (req, reply) => {
     try {
@@ -4763,6 +4835,125 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const analytics = await getFoalingAnalytics(tenantId, {
         year: year ? parseInt(year, 10) : undefined,
+      });
+      reply.send(analytics);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // NEW GENERIC ENDPOINTS (species-agnostic, female animals only)
+  // ────────────────────────────────────────────────────────────
+
+  // GET /breeding/animals/:animalId/reproductive-history
+  app.get("/breeding/animals/:animalId/reproductive-history", async (req, reply) => {
+    try {
+      const { animalId } = req.params as { animalId: string };
+      const tenantId = (req as any).tenantId;
+
+      // Validate animal exists, belongs to tenant, and is female
+      const animal = await prisma.animal.findFirst({
+        where: { id: Number(animalId), tenantId },
+        select: { id: true, sex: true },
+      });
+      if (!animal) {
+        reply.status(404).send({ error: "Animal not found" });
+        return;
+      }
+      if (animal.sex?.toUpperCase() !== "FEMALE") {
+        reply.status(400).send({ error: "Reproductive history is only available for female animals" });
+        return;
+      }
+
+      const history = await getAnimalReproductiveHistory(Number(animalId), tenantId);
+      reply.send(history ?? null);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/animals/:animalId/birth-history
+  app.get("/breeding/animals/:animalId/birth-history", async (req, reply) => {
+    try {
+      const { animalId } = req.params as { animalId: string };
+      const tenantId = (req as any).tenantId;
+
+      // Validate animal exists, belongs to tenant, and is female
+      const animal = await prisma.animal.findFirst({
+        where: { id: Number(animalId), tenantId },
+        select: { id: true, sex: true },
+      });
+      if (!animal) {
+        reply.status(404).send({ error: "Animal not found" });
+        return;
+      }
+      if (animal.sex?.toUpperCase() !== "FEMALE") {
+        reply.status(400).send({ error: "Birth history is only available for female animals" });
+        return;
+      }
+
+      const history = await getAnimalDetailedBirthHistory(Number(animalId), tenantId);
+      reply.send(history);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // POST /breeding/animals/:animalId/reproductive-history/recalculate
+  app.post("/breeding/animals/:animalId/reproductive-history/recalculate", async (req, reply) => {
+    try {
+      const { animalId } = req.params as { animalId: string };
+      const tenantId = (req as any).tenantId;
+
+      // Validate animal exists, belongs to tenant, and is female
+      const animal = await prisma.animal.findFirst({
+        where: { id: Number(animalId), tenantId },
+        select: { id: true, sex: true },
+      });
+      if (!animal) {
+        reply.status(404).send({ error: "Animal not found" });
+        return;
+      }
+      if (animal.sex?.toUpperCase() !== "FEMALE") {
+        reply.status(400).send({ error: "Reproductive history recalculation is only available for female animals" });
+        return;
+      }
+
+      const history = await recalculateAnimalHistory(Number(animalId), tenantId);
+
+      if (history) {
+        logEntityActivity({
+          tenantId,
+          entityType: "BREEDING_PLAN",
+          entityId: Number(animalId),
+          kind: "reproductive_history_recalculated",
+          category: "system",
+          title: "Reproductive history recalculated",
+          actorId: String((req as any).userId ?? "unknown"),
+          actorName: (req as any).userName,
+        });
+      }
+
+      reply.send(history ?? null);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /breeding/birth-analytics - Get aggregate birth analytics (species-aware)
+  app.get("/breeding/birth-analytics", async (req, reply) => {
+    try {
+      const tenantId = (req as any).tenantId;
+      const { year, species } = req.query as { year?: string; species?: string };
+
+      const analytics = await getBirthAnalytics(tenantId, {
+        year: year ? parseInt(year, 10) : undefined,
+        species: species || undefined,
       });
       reply.send(analytics);
     } catch (err) {
