@@ -81,7 +81,8 @@ type AnimalRow = {
     titles: number;
     competitionEntries: number;
   };
-  hasVerifiedTitles: boolean;
+  // Verified titles included in the select (take: 1) — non-empty means has verified
+  titles: Array<{ id: number }>;
 };
 
 const animalSelect = {
@@ -103,18 +104,13 @@ const animalSelect = {
       competitionEntries: true,
     },
   },
-} as const;
-
-/**
- * Check if animal has any verified titles
- */
-async function checkVerifiedTitles(animalId: number): Promise<boolean> {
-  const verified = await prisma.animalTitle.findFirst({
-    where: { animalId, verified: true },
+  // Include a single verified title to check hasVerifiedTitles without N+1 queries
+  titles: {
+    where: { verified: true },
     select: { id: true },
-  });
-  return !!verified;
-}
+    take: 1,
+  },
+} as const;
 
 /**
  * Recursively build ancestor tree to specified depth
@@ -135,13 +131,7 @@ async function buildAncestorTree(
     });
     if (!row) return null;
 
-    // Check for verified titles
-    const hasVerified = await checkVerifiedTitles(row.id);
-
-    animal = {
-      ...row,
-      hasVerifiedTitles: hasVerified,
-    } as AnimalRow;
+    animal = row as AnimalRow;
     cache.set(animalId, animal);
   }
 
@@ -165,7 +155,7 @@ async function buildAncestorTree(
     damId: animal.damId,
     titleCount: animal._count?.titles ?? 0,
     competitionCount: animal._count?.competitionEntries ?? 0,
-    hasVerifiedTitles: animal.hasVerifiedTitles ?? false,
+    hasVerifiedTitles: (animal.titles?.length ?? 0) > 0,
     dam,
     sire,
   };

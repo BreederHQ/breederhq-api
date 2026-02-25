@@ -160,6 +160,56 @@ const titlesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Animal Titles
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // GET /api/v1/titles?animalIds=1,2,3 — Batch fetch titles for multiple animals
+  app.get("/titles", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const query = req.query as { animalIds?: string };
+    if (!query.animalIds) {
+      return reply.code(400).send({ error: "animalIds_required", message: "Provide ?animalIds=1,2,3" });
+    }
+
+    const ids = query.animalIds
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+
+    if (ids.length === 0) {
+      return reply.code(400).send({ error: "animalIds_invalid" });
+    }
+
+    // Cap at 200 to prevent abuse
+    if (ids.length > 200) {
+      return reply.code(400).send({ error: "too_many_ids", message: "Max 200 animalIds per request" });
+    }
+
+    const titles = await prisma.animalTitle.findMany({
+      where: { tenantId, animalId: { in: ids } },
+      include: {
+        titleDefinition: {
+          select: {
+            id: true,
+            abbreviation: true,
+            fullName: true,
+            category: true,
+            organization: true,
+            prefixTitle: true,
+            suffixTitle: true,
+            displayOrder: true,
+            isProducingTitle: true,
+          },
+        },
+        animal: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { titleDefinition: { displayOrder: "asc" } },
+    });
+
+    return titles;
+  });
+
   // GET /api/v1/animals/:animalId/titles
   app.get("/animals/:animalId/titles", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
