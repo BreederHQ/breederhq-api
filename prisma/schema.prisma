@@ -57,6 +57,7 @@ model User {
   geneticNotificationSnoozes     GeneticNotificationSnooze[]
   geneticsDisclaimerAcceptances  GeneticsDisclaimerAcceptance[]
   HealthEvent                    HealthEvent[]
+  HelpConversation               HelpConversation[]
   HelpQueryLog                   HelpQueryLog[]
   LitterEvent                    LitterEvent[]
   marketplaceBlocks              MarketplaceUserBlock[]          @relation("BlockedMarketplaceUser")
@@ -219,6 +220,7 @@ model Tenant {
   linkRequestsTo                  AnimalLinkRequest[]             @relation("LinkRequestTo")
   microchipRegistrations          AnimalMicrochipRegistration[]
   AnimalOwnershipChange           AnimalOwnershipChange[]
+  AnimalReproductiveHistory       AnimalReproductiveHistory[]
   animalTitles                    AnimalTitle[]
   AnimalTraitEntry                AnimalTraitEntry[]
   AnimalTraitValue                AnimalTraitValue[]
@@ -288,6 +290,7 @@ model Tenant {
   geneticNotificationSnoozes      GeneticNotificationSnooze[]
   contributedIdentifiers          GlobalAnimalIdentifier[]
   HealthEvent                     HealthEvent[]
+  HelpConversation                HelpConversation[]
   IdempotencyKey                  IdempotencyKey[]
   Invoice                         Invoice[]
   InvoiceLineItem                 InvoiceLineItem[]
@@ -295,7 +298,6 @@ model Tenant {
   linearAppraisals                LinearAppraisal[]
   litters                         Litter[]
   LitterEvent                     LitterEvent[]
-  mareReproductiveHistories       MareReproductiveHistory[]
   marketplaceUserBlocks           MarketplaceUserBlock[]
   mediaAccessEvents               MediaAccessEvent[]
   MessageThread                   MessageThread[]
@@ -1167,6 +1169,7 @@ model Animal {
   privacySettings                                  AnimalPrivacySettings?
   programParticipants                              AnimalProgramParticipant[]    @relation("AnimalProgramParticipants")
   registryIds                                      AnimalRegistryIdentifier[]
+  AnimalReproductiveHistory                        AnimalReproductiveHistory?
   titles                                           AnimalTitle[]
   AnimalTraitEntry                                 AnimalTraitEntry[]
   AnimalTraitValue                                 AnimalTraitValue[]
@@ -1201,7 +1204,6 @@ model Animal {
   Invoice                                          Invoice[]
   lactationCycles                                  LactationCycle[]
   linearAppraisals                                 LinearAppraisal[]
-  mareReproductiveHistory                          MareReproductiveHistory?
   milkingRecords                                   MilkingRecord[]
   offspringAsDam                                   Offspring[]                   @relation("OffspringIndividualDam")
   Offspring                                        Offspring[]                   @relation("PromotedAnimal")
@@ -2361,73 +2363,39 @@ model PregnancyCheck {
 }
 
 model FoalingOutcome {
-  id                    Int                       @id @default(autoincrement())
+  id                    Int                    @id @default(autoincrement())
   tenantId              Int
-  breedingPlanId        Int                       @unique
-  hadComplications      Boolean                   @default(false)
+  breedingPlanId        Int                    @unique
+  hadComplications      Boolean                @default(false)
   complicationDetails   String?
-  veterinarianCalled    Boolean                   @default(false)
+  veterinarianCalled    Boolean                @default(false)
   veterinarianName      String?
   veterinarianNotes     String?
   placentaPassed        Boolean?
   placentaPassedMinutes Int?
-  mareCondition         MarePostFoalingCondition?
-  postFoalingHeatDate   DateTime?
-  postFoalingHeatNotes  String?
-  readyForRebreeding    Boolean                   @default(false)
+  damCondition          DamPostBirthCondition?
+  postBirthHeatDate     DateTime?
+  postBirthHeatNotes    String?
+  readyForRebreeding    Boolean                @default(false)
   rebredDate            DateTime?
   foalPhotoUrls         Json?
-  createdAt             DateTime                  @default(now())
-  updatedAt             DateTime                  @updatedAt
-  wasCSection           Boolean                   @default(false)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  wasCSection           Boolean                @default(false)
   cSectionReason        String?
   placentaCount         Int?
   damRecoveryNotes      String?
   totalBorn             Int?
   bornAlive             Int?
   stillborn             Int?
-  breedingPlan          BreedingPlan              @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
-  tenant                Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  maternalRating        String?                @db.VarChar(20)
+  milkProduction        String?                @db.VarChar(20)
+  mastitisHistory       Boolean                @default(false)
+  breedingPlan          BreedingPlan           @relation(fields: [breedingPlanId], references: [id], onDelete: Cascade)
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([breedingPlanId])
-  @@schema("public")
-}
-
-model MareReproductiveHistory {
-  id                           Int       @id @default(autoincrement())
-  tenantId                     Int
-  mareId                       Int       @unique
-  totalFoalings                Int       @default(0)
-  totalLiveFoals               Int       @default(0)
-  totalComplicatedFoalings     Int       @default(0)
-  totalVeterinaryInterventions Int       @default(0)
-  totalRetainedPlacentas       Int       @default(0)
-  lastFoalingDate              DateTime?
-  lastFoalingComplications     Boolean?
-  lastMareCondition            String?
-  lastPlacentaPassed           Boolean?
-  lastPlacentaMinutes          Int?
-  avgPostFoalingHeatDays       Float?
-  minPostFoalingHeatDays       Int?
-  maxPostFoalingHeatDays       Int?
-  lastPostFoalingHeatDate      DateTime?
-  lastReadyForRebreeding       Boolean?
-  lastRebredDate               DateTime?
-  riskScore                    Int       @default(0)
-  riskFactors                  String[]
-  notes                        String?
-  lastUpdatedFromPlanId        Int?
-  lastUpdatedFromBreedYear     Int?
-  createdAt                    DateTime  @default(now())
-  updatedAt                    DateTime  @updatedAt
-  isBarren                     Boolean   @default(false)
-  mare                         Animal    @relation(fields: [mareId], references: [id], onDelete: Cascade)
-  tenant                       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
-  @@index([mareId])
-  @@index([riskScore])
   @@schema("public")
 }
 
@@ -7048,6 +7016,7 @@ model HelpArticleEmbedding {
   indexedAt   DateTime              @default(now()) @db.Timestamptz(6)
   createdAt   DateTime              @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime              @default(now()) @db.Timestamptz(6)
+  contentType String                @default("article")
 
   @@unique([slug, chunkIndex])
   @@index([module], map: "idx_help_article_embedding_module")
@@ -7111,6 +7080,63 @@ model FoalingCheck {
   @@index([breedingPlanId])
   @@index([checkedAt])
   @@index([tenantId])
+  @@schema("public")
+}
+
+model AnimalReproductiveHistory {
+  id                           Int       @id @default(autoincrement())
+  tenantId                     Int
+  animalId                     Int       @unique
+  totalBirths                  Int       @default(0)
+  totalLiveOffspring           Int       @default(0)
+  totalComplicatedBirths       Int       @default(0)
+  totalVeterinaryInterventions Int       @default(0)
+  totalRetainedPlacentas       Int       @default(0)
+  lastBirthDate                DateTime?
+  lastBirthComplications       Boolean?
+  lastDamCondition             String?
+  lastPlacentaPassed           Boolean?
+  lastPlacentaMinutes          Int?
+  avgPostBirthHeatDays         Float?
+  minPostBirthHeatDays         Int?
+  maxPostBirthHeatDays         Int?
+  lastPostBirthHeatDate        DateTime?
+  lastReadyForRebreeding       Boolean?
+  lastRebredDate               DateTime?
+  riskScore                    Int       @default(0)
+  riskFactors                  String[]
+  notes                        String?
+  lastUpdatedFromPlanId        Int?
+  lastUpdatedFromBreedYear     Int?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime
+  isBarren                     Boolean   @default(false)
+  species                      String
+  Animal                       Animal    @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  Tenant                       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([animalId])
+  @@index([riskScore])
+  @@index([species])
+  @@index([tenantId])
+  @@schema("public")
+}
+
+model HelpConversation {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  tenantId  Int
+  title     String
+  messages  Json     @default("[]")
+  mode      String   @default("copilot")
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([updatedAt(sort: Desc)])
+  @@index([userId])
   @@schema("public")
 }
 enum PartyType {
@@ -7316,6 +7342,7 @@ enum EntitlementKey {
   GENETICS_STANDARD
   GENETICS_PRO
   AI_ASSISTANT
+  COPILOT
 
   @@schema("public")
 }
@@ -8288,16 +8315,6 @@ enum InquiryStatus {
   CONVERTED
   NOT_INTERESTED
   SPAM
-
-  @@schema("public")
-}
-
-enum MarePostFoalingCondition {
-  EXCELLENT
-  GOOD
-  FAIR
-  POOR
-  VETERINARY_CARE_REQUIRED
 
   @@schema("public")
 }
@@ -9294,6 +9311,16 @@ enum BoostStatus {
   PAUSED
   EXPIRED
   CANCELED
+
+  @@schema("public")
+}
+
+enum DamPostBirthCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  VETERINARY_CARE_REQUIRED
 
   @@schema("public")
 }

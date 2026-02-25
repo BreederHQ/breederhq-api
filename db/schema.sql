@@ -920,6 +920,19 @@ CREATE TYPE public."DHIATestType" AS ENUM (
 
 
 --
+-- Name: DamPostBirthCondition; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public."DamPostBirthCondition" AS ENUM (
+    'EXCELLENT',
+    'GOOD',
+    'FAIR',
+    'POOR',
+    'VETERINARY_CARE_REQUIRED'
+);
+
+
+--
 -- Name: DataSource; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -1105,7 +1118,8 @@ CREATE TYPE public."EntitlementKey" AS ENUM (
     'DATA_EXPORT',
     'GENETICS_STANDARD',
     'GENETICS_PRO',
-    'AI_ASSISTANT'
+    'AI_ASSISTANT',
+    'COPILOT'
 );
 
 
@@ -1604,19 +1618,6 @@ CREATE TYPE public."ListingType" AS ENUM (
     'BOARDING',
     'PRODUCT',
     'OTHER_SERVICE'
-);
-
-
---
--- Name: MarePostFoalingCondition; Type: TYPE; Schema: public; Owner: -
---
-
-CREATE TYPE public."MarePostFoalingCondition" AS ENUM (
-    'EXCELLENT',
-    'GOOD',
-    'FAIR',
-    'POOR',
-    'VETERINARY_CARE_REQUIRED'
 );
 
 
@@ -4858,6 +4859,62 @@ CREATE SEQUENCE public."AnimalRegistryIdentifier_id_seq"
 --
 
 ALTER SEQUENCE public."AnimalRegistryIdentifier_id_seq" OWNED BY public."AnimalRegistryIdentifier".id;
+
+
+--
+-- Name: AnimalReproductiveHistory; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."AnimalReproductiveHistory" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "animalId" integer NOT NULL,
+    "totalBirths" integer DEFAULT 0 NOT NULL,
+    "totalLiveOffspring" integer DEFAULT 0 NOT NULL,
+    "totalComplicatedBirths" integer DEFAULT 0 NOT NULL,
+    "totalVeterinaryInterventions" integer DEFAULT 0 NOT NULL,
+    "totalRetainedPlacentas" integer DEFAULT 0 NOT NULL,
+    "lastBirthDate" timestamp(3) without time zone,
+    "lastBirthComplications" boolean,
+    "lastDamCondition" text,
+    "lastPlacentaPassed" boolean,
+    "lastPlacentaMinutes" integer,
+    "avgPostBirthHeatDays" double precision,
+    "minPostBirthHeatDays" integer,
+    "maxPostBirthHeatDays" integer,
+    "lastPostBirthHeatDate" timestamp(3) without time zone,
+    "lastReadyForRebreeding" boolean,
+    "lastRebredDate" timestamp(3) without time zone,
+    "riskScore" integer DEFAULT 0 NOT NULL,
+    "riskFactors" text[],
+    notes text,
+    "lastUpdatedFromPlanId" integer,
+    "lastUpdatedFromBreedYear" integer,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "isBarren" boolean DEFAULT false NOT NULL,
+    species text NOT NULL
+);
+
+
+--
+-- Name: AnimalReproductiveHistory_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."AnimalReproductiveHistory_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: AnimalReproductiveHistory_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."AnimalReproductiveHistory_id_seq" OWNED BY public."AnimalReproductiveHistory".id;
 
 
 --
@@ -8127,9 +8184,9 @@ CREATE TABLE public."FoalingOutcome" (
     "veterinarianNotes" text,
     "placentaPassed" boolean,
     "placentaPassedMinutes" integer,
-    "mareCondition" public."MarePostFoalingCondition",
-    "postFoalingHeatDate" timestamp(3) without time zone,
-    "postFoalingHeatNotes" text,
+    "damCondition" public."DamPostBirthCondition",
+    "postBirthHeatDate" timestamp(3) without time zone,
+    "postBirthHeatNotes" text,
     "readyForRebreeding" boolean DEFAULT false NOT NULL,
     "rebredDate" timestamp(3) without time zone,
     "foalPhotoUrls" jsonb,
@@ -8141,7 +8198,10 @@ CREATE TABLE public."FoalingOutcome" (
     "damRecoveryNotes" text,
     "totalBorn" integer,
     "bornAlive" integer,
-    stillborn integer
+    stillborn integer,
+    "maternalRating" character varying(20),
+    "milkProduction" character varying(20),
+    "mastitisHistory" boolean DEFAULT false NOT NULL
 );
 
 
@@ -8510,7 +8570,8 @@ CREATE TABLE public."HelpArticleEmbedding" (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     "indexedAt" timestamp with time zone DEFAULT now() NOT NULL,
     "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
-    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "contentType" text DEFAULT 'article'::text NOT NULL
 );
 
 
@@ -8532,6 +8593,42 @@ CREATE SEQUENCE public."HelpArticleEmbedding_id_seq"
 --
 
 ALTER SEQUENCE public."HelpArticleEmbedding_id_seq" OWNED BY public."HelpArticleEmbedding".id;
+
+
+--
+-- Name: HelpConversation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."HelpConversation" (
+    id integer NOT NULL,
+    "userId" text NOT NULL,
+    "tenantId" integer NOT NULL,
+    title text NOT NULL,
+    messages jsonb DEFAULT '[]'::jsonb NOT NULL,
+    mode text DEFAULT 'copilot'::text NOT NULL,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: HelpConversation_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."HelpConversation_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: HelpConversation_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."HelpConversation_id_seq" OWNED BY public."HelpConversation".id;
 
 
 --
@@ -8993,61 +9090,6 @@ CREATE SEQUENCE public."Litter_id_seq"
 --
 
 ALTER SEQUENCE public."Litter_id_seq" OWNED BY public."Litter".id;
-
-
---
--- Name: MareReproductiveHistory; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."MareReproductiveHistory" (
-    id integer NOT NULL,
-    "tenantId" integer NOT NULL,
-    "mareId" integer NOT NULL,
-    "totalFoalings" integer DEFAULT 0 NOT NULL,
-    "totalLiveFoals" integer DEFAULT 0 NOT NULL,
-    "totalComplicatedFoalings" integer DEFAULT 0 NOT NULL,
-    "totalVeterinaryInterventions" integer DEFAULT 0 NOT NULL,
-    "totalRetainedPlacentas" integer DEFAULT 0 NOT NULL,
-    "lastFoalingDate" timestamp(3) without time zone,
-    "lastFoalingComplications" boolean,
-    "lastMareCondition" text,
-    "lastPlacentaPassed" boolean,
-    "lastPlacentaMinutes" integer,
-    "avgPostFoalingHeatDays" double precision,
-    "minPostFoalingHeatDays" integer,
-    "maxPostFoalingHeatDays" integer,
-    "lastPostFoalingHeatDate" timestamp(3) without time zone,
-    "lastReadyForRebreeding" boolean,
-    "lastRebredDate" timestamp(3) without time zone,
-    "riskScore" integer DEFAULT 0 NOT NULL,
-    "riskFactors" text[],
-    notes text,
-    "lastUpdatedFromPlanId" integer,
-    "lastUpdatedFromBreedYear" integer,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL,
-    "isBarren" boolean DEFAULT false NOT NULL
-);
-
-
---
--- Name: MareReproductiveHistory_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."MareReproductiveHistory_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: MareReproductiveHistory_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."MareReproductiveHistory_id_seq" OWNED BY public."MareReproductiveHistory".id;
 
 
 --
@@ -13183,7 +13225,7 @@ ALTER SEQUENCE public.refresh_tokens_id_seq OWNED BY public.refresh_tokens.id;
 --
 
 CREATE TABLE public.schema_migrations (
-    version character varying(255) NOT NULL
+    version character varying(128) NOT NULL
 );
 
 
@@ -13423,6 +13465,13 @@ ALTER TABLE ONLY public."AnimalProgramParticipant" ALTER COLUMN id SET DEFAULT n
 --
 
 ALTER TABLE ONLY public."AnimalRegistryIdentifier" ALTER COLUMN id SET DEFAULT nextval('public."AnimalRegistryIdentifier_id_seq"'::regclass);
+
+
+--
+-- Name: AnimalReproductiveHistory id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."AnimalReproductiveHistory" ALTER COLUMN id SET DEFAULT nextval('public."AnimalReproductiveHistory_id_seq"'::regclass);
 
 
 --
@@ -13986,6 +14035,13 @@ ALTER TABLE ONLY public."HelpArticleEmbedding" ALTER COLUMN id SET DEFAULT nextv
 
 
 --
+-- Name: HelpConversation id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpConversation" ALTER COLUMN id SET DEFAULT nextval('public."HelpConversation_id_seq"'::regclass);
+
+
+--
 -- Name: HelpQueryLog id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -14053,13 +14109,6 @@ ALTER TABLE ONLY public."Litter" ALTER COLUMN id SET DEFAULT nextval('public."Li
 --
 
 ALTER TABLE ONLY public."LitterEvent" ALTER COLUMN id SET DEFAULT nextval('public."LitterEvent_id_seq"'::regclass);
-
-
---
--- Name: MareReproductiveHistory id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."MareReproductiveHistory" ALTER COLUMN id SET DEFAULT nextval('public."MareReproductiveHistory_id_seq"'::regclass);
 
 
 --
@@ -15009,6 +15058,14 @@ ALTER TABLE ONLY public."AnimalRegistryIdentifier"
 
 
 --
+-- Name: AnimalReproductiveHistory AnimalReproductiveHistory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."AnimalReproductiveHistory"
+    ADD CONSTRAINT "AnimalReproductiveHistory_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: AnimalTitleDocument AnimalTitleDocument_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15681,6 +15738,14 @@ ALTER TABLE ONLY public."HelpArticleEmbedding"
 
 
 --
+-- Name: HelpConversation HelpConversation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpConversation"
+    ADD CONSTRAINT "HelpConversation_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: HelpQueryLog HelpQueryLog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15766,14 +15831,6 @@ ALTER TABLE ONLY public."LitterEvent"
 
 ALTER TABLE ONLY public."Litter"
     ADD CONSTRAINT "Litter_pkey" PRIMARY KEY (id);
-
-
---
--- Name: MareReproductiveHistory MareReproductiveHistory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."MareReproductiveHistory"
-    ADD CONSTRAINT "MareReproductiveHistory_pkey" PRIMARY KEY (id);
 
 
 --
@@ -17654,6 +17711,41 @@ CREATE UNIQUE INDEX "AnimalRegistryIdentifier_registryId_identifier_key" ON publ
 --
 
 CREATE INDEX "AnimalRegistryIdentifier_registryId_idx" ON public."AnimalRegistryIdentifier" USING btree ("registryId");
+
+
+--
+-- Name: AnimalReproductiveHistory_animalId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "AnimalReproductiveHistory_animalId_idx" ON public."AnimalReproductiveHistory" USING btree ("animalId");
+
+
+--
+-- Name: AnimalReproductiveHistory_animalId_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "AnimalReproductiveHistory_animalId_key" ON public."AnimalReproductiveHistory" USING btree ("animalId");
+
+
+--
+-- Name: AnimalReproductiveHistory_riskScore_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "AnimalReproductiveHistory_riskScore_idx" ON public."AnimalReproductiveHistory" USING btree ("riskScore");
+
+
+--
+-- Name: AnimalReproductiveHistory_species_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "AnimalReproductiveHistory_species_idx" ON public."AnimalReproductiveHistory" USING btree (species);
+
+
+--
+-- Name: AnimalReproductiveHistory_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "AnimalReproductiveHistory_tenantId_idx" ON public."AnimalReproductiveHistory" USING btree ("tenantId");
 
 
 --
@@ -20317,6 +20409,27 @@ CREATE INDEX "HealthEvent_tenantId_idx" ON public."HealthEvent" USING btree ("te
 
 
 --
+-- Name: HelpConversation_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "HelpConversation_tenantId_idx" ON public."HelpConversation" USING btree ("tenantId");
+
+
+--
+-- Name: HelpConversation_updatedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "HelpConversation_updatedAt_idx" ON public."HelpConversation" USING btree ("updatedAt" DESC);
+
+
+--
+-- Name: HelpConversation_userId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "HelpConversation_userId_idx" ON public."HelpConversation" USING btree ("userId");
+
+
+--
 -- Name: IdempotencyKey_tenantId_createdAt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20615,34 +20728,6 @@ CREATE INDEX "Litter_tenantId_placementStartAt_idx" ON public."Litter" USING btr
 --
 
 CREATE INDEX "Litter_tenantId_weanedAt_idx" ON public."Litter" USING btree ("tenantId", "weanedAt");
-
-
---
--- Name: MareReproductiveHistory_mareId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "MareReproductiveHistory_mareId_idx" ON public."MareReproductiveHistory" USING btree ("mareId");
-
-
---
--- Name: MareReproductiveHistory_mareId_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX "MareReproductiveHistory_mareId_key" ON public."MareReproductiveHistory" USING btree ("mareId");
-
-
---
--- Name: MareReproductiveHistory_riskScore_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "MareReproductiveHistory_riskScore_idx" ON public."MareReproductiveHistory" USING btree ("riskScore");
-
-
---
--- Name: MareReproductiveHistory_tenantId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "MareReproductiveHistory_tenantId_idx" ON public."MareReproductiveHistory" USING btree ("tenantId");
 
 
 --
@@ -24017,6 +24102,22 @@ ALTER TABLE ONLY public."AnimalRegistryIdentifier"
 
 
 --
+-- Name: AnimalReproductiveHistory AnimalReproductiveHistory_animalId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."AnimalReproductiveHistory"
+    ADD CONSTRAINT "AnimalReproductiveHistory_animalId_fkey" FOREIGN KEY ("animalId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: AnimalReproductiveHistory AnimalReproductiveHistory_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."AnimalReproductiveHistory"
+    ADD CONSTRAINT "AnimalReproductiveHistory_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: AnimalTitleDocument AnimalTitleDocument_animalTitleId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25897,6 +25998,22 @@ ALTER TABLE ONLY public."HealthEvent"
 
 
 --
+-- Name: HelpConversation HelpConversation_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpConversation"
+    ADD CONSTRAINT "HelpConversation_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: HelpConversation HelpConversation_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."HelpConversation"
+    ADD CONSTRAINT "HelpConversation_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: HelpQueryLog HelpQueryLog_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26062,22 +26179,6 @@ ALTER TABLE ONLY public."Litter"
 
 ALTER TABLE ONLY public."Litter"
     ADD CONSTRAINT "Litter_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: MareReproductiveHistory MareReproductiveHistory_mareId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."MareReproductiveHistory"
-    ADD CONSTRAINT "MareReproductiveHistory_mareId_fkey" FOREIGN KEY ("mareId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: MareReproductiveHistory MareReproductiveHistory_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."MareReproductiveHistory"
-    ADD CONSTRAINT "MareReproductiveHistory_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -27908,4 +28009,10 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260224140001'),
     ('20260224140002'),
     ('20260224181747'),
-    ('20260224200710');
+    ('20260224200710'),
+    ('20260225150742'),
+    ('20260225170848'),
+    ('20260225170904'),
+    ('20260225171308'),
+    ('20260225175124'),
+    ('20260225175517');

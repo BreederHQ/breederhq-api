@@ -427,6 +427,13 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
       countBorn: true,
       countLive: true,
       countStillborn: true,
+      foalingOutcome: {
+        select: {
+          maternalRating: true,
+          milkProduction: true,
+          mastitisHistory: true,
+        },
+      },
     },
   });
 
@@ -439,6 +446,12 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
   let lastPregnancyDate: Date | null = null;
   let lastBirthDate: Date | null = null;
 
+  // Maternal aggregates
+  let mostRecentMaternalRating: string | undefined;
+  let mostRecentMilkProduction: string | undefined;
+  let mastitisOccurrences = 0;
+  let mastitisTotal = 0;
+
   for (const plan of plans) {
     const hasBirth = plan.birthDateActual;
 
@@ -449,6 +462,13 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
       if (birthDate && (!lastBirthDate || birthDate > lastBirthDate)) {
         lastBirthDate = birthDate;
         lastPregnancyDate = birthDate;
+        // Track most recent maternal data (from the latest birth)
+        if (plan.foalingOutcome?.maternalRating) {
+          mostRecentMaternalRating = plan.foalingOutcome.maternalRating;
+        }
+        if (plan.foalingOutcome?.milkProduction) {
+          mostRecentMilkProduction = plan.foalingOutcome.milkProduction;
+        }
       }
 
       const litterSize = plan.countLive ?? plan.countBorn ?? 0;
@@ -457,6 +477,14 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
         litterSizes.push(litterSize);
       }
       totalDeceased += plan.countStillborn ?? 0;
+
+      // Aggregate mastitis across all litters with outcomes
+      if (plan.foalingOutcome) {
+        mastitisTotal++;
+        if (plan.foalingOutcome.mastitisHistory) {
+          mastitisOccurrences++;
+        }
+      }
     } else if (plan.status === "CANCELED" || plan.status === "UNSUCCESSFUL") {
       // Count as pregnancy loss if plan was cancelled/failed
       pregnancyLosses++;
@@ -476,6 +504,10 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
     offspringMortalityRate: totalBorn > 0 ? Math.round((totalDeceased / totalBorn) * 1000) / 10 : 0,
     lastPregnancyDate: lastPregnancyDate?.toISOString()?.split("T")[0] || null,
     lastBirthDate: lastBirthDate?.toISOString()?.split("T")[0] || null,
+    mostRecentMaternalRating,
+    mostRecentMilkProduction,
+    mastitisOccurrences,
+    mastitisTotal,
   };
 }
 

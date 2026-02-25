@@ -22,6 +22,7 @@ import {
   streamHelpResponse,
   getRateLimitState,
 } from "../services/help-search-service.js";
+import { streamCopilotResponse } from "../services/copilot/index.js";
 import { embedTexts, EMBEDDING_DIMS } from "../services/voyage-client.js";
 import { createHash } from "node:crypto";
 
@@ -174,6 +175,63 @@ export default async function helpRoutes(
   );
 
   // ─────────────────────────────────────────────────────────────────────────
+  // POST /help/copilot/chat — AI Copilot with tool use + agentic loop (SSE)
+  // Requires COPILOT entitlement (Pro: 15/day, Enterprise: 50/day).
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post(
+    "/help/copilot/chat",
+    { preHandler: [requireEntitlement("COPILOT" as any)] },
+    async (req, reply) => {
+      const userId = getActorId(req);
+      if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+      const tenantId = (req as any).tenantId as number;
+      if (!tenantId) return reply.code(403).send({ error: "tenant required" });
+
+      const { query, module: mod, entityType, entityId, conversationHistory } = req.body as {
+        query?: string;
+        module?: string;
+        entityType?: string;
+        entityId?: string;
+        conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+      };
+
+      if (!query?.trim()) {
+        return reply.code(400).send({ error: "query is required" });
+      }
+
+      // Get rate limit state for response headers
+      const rateLimit = await getRateLimitState(userId, tenantId, "COPILOT");
+
+      // Set SSE headers
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        "X-RateLimit-Limit": String(rateLimit.limit),
+        "X-RateLimit-Remaining": String(rateLimit.remaining),
+        "X-RateLimit-Reset": String(rateLimit.resetAt),
+      });
+
+      // Stream copilot response with tool use
+      for await (const sseChunk of streamCopilotResponse({
+        query: query.trim(),
+        userId,
+        tenantId,
+        module: mod,
+        entityType,
+        entityId,
+        conversationHistory,
+      })) {
+        reply.raw.write(sseChunk);
+      }
+
+      reply.raw.end();
+    }
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
   // POST /help/feedback — submit thumbs up/down on an AI response
   // ─────────────────────────────────────────────────────────────────────────
   app.post("/help/feedback", async (req, reply) => {
@@ -203,6 +261,161 @@ export default async function helpRoutes(
         feedbackText: text ?? null,
       },
     });
+
+    return reply.code(204).send();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Conversation persistence — CRUD for AI chat conversations
+  // Uses raw SQL because HelpConversation model requires migration to be applied.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** List conversations (paginated, most recent first). */
+  app.get("/help/conversations", async (req, reply) => {
+    const userId = getActorId(req);
+    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+    const tenantId = (req as any).tenantId as number;
+    const { page = "1", limit = "10", mode } = req.query as {
+      page?: string; limit?: string; mode?: string;
+    };
+    const pg = Math.max(1, Number(page));
+    const lim = Math.min(50, Math.max(1, Number(limit)));
+    const offset = (pg - 1) * lim;
+
+    const modeFilter = mode ? `AND "mode" = $3` : "";
+    const params: unknown[] = [userId, tenantId];
+    if (mode) params.push(mode);
+
+    const countSql = `SELECT COUNT(*)::int AS count FROM "public"."HelpConversation" WHERE "userId" = $1 AND "tenantId" = $2 ${modeFilter}`;
+    const listSql = `SELECT "id", "title", "mode", "createdAt", "updatedAt"
+      FROM "public"."HelpConversation"
+      WHERE "userId" = $1 AND "tenantId" = $2 ${modeFilter}
+      ORDER BY "updatedAt" DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+
+    const listParams = [...params, lim, offset];
+
+    const [rows, countResult] = await Promise.all([
+      prisma.$queryRawUnsafe<Array<{ id: number; title: string; mode: string; createdAt: Date; updatedAt: Date }>>(
+        listSql, ...listParams
+      ),
+      prisma.$queryRawUnsafe<[{ count: number }]>(countSql, ...params),
+    ]);
+
+    return reply.send({
+      conversations: rows,
+      total: countResult[0]?.count ?? 0,
+      page: pg,
+      limit: lim,
+    });
+  });
+
+  /** Create a new conversation. */
+  app.post("/help/conversations", async (req, reply) => {
+    const userId = getActorId(req);
+    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+    const tenantId = (req as any).tenantId as number;
+    const { title, mode = "copilot", messages: msgs = [] } = req.body as {
+      title?: string;
+      mode?: string;
+      messages?: unknown[];
+    };
+
+    const finalTitle = title?.trim() || "New conversation";
+    const now = new Date();
+
+    const rows = await prisma.$queryRawUnsafe<[{ id: number }]>(
+      `INSERT INTO "public"."HelpConversation" ("userId", "tenantId", "title", "mode", "messages", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $6)
+       RETURNING "id"`,
+      userId, tenantId, finalTitle, mode, JSON.stringify(msgs), now
+    );
+
+    return reply.code(201).send({ id: rows[0].id, title: finalTitle, mode });
+  });
+
+  /** Get a conversation with messages. */
+  app.get("/help/conversations/:id", async (req, reply) => {
+    const userId = getActorId(req);
+    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+    const tenantId = (req as any).tenantId as number;
+    const convId = Number((req.params as { id: string }).id);
+    if (isNaN(convId)) return reply.code(400).send({ error: "invalid id" });
+
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{ id: number; title: string; mode: string; messages: unknown; createdAt: Date; updatedAt: Date }>
+    >(
+      `SELECT "id", "title", "mode", "messages", "createdAt", "updatedAt"
+       FROM "public"."HelpConversation"
+       WHERE "id" = $1 AND "userId" = $2 AND "tenantId" = $3`,
+      convId, userId, tenantId
+    );
+
+    if (rows.length === 0) return reply.code(404).send({ error: "not found" });
+    return reply.send(rows[0]);
+  });
+
+  /** Update conversation (title and/or messages). */
+  app.patch("/help/conversations/:id", async (req, reply) => {
+    const userId = getActorId(req);
+    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+    const tenantId = (req as any).tenantId as number;
+    const convId = Number((req.params as { id: string }).id);
+    if (isNaN(convId)) return reply.code(400).send({ error: "invalid id" });
+
+    const { title, messages: msgs } = req.body as {
+      title?: string;
+      messages?: unknown[];
+    };
+
+    if (!title && !msgs) {
+      return reply.code(400).send({ error: "title or messages required" });
+    }
+
+    // Verify ownership
+    const existing = await prisma.$queryRawUnsafe<[{ id: number }]>(
+      `SELECT "id" FROM "public"."HelpConversation" WHERE "id" = $1 AND "userId" = $2 AND "tenantId" = $3`,
+      convId, userId, tenantId
+    );
+    if (!existing?.length) return reply.code(404).send({ error: "not found" });
+
+    const sets: string[] = [`"updatedAt" = $4`];
+    const params: unknown[] = [convId, userId, tenantId, new Date()];
+
+    if (title) {
+      params.push(title.trim());
+      sets.push(`"title" = $${params.length}`);
+    }
+    if (msgs) {
+      params.push(JSON.stringify(msgs));
+      sets.push(`"messages" = $${params.length}::jsonb`);
+    }
+
+    await prisma.$queryRawUnsafe(
+      `UPDATE "public"."HelpConversation" SET ${sets.join(", ")} WHERE "id" = $1 AND "userId" = $2 AND "tenantId" = $3`,
+      ...params
+    );
+
+    return reply.code(204).send();
+  });
+
+  /** Delete a conversation. */
+  app.delete("/help/conversations/:id", async (req, reply) => {
+    const userId = getActorId(req);
+    if (!userId) return reply.code(401).send({ error: "unauthorized" });
+
+    const tenantId = (req as any).tenantId as number;
+    const convId = Number((req.params as { id: string }).id);
+    if (isNaN(convId)) return reply.code(400).send({ error: "invalid id" });
+
+    await prisma.$queryRawUnsafe(
+      `DELETE FROM "public"."HelpConversation" WHERE "id" = $1 AND "userId" = $2 AND "tenantId" = $3`,
+      convId, userId, tenantId
+    );
 
     return reply.code(204).send();
   });

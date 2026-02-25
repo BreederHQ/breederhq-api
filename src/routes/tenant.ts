@@ -1974,7 +1974,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.planParty.deleteMany({ where: { tenantId } });
         await tx.reproductiveCycle.deleteMany({ where: { tenantId } });
         await tx.testResult.deleteMany({ where: { tenantId } });
-        await tx.mareReproductiveHistory.deleteMany({ where: { tenantId } });
+        await tx.animalReproductiveHistory.deleteMany({ where: { tenantId } });
         await tx.breedingPlan.deleteMany({ where: { tenantId } });
         await tx.planCodeCounter.deleteMany({ where: { tenantId } });
 
@@ -2151,7 +2151,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         await tx.planParty.deleteMany({ where: { tenantId } });
         await tx.reproductiveCycle.deleteMany({ where: { tenantId } });
         await tx.testResult.deleteMany({ where: { tenantId } });
-        await tx.mareReproductiveHistory.deleteMany({ where: { tenantId } });
+        await tx.animalReproductiveHistory.deleteMany({ where: { tenantId } });
         await tx.breedingPlan.deleteMany({ where: { tenantId } });
         await tx.planCodeCounter.deleteMany({ where: { tenantId } });
 
