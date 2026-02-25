@@ -62,6 +62,7 @@ const ALLOWED_IMAGE_TYPES = [
   "image/gif",
   "image/heic",
   "image/heif",
+  "image/avif",
 ];
 
 const ALLOWED_VIDEO_TYPES = [
@@ -95,7 +96,7 @@ export function validateContentType(
     if (!ALLOWED_MEDIA_TYPES.includes(contentType)) {
       return {
         valid: false,
-        error: "Invalid content type. Allowed: images (JPEG, PNG, WebP, GIF) or videos (MP4, MOV, WebM)",
+        error: "Invalid content type. Allowed: images (JPEG, PNG, WebP, GIF, AVIF) or videos (MP4, MOV, WebM)",
       };
     }
     return { valid: true };
@@ -112,8 +113,8 @@ export function validateContentType(
 
   if (!allowedTypes.includes(contentType)) {
     const typeList = documentPurposes.includes(purpose)
-      ? "images (JPEG, PNG, WebP) or documents (PDF, Word)"
-      : "images (JPEG, PNG, WebP, HEIC)";
+      ? "images (JPEG, PNG, WebP, AVIF) or documents (PDF, Word)"
+      : "images (JPEG, PNG, WebP, HEIC, AVIF)";
     return {
       valid: false,
       error: `Invalid content type. Allowed: ${typeList}`,
