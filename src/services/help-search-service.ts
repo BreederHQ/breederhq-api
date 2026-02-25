@@ -139,20 +139,24 @@ export async function searchArticlesKeyword(
   const limit = opts.limit ?? 5;
   const term = `%${query.replace(/[%_]/g, "\\$&")}%`;
 
-  const rows = await prisma.helpArticleEmbedding.findMany({
-    where: {
-      ...(opts.module ? { module: opts.module } : {}),
-      OR: [
-        { title: { contains: query, mode: "insensitive" } },
-        { chunkText: { contains: query, mode: "insensitive" } },
-        { summary: { contains: query, mode: "insensitive" } },
-      ],
-    },
-    select: { slug: true, title: true, module: true, chunkText: true },
-    take: limit,
-  });
+  // Raw SQL because HelpArticleEmbedding uses @@ignore (pgvector column)
+  const params: unknown[] = [term, term, term];
+  let sql = `SELECT slug, title, module, "chunkText"
+    FROM "public"."HelpArticleEmbedding"
+    WHERE (title ILIKE $1 OR "chunkText" ILIKE $2 OR summary ILIKE $3)`;
 
-  return rows.map((r: { slug: string; title: string; module: string; chunkText: string }) => ({ ...r, score: 0 }));
+  if (opts.module) {
+    params.push(opts.module);
+    sql += ` AND module = $${params.length}`;
+  }
+  params.push(limit);
+  sql += ` LIMIT $${params.length}`;
+
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{ slug: string; title: string; module: string; chunkText: string }>
+  >(sql, ...params);
+
+  return rows.map((r) => ({ ...r, score: 0 }));
 }
 
 // ---------- Article browsing ----------
@@ -167,31 +171,37 @@ export async function listArticles(opts: {
   const limit = Math.min(100, Math.max(1, opts.limit ?? 25));
   const skip = (page - 1) * limit;
 
-  const where = {
-    chunkIndex: 0, // Only first chunk per article for metadata
-    ...(opts.module ? { module: opts.module } : {}),
-    ...(opts.q
-      ? {
-          OR: [
-            { title: { contains: opts.q, mode: "insensitive" as const } },
-            { summary: { contains: opts.q, mode: "insensitive" as const } },
-          ],
-        }
-      : {}),
-  };
+  // Raw SQL because HelpArticleEmbedding uses @@ignore (pgvector column)
+  const conditions: string[] = ['"chunkIndex" = 0'];
+  const params: unknown[] = [];
 
-  const [rows, total] = await prisma.$transaction([
-    prisma.helpArticleEmbedding.findMany({
-      where,
-      select: { slug: true, title: true, module: true, tags: true, summary: true },
-      orderBy: { module: "asc" },
-      skip,
-      take: limit,
-    }),
-    prisma.helpArticleEmbedding.count({ where }),
+  if (opts.module) {
+    params.push(opts.module);
+    conditions.push(`module = $${params.length}`);
+  }
+  if (opts.q) {
+    params.push(`%${opts.q.replace(/[%_]/g, "\\$&")}%`);
+    const qIdx = params.length;
+    conditions.push(`(title ILIKE $${qIdx} OR summary ILIKE $${qIdx})`);
+  }
+
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+  const countSql = `SELECT COUNT(*)::int AS count FROM "public"."HelpArticleEmbedding" ${whereClause}`;
+
+  const listSql = `SELECT slug, title, module, tags, summary
+    FROM "public"."HelpArticleEmbedding"
+    ${whereClause}
+    ORDER BY module ASC
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+  const listParams = [...params, limit, skip];
+
+  const [rows, countResult] = await prisma.$transaction([
+    prisma.$queryRawUnsafe<ArticleMeta[]>(listSql, ...listParams),
+    prisma.$queryRawUnsafe<[{ count: number }]>(countSql, ...params),
   ]);
 
-  return { articles: rows, total };
+  return { articles: rows, total: countResult[0]?.count ?? 0 };
 }
 
 export async function getArticle(slug: string): Promise<{
@@ -202,12 +212,16 @@ export async function getArticle(slug: string): Promise<{
   summary: string | null;
   content: string;
 } | null> {
-  // Get all chunks for this slug, ordered, then reassemble content
-  const chunks = await prisma.helpArticleEmbedding.findMany({
-    where: { slug },
-    orderBy: { chunkIndex: "asc" },
-    select: { slug: true, title: true, module: true, tags: true, summary: true, chunkText: true },
-  });
+  // Raw SQL because HelpArticleEmbedding uses @@ignore (pgvector column)
+  const chunks = await prisma.$queryRawUnsafe<
+    Array<{ slug: string; title: string; module: string; tags: string[]; summary: string | null; chunkText: string }>
+  >(
+    `SELECT slug, title, module, tags, summary, "chunkText"
+     FROM "public"."HelpArticleEmbedding"
+     WHERE slug = $1
+     ORDER BY "chunkIndex" ASC`,
+    slug
+  );
 
   if (chunks.length === 0) return null;
 
@@ -218,7 +232,7 @@ export async function getArticle(slug: string): Promise<{
     module: first.module,
     tags: first.tags,
     summary: first.summary ?? null,
-    content: chunks.map((c: { chunkText: string }) => c.chunkText).join("\n\n"),
+    content: chunks.map((c) => c.chunkText).join("\n\n"),
   };
 }
 
