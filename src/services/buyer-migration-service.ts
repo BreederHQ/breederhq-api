@@ -339,10 +339,12 @@ export async function runFullBuyerMigration(
  * Returns all the old-system records linked to this buyer:
  * - BreedingPlanBuyer records (interest in breeding plans)
  * - WaitlistEntry records (waitlist positions)
+ *
+ * Returns null if the buyer does not exist or does not belong to the given tenant.
  */
-export async function getBuyerConnections(buyerId: number) {
-  const buyer = await prisma.buyer.findUnique({
-    where: { id: buyerId },
+export async function getBuyerConnections(buyerId: number, tenantId: number) {
+  const buyer = await prisma.buyer.findFirst({
+    where: { id: buyerId, tenantId },
     include: {
       // Direct BuyerInterest (new CRM)
       interests: {

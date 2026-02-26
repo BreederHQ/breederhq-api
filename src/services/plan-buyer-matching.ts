@@ -360,8 +360,8 @@ export async function refreshMatchingPlansForEntry(
   entryId: number,
   tenantId: number
 ): Promise<void> {
-  const entry = await prisma.waitlistEntry.findUnique({
-    where: { id: entryId },
+  const entry = await prisma.waitlistEntry.findFirst({
+    where: { id: entryId, tenantId },
     include: { program: true },
   });
 
@@ -436,7 +436,7 @@ export async function refreshMatchingPlansForEntries(
 
   // 1. Batch-fetch all entries with their program info
   const entries = await prisma.waitlistEntry.findMany({
-    where: { id: { in: entryIds } },
+    where: { id: { in: entryIds }, tenantId },
     include: { program: true },
   });
 

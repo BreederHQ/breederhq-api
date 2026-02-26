@@ -1010,6 +1010,7 @@ const animalBreedingProfileRoutes: FastifyPluginAsync = async (app: FastifyInsta
     if (data.testType !== undefined) updateData.testType = data.testType;
     if (data.testResult !== undefined) updateData.testResult = data.testResult;
 
+    // tenant-verified above via findFirst({ where: { id: eventId, tenantId } })
     const event = await prisma.breedingEvent.update({
       where: { id: eventId },
       data: updateData,
@@ -1073,7 +1074,7 @@ const animalBreedingProfileRoutes: FastifyPluginAsync = async (app: FastifyInsta
       });
     }
 
-    await prisma.breedingEvent.delete({ where: { id: eventId } });
+    await prisma.breedingEvent.deleteMany({ where: { id: eventId, tenantId } });
 
     return reply.code(204).send();
   });
@@ -1213,7 +1214,7 @@ const animalBreedingProfileRoutes: FastifyPluginAsync = async (app: FastifyInsta
       });
     }
 
-    await prisma.animalIncompatibility.delete({ where: { id: incompatibilityId } });
+    await prisma.animalIncompatibility.deleteMany({ where: { id: incompatibilityId, tenantId } });
 
     return reply.code(204).send();
   });

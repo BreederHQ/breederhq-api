@@ -53,7 +53,7 @@ export const COPILOT_TOOLS: Tool[] = [
   {
     name: "get_animal_details",
     description:
-      "Get the full profile for a specific animal by ID, including parents, health records, traits, and titles. Use this after search_animals to get detailed info about a specific animal.",
+      "Get the full profile for a specific animal by ID. Returns: basic info (name, DOB, microchip, breed, sex, status), parents (dam/sire with breed), vaccination records (protocol, date administered, expiry, vet/clinic), earned titles (abbreviation, full name, organization, date earned), and genetics data (test provider, health panel results, breed composition, coat color). Use this for detailed animal lookups, vet visit prep, health summaries, or any question about a specific animal's history.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -69,7 +69,7 @@ export const COPILOT_TOOLS: Tool[] = [
   {
     name: "search_breeding_plans",
     description:
-      "Search breeding plans by status, species, or name. Returns a list of plans with dam/sire names, status, and expected dates. Use this when the user asks about their breeding plans, litters, or upcoming births.",
+      "Search breeding plans by status, species, or name. Returns a list of plans with dam/sire names, status, and expected dates. Status guide: PLANNING/COMMITTED/CYCLE_EXPECTED/HORMONE_TESTING/BRED/PREGNANT = pre-birth (no offspring yet). BIRTHED/WEANED/PLACEMENT = active litters with born offspring. COMPLETE/CANCELED/UNSUCCESSFUL = finished. Use BIRTHED, WEANED, or PLACEMENT when the user asks about a litter they can take to the vet.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -233,6 +233,22 @@ export const COPILOT_TOOLS: Tool[] = [
         },
       },
       required: ["query"],
+    },
+  },
+
+  {
+    name: "get_litter_health_summary",
+    description:
+      "Get a full health summary for a litter (all offspring in a breeding plan). Returns each offspring's vaccinations, deworming, weight history, neonatal care entries (temperature, feeding, activity), and the dam's active feeding/nutrition plan. IMPORTANT: Only call this on plans with status BIRTHED, WEANED, or PLACEMENT — these are the only statuses where offspring have actually been born. Plans with status PREGNANT or BRED have no born offspring and will return empty results. Use when the breeder asks about litter health, preparing for a vet visit with puppies/kittens/foals, or needs a health report for a whole litter.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        plan_id: {
+          type: "number",
+          description: "The breeding plan ID for this litter",
+        },
+      },
+      required: ["plan_id"],
     },
   },
 

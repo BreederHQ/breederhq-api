@@ -329,6 +329,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         }
       }
 
+      // tenant-verified via findFirst above (OR clause covers both offeringTenantId and seekingTenantId);
+      // return value used with include so updateMany is not viable
       const updated = await prisma.breedingBooking.update({
         where: { id },
         data: updateData,
@@ -399,6 +401,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         updateData.cancellationReason = cancellationReason ?? null;
       }
 
+      // tenant-verified via findFirst above (OR clause covers both offeringTenantId and seekingTenantId);
+      // return value used with include so updateMany is not viable
       const updated = await prisma.breedingBooking.update({
         where: { id },
         data: updateData,
@@ -436,6 +440,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         return reply.code(400).send({ error: "validation_error", details: parsed.error.flatten() });
       }
 
+      // tenant-verified via findFirst above (offeringTenantId);
+      // return value used with include so updateMany is not viable
       const updated = await prisma.breedingBooking.update({
         where: { id },
         data: {
@@ -661,6 +667,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         updateData.statusChangedAt = new Date();
       }
 
+      // tenant-verified via findFirst above (offeringTenantId);
+      // return value used with include so updateMany is not viable
       const updated = await prisma.breedingBooking.update({
         where: { id },
         data: updateData,
@@ -734,6 +742,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           },
         });
 
+        // tenant-verified via findFirst above (offeringTenantId);
+        // return value used with include so updateMany is not viable
         const u = await tx.breedingBooking.update({
           where: { id },
           data: {
@@ -863,8 +873,10 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       const [usage, updated] = await prisma.$transaction(async (tx) => {
-        await tx.semenInventory.update({
-          where: { id: inventoryId },
+        // tenant-verified via findFirst above (inventoryId + tenantId);
+        // return value not used so updateMany is viable for defense-in-depth
+        await tx.semenInventory.updateMany({
+          where: { id: inventoryId, tenantId },
           data: {
             availableDoses: { decrement: dosesUsed },
             status: inventory.availableDoses - dosesUsed === 0 ? "DEPLETED" : inventory.status,
@@ -885,6 +897,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           },
         });
 
+        // tenant-verified via findFirst above (offeringTenantId);
+        // return value used with include so updateMany is not viable
         const u = await tx.breedingBooking.update({
           where: { id },
           data: { semenUsageId: usage.id },
@@ -938,7 +952,15 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         });
       }
 
-      await prisma.breedingBooking.delete({ where: { id } });
+      await prisma.breedingBooking.deleteMany({
+        where: {
+          id,
+          OR: [
+            { offeringTenantId: tenantId },
+            { seekingTenantId: tenantId },
+          ],
+        },
+      });
       reply.code(204).send();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -977,6 +999,8 @@ const breedingBookingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       }
 
       const body = (req.body || {}) as any;
+      // tenant-verified via findFirst above (OR clause covers both offeringTenantId and seekingTenantId);
+      // return value used with include so updateMany is not viable
       const updated = await prisma.breedingBooking.update({
         where: { id },
         data: {

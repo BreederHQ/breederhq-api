@@ -1078,6 +1078,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const beforeSnap = await prisma.animal.findUnique({ where: { id } });
 
     try {
+      // tenant-verified above via findFirst({ id, tenantId }); update needs select so updateMany won't work
       const updated = await prisma.animal.update({
         where: { id },
         data,
@@ -1184,6 +1185,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // Update the breeding availability
+    // tenant-verified above via findFirst({ id, tenantId }); update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { breedingAvailability: status },
@@ -1282,6 +1284,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
 
     // Update animal with new CDN URL
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { photoUrl: cdnUrl },
@@ -1348,6 +1351,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { photoUrl: null },
@@ -1421,6 +1425,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { coverImageUrl: true },
     });
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { coverImageUrl: cdnUrl },
@@ -1485,6 +1490,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { coverImageUrl: null },
@@ -1513,7 +1519,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.update({ where: { id }, data: { archived: true } });
+    await prisma.animal.updateMany({ where: { id, tenantId }, data: { archived: true } });
     auditArchive("ANIMAL", id, auditCtx(req, tenantId));
     logEntityActivity({
       tenantId,
@@ -1536,7 +1542,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.update({ where: { id }, data: { archived: false } });
+    await prisma.animal.updateMany({ where: { id, tenantId }, data: { archived: false } });
     auditRestore("ANIMAL", id, auditCtx(req, tenantId));
     logEntityActivity({
       tenantId,
@@ -1560,7 +1566,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.delete({ where: { id } });
+    await prisma.animal.deleteMany({ where: { id, tenantId } });
 
     // Audit trail (fire-and-forget)
     auditDelete("ANIMAL", id, auditCtx(req, tenantId));
@@ -1605,6 +1611,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Check for offspring (this animal is a parent via Animal table damId/sireId)
       const offspringCount = await prisma.animal.count({
         where: {
+          tenantId,
           OR: [{ damId: id }, { sireId: id }],
         },
       });
@@ -1617,6 +1624,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Check for offspring via Offspring table
       const offspringTableCount = await prisma.offspring.count({
         where: {
+          tenantId,
           OR: [{ damId: id }, { sireId: id }],
         },
       });
@@ -1833,6 +1841,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
 
+    // tagAssignment has no tenantId column; tenant-verified above via assertAnimalInTenant; scoped by animalId+tagId
     await prisma.tagAssignment.deleteMany({ where: { animalId: id, tagId } });
     logEntityActivity({
       tenantId,
@@ -2123,6 +2132,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // animalOwner has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
       const updated = await prisma.animalOwner.update({
         where: { id: ownerId },
         data,
@@ -2202,6 +2212,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "not_found" });
     }
 
+    // animalOwner has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
     await prisma.animalOwner.delete({ where: { id: ownerId } });
     logEntityActivity({
       tenantId,
@@ -2605,6 +2616,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // animalRegistryIdentifier has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
       const updated = await prisma.animalRegistryIdentifier.update({
         where: { id: identifierId },
         data,
@@ -2642,6 +2654,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
     if (!existing || existing.animalId !== animalId) return reply.code(404).send({ error: "not_found" });
 
+    // animalRegistryIdentifier has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
     await prisma.animalRegistryIdentifier.delete({ where: { id: identifierId } });
     logEntityActivity({
       tenantId,
@@ -4724,6 +4737,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "animal not found" });
     }
 
+    // animalIdentityLink has no tenantId column; tenant-verified above via findFirst({ id: animalId, tenantId })
     await prisma.animalIdentityLink.deleteMany({
       where: { animalId },
     });

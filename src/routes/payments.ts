@@ -115,8 +115,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Fire-and-forget: send payment notification emails
       (async () => {
         try {
-          const invoice = await prisma.invoice.findUnique({
-            where: { id: invoiceId },
+          const invoice = await prisma.invoice.findFirst({
+            where: { id: invoiceId, tenantId },
             select: {
               invoiceNumber: true,
               amountCents: true,
@@ -446,7 +446,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "attachment_does_not_belong_to_payment" });
       }
 
-      await prisma.attachment.delete({ where: { id: aid } });
+      // Tenant-isolated delete: use deleteMany with tenantId
+      await prisma.attachment.deleteMany({ where: { id: aid, tenantId } });
       return reply.send({ ok: true, deleted: aid });
     } catch (err) {
       const { status, payload } = errorReply(err);

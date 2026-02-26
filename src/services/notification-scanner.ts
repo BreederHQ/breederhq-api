@@ -250,6 +250,164 @@ export async function createVaccinationNotifications(alerts: VaccinationAlert[])
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Client Vaccination Scanning (Portal — ClientVaccinationRecord)
+// ────────────────────────────────────────────────────────────────────────────
+
+interface ClientVaccinationAlert {
+  clientVaccinationRecordId: number;
+  offspringId: number;
+  offspringName: string;
+  contactId: number;
+  protocolKey: string;
+  expiresAt: Date;
+  daysUntilExpiration: number;
+  tenantId: number;
+  damId: number | null;
+  sireId: number | null;
+  promotedAnimalId: number | null;
+}
+
+/**
+ * Scan for client vaccination records (portal) expiring within ±30 days.
+ * Alert thresholds: 30, 7, 3, 1, 0 (expired), -7 (overdue)
+ */
+export async function scanClientVaccinationExpirations(): Promise<ClientVaccinationAlert[]> {
+  const today = startOfDay(new Date());
+  const thirtyDaysFromNow = addDays(today, 30);
+  const sevenDaysAgo = addDays(today, -7);
+
+  const records = await prisma.clientVaccinationRecord.findMany({
+    where: {
+      expiresAt: {
+        not: null,
+        gte: sevenDaysAgo,
+        lte: thirtyDaysFromNow,
+      },
+    },
+    include: {
+      Offspring: {
+        select: {
+          id: true,
+          name: true,
+          damId: true,
+          sireId: true,
+          promotedAnimalId: true,
+        },
+      },
+    },
+  });
+
+  const alerts: ClientVaccinationAlert[] = [];
+
+  for (const rec of records) {
+    if (!rec.expiresAt) continue;
+
+    const expiresAtStartOfDay = startOfDay(rec.expiresAt);
+    const daysUntilExpiration = differenceInDays(expiresAtStartOfDay, today);
+
+    // Alert at specific thresholds: 30, 7, 3, 1, 0, -7
+    const shouldAlert =
+      daysUntilExpiration === 30 ||
+      daysUntilExpiration === 7 ||
+      daysUntilExpiration === 3 ||
+      daysUntilExpiration === 1 ||
+      daysUntilExpiration === 0 ||
+      daysUntilExpiration === -7;
+
+    if (!shouldAlert) continue;
+
+    alerts.push({
+      clientVaccinationRecordId: rec.id,
+      offspringId: rec.offspringId,
+      offspringName: rec.Offspring.name || `Offspring #${rec.offspringId}`,
+      contactId: rec.contactId,
+      protocolKey: rec.protocolKey,
+      expiresAt: rec.expiresAt,
+      daysUntilExpiration,
+      tenantId: rec.tenantId,
+      damId: rec.Offspring.damId,
+      sireId: rec.Offspring.sireId,
+      promotedAnimalId: rec.Offspring.promotedAnimalId,
+    });
+  }
+
+  return alerts;
+}
+
+/**
+ * Create notification records for client vaccination alerts.
+ * Uses existing vaccination_expiring_* types — portal filtering
+ * works via metadata.animalId matching offspring parent IDs.
+ */
+export async function createClientVaccinationNotifications(alerts: ClientVaccinationAlert[]): Promise<number> {
+  const today = startOfDay(new Date());
+  let created = 0;
+
+  for (const alert of alerts) {
+    const { type, priority } = getVaccinationNotificationType(alert.daysUntilExpiration);
+
+    const idempotencyKey = `${type}:ClientVaccinationRecord:${alert.clientVaccinationRecordId}:${today.toISOString().split("T")[0]}`;
+
+    const existing = await prisma.notification.findUnique({
+      where: { idempotencyKey },
+    });
+
+    if (existing) continue;
+
+    // Format protocol key for display
+    const vaccineName = alert.protocolKey.split(".").pop()?.replace(/_/g, " ") || alert.protocolKey;
+    const vaccineDisplayName = vaccineName.charAt(0).toUpperCase() + vaccineName.slice(1);
+
+    let title: string;
+    let message: string;
+
+    if (alert.daysUntilExpiration > 0) {
+      title = `Vaccination Due ${alert.daysUntilExpiration === 1 ? "Tomorrow" : `in ${alert.daysUntilExpiration} Days`}`;
+      message = `${alert.offspringName}'s ${vaccineDisplayName} vaccination expires in ${alert.daysUntilExpiration} day${alert.daysUntilExpiration === 1 ? "" : "s"} (${alert.expiresAt.toLocaleDateString()}). Schedule a vet appointment soon.`;
+    } else if (alert.daysUntilExpiration === 0) {
+      title = "Vaccination Expired Today";
+      message = `${alert.offspringName}'s ${vaccineDisplayName} vaccination expired today. Schedule a vet visit ASAP.`;
+    } else {
+      const daysOverdue = Math.abs(alert.daysUntilExpiration);
+      title = "Vaccination Overdue";
+      message = `${alert.offspringName}'s ${vaccineDisplayName} vaccination is ${daysOverdue} day${daysOverdue === 1 ? "" : "s"} overdue. Contact your vet immediately.`;
+    }
+
+    // Use offspring parent animal IDs for portal notification filtering
+    const animalId = alert.damId || alert.sireId || alert.promotedAnimalId;
+
+    await prisma.notification.create({
+      data: {
+        tenantId: alert.tenantId,
+        userId: null,
+        type,
+        priority,
+        title,
+        message,
+        linkUrl: `/offspring/${alert.offspringId}/health`,
+        status: "UNREAD",
+        idempotencyKey,
+        metadata: {
+          clientVaccinationRecordId: alert.clientVaccinationRecordId,
+          animalId,
+          damId: alert.damId,
+          sireId: alert.sireId,
+          offspringId: alert.offspringId,
+          offspringName: alert.offspringName,
+          protocolKey: alert.protocolKey,
+          expiresAt: alert.expiresAt.toISOString(),
+          daysUntilExpiration: alert.daysUntilExpiration,
+        },
+      },
+    });
+
+    created++;
+  }
+
+  return created;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Breeding Timeline Scanning
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1287,6 +1445,7 @@ export async function runNotificationScan(): Promise<{
   breeding: number;
   guarantees: number;
   geneticTests: number;
+  clientVaccinations: number;
   total: number;
 }> {
   console.log("[notification-scanner] Starting notification scan...");
@@ -1319,7 +1478,14 @@ export async function runNotificationScan(): Promise<{
   const geneticTestsCreated = await createGeneticTestNotifications(geneticTestAlerts);
   console.log(`[notification-scanner] Created ${geneticTestsCreated} genetic test notifications`);
 
-  const total = vaccinationsCreated + breedingCreated + guaranteesCreated + geneticTestsCreated;
+  // Scan client vaccination expirations (Client Health Portal Phase 4)
+  const clientVaxAlerts = await scanClientVaccinationExpirations();
+  console.log(`[notification-scanner] Found ${clientVaxAlerts.length} client vaccination alerts`);
+
+  const clientVaxCreated = await createClientVaccinationNotifications(clientVaxAlerts);
+  console.log(`[notification-scanner] Created ${clientVaxCreated} client vaccination notifications`);
+
+  const total = vaccinationsCreated + breedingCreated + guaranteesCreated + geneticTestsCreated + clientVaxCreated;
   console.log(`[notification-scanner] Scan complete. Created ${total} total notifications`);
 
   return {
@@ -1327,6 +1493,7 @@ export async function runNotificationScan(): Promise<{
     breeding: breedingCreated,
     guarantees: guaranteesCreated,
     geneticTests: geneticTestsCreated,
+    clientVaccinations: clientVaxCreated,
     total,
   };
 }

@@ -68,11 +68,17 @@ async function searchAnimals(
     select: {
       id: true,
       name: true,
+      nickname: true,
       species: true,
       breed: true,
       sex: true,
       status: true,
       birthDate: true,
+      microchip: true,
+      notes: true,
+      forSale: true,
+      inSyndication: true,
+      isLeased: true,
     },
     take: limit,
     orderBy: { name: "asc" },
@@ -93,20 +99,70 @@ async function getAnimalDetails(
     select: {
       id: true,
       name: true,
+      nickname: true,
       species: true,
       breed: true,
       sex: true,
       status: true,
       birthDate: true,
       microchip: true,
-      dam: { select: { id: true, name: true } },
-      sire: { select: { id: true, name: true } },
+      dam: { select: { id: true, name: true, breed: true } },
+      sire: { select: { id: true, name: true, breed: true } },
       notes: true,
+      // Vaccination history
+      VaccinationRecord: {
+        select: {
+          protocolKey: true,
+          administeredAt: true,
+          expiresAt: true,
+          veterinarian: true,
+          clinic: true,
+          notes: true,
+        },
+        orderBy: { administeredAt: "desc" as const },
+        take: 20,
+      },
+      // Titles earned
+      titles: {
+        where: { status: { in: ["EARNED", "VERIFIED"] as any[] } },
+        select: {
+          dateEarned: true,
+          status: true,
+          registryRef: true,
+          eventName: true,
+          titleDefinition: {
+            select: {
+              abbreviation: true,
+              fullName: true,
+              organization: true,
+              category: true,
+            },
+          },
+        },
+        orderBy: { dateEarned: "asc" as const },
+      },
+      // Genetics — health panel + breed composition are most useful for vet visits
+      genetics: {
+        select: {
+          testProvider: true,
+          testDate: true,
+          testId: true,
+          healthGeneticsData: true,
+          breedComposition: true,
+          coatColorData: true,
+        },
+      },
     },
   });
 
   if (!animal) return { error: "Animal not found" };
-  return animal;
+
+  // Rename Prisma PascalCase relation to camelCase for cleaner AI output
+  const { VaccinationRecord, ...rest } = animal;
+  return {
+    ...rest,
+    vaccinationRecords: VaccinationRecord,
+  };
 }
 
 async function searchBreedingPlans(
@@ -257,11 +313,19 @@ async function searchOffspring(
       name: true,
       sex: true,
       species: true,
+      breed: true,
       bornAt: true,
+      diedAt: true,
       status: true,
+      lifeState: true,
       placementState: true,
+      financialState: true,
+      paperworkState: true,
       keeperIntent: true,
       priceCents: true,
+      healthStatus: true,
+      healthNotes: true,
+      isExtraNeeds: true,
       BreedingPlan: { select: { id: true, name: true } },
       buyerParty: {
         select: {
@@ -278,11 +342,19 @@ async function searchOffspring(
     name: o.name,
     sex: o.sex,
     species: o.species,
+    breed: o.breed,
     bornAt: o.bornAt,
+    diedAt: o.diedAt,
     status: o.status,
+    lifeState: o.lifeState,
     placementState: o.placementState,
+    financialState: o.financialState,
+    paperworkState: o.paperworkState,
     keeperIntent: o.keeperIntent,
     priceCents: o.priceCents,
+    healthStatus: o.healthStatus,
+    healthNotes: o.healthNotes,
+    isExtraNeeds: o.isExtraNeeds,
     planName: o.BreedingPlan?.name ?? null,
     buyerName: o.buyerParty?.contact?.display_name ?? null,
   }));
@@ -317,8 +389,15 @@ async function searchContacts(
       display_name: true,
       first_name: true,
       last_name: true,
+      nickname: true,
       email: true,
       phoneE164: true,
+      whatsappE164: true,
+      street: true,
+      city: true,
+      state: true,
+      zip: true,
+      country: true,
       archived: true,
     },
     take: limit,
@@ -351,6 +430,11 @@ async function getWaitlist(
       depositRequiredCents: true,
       depositPaidCents: true,
       balanceDueCents: true,
+      notes: true,
+      offspringId: true,
+      animalId: true,
+      skipCount: true,
+      rejectedReason: true,
       createdAt: true,
       clientParty: {
         select: {
@@ -374,6 +458,11 @@ async function getWaitlist(
     depositRequiredCents: e.depositRequiredCents,
     depositPaidCents: e.depositPaidCents,
     balanceDueCents: e.balanceDueCents,
+    notes: e.notes,
+    allocatedOffspringId: e.offspringId ?? null,
+    allocatedAnimalId: e.animalId ?? null,
+    skipCount: e.skipCount,
+    rejectedReason: e.rejectedReason ?? null,
     clientName: e.clientParty?.contact?.display_name ?? "Unknown",
     clientEmail: e.clientParty?.contact?.email ?? null,
     planName: e.plan?.name ?? null,
@@ -463,6 +552,103 @@ async function searchHelpArticles(
     excerpt: r.chunkText.slice(0, 300),
     score: Math.round(r.score * 100) / 100,
   }));
+}
+
+async function getLitterHealthSummary(
+  tenantId: number,
+  input: Record<string, unknown>
+) {
+  const planId = Number(input.plan_id);
+  if (!planId) return { error: "plan_id is required" };
+
+  const plan = await prisma.breedingPlan.findFirst({
+    where: { id: planId, tenantId, deletedAt: null },
+    select: {
+      id: true,
+      name: true,
+      species: true,
+      status: true,
+      birthDateActual: true,
+      expectedBirthDate: true,
+      dam: { select: { id: true, name: true } },
+      sire: { select: { id: true, name: true } },
+      // Dam's active feeding/nutrition plan
+      FeedingPlan: {
+        where: { isActive: true },
+        select: {
+          portionOz: true,
+          feedingsPerDay: true,
+          feedingTimes: true,
+          notes: true,
+          foodProduct: {
+            select: { name: true, brand: true, foodType: true, proteinPct: true, fatPct: true, caloriesPerCup: true },
+          },
+        },
+        take: 3,
+      },
+      // All offspring with health events + neonatal care
+      Offspring: {
+        select: {
+          id: true,
+          name: true,
+          sex: true,
+          breed: true,
+          bornAt: true,
+          status: true,
+          lifeState: true,
+          healthStatus: true,
+          healthNotes: true,
+          isExtraNeeds: true,
+          // Vaccinations, dewormings, weight checks
+          HealthLogs: {
+            select: {
+              kind: true,
+              occurredAt: true,
+              weightGrams: true,
+              vaccineCode: true,
+              dose: true,
+              vetClinic: true,
+              result: true,
+              notes: true,
+            },
+            orderBy: { occurredAt: "desc" as const },
+            take: 15,
+          },
+          // Neonatal care: temperature, weight, feeding logs
+          NeonatalCareEntries: {
+            select: {
+              recordedAt: true,
+              weightOz: true,
+              weightChangePercent: true,
+              temperatureF: true,
+              feedingMethod: true,
+              feedingVolumeMl: true,
+              feedingNotes: true,
+              activityLevel: true,
+              notes: true,
+            },
+            orderBy: { recordedAt: "desc" as const },
+            take: 5,
+          },
+        },
+        orderBy: { bornAt: "asc" as const },
+      },
+    },
+  });
+
+  if (!plan) return { error: "Breeding plan not found" };
+
+  // Rename PascalCase Prisma relations for cleaner AI output
+  const { FeedingPlan, Offspring, ...planRest } = plan;
+  return {
+    ...planRest,
+    damFeedingPlans: FeedingPlan,
+    offspring: Offspring.map(({ HealthLogs, NeonatalCareEntries, ...o }) => ({
+      ...o,
+      healthEvents: HealthLogs,
+      neonatalCareEntries: NeonatalCareEntries,
+    })),
+  };
 }
 
 async function getFarmOverview(
@@ -579,6 +765,7 @@ export const toolHandlers: Record<string, ToolHandler> = {
   get_waitlist: getWaitlist,
   get_financial_summary: getFinancialSummary,
   search_help_articles: searchHelpArticles,
+  get_litter_health_summary: getLitterHealthSummary,
   get_farm_overview: getFarmOverview,
 };
 

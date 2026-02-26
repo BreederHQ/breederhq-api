@@ -302,6 +302,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (timeBasedConfig !== undefined) updateData.timeBasedConfigJson = timeBasedConfig;
       if (businessHoursConfig !== undefined) updateData.businessHoursJson = businessHoursConfig;
 
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const updated = await prisma.autoReplyRule.update({
         where: { id },
         data: updateData,
@@ -332,8 +333,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       // Soft delete by setting status to archived
-      await prisma.autoReplyRule.update({
-        where: { id },
+      await prisma.autoReplyRule.updateMany({
+        where: { id, tenantId },
         data: {
           status: "archived",
           enabled: false, // Keep legacy field in sync
@@ -363,6 +364,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const updated = await prisma.autoReplyRule.update({
         where: { id },
         data: {
@@ -395,6 +397,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const updated = await prisma.autoReplyRule.update({
         where: { id },
         data: {

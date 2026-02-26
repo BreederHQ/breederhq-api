@@ -819,7 +819,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ? Math.min(250, Math.max(1, Number(limitRaw)))
         : 50;
 
-      const where: any = { tenantId };
+      const where: any = { tenantId, archivedAt: null };
       if (planId != null && !Number.isNaN(planId)) {
         where.breedingPlanId = planId;
       }

@@ -334,6 +334,7 @@ const animalVaccinationsRoutes: FastifyPluginAsync = async (app: FastifyInstance
     if (body.batchLotNumber !== undefined) updates.batchLotNumber = body.batchLotNumber;
     if (body.notes !== undefined) updates.notes = body.notes;
 
+    // tenant-verified above via findFirst({ where: { id: recordId, animalId, tenantId } })
     const record = await prisma.vaccinationRecord.update({
       where: { id: recordId },
       data: updates,
@@ -365,7 +366,7 @@ const animalVaccinationsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(404).send({ error: "record_not_found" });
     }
 
-    await prisma.vaccinationRecord.delete({ where: { id: recordId } });
+    await prisma.vaccinationRecord.deleteMany({ where: { id: recordId, tenantId } });
 
     return reply.code(204).send();
   });
@@ -398,6 +399,7 @@ const animalVaccinationsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       return reply.code(404).send({ error: "document_not_found" });
     }
 
+    // tenant-verified above via assertAnimalInTenant + document findFirst({ where: { ..., tenantId } })
     const record = await prisma.vaccinationRecord.update({
       where: { id: recordId },
       data: { documentId: body.documentId },
@@ -431,6 +433,7 @@ const animalVaccinationsRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
     await assertAnimalInTenant(animalId, tenantId);
 
+    // tenant-verified above via assertAnimalInTenant (animalId is tenant-scoped)
     const record = await prisma.vaccinationRecord.update({
       where: { id: recordId },
       data: { documentId: null },

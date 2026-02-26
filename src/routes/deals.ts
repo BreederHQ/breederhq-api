@@ -586,6 +586,7 @@ const dealsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         updates.notes = trimToNull(body.notes);
       }
 
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const deal = await prisma.deal.update({
         where: { id },
         data: updates,
@@ -691,6 +692,7 @@ const dealsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const userId = (req as any).userId;
 
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const deal = await prisma.deal.update({
         where: { id },
         data: {
@@ -723,8 +725,9 @@ const dealsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Update buyer status if won
       if (outcome === "WON") {
         try {
-          await prisma.buyer.update({
-            where: { id: existing.buyer.id },
+          // buyer.id from tenant-verified deal include
+          await prisma.buyer.updateMany({
+            where: { id: existing.buyer.id, tenantId },
             data: { status: "PURCHASED" },
           });
         } catch {
@@ -974,6 +977,7 @@ const dealsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(404).send({ error: "tag_assignment_not_found" });
       }
 
+      // deal ownership tenant-verified above; tagAssignment found via tenant-scoped deal
       await prisma.tagAssignment.delete({
         where: { id: existing.id },
       });

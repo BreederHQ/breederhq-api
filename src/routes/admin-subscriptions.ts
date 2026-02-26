@@ -22,8 +22,38 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { getActorId } from "../utils/session.js";
 import { auditSuccess } from "../services/audit.js";
 import { sendEmail } from "../services/email-service.js";
+
+/**
+ * Require the current user to be a super admin.
+ * Returns actor ID if authorized, or sends error response and returns null.
+ */
+async function requireSuperAdmin(
+  req: any,
+  reply: any
+): Promise<string | null> {
+  const actorId = getActorId(req);
+  if (!actorId) {
+    reply.code(401).send({ error: "unauthorized" });
+    return null;
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { isSuperAdmin: true },
+  });
+
+  if (!actor?.isSuperAdmin) {
+    reply
+      .code(403)
+      .send({ error: "forbidden", message: "Super admin access required" });
+    return null;
+  }
+
+  return actorId;
+}
 
 const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ─────────────────── SUBSCRIPTIONS ───────────────────
@@ -48,6 +78,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/subscriptions", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { status, tenantId, page = "1", limit = "50" } = req.query;
 
       const where: any = {};
@@ -113,6 +146,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
    */
   app.get<{ Params: { id: string } }>("/admin/subscriptions/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const subscription = await prisma.subscription.findUnique({
         where: { id: Number(req.params.id) },
         include: {
@@ -169,6 +205,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/subscriptions", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const {
         tenantId,
         productId,
@@ -249,6 +288,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/subscriptions/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { status, currentPeriodEnd, cancelAtPeriodEnd } = req.body;
 
       const data: any = {};
@@ -297,6 +339,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/products", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { type, active } = req.query;
 
       const where: any = {};
@@ -333,6 +378,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
    */
   app.get<{ Params: { id: string } }>("/admin/products/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const product = await prisma.product.findUnique({
         where: { id: Number(req.params.id) },
         include: {
@@ -387,6 +435,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/products", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { name, description, type, priceUSD, billingInterval, features, sortOrder } =
         req.body;
 
@@ -437,6 +488,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/products/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const product = await prisma.product.update({
         where: { id: Number(req.params.id) },
         data: req.body,
@@ -480,6 +534,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/products/:id/entitlements", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { entitlementKey, limitValue } = req.body;
 
       const entitlement = await prisma.productEntitlement.create({
@@ -521,6 +578,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/products/:id/entitlements/:key", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { limitValue } = req.body;
 
       const entitlement = await prisma.productEntitlement.updateMany({
@@ -560,6 +620,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     Params: { id: string; key: string };
   }>("/admin/products/:id/entitlements/:key", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       await prisma.productEntitlement.deleteMany({
         where: {
           productId: Number(req.params.id),
@@ -600,6 +663,9 @@ const adminSubscriptionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     };
   }>("/admin/test-email", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const tenantId = Number((req as any).tenantId);
       const userId = (req as any).userId;
 

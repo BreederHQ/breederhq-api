@@ -7,7 +7,8 @@
  * - Sync logging
  */
 
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import prisma from '../../prisma.js';
 import type {
   VerificationResult,
   PedigreeResult,
@@ -18,8 +19,6 @@ import type {
 } from './types.js';
 import { getRegistryClient, getRegistryCapabilities } from './client-factory.js';
 import { getGenerationFromPosition } from './types.js';
-
-const prisma = new PrismaClient();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verification Service
@@ -63,6 +62,15 @@ export async function verifyRegistrationViaApi(
       method: 'API',
       errorMessage: 'Registration not found',
     };
+  }
+
+  // Defense-in-depth: verify registration belongs to this tenant's animal
+  const animal = await prisma.animal.findFirst({
+    where: { id: registration.animalId, tenantId },
+    select: { id: true },
+  });
+  if (!animal) {
+    return { verified: false, confidence: 'NONE', method: 'API', errorMessage: 'Registration not in tenant' };
   }
 
   const client = getRegistryClient(
@@ -132,6 +140,15 @@ export async function recordManualVerification(
 
   if (!registration) {
     return { success: false, error: 'Registration not found' };
+  }
+
+  // Defense-in-depth: verify registration belongs to this tenant's animal
+  const animal = await prisma.animal.findFirst({
+    where: { id: registration.animalId, tenantId },
+    select: { id: true },
+  });
+  if (!animal) {
+    return { success: false, error: 'Registration not in tenant' };
   }
 
   try {

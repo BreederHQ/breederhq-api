@@ -310,6 +310,7 @@ export default async function marketplaceListingsRoutes(
               listingId: listing.id,
               tagId,
             })),
+            skipDuplicates: true,
           });
 
           // Increment usage counts
@@ -717,6 +718,7 @@ export default async function marketplaceListingsRoutes(
                 listingId,
                 tagId,
               })),
+              skipDuplicates: true,
             });
 
             // Increment usage counts

@@ -17,6 +17,11 @@ export type PartySource =
  * Resolves partyId from a Contact or Organization ID.
  * Returns null if source is null or if the Contact/Organization has no partyId.
  *
+ * NOTE: This utility does NOT enforce tenant scoping. It trusts the caller to
+ * provide IDs that have already been verified against the correct tenantId.
+ * All current callers (e.g. user PATCH endpoint) perform their own tenant
+ * checks before invoking this function.
+ *
  * @param prisma - Prisma client instance
  * @param source - Object with either contactId or organizationId
  * @returns The partyId if resolvable, otherwise null

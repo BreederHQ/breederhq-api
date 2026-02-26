@@ -252,7 +252,7 @@ export default async function breederMarketplaceRoutes(
 
   /**
    * GET /animals/:animalId/public-listing - Get listing for a specific animal
-   * Returns the individual animal listing for this animal, or 404 if none exists
+   * Returns the individual animal listing for this animal, or null if none exists
    */
   app.get<{
     Params: { animalId: string };
@@ -277,7 +277,7 @@ export default async function breederMarketplaceRoutes(
       });
 
       if (!listing) {
-        return reply.code(404).send({ error: "not_found" });
+        return reply.send(null);
       }
 
       return reply.send({
@@ -321,6 +321,132 @@ export default async function breederMarketplaceRoutes(
       return reply.code(500).send({
         error: "get_failed",
         message: "Failed to get animal listing. Please try again.",
+      });
+    }
+  });
+
+  /**
+   * GET /animals/:animalId/commerce-summary - All commerce listings for an animal
+   * Returns individual listings, animal program participations, breeding programs,
+   * and breeding bookings this animal participates in — scoped to the tenant.
+   */
+  app.get<{
+    Params: { animalId: string };
+  }>("/animals/:animalId/commerce-summary", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const animalId = parseInt(req.params.animalId, 10);
+    if (isNaN(animalId)) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    try {
+      const [individualListings, programParticipations, bookingAssignments, breedingPrograms] =
+        await Promise.all([
+          // Individual animal listings
+          prisma.mktListingIndividualAnimal.findMany({
+            where: { animalId, tenantId },
+            select: {
+              id: true,
+              slug: true,
+              status: true,
+              templateType: true,
+              headline: true,
+              title: true,
+              viewCount: true,
+              inquiryCount: true,
+            },
+          }),
+
+          // Animal program participations (with program details)
+          prisma.animalProgramParticipant.findMany({
+            where: { animalId, program: { tenantId } },
+            include: {
+              program: {
+                select: { id: true, name: true, slug: true, status: true, templateType: true },
+              },
+            },
+          }),
+
+          // Breeding booking assignments
+          prisma.mktBreedingBookingAnimal.findMany({
+            where: { animalId, booking: { tenantId } },
+            include: {
+              booking: {
+                select: { id: true, slug: true, status: true, headline: true, intent: true },
+              },
+            },
+          }),
+
+          // Breeding programs where this animal is dam or sire in an active plan
+          prisma.mktListingBreedingProgram.findMany({
+            where: {
+              tenantId,
+              breedingPlans: {
+                some: {
+                  OR: [{ damId: animalId }, { sireId: animalId }],
+                  deletedAt: null,
+                },
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              status: true,
+              breedingPlans: {
+                where: {
+                  OR: [{ damId: animalId }, { sireId: animalId }],
+                  deletedAt: null,
+                },
+                select: { damId: true, sireId: true },
+                take: 1,
+              },
+            },
+          }),
+        ]);
+
+      return reply.send({
+        individualListings: individualListings.map((l: any) => ({
+          id: l.id,
+          slug: l.slug,
+          status: l.status,
+          templateType: l.templateType,
+          headline: l.headline,
+          title: l.title,
+          viewCount: l.viewCount ?? 0,
+          inquiryCount: l.inquiryCount ?? 0,
+        })),
+        animalPrograms: programParticipations.map((p: any) => ({
+          programId: p.program.id,
+          programName: p.program.name,
+          programSlug: p.program.slug,
+          programStatus: p.program.status,
+          templateType: p.program.templateType,
+          listed: p.listed,
+          participantStatus: p.status,
+        })),
+        breedingPrograms: breedingPrograms.map((bp: any) => ({
+          id: bp.id,
+          name: bp.name,
+          slug: bp.slug,
+          status: bp.status,
+          role: bp.breedingPlans[0]?.damId === animalId ? "dam" : "sire",
+        })),
+        breedingBookings: bookingAssignments.map((b: any) => ({
+          id: b.booking.id,
+          slug: b.booking.slug,
+          status: b.booking.status,
+          headline: b.booking.headline,
+          intent: b.booking.intent,
+        })),
+      });
+    } catch (err: any) {
+      req.log?.error?.({ err, animalId, tenantId }, "Failed to get animal commerce summary");
+      return reply.code(500).send({
+        error: "fetch_failed",
+        message: "Failed to fetch commerce summary. Please try again.",
       });
     }
   });

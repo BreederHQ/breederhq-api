@@ -271,8 +271,9 @@ async function handleUploadUrl(
     );
 
     // Create Document record with UPLOADING status (for tenant uploads)
+    let documentId: number | undefined;
     if (context.type === "tenant") {
-      await prisma.document.create({
+      const doc = await prisma.document.create({
         data: {
           tenantId: context.tenantId!,
           scope: mapPurposeToScope(context.purpose),
@@ -296,6 +297,7 @@ async function handleUploadUrl(
             : null,
         },
       });
+      documentId = doc.id;
     }
 
     // For provider uploads, we could create a separate ProviderMedia record
@@ -306,6 +308,7 @@ async function handleUploadUrl(
       storageKey: result.storageKey,
       cdnUrl: result.cdnUrl,
       expiresIn: result.expiresIn,
+      ...(documentId != null && { documentId }),
     });
   } catch (error) {
     request.log.error(error, "Failed to generate presigned upload URL");

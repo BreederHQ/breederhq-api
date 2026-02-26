@@ -364,8 +364,8 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         return reply.send({ success: true, alreadyRevoked: true });
       }
 
-      await prisma.rearingCertificate.update({
-        where: { id },
+      await prisma.rearingCertificate.updateMany({
+        where: { id, tenantId },
         data: {
           isValid: false,
           revokedAt: new Date(),

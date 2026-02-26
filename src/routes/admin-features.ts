@@ -25,8 +25,42 @@
 
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
+import { getActorId } from "../utils/session.js";
 import { auditSuccess } from "../services/audit.js";
 import type { FeatureModule, EntitlementKey } from "@prisma/client";
+
+// ────────────────────────────────────────────────────────────────────────────
+// Auth Helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Require the current user to be a super admin.
+ * Returns actor ID if authorized, or sends error response and returns null.
+ */
+async function requireSuperAdmin(
+  req: any,
+  reply: any
+): Promise<string | null> {
+  const actorId = getActorId(req);
+  if (!actorId) {
+    reply.code(401).send({ error: "unauthorized" });
+    return null;
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { isSuperAdmin: true },
+  });
+
+  if (!actor?.isSuperAdmin) {
+    reply
+      .code(403)
+      .send({ error: "forbidden", message: "Super admin access required" });
+    return null;
+  }
+
+  return actorId;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -180,6 +214,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }>("/admin/features", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { module, entitlementKey, includeArchived, includeInactive } = req.query;
 
       const where: any = {};
@@ -219,6 +256,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.get<{ Params: { id: string } }>("/admin/features/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const feature = await prisma.feature.findUnique({
         where: { id: Number(req.params.id) },
       });
@@ -262,6 +302,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }>("/admin/features", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { key, name, description, module, entitlementKey, uiHint, isActive = true } = req.body;
 
       // Validate key format
@@ -329,6 +372,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }>("/admin/features/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { key, name, description, module, entitlementKey, uiHint, isActive } = req.body;
 
       // Validate key format if provided
@@ -390,6 +436,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.post<{ Params: { id: string } }>("/admin/features/:id/archive", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const feature = await prisma.feature.update({
         where: { id: Number(req.params.id) },
         data: { archivedAt: new Date() },
@@ -419,6 +468,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.post<{ Params: { id: string } }>("/admin/features/:id/restore", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const feature = await prisma.feature.update({
         where: { id: Number(req.params.id) },
         data: { archivedAt: null },
@@ -448,6 +500,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.delete<{ Params: { id: string } }>("/admin/features/:id", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const feature = await prisma.feature.delete({
         where: { id: Number(req.params.id) },
       });
@@ -478,6 +533,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    */
   app.get("/admin/entitlement-keys", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       // Get feature counts per entitlement key
       const featureCounts = await prisma.feature.groupBy({
         by: ["entitlementKey"],
@@ -521,6 +579,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     "/admin/entitlement-keys/:key/features",
     async (req, reply) => {
       try {
+        const actorId = await requireSuperAdmin(req, reply);
+        if (!actorId) return;
+
         const features = await prisma.feature.findMany({
           where: {
             entitlementKey: req.params.key as EntitlementKey,
@@ -557,6 +618,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }>("/admin/features/analytics", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { startDate, endDate, module } = req.query;
 
       const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -696,6 +760,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     };
   }>("/admin/features/checks", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { featureKey, tenantId, granted, limit = "100" } = req.query;
 
       const where: any = {};
@@ -742,6 +809,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     Querystring: { days?: string };
   }>("/admin/features/orphaned", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const days = Number(req.query.days) || 30;
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -781,6 +851,9 @@ const adminFeatureRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     Querystring: { days?: string };
   }>("/admin/features/ungated", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const days = Number(req.query.days) || 30;
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 

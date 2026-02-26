@@ -255,6 +255,7 @@ const EMAIL_FREQUENCY_LIMITS: Record<string, "always" | { silenceDays: number } 
  * Uses the notification's idempotency key pattern to check last sent time
  */
 export async function shouldSendEmailForNotification(
+  tenantId: number,
   notificationType: string,
   entityType: "Animal" | "BreedingPlan",
   entityId: number
@@ -276,9 +277,10 @@ export async function shouldSendEmailForNotification(
     const silenceDate = new Date();
     silenceDate.setDate(silenceDate.getDate() - limit.silenceDays);
 
-    // Check last email sent for this type + entity
+    // Check last email sent for this type + entity within this tenant
     const lastSent = await prisma.notification.findFirst({
       where: {
+        tenantId,
         type: notificationType as any,
         idempotencyKey: {
           contains: `${entityType}:${entityId}`,
@@ -580,10 +582,12 @@ export async function deliverToAnimalOwners(
   }
 
   // Get all owners for these animals who want to receive notifications
+  // Scoped to tenant via animal relation to prevent cross-tenant data leakage
   const owners = await prisma.animalOwner.findMany({
     where: {
       animalId: { in: animalIds },
       receiveNotifications: true,
+      animal: { tenantId: notification.tenantId },
     },
     include: {
       party: {
@@ -646,6 +650,10 @@ export async function deliverToAnimalOwners(
 /**
  * Deliver all undelivered notifications
  * Called by cron job after scanning creates new notifications
+ *
+ * NOTE: Intentionally unscoped by tenantId — this is a cross-tenant batch
+ * function that processes all pending notifications. Tenant isolation is
+ * enforced downstream by deliverNotification() and deliverToAnimalOwners().
  */
 export async function deliverPendingNotifications(): Promise<{ total: number; sent: number; failed: number }> {
   // Find all UNREAD notifications created today that haven't been emailed yet

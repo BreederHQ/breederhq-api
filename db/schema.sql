@@ -1899,7 +1899,14 @@ CREATE TYPE public."NotificationType" AS ENUM (
     'network_inquiry_response',
     'breeding_data_agreement_request',
     'breeding_data_agreement_approved',
-    'breeding_data_agreement_rejected'
+    'breeding_data_agreement_rejected',
+    'compliance_reminder_30d',
+    'compliance_reminder_7d',
+    'compliance_reminder_1d',
+    'compliance_overdue',
+    'compliance_fulfilled',
+    'compliance_verified',
+    'compliance_rejected'
 );
 
 
@@ -2685,7 +2692,11 @@ CREATE TYPE public."TenantRole" AS ENUM (
     'ADMIN',
     'MEMBER',
     'BILLING',
-    'VIEWER'
+    'VIEWER',
+    'MANAGER',
+    'BREEDING_STAFF',
+    'BARN_STAFF',
+    'FINANCE'
 );
 
 
@@ -6878,6 +6889,95 @@ ALTER SEQUENCE public."Campaign_id_seq" OWNED BY public."Campaign".id;
 
 
 --
+-- Name: ClientHealthRecord; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ClientHealthRecord" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "offspringId" integer NOT NULL,
+    "contactId" integer NOT NULL,
+    "recordType" character varying(50) NOT NULL,
+    "occurredAt" timestamp with time zone NOT NULL,
+    "vetClinic" character varying(255),
+    veterinarian character varying(255),
+    weight numeric(10,2),
+    "weightUnit" character varying(10),
+    findings text,
+    recommendations text,
+    "documentId" integer,
+    "sharedWithBreeder" boolean DEFAULT true NOT NULL,
+    "sharedAt" timestamp with time zone,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ClientHealthRecord_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."ClientHealthRecord_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ClientHealthRecord_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."ClientHealthRecord_id_seq" OWNED BY public."ClientHealthRecord".id;
+
+
+--
+-- Name: ClientVaccinationRecord; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ClientVaccinationRecord" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "offspringId" integer NOT NULL,
+    "contactId" integer NOT NULL,
+    "protocolKey" character varying(100) NOT NULL,
+    "administeredAt" timestamp with time zone NOT NULL,
+    "expiresAt" timestamp with time zone,
+    veterinarian character varying(255),
+    clinic character varying(255),
+    "batchLotNumber" character varying(100),
+    notes text,
+    "documentId" integer,
+    "sharedWithBreeder" boolean DEFAULT true NOT NULL,
+    "sharedAt" timestamp with time zone,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ClientVaccinationRecord_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."ClientVaccinationRecord_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ClientVaccinationRecord_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."ClientVaccinationRecord_id_seq" OWNED BY public."ClientVaccinationRecord".id;
+
+
+--
 -- Name: CompetitionEntry; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6965,6 +7065,52 @@ CREATE SEQUENCE public."CompetitionEntry_id_seq"
 --
 
 ALTER SEQUENCE public."CompetitionEntry_id_seq" OWNED BY public."CompetitionEntry".id;
+
+
+--
+-- Name: ComplianceRequirement; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ComplianceRequirement" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "offspringId" integer NOT NULL,
+    "contractId" integer,
+    type character varying(50) NOT NULL,
+    description text NOT NULL,
+    "dueBy" timestamp with time zone,
+    "reminderDays" integer[] DEFAULT '{30,7,1}'::integer[] NOT NULL,
+    "lastReminderSentAt" timestamp with time zone,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    "fulfilledAt" timestamp with time zone,
+    "proofRecordId" integer,
+    "verifiedByBreeder" boolean DEFAULT false NOT NULL,
+    "verifiedAt" timestamp with time zone,
+    "verifiedBy" character varying(255),
+    "rejectionReason" text,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ComplianceRequirement_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."ComplianceRequirement_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ComplianceRequirement_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."ComplianceRequirement_id_seq" OWNED BY public."ComplianceRequirement".id;
 
 
 --
@@ -11217,6 +11363,45 @@ ALTER SEQUENCE public."ReproductiveCycle_id_seq" OWNED BY public."ReproductiveCy
 
 
 --
+-- Name: ResourceAssignment; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ResourceAssignment" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "userId" text NOT NULL,
+    "resourceType" text NOT NULL,
+    "resourceId" integer NOT NULL,
+    "assignmentRole" text NOT NULL,
+    "assignedBy" text,
+    "startDate" date,
+    "endDate" date,
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ResourceAssignment_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."ResourceAssignment_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ResourceAssignment_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."ResourceAssignment_id_seq" OWNED BY public."ResourceAssignment".id;
+
+
+--
 -- Name: SchedulingAvailabilityBlock; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13225,7 +13410,7 @@ ALTER SEQUENCE public.refresh_tokens_id_seq OWNED BY public.refresh_tokens.id;
 --
 
 CREATE TABLE public.schema_migrations (
-    version character varying(128) NOT NULL
+    version character varying(255) NOT NULL
 );
 
 
@@ -13755,6 +13940,20 @@ ALTER TABLE ONLY public."CampaignAttribution" ALTER COLUMN id SET DEFAULT nextva
 
 
 --
+-- Name: ClientHealthRecord id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord" ALTER COLUMN id SET DEFAULT nextval('public."ClientHealthRecord_id_seq"'::regclass);
+
+
+--
+-- Name: ClientVaccinationRecord id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord" ALTER COLUMN id SET DEFAULT nextval('public."ClientVaccinationRecord_id_seq"'::regclass);
+
+
+--
 -- Name: CompetitionEntry id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -13766,6 +13965,13 @@ ALTER TABLE ONLY public."CompetitionEntry" ALTER COLUMN id SET DEFAULT nextval('
 --
 
 ALTER TABLE ONLY public."CompetitionEntryDocument" ALTER COLUMN id SET DEFAULT nextval('public."CompetitionEntryDocument_id_seq"'::regclass);
+
+
+--
+-- Name: ComplianceRequirement id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement" ALTER COLUMN id SET DEFAULT nextval('public."ComplianceRequirement_id_seq"'::regclass);
 
 
 --
@@ -14452,6 +14658,13 @@ ALTER TABLE ONLY public."RegistryVerification" ALTER COLUMN id SET DEFAULT nextv
 --
 
 ALTER TABLE ONLY public."ReproductiveCycle" ALTER COLUMN id SET DEFAULT nextval('public."ReproductiveCycle_id_seq"'::regclass);
+
+
+--
+-- Name: ResourceAssignment id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment" ALTER COLUMN id SET DEFAULT nextval('public."ResourceAssignment_id_seq"'::regclass);
 
 
 --
@@ -15410,6 +15623,22 @@ ALTER TABLE ONLY public."Campaign"
 
 
 --
+-- Name: ClientHealthRecord ClientHealthRecord_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord"
+    ADD CONSTRAINT "ClientHealthRecord_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: ClientVaccinationRecord ClientVaccinationRecord_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord"
+    ADD CONSTRAINT "ClientVaccinationRecord_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: CompetitionEntryDocument CompetitionEntryDocument_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15423,6 +15652,14 @@ ALTER TABLE ONLY public."CompetitionEntryDocument"
 
 ALTER TABLE ONLY public."CompetitionEntry"
     ADD CONSTRAINT "CompetitionEntry_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: ComplianceRequirement ComplianceRequirement_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement"
+    ADD CONSTRAINT "ComplianceRequirement_pkey" PRIMARY KEY (id);
 
 
 --
@@ -16271,6 +16508,22 @@ ALTER TABLE ONLY public."Registry"
 
 ALTER TABLE ONLY public."ReproductiveCycle"
     ADD CONSTRAINT "ReproductiveCycle_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: ResourceAssignment ResourceAssignment_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment"
+    ADD CONSTRAINT "ResourceAssignment_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: ResourceAssignment ResourceAssignment_unique_assignment; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment"
+    ADD CONSTRAINT "ResourceAssignment_unique_assignment" UNIQUE ("tenantId", "userId", "resourceType", "resourceId", "assignmentRole");
 
 
 --
@@ -22033,6 +22286,20 @@ CREATE INDEX "ReproductiveCycle_tenantId_idx" ON public."ReproductiveCycle" USIN
 
 
 --
+-- Name: ResourceAssignment_tenantId_resourceType_resourceId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "ResourceAssignment_tenantId_resourceType_resourceId_idx" ON public."ResourceAssignment" USING btree ("tenantId", "resourceType", "resourceId");
+
+
+--
+-- Name: ResourceAssignment_tenantId_userId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "ResourceAssignment_tenantId_userId_idx" ON public."ResourceAssignment" USING btree ("tenantId", "userId");
+
+
+--
 -- Name: SchedulingAvailabilityBlock_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23311,6 +23578,62 @@ CREATE INDEX "idx_Document_partyId" ON public."Document" USING btree ("partyId")
 --
 
 CREATE INDEX "idx_TagAssignment_documentId" ON public."TagAssignment" USING btree ("documentId");
+
+
+--
+-- Name: idx_client_health_record_contact; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_health_record_contact ON public."ClientHealthRecord" USING btree ("contactId");
+
+
+--
+-- Name: idx_client_health_record_tenant_offspring; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_health_record_tenant_offspring ON public."ClientHealthRecord" USING btree ("tenantId", "offspringId");
+
+
+--
+-- Name: idx_client_health_record_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_health_record_type ON public."ClientHealthRecord" USING btree ("recordType");
+
+
+--
+-- Name: idx_client_vaccination_record_offspring_protocol; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_vaccination_record_offspring_protocol ON public."ClientVaccinationRecord" USING btree ("offspringId", "protocolKey");
+
+
+--
+-- Name: idx_client_vaccination_record_tenant_offspring; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_vaccination_record_tenant_offspring ON public."ClientVaccinationRecord" USING btree ("tenantId", "offspringId");
+
+
+--
+-- Name: idx_compliance_requirement_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_compliance_requirement_due ON public."ComplianceRequirement" USING btree ("dueBy");
+
+
+--
+-- Name: idx_compliance_requirement_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_compliance_requirement_status ON public."ComplianceRequirement" USING btree (status);
+
+
+--
+-- Name: idx_compliance_requirement_tenant_offspring; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_compliance_requirement_tenant_offspring ON public."ComplianceRequirement" USING btree ("tenantId", "offspringId");
 
 
 --
@@ -25166,6 +25489,70 @@ ALTER TABLE ONLY public."Campaign"
 
 
 --
+-- Name: ClientHealthRecord ClientHealthRecord_contactId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord"
+    ADD CONSTRAINT "ClientHealthRecord_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES public."Party"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ClientHealthRecord ClientHealthRecord_documentId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord"
+    ADD CONSTRAINT "ClientHealthRecord_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES public."Document"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: ClientHealthRecord ClientHealthRecord_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord"
+    ADD CONSTRAINT "ClientHealthRecord_offspringId_fkey" FOREIGN KEY ("offspringId") REFERENCES public."Offspring"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ClientHealthRecord ClientHealthRecord_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientHealthRecord"
+    ADD CONSTRAINT "ClientHealthRecord_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ClientVaccinationRecord ClientVaccinationRecord_contactId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord"
+    ADD CONSTRAINT "ClientVaccinationRecord_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES public."Party"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ClientVaccinationRecord ClientVaccinationRecord_documentId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord"
+    ADD CONSTRAINT "ClientVaccinationRecord_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES public."Document"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: ClientVaccinationRecord ClientVaccinationRecord_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord"
+    ADD CONSTRAINT "ClientVaccinationRecord_offspringId_fkey" FOREIGN KEY ("offspringId") REFERENCES public."Offspring"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ClientVaccinationRecord ClientVaccinationRecord_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ClientVaccinationRecord"
+    ADD CONSTRAINT "ClientVaccinationRecord_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: CompetitionEntryDocument CompetitionEntryDocument_competitionEntryId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25195,6 +25582,38 @@ ALTER TABLE ONLY public."CompetitionEntry"
 
 ALTER TABLE ONLY public."CompetitionEntry"
     ADD CONSTRAINT "CompetitionEntry_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ComplianceRequirement ComplianceRequirement_contractId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement"
+    ADD CONSTRAINT "ComplianceRequirement_contractId_fkey" FOREIGN KEY ("contractId") REFERENCES public."Contract"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: ComplianceRequirement ComplianceRequirement_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement"
+    ADD CONSTRAINT "ComplianceRequirement_offspringId_fkey" FOREIGN KEY ("offspringId") REFERENCES public."Offspring"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ComplianceRequirement ComplianceRequirement_proofRecordId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement"
+    ADD CONSTRAINT "ComplianceRequirement_proofRecordId_fkey" FOREIGN KEY ("proofRecordId") REFERENCES public."ClientHealthRecord"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: ComplianceRequirement ComplianceRequirement_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ComplianceRequirement"
+    ADD CONSTRAINT "ComplianceRequirement_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -27134,6 +27553,30 @@ ALTER TABLE ONLY public."ReproductiveCycle"
 
 
 --
+-- Name: ResourceAssignment ResourceAssignment_assignedBy_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment"
+    ADD CONSTRAINT "ResourceAssignment_assignedBy_fkey" FOREIGN KEY ("assignedBy") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: ResourceAssignment ResourceAssignment_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment"
+    ADD CONSTRAINT "ResourceAssignment_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: ResourceAssignment ResourceAssignment_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ResourceAssignment"
+    ADD CONSTRAINT "ResourceAssignment_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."User"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: SchedulingAvailabilityBlock SchedulingAvailabilityBlock_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28015,4 +28458,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260225170904'),
     ('20260225171308'),
     ('20260225175124'),
-    ('20260225175517');
+    ('20260225175517'),
+    ('20260225234242'),
+    ('20260226144351'),
+    ('20260226144817'),
+    ('20260226150822'),
+    ('20260226151913');

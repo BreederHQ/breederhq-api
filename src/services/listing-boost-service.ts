@@ -108,7 +108,11 @@ export async function createBoostCheckout(
     throw new Error("Either tenantId or providerId is required");
   }
 
-  // Check for existing active boost on this listing (FR-21)
+  // Check for existing active boost on this listing (FR-21).
+  // NOTE: Intentionally NOT scoped to tenantId/providerId — business rule is
+  // that a listing can only have ONE active/pending boost globally, regardless
+  // of owner. Two different owners should not be able to boost the same listing
+  // concurrently (the listing identity is the uniqueness key, not the payer).
   const existingBoost = await prisma.listingBoost.findFirst({
     where: {
       listingType,
@@ -415,6 +419,17 @@ export async function getBoostsForOwner(
 // Query: Single Boost
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Low-level getter — returns any boost by ID without ownership filtering.
+ *
+ * IMPORTANT: This function does NOT enforce tenant/provider ownership.
+ * Callers from non-admin routes MUST verify that the returned boost belongs
+ * to the requesting user (check boost.tenantId or boost.providerId) before
+ * exposing data. Admin routes (prefixed /admin/) may use it without scoping.
+ *
+ * Ownership-checked alternatives: cancelBoost() and toggleAutoRenew() both
+ * accept an ownerId param and verify ownership internally.
+ */
 export async function getBoostById(
   boostId: number
 ): Promise<ListingBoost | null> {

@@ -128,6 +128,7 @@ export async function validateTemplate(params: {
  */
 export async function renderTemplate(params: {
   prisma: PrismaClient;
+  tenantId: number;
   templateId: number;
   context: RenderContext;
 }): Promise<{
@@ -135,10 +136,10 @@ export async function renderTemplate(params: {
   bodyText: string;
   bodyHtml?: string;
 }> {
-  const { prisma, templateId, context } = params;
+  const { prisma, tenantId, templateId, context } = params;
 
-  const template = await prisma.template.findUnique({
-    where: { id: templateId },
+  const template = await prisma.template.findFirst({
+    where: { id: templateId, tenantId },
     include: { content: true },
   });
 

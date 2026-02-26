@@ -810,13 +810,14 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       // Update contact and mark request as approved
+      // Tenant-isolated: include tenantId in where clauses for defense-in-depth
       await prisma.$transaction([
-        prisma.contact.update({
-          where: { id: contact.id },
+        prisma.contact.updateMany({
+          where: { id: contact.id, tenantId },
           data: { [dbField]: changeRequest.newValue },
         }),
-        prisma.contactChangeRequest.update({
-          where: { id: requestId },
+        prisma.contactChangeRequest.updateMany({
+          where: { id: requestId, tenantId },
           data: {
             status: "APPROVED",
             resolvedAt: new Date(),
@@ -884,9 +885,9 @@ const partyCrmRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           return reply.code(404).send({ error: "request_not_found" });
         }
 
-        // Mark request as rejected
-        await prisma.contactChangeRequest.update({
-          where: { id: requestId },
+        // Mark request as rejected — tenant-isolated
+        await prisma.contactChangeRequest.updateMany({
+          where: { id: requestId, tenantId },
           data: {
             status: "REJECTED",
             resolvedAt: new Date(),

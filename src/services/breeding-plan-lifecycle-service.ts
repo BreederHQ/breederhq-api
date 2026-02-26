@@ -3,8 +3,11 @@
  * Breeding Plan Lifecycle Service
  *
  * Manages post-birth lifecycle on BreedingPlan directly:
- *   BIRTHED -> BORN -> WEANING -> WEANED -> PLACEMENT -> PLAN_COMPLETE
+ *   BIRTHED -> BORN -> WEANED -> PLACEMENT -> PLAN_COMPLETE
  *   Any -> DISSOLVED (all offspring deceased)
+ *
+ * Note: WEANING is not a valid BreedingPlanStatus enum value in the DB schema.
+ * The transition from BORN to WEANED is direct (no intermediate WEANING state).
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -24,7 +27,6 @@ export class LifecycleError extends Error {
 export type PlanLifecycleStatus =
   | "BIRTHED"
   | "BORN"
-  | "WEANING"
   | "WEANED"
   | "PLACEMENT"
   | "PLAN_COMPLETE"
@@ -34,7 +36,6 @@ export type PlanLifecycleStatus =
 const PLAN_STATUS_ORDER: PlanLifecycleStatus[] = [
   "BIRTHED",
   "BORN",
-  "WEANING",
   "WEANED",
   "PLACEMENT",
   "PLAN_COMPLETE",
@@ -221,8 +222,6 @@ export async function rewindPlanLifecycle(
       case "WEANED":
         planPatch.weanedDateActual = null;
         break;
-      case "WEANING":
-        break;
       case "BORN":
         planPatch.birthDateActual = null;
         planPatch.expectedWeaned = null;
@@ -301,6 +300,11 @@ export async function autoAdvancePlanIfReady(
   const currentIdx = PLAN_STATUS_ORDER.indexOf(current);
   if (currentIdx < 0) return null;
 
+  // BORN→WEANED requires explicit user action (advance-lifecycle call).
+  // Skipping auto-advance here prevents a race where the weanedDate PATCH would
+  // auto-advance to WEANED before the frontend's advance-lifecycle call fires.
+  if (current === "BORN") return null;
+
   const nextStatus = PLAN_STATUS_ORDER[currentIdx + 1];
   if (!nextStatus || current === "DISSOLVED" || current === "PLAN_COMPLETE") {
     return null;
@@ -350,25 +354,17 @@ function validatePlanAdvanceCondition(
       }
       break;
 
-    case "BORN→WEANING": {
+    case "BORN→WEANED": {
+      // Requires at least one live offspring registered
       const liveCount = offspring.filter((o) => o.lifeState === "ALIVE").length;
       if (liveCount === 0) {
         throw new LifecycleError(
           "NO_LIVE_OFFSPRING",
-          "At least one live offspring is required to advance to WEANING",
+          "At least one live offspring is required to advance to WEANED",
         );
       }
       break;
     }
-
-    case "WEANING→WEANED":
-      if (!plan.weanedDateActual) {
-        throw new LifecycleError(
-          "WEANED_DATE_REQUIRED",
-          "weanedDateActual must be set to advance to WEANED",
-        );
-      }
-      break;
 
     case "WEANED→PLACEMENT":
       if (!plan.placementStartDateActual) {

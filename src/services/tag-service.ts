@@ -4,8 +4,11 @@
 import prisma from "../prisma.js";
 
 /**
- * Resolve partyId from contactId or organizationId
- * Returns null if the entity doesn't exist or doesn't have a partyId
+ * Resolve partyId from contactId or organizationId.
+ * Returns null if the entity doesn't exist or doesn't have a partyId.
+ *
+ * NOTE: These utilities do NOT enforce tenant scoping. They trust the caller
+ * to provide IDs that have already been verified against the correct tenantId.
  */
 export async function resolvePartyIdFromContact(contactId: number): Promise<number | null> {
   const contact = await prisma.contact.findUnique({
@@ -88,26 +91,25 @@ export async function getTagsForContact(contactId: number, tenantId: number): Pr
     return [];
   }
 
-  // Party-only read: query by taggedPartyId
+  // Party-only read: query by taggedPartyId, scoped to tenant via tag relation
   const rows = await prisma.tagAssignment.findMany({
     where: {
       taggedPartyId: contact.partyId,
+      tag: { tenantId },
     },
     include: { tag: true },
     orderBy: [{ tag: { name: "asc" } }],
   });
 
-  // Map to DTO, filtering by tenantId
-  const tags = rows
-    .filter((r) => r.tag && r.tag.tenantId === tenantId)
-    .map((r) => ({
-      id: r.tag.id,
-      name: r.tag.name,
-      module: r.tag.module,
-      color: r.tag.color ?? null,
-      createdAt: r.tag.createdAt,
-      updatedAt: r.tag.updatedAt,
-    }));
+  // Map to DTO — rows are already tenant-scoped by the query
+  const tags = rows.map((r) => ({
+    id: r.tag.id,
+    name: r.tag.name,
+    module: r.tag.module,
+    color: r.tag.color ?? null,
+    createdAt: r.tag.createdAt,
+    updatedAt: r.tag.updatedAt,
+  }));
 
   return tags;
 }
@@ -132,26 +134,25 @@ export async function getTagsForOrganization(organizationId: number, tenantId: n
     return [];
   }
 
-  // Party-only read: query by taggedPartyId
+  // Party-only read: query by taggedPartyId, scoped to tenant via tag relation
   const rows = await prisma.tagAssignment.findMany({
     where: {
       taggedPartyId: org.partyId,
+      tag: { tenantId },
     },
     include: { tag: true },
     orderBy: [{ tag: { name: "asc" } }],
   });
 
-  // Map to DTO, filtering by tenantId
-  const tags = rows
-    .filter((r) => r.tag && r.tag.tenantId === tenantId)
-    .map((r) => ({
-      id: r.tag.id,
-      name: r.tag.name,
-      module: r.tag.module,
-      color: r.tag.color ?? null,
-      createdAt: r.tag.createdAt,
-      updatedAt: r.tag.updatedAt,
-    }));
+  // Map to DTO — rows are already tenant-scoped by the query
+  const tags = rows.map((r) => ({
+    id: r.tag.id,
+    name: r.tag.name,
+    module: r.tag.module,
+    color: r.tag.color ?? null,
+    createdAt: r.tag.createdAt,
+    updatedAt: r.tag.updatedAt,
+  }));
 
   return tags;
 }

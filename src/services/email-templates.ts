@@ -9,6 +9,7 @@ import {
   emailParagraph,
   emailHeading,
   emailAccent,
+  emailBulletList,
 } from "./email-layout.js";
 
 export interface InvoiceTemplateParams {
@@ -630,6 +631,285 @@ Reminder emails have been sent to the respective clients.
         `You have ${emailAccent(String(overdueCount))} overdue invoice${overdueCount !== 1 ? "s" : ""} totaling ${emailAccent(`${currency} ${total}`)}.`
       ),
       emailParagraph("Reminder emails have been sent to the respective clients."),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+// ---------- Compliance Reminder Email Templates ----------
+
+export interface ComplianceReminderParams {
+  clientName: string;
+  offspringName: string;
+  requirementType: string;
+  requirementDescription: string;
+  dueDate: string;
+  daysRemaining: number;
+  tenantName: string;
+  portalUrl: string;
+}
+
+/**
+ * 30-day compliance reminder — informational tone.
+ */
+export function renderComplianceReminderEmail(params: ComplianceReminderParams): { subject: string; html: string; text: string } {
+  const { clientName, offspringName, requirementType, requirementDescription, dueDate, daysRemaining, tenantName, portalUrl } = params;
+
+  const subject = `Reminder: ${requirementType} due in ${daysRemaining} days for ${offspringName}`;
+
+  const text = `
+Hi ${clientName},
+
+This is a friendly reminder about an upcoming health guarantee requirement for ${offspringName}.
+
+Requirement: ${requirementType}
+Details: ${requirementDescription}
+Due Date: ${dueDate}
+Days Remaining: ${daysRemaining}
+
+Please complete this requirement before the deadline to maintain your health guarantee coverage.
+
+View in Portal: ${portalUrl}
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Health Guarantee Reminder",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph(
+        `This is a friendly reminder about an upcoming health guarantee requirement for ${emailAccent(offspringName)}.`
+      ),
+      emailInfoCard(
+        [
+          `<p style="color: #3b82f6; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${requirementType}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0;">${requirementDescription}</p>`,
+        ].join("\n"),
+        { borderColor: "blue" },
+      ),
+      emailDetailRows([
+        { label: "Due Date", value: dueDate },
+        { label: "Days Remaining", value: String(daysRemaining) },
+      ]),
+      emailParagraph("Please complete this requirement before the deadline to maintain your health guarantee coverage."),
+      emailButton("View in Portal", portalUrl),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+/**
+ * 7-day compliance reminder — urgent tone, amber styling.
+ */
+export function renderComplianceUrgentEmail(params: ComplianceReminderParams): { subject: string; html: string; text: string } {
+  const { clientName, offspringName, requirementType, requirementDescription, dueDate, daysRemaining, tenantName, portalUrl } = params;
+
+  const subject = `Urgent: ${requirementType} due in ${daysRemaining} days for ${offspringName}`;
+
+  const text = `
+Hi ${clientName},
+
+URGENT: Your health guarantee requirement for ${offspringName} is due in ${daysRemaining} days.
+
+Requirement: ${requirementType}
+Details: ${requirementDescription}
+Due Date: ${dueDate}
+
+Please take action soon to avoid losing your health guarantee coverage.
+
+View in Portal: ${portalUrl}
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Urgent: Compliance Deadline Approaching",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailParagraph(
+        `Your health guarantee requirement for ${emailAccent(offspringName)} is due in ${emailAccent(`${daysRemaining} days`)}.`
+      ),
+      emailInfoCard(
+        [
+          `<p style="color: #f59e0b; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${requirementType}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0;">${requirementDescription}</p>`,
+        ].join("\n"),
+        { borderColor: "yellow" },
+      ),
+      emailDetailRows([
+        { label: "Due Date", value: dueDate },
+        { label: "Days Remaining", value: String(daysRemaining) },
+      ]),
+      emailParagraph("Please take action soon to avoid losing your health guarantee coverage."),
+      emailButton("Take Action Now", portalUrl, "orange"),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+/**
+ * 1-day compliance reminder — critical tone, red styling.
+ */
+export function renderComplianceFinalEmail(params: ComplianceReminderParams): { subject: string; html: string; text: string } {
+  const { clientName, offspringName, requirementType, requirementDescription, dueDate, tenantName, portalUrl } = params;
+
+  const subject = `FINAL NOTICE: ${requirementType} due TOMORROW for ${offspringName}`;
+
+  const text = `
+Hi ${clientName},
+
+FINAL NOTICE: Your health guarantee requirement for ${offspringName} is due TOMORROW.
+
+Requirement: ${requirementType}
+Details: ${requirementDescription}
+Due Date: ${dueDate}
+
+Failure to complete this requirement by the deadline may void your health guarantee. Please take immediate action.
+
+View in Portal: ${portalUrl}
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Final Notice: Compliance Due Tomorrow",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailInfoCard(
+        [
+          `<p style="color: #ef4444; margin: 0 0 8px 0; font-size: 16px; font-weight: 700;">FINAL NOTICE</p>`,
+          `<p style="color: #e5e5e5; margin: 0;">Your health guarantee requirement for ${emailAccent(offspringName)} is due ${emailAccent("TOMORROW")}.</p>`,
+        ].join("\n"),
+        { borderColor: "red" },
+      ),
+      emailDetailRows([
+        { label: "Requirement", value: requirementType },
+        { label: "Details", value: requirementDescription },
+        { label: "Due Date", value: dueDate },
+      ]),
+      emailParagraph("Failure to complete this requirement by the deadline may void your health guarantee. Please take immediate action."),
+      emailButton("Complete Now", portalUrl, "red"),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+/**
+ * Overdue compliance notification — action-required tone, red styling.
+ */
+export function renderComplianceOverdueEmail(params: ComplianceReminderParams): { subject: string; html: string; text: string } {
+  const { clientName, offspringName, requirementType, requirementDescription, dueDate, daysRemaining, tenantName, portalUrl } = params;
+
+  const daysOverdue = Math.abs(daysRemaining);
+
+  const subject = `Action Required: ${requirementType} is ${daysOverdue} day${daysOverdue !== 1 ? "s" : ""} overdue for ${offspringName}`;
+
+  const text = `
+Hi ${clientName},
+
+ACTION REQUIRED: Your health guarantee requirement for ${offspringName} is now ${daysOverdue} day${daysOverdue !== 1 ? "s" : ""} overdue.
+
+Requirement: ${requirementType}
+Details: ${requirementDescription}
+Was Due: ${dueDate}
+Days Overdue: ${daysOverdue}
+
+Your health guarantee coverage may be at risk. Please complete this requirement as soon as possible and upload proof in your portal.
+
+View in Portal: ${portalUrl}
+
+Thank you,
+${tenantName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Action Required: Overdue Compliance",
+    footerOrgName: tenantName,
+    body: [
+      emailGreeting(clientName),
+      emailInfoCard(
+        [
+          `<p style="color: #ef4444; margin: 0 0 8px 0; font-size: 16px; font-weight: 700;">OVERDUE</p>`,
+          `<p style="color: #e5e5e5; margin: 0;">Your health guarantee requirement for ${emailAccent(offspringName)} is now ${emailAccent(`${daysOverdue} day${daysOverdue !== 1 ? "s" : ""}`)} overdue.</p>`,
+        ].join("\n"),
+        { borderColor: "red" },
+      ),
+      emailDetailRows([
+        { label: "Requirement", value: requirementType },
+        { label: "Details", value: requirementDescription },
+        { label: "Was Due", value: dueDate },
+        { label: "Days Overdue", value: String(daysOverdue) },
+      ]),
+      emailParagraph("Your health guarantee coverage may be at risk. Please complete this requirement as soon as possible and upload proof in your portal."),
+      emailButton("Complete Now", portalUrl, "red"),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}
+
+// ---------- Breeder Compliance Digest Email Template ----------
+
+export interface BreederComplianceDigestParams {
+  tenantName: string;
+  overdueItems: Array<{
+    offspringName: string;
+    requirementType: string;
+    dueDate: string;
+    daysOverdue: number;
+    clientName: string;
+  }>;
+  portalUrl: string;
+}
+
+/**
+ * Weekly digest email to breeder summarizing all overdue compliance requirements.
+ */
+export function renderBreederComplianceDigestEmail(params: BreederComplianceDigestParams): { subject: string; html: string; text: string } {
+  const { tenantName, overdueItems, portalUrl } = params;
+
+  const subject = `${overdueItems.length} overdue compliance requirement${overdueItems.length !== 1 ? "s" : ""} — Weekly Digest`;
+
+  const itemLines = overdueItems.map(
+    (item) => `• ${item.offspringName} — ${item.requirementType} (${item.daysOverdue}d overdue, client: ${item.clientName})`
+  );
+
+  const text = `
+You have ${overdueItems.length} overdue compliance requirement${overdueItems.length !== 1 ? "s" : ""} across your placed offspring.
+
+${itemLines.join("\n")}
+
+Reminder emails have been sent to the respective clients.
+
+— ${tenantName}
+`.trim();
+
+  const bulletItems = overdueItems.map(
+    (item) =>
+      `<strong style="color: #ffffff;">${item.offspringName}</strong> — ${item.requirementType} <span style="color: #ef4444;">(${item.daysOverdue}d overdue)</span> · Client: ${item.clientName}`
+  );
+
+  const html = wrapEmailLayout({
+    title: "Compliance Digest",
+    footerOrgName: tenantName,
+    body: [
+      emailParagraph(
+        `You have ${emailAccent(String(overdueItems.length))} overdue compliance requirement${overdueItems.length !== 1 ? "s" : ""} across your placed offspring.`
+      ),
+      emailBulletList(bulletItems),
+      emailParagraph("Reminder emails have been sent to the respective clients."),
+      emailButton("View Offspring", portalUrl),
     ].join("\n"),
   });
 

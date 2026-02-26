@@ -350,7 +350,7 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
         if (notes !== undefined) updateData.notes = notes;
 
         const updated = await prisma.breedingPlanBuyer.update({
-          where: { id: buyerId },
+          where: { id: buyerId, tenantId }, // tenant-isolated mutation
           data: updateData,
           include: buyerIncludes,
         });
@@ -420,7 +420,7 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
         });
         if (!existing) return reply.code(404).send({ error: "buyer_not_found" });
 
-        await prisma.breedingPlanBuyer.delete({ where: { id: buyerId } });
+        await prisma.breedingPlanBuyer.deleteMany({ where: { id: buyerId, tenantId } });
 
         // If this buyer was linked to a waitlist entry, revert it to APPROVED
         // so it re-enters the active waitlist and can be matched again.
@@ -598,13 +598,13 @@ const breedingPlanBuyersRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
         // Link the invoice to this plan buyer
         await prisma.invoice.update({
-          where: { id: invoiceId },
+          where: { id: invoiceId, tenantId }, // tenant-isolated mutation
           data: { breedingPlanBuyerId: buyerId },
         });
 
         // Return the updated buyer DTO with invoice fields populated
         const updated = await prisma.breedingPlanBuyer.findFirst({
-          where: { id: buyerId },
+          where: { id: buyerId, tenantId },
           include: buyerIncludes,
         });
 

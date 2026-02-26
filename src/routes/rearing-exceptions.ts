@@ -172,6 +172,7 @@ const rearingExceptionsRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const exception = await prisma.offspringProtocolException.update({
         where: { id },
         data: {
@@ -218,8 +219,8 @@ const rearingExceptionsRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      await prisma.offspringProtocolException.delete({
-        where: { id },
+      await prisma.offspringProtocolException.deleteMany({
+        where: { id, tenantId },
       });
 
       return reply.send({ success: true });

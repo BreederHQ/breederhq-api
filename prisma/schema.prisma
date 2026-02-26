@@ -9,85 +9,87 @@ datasource db {
 }
 
 model User {
-  id                             String                          @id @default(cuid())
-  email                          String                          @unique @db.Citext
-  name                           String?
-  firstName                      String
-  lastName                       String
-  nickname                       String?
-  image                          String?
-  passwordHash                   String?
-  passwordUpdatedAt              DateTime?
-  mustChangePassword             Boolean                         @default(false)
-  passwordSetAt                  DateTime?
-  lastPasswordChangeAt           DateTime?
-  isSuperAdmin                   Boolean                         @default(false)
-  emailVerifiedAt                DateTime?
-  phoneE164                      String?                         @db.VarChar(32)
-  whatsappE164                   String?                         @db.VarChar(32)
-  street                         String?
-  street2                        String?
-  city                           String?
-  state                          String?
-  postalCode                     String?
-  country                        String?                         @db.Char(2)
-  partyId                        Int?
-  defaultTenantId                Int?
-  lastLoginAt                    DateTime?
-  createdAt                      DateTime                        @default(now())
-  updatedAt                      DateTime                        @updatedAt
-  role                           String                          @default("user")
-  twoFactorEnabled               Boolean                         @default(false)
-  providerReportsSubmitted       MarketplaceProviderReport[]     @relation("UserProviderReports")
-  savedListings                  MarketplaceSavedListing[]       @relation("UserSavedListings")
-  animalLinkRequestsSent         AnimalLinkRequest[]             @relation("LinkRequestFromUser")
-  Attachment                     Attachment[]
-  breederReportsSubmitted        BreederReport[]                 @relation("BreederReportReporter")
-  breederReportsReviewed         BreederReport[]                 @relation("BreederReportReviewedBy")
-  committedPlans                 BreedingPlan[]                  @relation("CommittedByUser")
-  BreedingPlanEvent              BreedingPlanEvent[]
-  assignedInquiries              BreedingProgramInquiry[]
-  buyerTasksAssigned             BuyerTask[]                     @relation("BuyerTaskAssignee")
-  buyerTasksCompleted            BuyerTask[]                     @relation("BuyerTaskCompleter")
-  ContractParty                  ContractParty[]
-  contractTemplatesCreated       ContractTemplate[]              @relation("ContractTemplateCreatedBy")
-  dealActivities                 DealActivity[]
-  drafts                         Draft[]                         @relation("DraftCreatedBy")
-  geneticNotificationPreferences GeneticNotificationPreference[]
-  geneticNotificationSnoozes     GeneticNotificationSnooze[]
-  geneticsDisclaimerAcceptances  GeneticsDisclaimerAcceptance[]
-  HealthEvent                    HealthEvent[]
-  HelpConversation               HelpConversation[]
-  HelpQueryLog                   HelpQueryLog[]
-  LitterEvent                    LitterEvent[]
-  marketplaceBlocks              MarketplaceUserBlock[]          @relation("BlockedMarketplaceUser")
-  marketplaceFlag                MarketplaceUserFlag?            @relation("MarketplaceUserFlagUser")
-  memberships                    Membership[]
-  neonatalCareEntries            NeonatalCareEntry[]
-  neonatalInterventions          NeonatalIntervention[]
-  notifications                  Notification[]
-  OffspringEvent                 OffspringEvent[]
-  portalAccessesCreatedBy        PortalAccess[]                  @relation("PortalAccessCreatedBy")
-  portalAccessesUpdatedBy        PortalAccess[]                  @relation("PortalAccessUpdatedBy")
-  portalAccesses                 PortalAccess[]                  @relation("PortalAccessUser")
-  portalInvitesSentBy            PortalInvite[]                  @relation("PortalInviteSentBy")
-  portalInvites                  PortalInvite[]                  @relation("PortalInviteUser")
-  protocolHandoffsInitiated      RearingProtocolAssignment[]     @relation("ProtocolHandoffInitiator")
-  protocolHandoffsReceived       RearingProtocolAssignment[]     @relation("ProtocolHandoffRecipient")
-  registrySyncLogs               RegistrySyncLog[]               @relation("RegistrySyncLogInitiator")
-  registryVerifications          RegistryVerification[]          @relation("RegistryVerificationVerifier")
-  Session                        Session[]
-  Task                           Task[]
-  tenantMemberships              TenantMembership[]
-  tosAcceptances                 TosAcceptance[]
-  defaultTenant                  Tenant?                         @relation(fields: [defaultTenantId], references: [id])
-  party                          Party?                          @relation("UserParty", fields: [partyId], references: [id])
-  entitlements                   UserEntitlement[]
-  UserHelpPreference             UserHelpPreference?
-  notificationPreferences        UserNotificationPreferences?
-  VerificationToken              VerificationToken[]
-  devices                        Device[]
-  refreshTokens                  RefreshToken[]
+  id                                                     String                          @id @default(cuid())
+  email                                                  String                          @unique @db.Citext
+  name                                                   String?
+  firstName                                              String
+  lastName                                               String
+  nickname                                               String?
+  image                                                  String?
+  passwordHash                                           String?
+  passwordUpdatedAt                                      DateTime?
+  mustChangePassword                                     Boolean                         @default(false)
+  passwordSetAt                                          DateTime?
+  lastPasswordChangeAt                                   DateTime?
+  isSuperAdmin                                           Boolean                         @default(false)
+  emailVerifiedAt                                        DateTime?
+  phoneE164                                              String?                         @db.VarChar(32)
+  whatsappE164                                           String?                         @db.VarChar(32)
+  street                                                 String?
+  street2                                                String?
+  city                                                   String?
+  state                                                  String?
+  postalCode                                             String?
+  country                                                String?                         @db.Char(2)
+  partyId                                                Int?
+  defaultTenantId                                        Int?
+  lastLoginAt                                            DateTime?
+  createdAt                                              DateTime                        @default(now())
+  updatedAt                                              DateTime                        @updatedAt
+  role                                                   String                          @default("user")
+  twoFactorEnabled                                       Boolean                         @default(false)
+  providerReportsSubmitted                               MarketplaceProviderReport[]     @relation("UserProviderReports")
+  savedListings                                          MarketplaceSavedListing[]       @relation("UserSavedListings")
+  animalLinkRequestsSent                                 AnimalLinkRequest[]             @relation("LinkRequestFromUser")
+  Attachment                                             Attachment[]
+  breederReportsSubmitted                                BreederReport[]                 @relation("BreederReportReporter")
+  breederReportsReviewed                                 BreederReport[]                 @relation("BreederReportReviewedBy")
+  committedPlans                                         BreedingPlan[]                  @relation("CommittedByUser")
+  BreedingPlanEvent                                      BreedingPlanEvent[]
+  assignedInquiries                                      BreedingProgramInquiry[]
+  buyerTasksAssigned                                     BuyerTask[]                     @relation("BuyerTaskAssignee")
+  buyerTasksCompleted                                    BuyerTask[]                     @relation("BuyerTaskCompleter")
+  ContractParty                                          ContractParty[]
+  contractTemplatesCreated                               ContractTemplate[]              @relation("ContractTemplateCreatedBy")
+  dealActivities                                         DealActivity[]
+  drafts                                                 Draft[]                         @relation("DraftCreatedBy")
+  geneticNotificationPreferences                         GeneticNotificationPreference[]
+  geneticNotificationSnoozes                             GeneticNotificationSnooze[]
+  geneticsDisclaimerAcceptances                          GeneticsDisclaimerAcceptance[]
+  HealthEvent                                            HealthEvent[]
+  HelpConversation                                       HelpConversation[]
+  HelpQueryLog                                           HelpQueryLog[]
+  LitterEvent                                            LitterEvent[]
+  marketplaceBlocks                                      MarketplaceUserBlock[]          @relation("BlockedMarketplaceUser")
+  marketplaceFlag                                        MarketplaceUserFlag?            @relation("MarketplaceUserFlagUser")
+  memberships                                            Membership[]
+  neonatalCareEntries                                    NeonatalCareEntry[]
+  neonatalInterventions                                  NeonatalIntervention[]
+  notifications                                          Notification[]
+  OffspringEvent                                         OffspringEvent[]
+  portalAccessesCreatedBy                                PortalAccess[]                  @relation("PortalAccessCreatedBy")
+  portalAccessesUpdatedBy                                PortalAccess[]                  @relation("PortalAccessUpdatedBy")
+  portalAccesses                                         PortalAccess[]                  @relation("PortalAccessUser")
+  portalInvitesSentBy                                    PortalInvite[]                  @relation("PortalInviteSentBy")
+  portalInvites                                          PortalInvite[]                  @relation("PortalInviteUser")
+  protocolHandoffsInitiated                              RearingProtocolAssignment[]     @relation("ProtocolHandoffInitiator")
+  protocolHandoffsReceived                               RearingProtocolAssignment[]     @relation("ProtocolHandoffRecipient")
+  registrySyncLogs                                       RegistrySyncLog[]               @relation("RegistrySyncLogInitiator")
+  registryVerifications                                  RegistryVerification[]          @relation("RegistryVerificationVerifier")
+  ResourceAssignment_ResourceAssignment_assignedByToUser ResourceAssignment[]            @relation("ResourceAssignment_assignedByToUser")
+  ResourceAssignment_ResourceAssignment_userIdToUser     ResourceAssignment[]            @relation("ResourceAssignment_userIdToUser")
+  Session                                                Session[]
+  Task                                                   Task[]
+  tenantMemberships                                      TenantMembership[]
+  tosAcceptances                                         TosAcceptance[]
+  defaultTenant                                          Tenant?                         @relation(fields: [defaultTenantId], references: [id])
+  party                                                  Party?                          @relation("UserParty", fields: [partyId], references: [id])
+  entitlements                                           UserEntitlement[]
+  UserHelpPreference                                     UserHelpPreference?
+  notificationPreferences                                UserNotificationPreferences?
+  VerificationToken                                      VerificationToken[]
+  devices                                                Device[]
+  refreshTokens                                          RefreshToken[]
 
   @@index([partyId])
   @@index([defaultTenantId])
@@ -257,7 +259,10 @@ model Tenant {
   buyerTasks                      BuyerTask[]
   Campaign                        Campaign[]
   CampaignAttribution             CampaignAttribution[]
+  ClientHealthRecord              ClientHealthRecord[]
+  ClientVaccinationRecord         ClientVaccinationRecord[]
   competitionEntries              CompetitionEntry[]
+  ComplianceRequirement           ComplianceRequirement[]
   contacts                        Contact[]
   contactChangeRequests           ContactChangeRequest[]
   Contract                        Contract[]
@@ -338,6 +343,7 @@ model Tenant {
   registryConnections             RegistryConnection[]
   registrySyncLogs                RegistrySyncLog[]
   reproductiveCycles              ReproductiveCycle[]
+  ResourceAssignment              ResourceAssignment[]
   schedulingAvailabilityBlocks    SchedulingAvailabilityBlock[]
   schedulingBookings              SchedulingBooking[]
   schedulingEventTemplates        SchedulingEventTemplate[]
@@ -818,6 +824,8 @@ model Party {
   breedingBookings         BreedingBooking[]
   breedingPlanBuyers       BreedingPlanBuyer[]        @relation("BreedingPlanBuyerParty")
   buyer                    Buyer?                     @relation("BuyerParty")
+  ClientHealthRecord       ClientHealthRecord[]
+  ClientVaccinationRecord  ClientVaccinationRecord[]
   contact                  Contact?                   @relation("ContactParty")
   contractParties          ContractParty[]            @relation("ContractPartyRole")
   Document                 Document[]
@@ -2481,6 +2489,9 @@ model Offspring {
   rearingOverrides         AssignmentOffspringOverride[]
   Attachments              Attachment[]
   CampaignAttribution      CampaignAttribution[]
+  ClientHealthRecord       ClientHealthRecord[]
+  ClientVaccinationRecord  ClientVaccinationRecord[]
+  ComplianceRequirement    ComplianceRequirement[]
   Contracts                Contract[]
   Documents                Document[]
   HealthLogs               HealthEvent[]
@@ -3436,50 +3447,52 @@ model HealthEvent {
 }
 
 model Document {
-  id                 Int                        @id @default(autoincrement())
-  tenantId           Int
-  scope              DocumentScope
-  kind               DocumentKind               @default(generic)
-  animalId           Int?
-  ownershipChangeId  Int?
-  offspringId        Int?
-  invoiceId          Int?                       @unique
-  contractId         Int?
-  title              String
-  storageKey         String?
-  externalUrl        String?
-  mimeType           String?
-  bytes              Int?
-  sha256             String?
-  data               Json?
-  visibility         DocVisibility?             @default(PRIVATE)
-  status             DocStatus?                 @default(PLACEHOLDER)
-  sizeBytes          Int?
-  originalFileName   String?
-  storageProvider    String?
-  bucket             String?
-  objectKey          String?
-  url                String?
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
-  watermarkEnabled   Boolean                    @default(false)
-  partyId            Int?
-  breedingPlanId     Int?
-  titleLinks         AnimalTitleDocument[]
-  traitEntries       AnimalTraitEntry[]
-  traitValueLinks    AnimalTraitValueDocument[]
-  competitionLinks   CompetitionEntryDocument[]
-  animal             Animal?                    @relation(fields: [animalId], references: [id])
-  BreedingPlan       BreedingPlan?              @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  contract           Contract?                  @relation(fields: [contractId], references: [id])
-  invoice            Invoice?                   @relation(fields: [invoiceId], references: [id])
-  offspring          Offspring?                 @relation(fields: [offspringId], references: [id])
-  ownershipChange    AnimalOwnershipChange?     @relation(fields: [ownershipChangeId], references: [id])
-  Party              Party?                     @relation(fields: [partyId], references: [id], onUpdate: NoAction)
-  tenant             Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  bundleItems        DocumentBundleItem[]
-  TagAssignment      TagAssignment[]
-  vaccinationRecords VaccinationRecord[]
+  id                      Int                        @id @default(autoincrement())
+  tenantId                Int
+  scope                   DocumentScope
+  kind                    DocumentKind               @default(generic)
+  animalId                Int?
+  ownershipChangeId       Int?
+  offspringId             Int?
+  invoiceId               Int?                       @unique
+  contractId              Int?
+  title                   String
+  storageKey              String?
+  externalUrl             String?
+  mimeType                String?
+  bytes                   Int?
+  sha256                  String?
+  data                    Json?
+  visibility              DocVisibility?             @default(PRIVATE)
+  status                  DocStatus?                 @default(PLACEHOLDER)
+  sizeBytes               Int?
+  originalFileName        String?
+  storageProvider         String?
+  bucket                  String?
+  objectKey               String?
+  url                     String?
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+  watermarkEnabled        Boolean                    @default(false)
+  partyId                 Int?
+  breedingPlanId          Int?
+  titleLinks              AnimalTitleDocument[]
+  traitEntries            AnimalTraitEntry[]
+  traitValueLinks         AnimalTraitValueDocument[]
+  ClientHealthRecord      ClientHealthRecord[]
+  ClientVaccinationRecord ClientVaccinationRecord[]
+  competitionLinks        CompetitionEntryDocument[]
+  animal                  Animal?                    @relation(fields: [animalId], references: [id])
+  BreedingPlan            BreedingPlan?              @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  contract                Contract?                  @relation(fields: [contractId], references: [id])
+  invoice                 Invoice?                   @relation(fields: [invoiceId], references: [id])
+  offspring               Offspring?                 @relation(fields: [offspringId], references: [id])
+  ownershipChange         AnimalOwnershipChange?     @relation(fields: [ownershipChangeId], references: [id])
+  Party                   Party?                     @relation(fields: [partyId], references: [id], onUpdate: NoAction)
+  tenant                  Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bundleItems             DocumentBundleItem[]
+  TagAssignment           TagAssignment[]
+  vaccinationRecords      VaccinationRecord[]
 
   @@index([tenantId])
   @@index([scope, offspringId])
@@ -3595,37 +3608,38 @@ model ContractTemplate {
 }
 
 model Contract {
-  id                 Int               @id @default(autoincrement())
-  tenantId           Int
-  templateId         Int?
-  offspringId        Int?
-  invoiceId          Int?              @unique
-  title              String
-  status             ContractStatus    @default(draft)
-  provider           SignatureProvider @default(internal)
-  providerEnvelopeId String?
-  providerDocId      String?
-  issuedAt           DateTime?
-  signedAt           DateTime?
-  voidedAt           DateTime?
-  expiresAt          DateTime?
-  data               Json?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  animalId           Int?
-  waitlistEntryId    Int?
-  breedingPlanId     Int?
-  animal             Animal?           @relation("ContractAnimal", fields: [animalId], references: [id])
-  BreedingPlan       BreedingPlan?     @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  invoice            Invoice?          @relation(fields: [invoiceId], references: [id])
-  offspring          Offspring?        @relation(fields: [offspringId], references: [id])
-  template           ContractTemplate? @relation(fields: [templateId], references: [id])
-  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waitlistEntry      WaitlistEntry?    @relation(fields: [waitlistEntryId], references: [id])
-  content            ContractContent?
-  parties            ContractParty[]
-  documents          Document[]
-  events             SignatureEvent[]
+  id                    Int                     @id @default(autoincrement())
+  tenantId              Int
+  templateId            Int?
+  offspringId           Int?
+  invoiceId             Int?                    @unique
+  title                 String
+  status                ContractStatus          @default(draft)
+  provider              SignatureProvider       @default(internal)
+  providerEnvelopeId    String?
+  providerDocId         String?
+  issuedAt              DateTime?
+  signedAt              DateTime?
+  voidedAt              DateTime?
+  expiresAt             DateTime?
+  data                  Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  animalId              Int?
+  waitlistEntryId       Int?
+  breedingPlanId        Int?
+  ComplianceRequirement ComplianceRequirement[]
+  animal                Animal?                 @relation("ContractAnimal", fields: [animalId], references: [id])
+  BreedingPlan          BreedingPlan?           @relation(fields: [breedingPlanId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  invoice               Invoice?                @relation(fields: [invoiceId], references: [id])
+  offspring             Offspring?              @relation(fields: [offspringId], references: [id])
+  template              ContractTemplate?       @relation(fields: [templateId], references: [id])
+  tenant                Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  waitlistEntry         WaitlistEntry?          @relation(fields: [waitlistEntryId], references: [id])
+  content               ContractContent?
+  parties               ContractParty[]
+  documents             Document[]
+  events                SignatureEvent[]
 
   @@index([tenantId])
   @@index([offspringId])
@@ -7139,6 +7153,115 @@ model HelpConversation {
   @@index([userId])
   @@schema("public")
 }
+
+model ResourceAssignment {
+  id                                       Int       @id @default(autoincrement())
+  tenantId                                 Int
+  userId                                   String
+  resourceType                             String
+  resourceId                               Int
+  assignmentRole                           String
+  assignedBy                               String?
+  startDate                                DateTime? @db.Date
+  endDate                                  DateTime? @db.Date
+  createdAt                                DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                                DateTime  @default(now()) @db.Timestamptz(6)
+  User_ResourceAssignment_assignedByToUser User?     @relation("ResourceAssignment_assignedByToUser", fields: [assignedBy], references: [id])
+  Tenant                                   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  User_ResourceAssignment_userIdToUser     User      @relation("ResourceAssignment_userIdToUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, resourceType, resourceId, assignmentRole], map: "ResourceAssignment_unique_assignment")
+  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId, userId])
+  @@schema("public")
+}
+
+model ClientVaccinationRecord {
+  id                Int       @id @default(autoincrement())
+  tenantId          Int
+  offspringId       Int
+  contactId         Int
+  protocolKey       String    @db.VarChar(100)
+  administeredAt    DateTime  @db.Timestamptz(6)
+  expiresAt         DateTime? @db.Timestamptz(6)
+  veterinarian      String?   @db.VarChar(255)
+  clinic            String?   @db.VarChar(255)
+  batchLotNumber    String?   @db.VarChar(100)
+  notes             String?
+  documentId        Int?
+  sharedWithBreeder Boolean   @default(true)
+  sharedAt          DateTime? @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @db.Timestamptz(6)
+  Party             Party     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  Document          Document? @relation(fields: [documentId], references: [id])
+  Offspring         Offspring @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  Tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([offspringId, protocolKey], map: "idx_client_vaccination_record_offspring_protocol")
+  @@index([tenantId, offspringId], map: "idx_client_vaccination_record_tenant_offspring")
+  @@schema("public")
+}
+
+model ClientHealthRecord {
+  id                    Int                     @id @default(autoincrement())
+  tenantId              Int
+  offspringId           Int
+  contactId             Int
+  recordType            String                  @db.VarChar(50)
+  occurredAt            DateTime                @db.Timestamptz(6)
+  vetClinic             String?                 @db.VarChar(255)
+  veterinarian          String?                 @db.VarChar(255)
+  weight                Decimal?                @db.Decimal(10, 2)
+  weightUnit            String?                 @db.VarChar(10)
+  findings              String?
+  recommendations       String?
+  documentId            Int?
+  sharedWithBreeder     Boolean                 @default(true)
+  sharedAt              DateTime?               @db.Timestamptz(6)
+  createdAt             DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime                @default(now()) @db.Timestamptz(6)
+  Party                 Party                   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  Document              Document?               @relation(fields: [documentId], references: [id])
+  Offspring             Offspring               @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  Tenant                Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ComplianceRequirement ComplianceRequirement[]
+
+  @@index([contactId], map: "idx_client_health_record_contact")
+  @@index([tenantId, offspringId], map: "idx_client_health_record_tenant_offspring")
+  @@index([recordType], map: "idx_client_health_record_type")
+  @@schema("public")
+}
+
+model ComplianceRequirement {
+  id                 Int                 @id @default(autoincrement())
+  tenantId           Int
+  offspringId        Int
+  contractId         Int?
+  type               String              @db.VarChar(50)
+  description        String
+  dueBy              DateTime?           @db.Timestamptz(6)
+  reminderDays       Int[]               @default([30, 7, 1])
+  lastReminderSentAt DateTime?           @db.Timestamptz(6)
+  status             String              @default("pending") @db.VarChar(20)
+  fulfilledAt        DateTime?           @db.Timestamptz(6)
+  proofRecordId      Int?
+  verifiedByBreeder  Boolean             @default(false)
+  verifiedAt         DateTime?           @db.Timestamptz(6)
+  verifiedBy         String?             @db.VarChar(255)
+  rejectionReason    String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime            @default(now()) @db.Timestamptz(6)
+  Contract           Contract?           @relation(fields: [contractId], references: [id])
+  Offspring          Offspring           @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  ClientHealthRecord ClientHealthRecord? @relation(fields: [proofRecordId], references: [id])
+  Tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([dueBy], map: "idx_compliance_requirement_due")
+  @@index([status], map: "idx_compliance_requirement_status")
+  @@index([tenantId, offspringId], map: "idx_compliance_requirement_tenant_offspring")
+  @@schema("public")
+}
 enum PartyType {
   CONTACT
   ORGANIZATION
@@ -7281,6 +7404,10 @@ enum TenantRole {
   MEMBER
   BILLING
   VIEWER
+  MANAGER
+  BREEDING_STAFF
+  BARN_STAFF
+  FINANCE
 
   @@schema("public")
 }
@@ -8226,6 +8353,13 @@ enum NotificationType {
   breeding_data_agreement_request
   breeding_data_agreement_approved
   breeding_data_agreement_rejected
+  compliance_reminder_30d
+  compliance_reminder_7d
+  compliance_reminder_1d
+  compliance_overdue
+  compliance_fulfilled
+  compliance_verified
+  compliance_rejected
 
   @@schema("public")
 }
