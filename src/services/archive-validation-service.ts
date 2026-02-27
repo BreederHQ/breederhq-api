@@ -341,19 +341,14 @@ export async function checkArchiveReadiness(
         : `Count mismatch: recorded ${plan.countPlaced} placed but found ${actualPlacedCount} placed (${keptCount} kept)`
     );
   } else {
-    // No offspring - most checks pass by default
+    // No offspring - placement checks are not applicable
     addCheck(
       "UNPLACED_OFFSPRING",
       "offspring",
       true,
       "No offspring linked to this plan"
     );
-    addCheck(
-      "MISSING_PLACEMENT_COMPLETED_DATE",
-      "group",
-      true,
-      "No offspring linked to this plan"
-    );
+    // MISSING_PLACEMENT_COMPLETED_DATE is not applicable when there are no offspring
   }
 
   // 6. PENDING_WAITLIST_ENTRIES - All waitlist entries must be resolved

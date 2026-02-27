@@ -5106,7 +5106,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id: true,
         planId: true,
         indicatesOvulationDate: true,
-        anchoredPlans: { select: { id: true } },
+        anchoredPlans: { select: { id: true, species: true } },
       },
     });
 
@@ -5146,10 +5146,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // If planId provided, verify it exists and belongs to tenant
+    let planSpecies: string | null = null;
     if (b.planId) {
       const plan = await prisma.breedingPlan.findFirst({
         where: { id: b.planId, tenantId },
-        select: { id: true, damId: true },
+        select: { id: true, damId: true, species: true },
       });
       if (!plan) return reply.code(404).send({ error: "breeding_plan_not_found" });
 
@@ -5157,7 +5158,26 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (plan.damId !== animalId) {
         return reply.code(400).send({ error: "animal_not_dam_on_plan" });
       }
+      planSpecies = plan.species;
     }
+
+    // Inline gestation defaults (mirrors SPECIES_DEFAULTS in breeding.ts)
+    const GESTATION_DEFAULTS: Record<string, { gestationDays: number; placementStartWeeksDefault: number }> = {
+      DOG: { gestationDays: 63, placementStartWeeksDefault: 8 },
+      CAT: { gestationDays: 63, placementStartWeeksDefault: 12 },
+      HORSE: { gestationDays: 340, placementStartWeeksDefault: 24 },
+      RABBIT: { gestationDays: 31, placementStartWeeksDefault: 8 },
+      GOAT: { gestationDays: 150, placementStartWeeksDefault: 8 },
+      SHEEP: { gestationDays: 147, placementStartWeeksDefault: 8 },
+    };
+    const computeLockedDatesFromOvulation = (ovulationDate: Date, species: string | null) => {
+      const d = GESTATION_DEFAULTS[String(species ?? "DOG").toUpperCase()] ?? GESTATION_DEFAULTS.DOG;
+      const lockedDueDate = new Date(ovulationDate);
+      lockedDueDate.setUTCDate(lockedDueDate.getUTCDate() + d.gestationDays);
+      const lockedPlacementStartDate = new Date(lockedDueDate);
+      lockedPlacementStartDate.setUTCDate(lockedPlacementStartDate.getUTCDate() + d.placementStartWeeksDefault * 7);
+      return { lockedOvulationDate: ovulationDate, lockedDueDate, lockedPlacementStartDate };
+    };
 
     try {
       // Update the test result
@@ -5184,6 +5204,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (existingTestResult.anchoredPlans && existingTestResult.anchoredPlans.length > 0) {
         // Update all anchored breeding plans with the new ovulation date
         for (const anchoredPlan of existingTestResult.anchoredPlans) {
+          const lockedDates = indicatesOvulationDate
+            ? computeLockedDatesFromOvulation(indicatesOvulationDate, anchoredPlan.species)
+            : { lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null };
           await prisma.breedingPlan.update({
             where: { id: anchoredPlan.id },
             data: {
@@ -5191,12 +5214,18 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
               ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
               ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
+              lockedOvulationDate: lockedDates.lockedOvulationDate,
+              lockedDueDate: lockedDates.lockedDueDate,
+              lockedPlacementStartDate: lockedDates.lockedPlacementStartDate,
             },
           });
         }
       } else if (b.planId && (indicatesOvulationDate || existingTestResult.indicatesOvulationDate)) {
         // If this exam previously anchored a plan (but anchoredPlans relation wasn't populated)
         // OR now indicates ovulation — sync the plan in both directions (set or clear).
+        const lockedDates = indicatesOvulationDate
+          ? computeLockedDatesFromOvulation(indicatesOvulationDate, planSpecies)
+          : { lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null };
         await prisma.breedingPlan.update({
           where: { id: b.planId },
           data: {
@@ -5204,6 +5233,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
             ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
             ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
+            lockedOvulationDate: lockedDates.lockedOvulationDate,
+            lockedDueDate: lockedDates.lockedDueDate,
+            lockedPlacementStartDate: lockedDates.lockedPlacementStartDate,
           },
         });
       }

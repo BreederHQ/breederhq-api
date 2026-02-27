@@ -300,10 +300,10 @@ export async function autoAdvancePlanIfReady(
   const currentIdx = PLAN_STATUS_ORDER.indexOf(current);
   if (currentIdx < 0) return null;
 
-  // BORN→WEANED requires explicit user action (advance-lifecycle call).
-  // Skipping auto-advance here prevents a race where the weanedDate PATCH would
-  // auto-advance to WEANED before the frontend's advance-lifecycle call fires.
-  if (current === "BORN") return null;
+  // BORN→WEANED, WEANED→PLACEMENT, and PLACEMENT→PLAN_COMPLETE require explicit user action.
+  // Skipping auto-advance here prevents a date PATCH (e.g. placementStartDateActual) from
+  // silently advancing the plan before the frontend's advance-lifecycle call fires.
+  if (current === "BORN" || current === "WEANED" || current === "PLACEMENT") return null;
 
   const nextStatus = PLAN_STATUS_ORDER[currentIdx + 1];
   if (!nextStatus || current === "DISSOLVED" || current === "PLAN_COMPLETE") {
@@ -367,12 +367,8 @@ function validatePlanAdvanceCondition(
     }
 
     case "WEANED→PLACEMENT":
-      if (!plan.placementStartDateActual) {
-        throw new LifecycleError(
-          "PLACEMENT_START_REQUIRED",
-          "placementStartDateActual must be set to advance to PLACEMENT",
-        );
-      }
+      // No date precondition — placementStartDateActual is recorded *within* the PLACEMENT phase
+      // (while at PLACEMENT_STARTED display state), not before entering it.
       break;
 
     case "PLACEMENT→PLAN_COMPLETE": {

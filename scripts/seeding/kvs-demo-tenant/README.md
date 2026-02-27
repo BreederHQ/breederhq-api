@@ -96,6 +96,48 @@ npm run db:dev:seed:kvs -- --force
 
 ---
 
+## Supplement Seeder (Video Demo Data)
+
+The main seed creates the core tenant data (animals, plans, genetics, etc.). The **supplement seeder** adds demo-specific data required for the video walkthrough that the main seed doesn't cover.
+
+```bash
+# Run from breederhq-api root (AFTER main seed)
+node scripts/development/run-with-env.js .env.dev.migrate \
+  npx tsx scripts/seeding/kvs-demo-tenant/seed-kvs-demo-supplements.ts
+```
+
+### What the Supplement Creates
+
+| # | Supplement | Target Animals | Records Created |
+|---|-----------|----------------|-----------------|
+| 1 | CYCLE-phase breeding plan | Sophie x Good Better Best | 1 plan + 4 test results (2 P4, 2 follicle) |
+| 2 | Cycle start dates (heat history) | Annie (6 dates), Sophie (6 dates) | 12 ReproductiveCycle records |
+| 3 | Vaccination records | Kennedy (7), Annie (5) | 12 VaccinationRecord entries |
+| 4 | Foaling check history | Raven (via her breeding plan) | 5 FoalingCheck records (progressive) |
+| 5 | Health trait values | Kennedy, Annie, VS Code Red | 5 AnimalTraitValue entries (Coggins + BSE) |
+
+### Why These Are Separate
+
+The main seed focuses on animals, pedigrees, plans, and genetics. The supplements add **clinical/operational** data needed for specific demo sections:
+
+- **Section 2 (Cycle Tab)**: Requires cycle history dates for Annie and Sophie
+- **Section 2 (Breeding Plan)**: Requires a plan in CYCLE phase with P4/follicle test results
+- **Section 3 (Health Tab)**: Requires vaccination records with compliance colors + Coggins/BSE traits
+- **Section 4 (Pre-Foaling Monitor)**: Requires progressive foaling check history for Raven
+
+### Idempotency
+
+The supplement seeder is fully idempotent — running it multiple times safely skips existing records.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `kvs-demo-supplements.ts` | Pure data definitions (no Prisma calls) |
+| `seed-kvs-demo-supplements.ts` | Orchestrator — reads data, creates DB records |
+
+---
+
 ## Demo Video Talking Points
 
 1. **Open Animals list** → "These are Katie's actual horses — VS Code Red, Denver, all 176+ animals in her program"

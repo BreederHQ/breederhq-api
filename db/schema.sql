@@ -1942,7 +1942,8 @@ CREATE TYPE public."OffspringKeeperIntent" AS ENUM (
 
 CREATE TYPE public."OffspringLifeState" AS ENUM (
     'ALIVE',
-    'DECEASED'
+    'DECEASED',
+    'STILLBORN'
 );
 
 
@@ -7386,6 +7387,52 @@ ALTER SEQUENCE public."Contract_id_seq" OWNED BY public."Contract".id;
 
 
 --
+-- Name: CopilotQualityReport; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."CopilotQualityReport" (
+    id integer NOT NULL,
+    "reportDate" date NOT NULL,
+    "generatedAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "periodStart" timestamp(3) without time zone NOT NULL,
+    "periodEnd" timestamp(3) without time zone NOT NULL,
+    "totalQueries" integer DEFAULT 0 NOT NULL,
+    "ratedCount" integer DEFAULT 0 NOT NULL,
+    "thumbsUpCount" integer DEFAULT 0 NOT NULL,
+    "thumbsDownCount" integer DEFAULT 0 NOT NULL,
+    "satisfactionRate" double precision,
+    "topQueryTopics" jsonb DEFAULT '[]'::jsonb,
+    "failurePatterns" jsonb DEFAULT '[]'::jsonb,
+    "aiAnalysis" text,
+    "queriesSampled" jsonb DEFAULT '[]'::jsonb,
+    "modelUsed" text,
+    "tokenCount" integer DEFAULT 0 NOT NULL,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: CopilotQualityReport_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."CopilotQualityReport_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: CopilotQualityReport_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."CopilotQualityReport_id_seq" OWNED BY public."CopilotQualityReport".id;
+
+
+--
 -- Name: CrossTenantAnimalLink; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8793,7 +8840,8 @@ CREATE TABLE public."HelpQueryLog" (
     "modelUsed" text DEFAULT 'claude-haiku-4-5-20251001'::text NOT NULL,
     "tokenCount" integer,
     "latencyMs" integer,
-    "createdAt" timestamp with time zone DEFAULT now() NOT NULL
+    "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+    mode text DEFAULT 'assistant'::text NOT NULL
 );
 
 
@@ -13013,6 +13061,54 @@ ALTER SEQUENCE public."WatermarkedAsset_id_seq" OWNED BY public."WatermarkedAsse
 
 
 --
+-- Name: WeanCheck; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."WeanCheck" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "breedingPlanId" integer NOT NULL,
+    "weaningMethod" text,
+    "stressRating" text,
+    "behaviorSigns" text[] DEFAULT '{}'::text[],
+    "daysToSettle" integer,
+    "vetAssessmentDone" boolean,
+    "vetName" text,
+    "vetNotes" text,
+    "vaccinationsUpToDate" boolean,
+    "dewormingDone" boolean,
+    "cogginsPulled" boolean,
+    "eatingHayIndependently" boolean,
+    "eatingGrainIndependently" boolean,
+    "supplementStarted" text,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "animalId" integer
+);
+
+
+--
+-- Name: WeanCheck_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."WeanCheck_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: WeanCheck_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."WeanCheck_id_seq" OWNED BY public."WeanCheck".id;
+
+
+--
 -- Name: _prisma_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14017,6 +14113,13 @@ ALTER TABLE ONLY public."ContractTemplate" ALTER COLUMN id SET DEFAULT nextval('
 
 
 --
+-- Name: CopilotQualityReport id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."CopilotQualityReport" ALTER COLUMN id SET DEFAULT nextval('public."CopilotQualityReport_id_seq"'::regclass);
+
+
+--
 -- Name: CrossTenantAnimalLink id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -14913,6 +15016,13 @@ ALTER TABLE ONLY public."WatermarkedAsset" ALTER COLUMN id SET DEFAULT nextval('
 
 
 --
+-- Name: WeanCheck id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck" ALTER COLUMN id SET DEFAULT nextval('public."WeanCheck_id_seq"'::regclass);
+
+
+--
 -- Name: animal_loci id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -15708,6 +15818,14 @@ ALTER TABLE ONLY public."ContractTemplate"
 
 ALTER TABLE ONLY public."Contract"
     ADD CONSTRAINT "Contract_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: CopilotQualityReport CopilotQualityReport_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."CopilotQualityReport"
+    ADD CONSTRAINT "CopilotQualityReport_pkey" PRIMARY KEY (id);
 
 
 --
@@ -16860,6 +16978,22 @@ ALTER TABLE ONLY public."WaitlistEntry"
 
 ALTER TABLE ONLY public."WatermarkedAsset"
     ADD CONSTRAINT "WatermarkedAsset_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: WeanCheck WeanCheck_animalId_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck"
+    ADD CONSTRAINT "WeanCheck_animalId_key" UNIQUE ("animalId");
+
+
+--
+-- Name: WeanCheck WeanCheck_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck"
+    ADD CONSTRAINT "WeanCheck_pkey" PRIMARY KEY (id);
 
 
 --
@@ -19780,6 +19914,20 @@ CREATE INDEX "Contract_waitlistEntryId_idx" ON public."Contract" USING btree ("w
 
 
 --
+-- Name: CopilotQualityReport_generatedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "CopilotQualityReport_generatedAt_idx" ON public."CopilotQualityReport" USING btree ("generatedAt");
+
+
+--
+-- Name: CopilotQualityReport_reportDate_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "CopilotQualityReport_reportDate_key" ON public."CopilotQualityReport" USING btree ("reportDate");
+
+
+--
 -- Name: CrossTenantAnimalLink_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20680,6 +20828,13 @@ CREATE INDEX "HelpConversation_updatedAt_idx" ON public."HelpConversation" USING
 --
 
 CREATE INDEX "HelpConversation_userId_idx" ON public."HelpConversation" USING btree ("userId");
+
+
+--
+-- Name: HelpQueryLog_mode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "HelpQueryLog_mode_idx" ON public."HelpQueryLog" USING btree (mode);
 
 
 --
@@ -23473,6 +23628,27 @@ CREATE INDEX "WatermarkedAsset_expiresAt_idx" ON public."WatermarkedAsset" USING
 --
 
 CREATE UNIQUE INDEX "WatermarkedAsset_tenantId_originalKey_settingsHash_key" ON public."WatermarkedAsset" USING btree ("tenantId", "originalKey", "settingsHash");
+
+
+--
+-- Name: WeanCheck_animalId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "WeanCheck_animalId_idx" ON public."WeanCheck" USING btree ("animalId");
+
+
+--
+-- Name: WeanCheck_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "WeanCheck_breedingPlanId_idx" ON public."WeanCheck" USING btree ("breedingPlanId");
+
+
+--
+-- Name: WeanCheck_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "WeanCheck_tenantId_idx" ON public."WeanCheck" USING btree ("tenantId");
 
 
 --
@@ -28321,6 +28497,30 @@ ALTER TABLE ONLY public."WatermarkedAsset"
 
 
 --
+-- Name: WeanCheck WeanCheck_animalId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck"
+    ADD CONSTRAINT "WeanCheck_animalId_fkey" FOREIGN KEY ("animalId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: WeanCheck WeanCheck_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck"
+    ADD CONSTRAINT "WeanCheck_breedingPlanId_fkey" FOREIGN KEY ("breedingPlanId") REFERENCES public."BreedingPlan"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: WeanCheck WeanCheck_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."WeanCheck"
+    ADD CONSTRAINT "WeanCheck_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: animal_loci animal_loci_animal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28463,4 +28663,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260226144351'),
     ('20260226144817'),
     ('20260226150822'),
-    ('20260226151913');
+    ('20260226151913'),
+    ('20260226222606'),
+    ('20260226222745'),
+    ('20260227192732'),
+    ('20260227202724'),
+    ('20260227205859');

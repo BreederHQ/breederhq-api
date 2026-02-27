@@ -201,7 +201,7 @@ export function summarizeOffspringStates(offspring: any[]) {
     const intent = o.keeperIntent ?? null;
 
     if (life === OffspringLifeState.ALIVE) alive += 1;
-    if (life === OffspringLifeState.DECEASED) deceased += 1;
+    if (life === OffspringLifeState.DECEASED || life === OffspringLifeState.STILLBORN) deceased += 1;
 
     switch (placement) {
       case OffspringPlacementState.UNASSIGNED:
@@ -325,25 +325,31 @@ export function normalizeOffspringState(
   const bornAt =
     patch.bornAt === undefined ? current?.bornAt ?? null : (patch.bornAt as Date | null);
 
-  // Clearing diedAt while still DECEASED is illegal to avoid silent resurrection.
+  // Clearing diedAt while still DECEASED or STILLBORN is illegal to avoid silent resurrection.
   if ("diedAt" in patch && patch.diedAt === null) {
     const finalLifeState = patch.lifeState ?? current?.lifeState ?? OffspringLifeState.ALIVE;
-    if (finalLifeState === OffspringLifeState.DECEASED) {
-      throw new Error("cannot clear diedAt while lifeState is DECEASED");
+    if (finalLifeState === OffspringLifeState.DECEASED || finalLifeState === OffspringLifeState.STILLBORN) {
+      throw new Error("cannot clear diedAt while offspring is deceased");
     }
   }
 
-  // A death timestamp always forces the DECEASED lifeState.
-  if (nextDiedAt) {
+  // A death timestamp always forces the DECEASED lifeState (but preserves STILLBORN).
+  if (nextDiedAt && nextLifeState !== OffspringLifeState.STILLBORN) {
     nextLifeState = OffspringLifeState.DECEASED;
   }
+  // DECEASED without diedAt: default to now. STILLBORN without diedAt: use birth date if available.
   if (nextLifeState === OffspringLifeState.DECEASED && !nextDiedAt) {
     nextDiedAt = current?.diedAt ?? new Date();
   }
+  if (nextLifeState === OffspringLifeState.STILLBORN && !nextDiedAt) {
+    nextDiedAt = (bornAt as Date | null) ?? current?.diedAt ?? new Date();
+  }
 
-  // Once deceased, block any placement transitions or timestamp edits.
+  // Once deceased or stillborn, block any placement transitions or timestamp edits.
+  const isDeadLifeState =
+    nextLifeState === OffspringLifeState.DECEASED || nextLifeState === OffspringLifeState.STILLBORN;
   const placementChangedWhileDead =
-    nextLifeState === OffspringLifeState.DECEASED &&
+    isDeadLifeState &&
     (("placementState" in patch &&
       (patch.placementState as OffspringPlacementState | undefined) !==
       (current?.placementState ?? OffspringPlacementState.UNASSIGNED)) ||
@@ -360,7 +366,7 @@ export function normalizeOffspringState(
 
   // placedAt drives PLACED and PLACED requires a timestamp.
   if (nextPlacedAt) {
-    if (nextLifeState === OffspringLifeState.DECEASED) {
+    if (nextLifeState === OffspringLifeState.DECEASED || nextLifeState === OffspringLifeState.STILLBORN) {
       throw new Error("cannot place a deceased offspring");
     }
     nextPlacementState = OffspringPlacementState.PLACED;
@@ -369,7 +375,7 @@ export function normalizeOffspringState(
     if (!nextPlacedAt) {
       throw new Error("placedAt is required when placementState is PLACED");
     }
-    if (nextLifeState === OffspringLifeState.DECEASED) {
+    if (nextLifeState === OffspringLifeState.DECEASED || nextLifeState === OffspringLifeState.STILLBORN) {
       throw new Error("cannot place a deceased offspring");
     }
   }
@@ -383,7 +389,8 @@ export function normalizeOffspringState(
   if (
     buyerAssigned &&
     nextPlacementState !== OffspringPlacementState.PLACED &&
-    nextLifeState !== OffspringLifeState.DECEASED
+    nextLifeState !== OffspringLifeState.DECEASED &&
+    nextLifeState !== OffspringLifeState.STILLBORN
   ) {
     nextPlacementState = OffspringPlacementState.RESERVED;
   }
@@ -722,7 +729,11 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }
 
-      const normalizedState = normalizeOffspringState(null, { bornAt });
+      const statePatchBatch: OffspringStatePatch = { bornAt };
+      if (ind.lifeState === OffspringLifeState.STILLBORN) {
+        statePatchBatch.lifeState = OffspringLifeState.STILLBORN;
+      }
+      const normalizedState = normalizeOffspringState(null, statePatchBatch);
 
       return prisma.offspring.create({
         data: {
@@ -1138,7 +1149,7 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (existing.paidInFullAt || existing.depositCents) blockers.hasPayments = true;
     if (existing.contractId || existing.contractSignedAt) blockers.hasContract = true;
     if (existing.promotedAnimalId) blockers.isPromoted = true;
-    if (existing.lifeState === "DECEASED" || existing.diedAt) blockers.isDeceased = true;
+    if (existing.lifeState === "DECEASED" || existing.lifeState === "STILLBORN" || existing.diedAt) blockers.isDeceased = true;
 
     // Check for related records
     const [healthEventsCount, documentsCount, invoicesCount] = await Promise.all([
