@@ -569,6 +569,43 @@ export default async function helpRoutes(
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // GET /help/admin/copilot/stats — AI Copilot analytics (super-admin only)
+  // Returns live metrics + recent quality reports for the admin panel.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/help/admin/copilot/stats", async (req, reply) => {
+    if (!isAdminTokenRequest(req)) {
+      const userId = getActorId(req);
+      if (!userId) return reply.code(401).send({ error: "unauthorized" });
+      const actor = await prisma.user.findUnique({ where: { id: userId }, select: { isSuperAdmin: true } });
+      if (!actor?.isSuperAdmin) return reply.code(403).send({ error: "forbidden" });
+    }
+
+    const { getCopilotAnalyticsStats } = await import("../services/copilot/copilot-analytics-service.js");
+    const stats = await getCopilotAnalyticsStats();
+    return reply.send(stats);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POST /help/admin/copilot/quality-report — trigger a manual quality report
+  // Generates a report for yesterday (or specified date). Idempotent.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post("/help/admin/copilot/quality-report", async (req, reply) => {
+    if (!isAdminTokenRequest(req)) {
+      const userId = getActorId(req);
+      if (!userId) return reply.code(401).send({ error: "unauthorized" });
+      const actor = await prisma.user.findUnique({ where: { id: userId }, select: { isSuperAdmin: true } });
+      if (!actor?.isSuperAdmin) return reply.code(403).send({ error: "forbidden" });
+    }
+
+    const { date } = req.body as { date?: string };
+    const targetDate = date ? new Date(date) : undefined;
+
+    const { generateDailyCopilotQualityReport } = await import("../services/copilot/copilot-analytics-service.js");
+    const report = await generateDailyCopilotQualityReport(targetDate);
+    return reply.send(report);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // POST /help/index — index help articles (super-admin only)
   // Accepts pre-parsed article data from CI/CD pipeline.
   // ─────────────────────────────────────────────────────────────────────────

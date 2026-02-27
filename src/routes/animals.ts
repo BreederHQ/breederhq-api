@@ -5194,15 +5194,16 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           });
         }
-      } else if (indicatesOvulationDate && b.planId) {
-        // If this test now indicates ovulation and is linked to a breeding plan, update the plan
+      } else if (b.planId && (indicatesOvulationDate || existingTestResult.indicatesOvulationDate)) {
+        // If this exam previously anchored a plan (but anchoredPlans relation wasn't populated)
+        // OR now indicates ovulation — sync the plan in both directions (set or clear).
         await prisma.breedingPlan.update({
           where: { id: b.planId },
           data: {
             ovulationConfirmed: indicatesOvulationDate,
-            ovulationConfirmedMethod: ovulationMethodFromKind(b.kind),
-            ovulationTestResultId: testResultId,
-            ovulationConfidence: "HIGH",
+            ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
+            ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
+            ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
           },
         });
       }

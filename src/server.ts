@@ -684,6 +684,7 @@ import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-healt
 import { startEmailRetryJob, stopEmailRetryJob } from "./jobs/email-retry.js"; // Email retry cron job (every 5 min)
 import { startOverdueReminderJob, stopOverdueReminderJob } from "./jobs/invoice-overdue-reminder.js"; // Overdue invoice reminder cron job (daily 9 AM UTC)
 import { startComplianceReminderJob, stopComplianceReminderJob, startComplianceDigestJob, stopComplianceDigestJob } from "./jobs/compliance-reminder.js"; // Compliance reminder + breeder digest cron jobs (Client Health Portal Phase 4)
+import { startCopilotQualityReportJob, stopCopilotQualityReportJob } from "./jobs/copilot-quality-report.js"; // AI Copilot nightly quality report (3 AM UTC)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1601,6 +1602,9 @@ export async function start() {
     // Start compliance reminder cron jobs (Client Health Portal Phase 4)
     startComplianceReminderJob();   // Daily at 8 AM UTC
     startComplianceDigestJob();     // Weekly Monday at 8 AM UTC
+
+    // Start AI Copilot nightly quality report job (daily at 3 AM UTC)
+    startCopilotQualityReportJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1625,6 +1629,7 @@ process.on("SIGTERM", async () => {
   stopOverdueReminderJob();
   stopComplianceReminderJob();
   stopComplianceDigestJob();
+  stopCopilotQualityReportJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1644,6 +1649,7 @@ process.on("SIGINT", async () => {
   stopOverdueReminderJob();
   stopComplianceReminderJob();
   stopComplianceDigestJob();
+  stopCopilotQualityReportJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
