@@ -444,12 +444,32 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       prisma.animal.count({ where: whereWithActive }),
     ]);
 
+    // Batch fetch withdrawal-active counts for all animals in the page (avoids N+1)
+    const animalIds = rawItems.map((r) => r.id);
+    let withdrawalMap = new Map<number, number>();
+    if (animalIds.length > 0) {
+      const withdrawalRows = await prisma.medicationCourse.groupBy({
+        by: ["animalId"],
+        where: {
+          animalId: { in: animalIds },
+          status: "ACTIVE",
+          deletedAt: null,
+          withdrawalExpiryDate: { gt: new Date() },
+        },
+        _count: { id: true },
+      });
+      for (const row of withdrawalRows) {
+        withdrawalMap.set(row.animalId, row._count.id);
+      }
+    }
+
     const items = rawItems.map((rec) => {
       const { genetics, ...rest } = rec;
       return {
         ...rest,
         hasGenetics: rec._count.loci > 0 || !!genetics,
         cycleStartDates: extractCycleStartDates(rec),
+        withdrawalActiveCount: withdrawalMap.get(rec.id) ?? 0,
       };
     });
 

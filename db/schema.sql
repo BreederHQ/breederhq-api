@@ -1906,7 +1906,10 @@ CREATE TYPE public."NotificationType" AS ENUM (
     'compliance_overdue',
     'compliance_fulfilled',
     'compliance_verified',
-    'compliance_rejected'
+    'compliance_rejected',
+    'medication_overdue',
+    'medication_withdrawal_expiring_7d',
+    'medication_withdrawal_cleared'
 );
 
 
@@ -9408,6 +9411,107 @@ ALTER SEQUENCE public."MediaAccessEvent_id_seq" OWNED BY public."MediaAccessEven
 
 
 --
+-- Name: MedicationCourse; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."MedicationCourse" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "animalId" integer NOT NULL,
+    "medicationName" character varying(255) NOT NULL,
+    category character varying(50) DEFAULT 'OTHER'::character varying NOT NULL,
+    "isControlledSubstance" boolean DEFAULT false NOT NULL,
+    "dosageAmount" numeric(10,3),
+    "dosageUnit" character varying(30),
+    "administrationRoute" character varying(50),
+    frequency character varying(30) DEFAULT 'ONCE'::character varying,
+    "startDate" date NOT NULL,
+    "endDate" date,
+    "nextDueDate" date,
+    "totalDoses" integer,
+    "completedDoses" integer DEFAULT 0 NOT NULL,
+    "prescribingVet" character varying(255),
+    clinic character varying(255),
+    "rxNumber" character varying(100),
+    "lotBatchNumber" character varying(100),
+    "refillsTotal" integer,
+    "refillsRemaining" integer,
+    "withdrawalPeriodDays" integer,
+    "withdrawalExpiryDate" date,
+    "costPerDose" numeric(10,2),
+    status character varying(30) DEFAULT 'ACTIVE'::character varying NOT NULL,
+    "discontinuedReason" text,
+    notes text,
+    "documentId" integer,
+    "deletedAt" timestamp with time zone,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "createdBy" integer,
+    "updatedBy" integer
+);
+
+
+--
+-- Name: MedicationCourse_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."MedicationCourse_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: MedicationCourse_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."MedicationCourse_id_seq" OWNED BY public."MedicationCourse".id;
+
+
+--
+-- Name: MedicationDose; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."MedicationDose" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "courseId" integer NOT NULL,
+    "animalId" integer NOT NULL,
+    "doseNumber" integer,
+    "administeredAt" timestamp with time zone NOT NULL,
+    "actualDosage" character varying(100),
+    "givenBy" character varying(255),
+    "adverseReaction" text,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "createdBy" integer
+);
+
+
+--
+-- Name: MedicationDose_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."MedicationDose_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: MedicationDose_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."MedicationDose_id_seq" OWNED BY public."MedicationDose".id;
+
+
+--
 -- Name: Membership; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14442,6 +14546,20 @@ ALTER TABLE ONLY public."MediaAccessEvent" ALTER COLUMN id SET DEFAULT nextval('
 
 
 --
+-- Name: MedicationCourse id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationCourse" ALTER COLUMN id SET DEFAULT nextval('public."MedicationCourse_id_seq"'::regclass);
+
+
+--
+-- Name: MedicationDose id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationDose" ALTER COLUMN id SET DEFAULT nextval('public."MedicationDose_id_seq"'::regclass);
+
+
+--
 -- Name: Message id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -16210,6 +16328,22 @@ ALTER TABLE ONLY public."MarketplaceUserFlag"
 
 ALTER TABLE ONLY public."MediaAccessEvent"
     ADD CONSTRAINT "MediaAccessEvent_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: MedicationCourse MedicationCourse_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationCourse"
+    ADD CONSTRAINT "MedicationCourse_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: MedicationDose MedicationDose_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationDose"
+    ADD CONSTRAINT "MedicationDose_pkey" PRIMARY KEY (id);
 
 
 --
@@ -21213,6 +21347,55 @@ CREATE INDEX "MediaAccessEvent_storageKey_idx" ON public."MediaAccessEvent" USIN
 --
 
 CREATE INDEX "MediaAccessEvent_tenantId_createdAt_idx" ON public."MediaAccessEvent" USING btree ("tenantId", "createdAt");
+
+
+--
+-- Name: MedicationCourse_nextDueDate_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationCourse_nextDueDate_idx" ON public."MedicationCourse" USING btree ("nextDueDate") WHERE (("nextDueDate" IS NOT NULL) AND ("deletedAt" IS NULL));
+
+
+--
+-- Name: MedicationCourse_tenantId_animalId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationCourse_tenantId_animalId_idx" ON public."MedicationCourse" USING btree ("tenantId", "animalId") WHERE ("deletedAt" IS NULL);
+
+
+--
+-- Name: MedicationCourse_tenantId_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationCourse_tenantId_status_idx" ON public."MedicationCourse" USING btree ("tenantId", status) WHERE ("deletedAt" IS NULL);
+
+
+--
+-- Name: MedicationCourse_withdrawalExpiryDate_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationCourse_withdrawalExpiryDate_idx" ON public."MedicationCourse" USING btree ("withdrawalExpiryDate") WHERE (("withdrawalExpiryDate" IS NOT NULL) AND ("deletedAt" IS NULL));
+
+
+--
+-- Name: MedicationDose_administeredAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationDose_administeredAt_idx" ON public."MedicationDose" USING btree ("administeredAt");
+
+
+--
+-- Name: MedicationDose_courseId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationDose_courseId_idx" ON public."MedicationDose" USING btree ("courseId");
+
+
+--
+-- Name: MedicationDose_tenantId_animalId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "MedicationDose_tenantId_animalId_idx" ON public."MedicationDose" USING btree ("tenantId", "animalId");
 
 
 --
@@ -26825,6 +27008,54 @@ ALTER TABLE ONLY public."MediaAccessEvent"
 
 
 --
+-- Name: MedicationCourse MedicationCourse_animalId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationCourse"
+    ADD CONSTRAINT "MedicationCourse_animalId_fkey" FOREIGN KEY ("animalId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: MedicationCourse MedicationCourse_documentId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationCourse"
+    ADD CONSTRAINT "MedicationCourse_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES public."Document"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: MedicationCourse MedicationCourse_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationCourse"
+    ADD CONSTRAINT "MedicationCourse_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: MedicationDose MedicationDose_animalId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationDose"
+    ADD CONSTRAINT "MedicationDose_animalId_fkey" FOREIGN KEY ("animalId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: MedicationDose MedicationDose_courseId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationDose"
+    ADD CONSTRAINT "MedicationDose_courseId_fkey" FOREIGN KEY ("courseId") REFERENCES public."MedicationCourse"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: MedicationDose MedicationDose_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MedicationDose"
+    ADD CONSTRAINT "MedicationDose_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: Membership Membership_organizationId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28668,4 +28899,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260226222745'),
     ('20260227192732'),
     ('20260227202724'),
-    ('20260227205859');
+    ('20260227205859'),
+    ('20260228150356');

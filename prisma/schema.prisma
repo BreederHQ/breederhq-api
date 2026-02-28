@@ -305,6 +305,8 @@ model Tenant {
   LitterEvent                     LitterEvent[]
   marketplaceUserBlocks           MarketplaceUserBlock[]
   mediaAccessEvents               MediaAccessEvent[]
+  MedicationCourse                MedicationCourse[]
+  MedicationDose                  MedicationDose[]
   MessageThread                   MessageThread[]
   milkingRecords                  MilkingRecord[]
   neonatalCareEntries             NeonatalCareEntry[]
@@ -1213,6 +1215,8 @@ model Animal {
   Invoice                                          Invoice[]
   lactationCycles                                  LactationCycle[]
   linearAppraisals                                 LinearAppraisal[]
+  MedicationCourse                                 MedicationCourse[]
+  MedicationDose                                   MedicationDose[]
   milkingRecords                                   MilkingRecord[]
   offspringAsDam                                   Offspring[]                   @relation("OffspringIndividualDam")
   Offspring                                        Offspring[]                   @relation("PromotedAnimal")
@@ -3494,6 +3498,7 @@ model Document {
   Party                   Party?                     @relation(fields: [partyId], references: [id], onUpdate: NoAction)
   tenant                  Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   bundleItems             DocumentBundleItem[]
+  MedicationCourse        MedicationCourse[]
   TagAssignment           TagAssignment[]
   vaccinationRecords      VaccinationRecord[]
 
@@ -7322,6 +7327,71 @@ model WeanCheck {
   @@index([animalId])
   @@schema("public")
 }
+
+model MedicationCourse {
+  id                    Int              @id @default(autoincrement())
+  tenantId              Int
+  animalId              Int
+  medicationName        String           @db.VarChar(255)
+  category              String           @default("OTHER") @db.VarChar(50)
+  isControlledSubstance Boolean          @default(false)
+  dosageAmount          Decimal?         @db.Decimal(10, 3)
+  dosageUnit            String?          @db.VarChar(30)
+  administrationRoute   String?          @db.VarChar(50)
+  frequency             String?          @default("ONCE") @db.VarChar(30)
+  startDate             DateTime         @db.Date
+  endDate               DateTime?        @db.Date
+  nextDueDate           DateTime?        @db.Date
+  totalDoses            Int?
+  completedDoses        Int              @default(0)
+  prescribingVet        String?          @db.VarChar(255)
+  clinic                String?          @db.VarChar(255)
+  rxNumber              String?          @db.VarChar(100)
+  lotBatchNumber        String?          @db.VarChar(100)
+  refillsTotal          Int?
+  refillsRemaining      Int?
+  withdrawalPeriodDays  Int?
+  withdrawalExpiryDate  DateTime?        @db.Date
+  costPerDose           Decimal?         @db.Decimal(10, 2)
+  status                String           @default("ACTIVE") @db.VarChar(30)
+  discontinuedReason    String?
+  notes                 String?
+  documentId            Int?
+  deletedAt             DateTime?        @db.Timestamptz(6)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime
+  createdBy             Int?
+  updatedBy             Int?
+  Animal                Animal           @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  Document              Document?        @relation(fields: [documentId], references: [id])
+  Tenant                Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  MedicationDose        MedicationDose[]
+
+  @@schema("public")
+}
+
+model MedicationDose {
+  id               Int              @id @default(autoincrement())
+  tenantId         Int
+  courseId         Int
+  animalId         Int
+  doseNumber       Int?
+  administeredAt   DateTime         @db.Timestamptz(6)
+  actualDosage     String?          @db.VarChar(100)
+  givenBy          String?          @db.VarChar(255)
+  adverseReaction  String?
+  notes            String?
+  createdAt        DateTime         @default(now())
+  createdBy        Int?
+  Animal           Animal           @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  MedicationCourse MedicationCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  Tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([administeredAt])
+  @@index([courseId])
+  @@index([tenantId, animalId])
+  @@schema("public")
+}
 enum PartyType {
   CONTACT
   ORGANIZATION
@@ -8421,6 +8491,9 @@ enum NotificationType {
   compliance_fulfilled
   compliance_verified
   compliance_rejected
+  medication_overdue
+  medication_withdrawal_expiring_7d
+  medication_withdrawal_cleared
 
   @@schema("public")
 }
