@@ -253,9 +253,14 @@ export async function checkArchiveReadiness(
     const offspring = plan.Offspring || [];
     const livingOffspring = offspring.filter((o) => o.lifeState !== "DECEASED");
 
-    // 1. UNPLACED_OFFSPRING - All living offspring must be placed
+    // 1. UNPLACED_OFFSPRING - All living offspring must be placed or designated as keeper.
+    // Offspring with keeperIntent === "KEEP" or "WITHHELD" are intentionally retained by the
+    // breeder and count as "accounted for" — they must not block archival.
     const unplacedOffspring = livingOffspring.filter(
-      (o) => o.placementState === "UNASSIGNED"
+      (o) =>
+        o.placementState === "UNASSIGNED" &&
+        o.keeperIntent !== "KEEP" &&
+        o.keeperIntent !== "WITHHELD"
     );
     addCheck(
       "UNPLACED_OFFSPRING",

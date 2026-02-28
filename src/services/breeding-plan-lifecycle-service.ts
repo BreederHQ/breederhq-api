@@ -157,7 +157,8 @@ export async function advancePlanLifecycle(
       where: { id: planId },
       data: {
         status: nextStatus as any,
-        ...(nextStatus === "PLAN_COMPLETE" ? { completedDateActual: new Date() } : {}),
+        // completedDateActual is NOT auto-set here — the breeder enters it manually
+        // in the Placed phase before advancing, and it is already saved via silent PATCH.
       },
     });
 
@@ -325,7 +326,7 @@ export async function autoAdvancePlanIfReady(
     where: { id: planId },
     data: {
       status: nextStatus as any,
-      ...(nextStatus === "PLAN_COMPLETE" ? { completedDateActual: new Date() } : {}),
+      // completedDateActual is NOT auto-set — breeder enters it manually before advancing.
     },
   });
 

@@ -2189,7 +2189,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const currentStatus = String(plan.status);
 
       // Hard-blocked statuses: terminal or already at start
-      const HARD_BLOCKED = ["PLANNING", "COMPLETE", "PLAN_COMPLETE", "CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
+      // PLAN_COMPLETE is NOT hard-blocked — breeders can rewind from Complete to Placed.
+      const HARD_BLOCKED = ["PLANNING", "COMPLETE", "CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
       if (HARD_BLOCKED.includes(currentStatus)) {
         const isPlanning = currentStatus === "PLANNING";
         return reply.code(400).send({
@@ -2219,6 +2220,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         PLACEMENT:           { toStatus: "WEANED", extraClearFields: { placementStartDateActual: null } },
         PLACEMENT_STARTED:   { toStatus: "WEANED", extraClearFields: { placementStartDateActual: null } },   // dead code (not a real DB enum value, kept for safety)
         PLACEMENT_COMPLETED: { toStatus: "PLACEMENT_STARTED" },   // dead code (not a real DB enum value, kept for safety)
+        // Rewinding from PLAN_COMPLETE goes back to PLACEMENT (displays as PLACEMENT_COMPLETED since
+        // placementStartDateActual is still set). Clears completedDateActual so the date can be re-entered.
+        PLAN_COMPLETE:       { toStatus: "PLACEMENT", extraClearFields: { completedDateActual: null } },
       };
 
       const target = REWIND_MAP[currentStatus];
@@ -2227,21 +2231,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           error: "cannot_rewind",
           detail: `Cannot rewind from status: ${currentStatus}`,
         });
-      }
-
-      // Block BIRTHED, BORN, and WEANED rewinds when offspring are registered.
-      // At that point the breeder should Cancel the plan instead.
-      if (currentStatus === "BIRTHED" || currentStatus === "BORN" || currentStatus === "WEANED") {
-        const offspringCount = await prisma.offspring.count({
-          where: { tenantId, breedingPlanId: id, archivedAt: null },
-        });
-        if (offspringCount > 0) {
-          return reply.code(409).send({
-            error: "rewind_blocked_offspring",
-            detail: `Cannot rewind — ${offspringCount} offspring are registered on this plan. To correct a mistake at this stage, Cancel the plan instead.`,
-            offspringCount,
-          });
-        }
       }
 
       // Build the update payload: only status changes, plus lock fields for CYCLE → PLANNING
