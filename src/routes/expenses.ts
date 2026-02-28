@@ -241,7 +241,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (expense.count === 0) return reply.code(404).send({ error: "not_found" });
 
-      const updated = await prisma.expense.findUnique({ where: { id } });
+      const updated = await prisma.expense.findFirst({ where: { id, tenantId } });
       return reply.code(200).send(expenseDTO(updated));
     } catch (err) {
       const { status, payload } = errorReply(err);
@@ -342,7 +342,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(409).send({ error: "attachment_does_not_belong_to_expense" });
       }
 
-      await prisma.attachment.delete({ where: { id: aid } });
+      // Tenant-isolated delete: use deleteMany with tenantId
+      await prisma.attachment.deleteMany({ where: { id: aid, tenantId } });
       return reply.send({ ok: true, deleted: aid });
     } catch (err) {
       const { status, payload } = errorReply(err);

@@ -44,20 +44,24 @@ async function isCooldownActive(params: {
  */
 async function hasHumanReplied(params: {
   prisma: PrismaClient;
+  tenantId: number;
   threadId: number;
   tenantPartyId: number;
 }): Promise<boolean> {
-  const { prisma, threadId, tenantPartyId } = params;
+  const { prisma, tenantId, threadId, tenantPartyId } = params;
 
+  // Tenant-scoped: Party has tenantId — verify the party belongs to this tenant
   const tenantParty = await prisma.party.findFirst({
-    where: { id: tenantPartyId, type: "ORGANIZATION" },
+    where: { id: tenantPartyId, tenantId, type: "ORGANIZATION" },
   });
 
   if (!tenantParty) return false;
 
+  // Message has no tenantId column — scope via thread.tenantId instead
   const humanMessage = await prisma.message.findFirst({
     where: {
       threadId,
+      thread: { tenantId },
       senderPartyId: tenantPartyId,
       isAutomated: false,
     },
@@ -103,7 +107,7 @@ export async function evaluateAndSendAutoReply(
   const tenantPartyId = tenantParticipant.partyId;
 
   // Check if human already replied
-  const humanReplied = await hasHumanReplied({ prisma, threadId, tenantPartyId });
+  const humanReplied = await hasHumanReplied({ prisma, tenantId, threadId, tenantPartyId });
   if (humanReplied) {
     await prisma.autoReplyLog.create({
       data: {
@@ -137,8 +141,9 @@ export async function evaluateAndSendAutoReply(
     let matches = false;
 
     if (rule.triggerType === "dm_first_message_from_party") {
+      // Message has no tenantId — scope via thread.tenantId
       const messageCount = await prisma.message.count({
-        where: { threadId, senderPartyId: inboundSenderPartyId },
+        where: { threadId, thread: { tenantId }, senderPartyId: inboundSenderPartyId },
       });
       matches = messageCount === 1;
     } else if (rule.triggerType === "dm_after_hours") {
@@ -174,10 +179,12 @@ export async function evaluateAndSendAutoReply(
 
     // Render template
     const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
-    const client = await prisma.party.findUnique({ where: { id: inboundSenderPartyId } });
+    // Tenant-scoped: Party has tenantId — use findFirst with tenant filter
+    const client = await prisma.party.findFirst({ where: { id: inboundSenderPartyId, tenantId } });
 
     const rendered = await renderTemplate({
       prisma,
+      tenantId,
       templateId: rule.templateId,
       context: {
         tenant: { name: tenant?.name || "" },

@@ -1078,6 +1078,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const beforeSnap = await prisma.animal.findUnique({ where: { id } });
 
     try {
+      // tenant-verified above via findFirst({ id, tenantId }); update needs select so updateMany won't work
       const updated = await prisma.animal.update({
         where: { id },
         data,
@@ -1184,6 +1185,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // Update the breeding availability
+    // tenant-verified above via findFirst({ id, tenantId }); update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { breedingAvailability: status },
@@ -1282,6 +1284,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
 
     // Update animal with new CDN URL
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { photoUrl: cdnUrl },
@@ -1348,6 +1351,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { photoUrl: null },
@@ -1421,6 +1425,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       select: { coverImageUrl: true },
     });
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { coverImageUrl: cdnUrl },
@@ -1485,6 +1490,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
     }
 
+    // tenant-verified above via assertAnimalInTenant; update needs select so updateMany won't work
     const updated = await prisma.animal.update({
       where: { id },
       data: { coverImageUrl: null },
@@ -1513,7 +1519,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.update({ where: { id }, data: { archived: true } });
+    await prisma.animal.updateMany({ where: { id, tenantId }, data: { archived: true } });
     auditArchive("ANIMAL", id, auditCtx(req, tenantId));
     logEntityActivity({
       tenantId,
@@ -1536,7 +1542,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.update({ where: { id }, data: { archived: false } });
+    await prisma.animal.updateMany({ where: { id, tenantId }, data: { archived: false } });
     auditRestore("ANIMAL", id, auditCtx(req, tenantId));
     logEntityActivity({
       tenantId,
@@ -1560,7 +1566,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!id) return reply.code(400).send({ error: "id_invalid" });
 
     await assertAnimalInTenant(id, tenantId);
-    await prisma.animal.delete({ where: { id } });
+    await prisma.animal.deleteMany({ where: { id, tenantId } });
 
     // Audit trail (fire-and-forget)
     auditDelete("ANIMAL", id, auditCtx(req, tenantId));
@@ -1605,6 +1611,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Check for offspring (this animal is a parent via Animal table damId/sireId)
       const offspringCount = await prisma.animal.count({
         where: {
+          tenantId,
           OR: [{ damId: id }, { sireId: id }],
         },
       });
@@ -1617,6 +1624,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Check for offspring via Offspring table
       const offspringTableCount = await prisma.offspring.count({
         where: {
+          tenantId,
           OR: [{ damId: id }, { sireId: id }],
         },
       });
@@ -1833,6 +1841,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     await assertAnimalInTenant(id, tenantId);
 
+    // tagAssignment has no tenantId column; tenant-verified above via assertAnimalInTenant; scoped by animalId+tagId
     await prisma.tagAssignment.deleteMany({ where: { animalId: id, tagId } });
     logEntityActivity({
       tenantId,
@@ -2123,6 +2132,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // animalOwner has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
       const updated = await prisma.animalOwner.update({
         where: { id: ownerId },
         data,
@@ -2202,6 +2212,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "not_found" });
     }
 
+    // animalOwner has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
     await prisma.animalOwner.delete({ where: { id: ownerId } });
     logEntityActivity({
       tenantId,
@@ -2605,6 +2616,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
+      // animalRegistryIdentifier has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
       const updated = await prisma.animalRegistryIdentifier.update({
         where: { id: identifierId },
         data,
@@ -2642,6 +2654,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
     if (!existing || existing.animalId !== animalId) return reply.code(404).send({ error: "not_found" });
 
+    // animalRegistryIdentifier has no tenantId column; tenant-verified above via assertAnimalInTenant + animalId ownership check
     await prisma.animalRegistryIdentifier.delete({ where: { id: identifierId } });
     logEntityActivity({
       tenantId,
@@ -4724,6 +4737,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "animal not found" });
     }
 
+    // animalIdentityLink has no tenantId column; tenant-verified above via findFirst({ id: animalId, tenantId })
     await prisma.animalIdentityLink.deleteMany({
       where: { animalId },
     });
@@ -5092,7 +5106,7 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id: true,
         planId: true,
         indicatesOvulationDate: true,
-        anchoredPlans: { select: { id: true } },
+        anchoredPlans: { select: { id: true, species: true } },
       },
     });
 
@@ -5132,10 +5146,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // If planId provided, verify it exists and belongs to tenant
+    let planSpecies: string | null = null;
     if (b.planId) {
       const plan = await prisma.breedingPlan.findFirst({
         where: { id: b.planId, tenantId },
-        select: { id: true, damId: true },
+        select: { id: true, damId: true, species: true },
       });
       if (!plan) return reply.code(404).send({ error: "breeding_plan_not_found" });
 
@@ -5143,7 +5158,26 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (plan.damId !== animalId) {
         return reply.code(400).send({ error: "animal_not_dam_on_plan" });
       }
+      planSpecies = plan.species;
     }
+
+    // Inline gestation defaults (mirrors SPECIES_DEFAULTS in breeding.ts)
+    const GESTATION_DEFAULTS: Record<string, { gestationDays: number; placementStartWeeksDefault: number }> = {
+      DOG: { gestationDays: 63, placementStartWeeksDefault: 8 },
+      CAT: { gestationDays: 63, placementStartWeeksDefault: 12 },
+      HORSE: { gestationDays: 340, placementStartWeeksDefault: 24 },
+      RABBIT: { gestationDays: 31, placementStartWeeksDefault: 8 },
+      GOAT: { gestationDays: 150, placementStartWeeksDefault: 8 },
+      SHEEP: { gestationDays: 147, placementStartWeeksDefault: 8 },
+    };
+    const computeLockedDatesFromOvulation = (ovulationDate: Date, species: string | null) => {
+      const d = GESTATION_DEFAULTS[String(species ?? "DOG").toUpperCase()] ?? GESTATION_DEFAULTS.DOG;
+      const lockedDueDate = new Date(ovulationDate);
+      lockedDueDate.setUTCDate(lockedDueDate.getUTCDate() + d.gestationDays);
+      const lockedPlacementStartDate = new Date(lockedDueDate);
+      lockedPlacementStartDate.setUTCDate(lockedPlacementStartDate.getUTCDate() + d.placementStartWeeksDefault * 7);
+      return { lockedOvulationDate: ovulationDate, lockedDueDate, lockedPlacementStartDate };
+    };
 
     try {
       // Update the test result
@@ -5170,6 +5204,9 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (existingTestResult.anchoredPlans && existingTestResult.anchoredPlans.length > 0) {
         // Update all anchored breeding plans with the new ovulation date
         for (const anchoredPlan of existingTestResult.anchoredPlans) {
+          const lockedDates = indicatesOvulationDate
+            ? computeLockedDatesFromOvulation(indicatesOvulationDate, anchoredPlan.species)
+            : { lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null };
           await prisma.breedingPlan.update({
             where: { id: anchoredPlan.id },
             data: {
@@ -5177,18 +5214,28 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
               ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
               ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
+              lockedOvulationDate: lockedDates.lockedOvulationDate,
+              lockedDueDate: lockedDates.lockedDueDate,
+              lockedPlacementStartDate: lockedDates.lockedPlacementStartDate,
             },
           });
         }
-      } else if (indicatesOvulationDate && b.planId) {
-        // If this test now indicates ovulation and is linked to a breeding plan, update the plan
+      } else if (b.planId && (indicatesOvulationDate || existingTestResult.indicatesOvulationDate)) {
+        // If this exam previously anchored a plan (but anchoredPlans relation wasn't populated)
+        // OR now indicates ovulation — sync the plan in both directions (set or clear).
+        const lockedDates = indicatesOvulationDate
+          ? computeLockedDatesFromOvulation(indicatesOvulationDate, planSpecies)
+          : { lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null };
         await prisma.breedingPlan.update({
           where: { id: b.planId },
           data: {
             ovulationConfirmed: indicatesOvulationDate,
-            ovulationConfirmedMethod: ovulationMethodFromKind(b.kind),
-            ovulationTestResultId: testResultId,
-            ovulationConfidence: "HIGH",
+            ovulationConfirmedMethod: indicatesOvulationDate ? ovulationMethodFromKind(b.kind) : null,
+            ovulationTestResultId: indicatesOvulationDate ? testResultId : null,
+            ovulationConfidence: indicatesOvulationDate ? "HIGH" : null,
+            lockedOvulationDate: lockedDates.lockedOvulationDate,
+            lockedDueDate: lockedDates.lockedDueDate,
+            lockedPlacementStartDate: lockedDates.lockedPlacementStartDate,
           },
         });
       }

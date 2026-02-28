@@ -240,6 +240,9 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
 
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+
       const t = await prisma.tenant.findUnique({
         where: { id },
         select: { availabilityPrefs: true },
@@ -438,9 +441,12 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** GET /tenants */
+  /** GET /tenants — super admin only (lists all tenants) */
   fastify.get("/tenants", async (req, reply) => {
     try {
+      const actorId = await requireSuperAdmin(req, reply);
+      if (!actorId) return;
+
       const { page, limit, skip } = parsePaging((req as any).query);
       const q = (req as any).query?.q ? String((req as any).query.q) : undefined;
       const orderBy = parseSort((req as any).query?.sort);
@@ -485,11 +491,14 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** GET /tenants/:id */
+  /** GET /tenants/:id — requires membership in this tenant (or super admin) */
   fastify.get<{ Params: { id: string } }>("/tenants/:id", async (req, reply) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
 
       const t = await prisma.tenant.findUnique({
         where: { id },
@@ -519,7 +528,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** PATCH /tenants/:id */
+  /** PATCH /tenants/:id — requires OWNER/ADMIN role (or super admin) */
   fastify.patch<{
     Params: { id: string };
     Body: { name?: string | null; slug?: string | null; primaryEmail?: string | null };
@@ -527,6 +536,10 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+      if (!isAdminLike(auth.role)) return reply.status(403).send({ error: "forbidden", message: "Owner or admin role required" });
 
       const { name, slug, primaryEmail } = req.body || {};
       if (name == null && slug === undefined && primaryEmail === undefined) {
@@ -565,11 +578,14 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** GET /tenants/:id/billing */
+  /** GET /tenants/:id/billing — requires membership (or super admin) */
   fastify.get<{ Params: { id: string } }>("/tenants/:id/billing", async (req, reply) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, id);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
 
       const billing = await prisma.billingAccount.findUnique({ where: { tenantId: id } });
       return reply.send(billing ?? null);
@@ -754,7 +770,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** PATCH /tenants/:id/billing */
+  /** PATCH /tenants/:id/billing — requires OWNER/ADMIN role (or super admin) */
   fastify.patch<{
     Params: { id: string };
     Body: {
@@ -769,6 +785,10 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     try {
       const tenantId = Number(req.params.id);
       if (!Number.isFinite(tenantId)) return reply.status(400).send({ error: "bad_request", detail: "Invalid id" });
+
+      const auth = await requireTenantMemberOrAdmin(req, tenantId);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+      if (!isAdminLike(auth.role)) return reply.status(403).send({ error: "forbidden", message: "Owner or admin role required" });
 
       const data: any = { ...req.body };
       if ("currentPeriodEnd" in data) {
@@ -794,7 +814,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
   });
 
-  /** GET /tenants/:tenantId/users */
+  /** GET /tenants/:tenantId/users — requires membership (or super admin) */
   fastify.get<{
     Params: { tenantId: string };
     Querystring: {
@@ -808,6 +828,9 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       const tenantId = Number(req.params.tenantId);
       if (!Number.isFinite(tenantId))
         return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
+
+      const auth = await requireTenantMemberOrAdmin(req, tenantId);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
 
       const { page, limit, skip } = parsePaging(req.query);
       const role = req.query.role;
@@ -1070,7 +1093,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     reply.send({ items });
   });
 
-  /** POST /tenants/:tenantId/users */
+  /** POST /tenants/:tenantId/users — requires OWNER/ADMIN role (or super admin) */
   fastify.post<{
     Params: { tenantId: string };
     Body: { email: string; name?: string | null; role: "OWNER" | "ADMIN" | "MEMBER" | "BILLING" | "VIEWER" };
@@ -1080,6 +1103,10 @@ const tenantRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       if (!Number.isFinite(tenantId)) {
         return reply.status(400).send({ error: "bad_request", detail: "Invalid tenantId" });
       }
+
+      const auth = await requireTenantMemberOrAdmin(req, tenantId);
+      if (!auth.ok) return reply.status(auth.code).send({ error: auth.code === 401 ? "unauthorized" : "forbidden" });
+      if (!isAdminLike(auth.role)) return reply.status(403).send({ error: "forbidden", message: "Owner or admin role required" });
 
       const { email, name, role } = req.body || {};
       if (!email || !role) {

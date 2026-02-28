@@ -191,6 +191,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (templateId !== undefined) updateData.templateId = templateId;
     if (metadata !== undefined) updateData.metadata = metadata;
 
+    // tenant-verified above via findFirst({ where: { id, tenantId } })
     const updated = await prisma.draft.update({
       where: { id },
       data: updateData,
@@ -215,7 +216,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(404).send({ error: "draft_not_found" });
     }
 
-    await prisma.draft.delete({ where: { id } });
+    await prisma.draft.deleteMany({ where: { id, tenantId } });
 
     return reply.send({ success: true });
   });
@@ -286,7 +287,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
 
         // Delete the draft
-        await prisma.draft.delete({ where: { id } });
+        await prisma.draft.deleteMany({ where: { id, tenantId } });
 
         return reply.send({
           ok: true,
@@ -316,7 +317,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
 
         // Delete the draft
-        await prisma.draft.delete({ where: { id } });
+        await prisma.draft.deleteMany({ where: { id, tenantId } });
 
         return reply.send({
           ok: true,
@@ -392,7 +393,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       // Delete the draft after successful send
-      await prisma.draft.delete({ where: { id } });
+      await prisma.draft.deleteMany({ where: { id, tenantId } });
 
       return reply.send({
         ok: true,

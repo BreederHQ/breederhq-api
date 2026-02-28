@@ -310,6 +310,7 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         }
       }
 
+      // tenant-verified above via findFirst({ where: { id, tenantId } })
       const result = await prisma.assessmentResult.update({
         where: { id },
         data: {
@@ -355,8 +356,8 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "not_found" });
       }
 
-      await prisma.assessmentResult.delete({
-        where: { id },
+      await prisma.assessmentResult.deleteMany({
+        where: { id, tenantId },
       });
 
       return reply.send({ success: true });

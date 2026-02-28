@@ -565,6 +565,7 @@ import authRoutes from "./routes/auth.js";
 import breedsRoutes from "./routes/breeds.js";
 import contactsRoutes from "./routes/contacts.js";
 import organizationsRoutes from "./routes/organizations.js";
+import orgSettingsRoutes from "./routes/org-settings.js";
 import partiesRoutes from "./routes/parties.js";
 import offspringRoutes from "./routes/offspring.js";
 import offspringDocumentsRoutes from "./routes/offspring-documents.js";
@@ -604,6 +605,8 @@ import portalDataRoutes from "./routes/portal-data.js"; // Portal read-only data
 import portalProfileRoutes from "./routes/portal-profile.js"; // Portal profile self-service
 import portalSchedulingRoutes from "./routes/portal-scheduling.js"; // Portal scheduling endpoints
 import portalProtocolsRoutes from "./routes/portal-protocols.js"; // Portal training protocol continuation
+import staffRoutes from "./routes/staff.js"; // Staff management (RBAC Phase 1)
+import resourceAssignmentRoutes from "./routes/resource-assignments.js"; // Resource assignments (RBAC Phase 1)
 import schedulingRoutes from "./routes/scheduling.js"; // Staff scheduling endpoints (calendar)
 import businessHoursRoutes from "./routes/business-hours.js"; // Business hours settings
 import adminMarketplaceRoutes from "./routes/admin-marketplace.js"; // Admin marketplace management
@@ -633,6 +636,8 @@ import autoRepliesRoutes from "./routes/auto-replies.js"; // Auto-reply rules fo
 import contractsRoutes from "./routes/contracts.js"; // Contract e-signatures (platform)
 import contractTemplatesRoutes from "./routes/contract-templates.js"; // Contract templates management
 import portalContractsRoutes from "./routes/portal-contracts.js"; // Contract signing (portal)
+import portalHealthRoutes from "./routes/portal-health.js"; // Portal health records & vaccinations
+import breederHealthRoutes from "./routes/breeder-health.js"; // Breeder-side shared health data
 import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
 import documentBundlesRoutes from "./routes/document-bundles.js"; // Document Bundles for email attachments
@@ -678,6 +683,8 @@ import adminEmailLogRoutes from "./routes/admin-email-logs.js"; // Admin email l
 import { startDbHealthMonitorJob, stopDbHealthMonitorJob } from "./jobs/db-health-monitor.js"; // DB health monitoring cron job (daily)
 import { startEmailRetryJob, stopEmailRetryJob } from "./jobs/email-retry.js"; // Email retry cron job (every 5 min)
 import { startOverdueReminderJob, stopOverdueReminderJob } from "./jobs/invoice-overdue-reminder.js"; // Overdue invoice reminder cron job (daily 9 AM UTC)
+import { startComplianceReminderJob, stopComplianceReminderJob, startComplianceDigestJob, stopComplianceDigestJob } from "./jobs/compliance-reminder.js"; // Compliance reminder + breeder digest cron jobs (Client Health Portal Phase 4)
+import { startCopilotQualityReportJob, stopCopilotQualityReportJob } from "./jobs/copilot-quality-report.js"; // AI Copilot nightly quality report (3 AM UTC)
 import sitemapRoutes from "./routes/sitemap.js"; // Public sitemap data endpoint
 import mediaRoutes from "./routes/media.js"; // Media upload/access endpoints (S3)
 import searchRoutes from "./routes/search.js"; // Platform-wide search (Command Palette)
@@ -1219,6 +1226,7 @@ app.register(
     api.register(contractsRoutes);     // /api/v1/contracts/* Contract e-signatures
     api.register(contractTemplatesRoutes); // /api/v1/contract-templates/* Contract template management
     api.register(organizationsRoutes); // /api/v1/organizations/*
+    api.register(orgSettingsRoutes);   // /api/v1/org/settings (tenant-verified org preferences)
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
     api.register(breedingGroupsRoutes); // /api/v1/breeding/groups/* (livestock group breeding)
@@ -1287,12 +1295,16 @@ app.register(
     api.register(messagingHubRoutes);   // /api/v1/emails/*, /api/v1/parties/lookup-by-email MessagingHub
     api.register(animalLinkingRoutes); // /api/v1/network/*, /api/v1/link-requests/*, /api/v1/cross-tenant-links/*
     api.register(networkRoutes);       // /api/v1/network/search Network Breeding Discovery
+    api.register(staffRoutes);          // /api/v1/staff/* Staff Management (RBAC Phase 1)
+    api.register(resourceAssignmentRoutes); // /api/v1/resource-assignments/* Resource Assignments (RBAC Phase 1)
     api.register(portalAccessRoutes);  // /api/v1/portal-access/* Portal Access Management
     api.register(portalDataRoutes);    // /api/v1/portal/* Portal read-only data surfaces
     api.register(portalProfileRoutes); // /api/v1/portal/profile/* Portal profile self-service
     api.register(portalSchedulingRoutes); // /api/v1/portal/scheduling/* Portal scheduling
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
     api.register(portalProtocolsRoutes); // /api/v1/portal/protocols/* Portal training protocol continuation
+    api.register(portalHealthRoutes);    // /api/v1/portal/offspring/:id/health* Portal health records & vaccinations
+    api.register(breederHealthRoutes);   // /api/v1/offspring/:id/health-feed, /api/v1/animals/:id/offspring-health-summary
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
     api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
     api.register(helpRoutes);          // /api/v1/help/* In-app help system (articles, AI chat, tours)
@@ -1305,6 +1317,7 @@ app.register(
     api.register(portalSchedulingRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/scheduling/*
     api.register(portalContractsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/contracts/*
     api.register(portalProtocolsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/protocols/*
+    api.register(portalHealthRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/offspring/:id/health*
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
@@ -1585,6 +1598,13 @@ export async function start() {
 
     // Start overdue invoice reminder cron job (daily at 9 AM UTC)
     startOverdueReminderJob();
+
+    // Start compliance reminder cron jobs (Client Health Portal Phase 4)
+    startComplianceReminderJob();   // Daily at 8 AM UTC
+    startComplianceDigestJob();     // Weekly Monday at 8 AM UTC
+
+    // Start AI Copilot nightly quality report job (daily at 3 AM UTC)
+    startCopilotQualityReportJob();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -1607,6 +1627,9 @@ process.on("SIGTERM", async () => {
   stopDbHealthMonitorJob();
   stopEmailRetryJob();
   stopOverdueReminderJob();
+  stopComplianceReminderJob();
+  stopComplianceDigestJob();
+  stopCopilotQualityReportJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);
@@ -1624,6 +1647,9 @@ process.on("SIGINT", async () => {
   stopDbHealthMonitorJob();
   stopEmailRetryJob();
   stopOverdueReminderJob();
+  stopComplianceReminderJob();
+  stopComplianceDigestJob();
+  stopCopilotQualityReportJob();
   await flush(2000); // Flush pending Sentry events
   await app.close();
   process.exit(0);

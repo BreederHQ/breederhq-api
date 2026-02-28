@@ -147,8 +147,8 @@ async function syncAnimalBreedingStatus(
   if (activeBreedingPlan) {
     // Animal is in an active breeding plan - set to BREEDING if not already
     if (currentStatus !== "BREEDING") {
-      await db.animal.update({
-        where: { id: animalId },
+      await db.animal.updateMany({
+        where: { id: animalId, tenantId },
         data: { status: "BREEDING" },
       });
     }
@@ -156,8 +156,8 @@ async function syncAnimalBreedingStatus(
     // Animal is not in any active breeding plan
     // Only revert from BREEDING to ACTIVE (don't touch other statuses)
     if (currentStatus === "BREEDING") {
-      await db.animal.update({
-        where: { id: animalId },
+      await db.animal.updateMany({
+        where: { id: animalId, tenantId },
         data: { status: "ACTIVE" },
       });
     }
@@ -1029,7 +1029,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!created.code) {
         const code = await buildFriendlyPlanCode(tenantId, created.id);
         created = await prisma.breedingPlan.update({
-          where: { id: created.id },
+          where: { id: created.id, tenantId },
           data: { code },
         });
       }
@@ -1448,15 +1448,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           s = "PLAN_COMPLETE";
         }
 
-        // Post-birth statuses (BORN, WEANING, WEANED, PLACEMENT) are valid plan statuses.
+        // Post-birth statuses (BORN, WEANED, PLACEMENT) are valid plan statuses.
         // For direct status changes via PATCH, recommend using the lifecycle endpoints instead.
-        if (s === "BORN" || s === "WEANING" || s === "WEANED" || s === "PLACEMENT") {
+        if (s === "BORN" || s === "WEANED" || s === "PLACEMENT") {
           req.log?.info?.({ planId: id, requestedStatus: s },
             "Post-birth status set via PATCH. Consider using POST /breeding/plans/:id/advance-lifecycle instead.");
         }
 
         const POST_PLANNING = ["CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
-          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANING", "WEANED", "PLACEMENT", "PLAN_COMPLETE"];
+          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANED", "PLACEMENT", "PLAN_COMPLETE"];
         if (POST_PLANNING.includes(s) && (!effectiveDamId || !effectiveSireId)) {
           return reply.code(400).send({
             error: "dam_sire_required",
@@ -1502,7 +1502,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // PLAN_COMPLETE is the terminal plan status
         const STATUS_ORDER = [
           "PLANNING", "CYCLE", "COMMITTED", "CYCLE_EXPECTED", "HORMONE_TESTING",
-          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANING", "WEANED", "PLACEMENT", "PLAN_COMPLETE"
+          "BRED", "PREGNANT", "BIRTHED", "BORN", "WEANED", "PLACEMENT", "PLAN_COMPLETE"
         ];
         const TERMINAL_STATUSES = ["CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
         const currentStatusIndex = STATUS_ORDER.indexOf(String(existing.status));
@@ -1689,7 +1689,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Snapshot full row before update for audit trail
       const beforeSnap = await prisma.breedingPlan.findFirst({ where: { id, tenantId } });
 
-      const updated = await prisma.breedingPlan.update({ where: { id }, data });
+      const updated = await prisma.breedingPlan.update({ where: { id, tenantId }, data });
 
       // Sync animal breeding statuses if dam, sire, or plan status changed
       if (damChanged || sireChanged || statusChanged) {
@@ -1952,7 +1952,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const expectedPlacementStart = plan.expectedPlacementStart ?? plan.lockedPlacementStartDate ?? null;
 
         const saved = await tx.breedingPlan.update({
-          where: { id: plan.id },
+          where: { id: plan.id, tenantId },
           data: {
             code,
             status: BreedingPlanStatus.CYCLE,
@@ -2079,7 +2079,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
         // Revert plan to PLANNING status
         const updated = await tx.breedingPlan.update({
-          where: { id: plan.id },
+          where: { id: plan.id, tenantId },
           data: {
             status: BreedingPlanStatus.PLANNING,
             committedAt: null,
@@ -2142,9 +2142,14 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * POST /breeding/plans/:id/rewind
    *
-   * Rewinds a breeding plan back one phase by clearing the date(s) that
-   * advanced it to the current phase. Includes validation to prevent
-   * data integrity issues (e.g., can't rewind past birth if offspring exist).
+   * Non-destructively rewinds a breeding plan back exactly one phase by
+   * updating only the status field. All entered data (dates, exams, etc.)
+   * is preserved so the breeder can immediately re-advance if needed.
+   *
+   * Blocks:
+   * - COMPLETE: terminal, cannot rewind
+   * - BIRTHED or WEANED with registered offspring: must Cancel instead
+   * - CANCELED / UNSUCCESSFUL / ON_HOLD: terminal statuses
    *
    * Body:
    * - actorId?: string (for audit trail)
@@ -2152,7 +2157,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    * Returns:
    * - { ok: true, fromPhase, toPhase } on success
    * - 400 with error code if validation fails
-   * - 409 with blockers if blocked by downstream data
+   * - 409 with error code if blocked by offspring
    */
   app.post("/breeding/plans/:id/rewind", async (req, reply) => {
     try {
@@ -2160,7 +2165,6 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const id = idNum((req.params as any).id);
       if (!id) return reply.code(400).send({ error: "bad_id" });
 
-      const b = (req.body || {}) as Partial<{ actorId: string }>;
       const userId = (req as any).user?.id ?? null;
 
       const plan = await prisma.breedingPlan.findFirst({
@@ -2171,267 +2175,113 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: true,
           damId: true,
           sireId: true,
-          // Lock fields (CYCLE phase)
+          // Lock fields — only cleared when rewinding CYCLE/BRED → PLANNING
           lockedCycleStart: true,
           lockedOvulationDate: true,
           lockedDueDate: true,
           lockedPlacementStartDate: true,
           committedAt: true,
           committedByUserId: true,
-          ovulationConfirmed: true,
-          ovulationConfirmedMethod: true,
-          // Actual dates
-          cycleStartDateActual: true,
-          hormoneTestingStartDateActual: true,
-          breedDateActual: true,
-          birthDateActual: true,
-          // DEPRECATED: Post-birth dates no longer written to BreedingPlan (Phase 4).
-          // Reads remain for historical data until columns are dropped (Phase 6).
-          weanedDateActual: true,
-          placementStartDateActual: true,
-          placementCompletedDateActual: true,
-          completedDateActual: true,
-          // Unknown flags
-          cycleStartDateUnknown: true,
-          ovulationDateUnknown: true,
-          breedDateUnknown: true,
         },
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      // Determine current phase based on dates (working backward from most advanced)
-      // Phase order: PLANNING -> CYCLE -> BRED -> BIRTHED -> PLAN_COMPLETE
-      //
-      // The phase represents where the plan currently IS (what milestone has been reached):
-      // - PLANNING: Basic info only, not yet committed
-      // - CYCLE: Plan is committed (locked dates), waiting for cycle start actual
-      // - BRED: Cycle start actual entered, waiting for breed date actual
-      // - BIRTHED: Breed date actual entered, waiting for birth date actual
-      // - PLAN_COMPLETE: Birth recorded, plan is complete
-      //
-      // Note: Unknown flags (cycleStartDateUnknown, breedDateUnknown) act as placeholders
-      // that allow advancing without the actual date (for surprise pregnancies).
-      // Post-birth lifecycle (WEANED, PLACEMENT) managed via plan date fields.
-      type Phase = "PLANNING" | "CYCLE" | "BRED" | "BIRTHED" | "PLAN_COMPLETE";
-      const PHASE_ORDER: Phase[] = ["PLANNING", "CYCLE", "BRED", "BIRTHED", "PLAN_COMPLETE"];
+      const currentStatus = String(plan.status);
 
-      const derivePhaseFromDates = (): Phase => {
-        // Work backward from most advanced phase
-        // Each check asks: "Has this milestone been completed?" If yes, we're in the NEXT phase
-        // Phase names represent what task you're working on, not what you've completed
-        if (plan.birthDateActual) return "PLAN_COMPLETE";
-        // Has breed date (or unknown), working on birth date → BIRTHED phase
-        if (plan.breedDateActual || plan.breedDateUnknown) return "BIRTHED";
-        // Has cycle start (or unknown), working on breed date → BRED phase
-        // For ovulation-anchored plans: status=BRED means we advanced via ovulation (cycle start may be null)
-        if (plan.cycleStartDateActual || plan.cycleStartDateUnknown) return "BRED";
-        // Check if plan was advanced to BRED via ovulation confirmation (ovulation-anchored workflow)
-        // In this case, cycleStartDateActual may be null but status is BRED
-        if (String(plan.status) === "BRED" && plan.ovulationConfirmed) return "BRED";
-        // Plan is committed/locked (via cycle start lock OR ovulation confirmation), working on cycle start actual → CYCLE phase
-        if (plan.lockedCycleStart || plan.lockedOvulationDate || plan.ovulationConfirmed) return "CYCLE";
-        return "PLANNING";
-      };
-
-      const derivedPhase = derivePhaseFromDates();
-      let storedStatus = String(plan.status) as Phase;
-
-      // Legacy status mapping: if plan somehow has old post-birth statuses, treat as PLAN_COMPLETE
-      if (["WEANED", "PLACEMENT", "COMPLETE"].includes(storedStatus)) {
-        storedStatus = "PLAN_COMPLETE";
-      }
-
-      // Use the stored status as the authoritative phase for rewind purposes.
-      // The derived phase tells us what dates have been entered, but the user may not have
-      // explicitly advanced yet (e.g., entered breed date but still in BRED status).
-      // Rewind should respect where the user actually IS (stored status), not where they
-      // COULD be based on entered data.
-      // However, if derived phase is MORE ADVANCED than stored status, use derived (data is ahead somehow).
-      const storedIdx = PHASE_ORDER.indexOf(storedStatus);
-      const derivedIdx = PHASE_ORDER.indexOf(derivedPhase);
-      const currentPhase = storedIdx >= 0 && storedIdx >= derivedIdx ? storedStatus : derivedPhase;
-
-      // Cannot rewind from PLANNING - nothing to rewind
-      if (currentPhase === "PLANNING") {
+      // Hard-blocked statuses: terminal or already at start
+      // PLAN_COMPLETE is NOT hard-blocked — breeders can rewind from Complete to Placed.
+      const HARD_BLOCKED = ["PLANNING", "COMPLETE", "CANCELED", "UNSUCCESSFUL", "ON_HOLD"];
+      if (HARD_BLOCKED.includes(currentStatus)) {
+        const isPlanning = currentStatus === "PLANNING";
         return reply.code(400).send({
-          error: "cannot_rewind_planning",
-          detail: "Plan is already in PLANNING phase. Nothing to rewind.",
+          error: isPlanning ? "cannot_rewind_planning" : "cannot_rewind_terminal",
+          detail: isPlanning
+            ? "Plan is already in PLANNING phase. Nothing to rewind."
+            : `Plans in ${currentStatus} status cannot be rewound.`,
         });
       }
 
-      // Define what each rewind operation clears and its target phase
-      const rewindConfig: Record<Phase, {
-        targetPhase: Phase;
-        clearFields: Record<string, null | false | string | BreedingPlanStatus>;
-        validation?: () => Promise<{ blocked: boolean; error?: string; detail?: string; blockers?: any }>;
-      } | null> = {
-        PLANNING: null, // Can't rewind from PLANNING
-
-        CYCLE: {
-          // Rewind CYCLE -> PLANNING: Clear lock fields, reset anchor mode
-          targetPhase: "PLANNING",
-          clearFields: {
-            lockedCycleStart: null,
-            lockedOvulationDate: null,
-            lockedDueDate: null,
-            lockedPlacementStartDate: null,
-            committedAt: null,
-            committedByUserId: null,
-            ovulationConfirmed: null,
-            ovulationConfirmedMethod: null,
-            // Reset anchor mode back to default - breeder must re-enable ovulation anchors if desired
-            reproAnchorMode: "CYCLE_START",
-            primaryAnchor: "CYCLE_START",
-            dateConfidenceLevel: null,
-            dateSourceNotes: null,
-            // Clear all downstream actual dates in case they were entered ahead of status
-            cycleStartDateActual: null,
-            cycleStartDateUnknown: false,
-            hormoneTestingStartDateActual: null,
-            ovulationDateUnknown: false,
-            breedDateActual: null,
-            breedDateUnknown: false,
-            birthDateActual: null,
-            status: BreedingPlanStatus.PLANNING,
-          },
-          validation: async () => {
-            const blockers: any = {};
-
-            // Check for offspring linked to this plan
-            const offspringCount = await prisma.offspring.count({
-              where: { tenantId, breedingPlanId: plan.id },
-            });
-            if (offspringCount > 0) blockers.hasOffspring = true;
-
-            try {
-              const buyersCount = await prisma.waitlistEntry.count({
-                where: { tenantId, planId: plan.id },
-              });
-              if (buyersCount > 0) blockers.hasBuyers = true;
-            } catch (e) {
-              // Table may not exist
-            }
-
-            if (Object.keys(blockers).length > 0) {
-              return { blocked: true, blockers };
-            }
-            return { blocked: false };
-          },
-        },
-
-        BRED: {
-          // Rewind BRED -> CYCLE: Clear cycle start date and/or ovulation data that advanced us to BRED
-          // BRED phase = has cycle start OR ovulation confirmed, working on breed date
-          // Also clear any breed date that may have been entered but not yet advanced
-          targetPhase: "CYCLE",
-          clearFields: {
-            cycleStartDateActual: null,
-            hormoneTestingStartDateActual: null,
-            cycleStartDateUnknown: false,
-            ovulationDateUnknown: false,
-            breedDateActual: null, // Clear any entered breed date
-            breedDateUnknown: false,
-            // Clear ovulation anchor data (plan may have been advanced via ovulation confirmation)
-            ovulationConfirmed: null,
-            ovulationConfirmedMethod: null,
-            ovulationConfidence: null,
-            ovulationTestResultId: null,
-            // Reset anchor mode back to CYCLE_START - breeder must re-enable ovulation anchors if desired
-            reproAnchorMode: "CYCLE_START",
-            primaryAnchor: "CYCLE_START",
-            dateConfidenceLevel: null,
-            dateSourceNotes: null,
-            // Clear downstream dates in case they were entered ahead of status
-            birthDateActual: null,
-            status: BreedingPlanStatus.CYCLE,
-          },
-        },
-
-        BIRTHED: {
-          // Rewind BIRTHED -> BRED: Clear breed date that advanced us to BIRTHED
-          // BIRTHED phase = has breed date, working on birth date
-          targetPhase: "BRED",
-          clearFields: {
-            breedDateActual: null,
-            breedDateUnknown: false,
-            birthDateActual: null,
-            status: BreedingPlanStatus.BRED,
-          },
-        },
-
-        PLAN_COMPLETE: {
-          // Rewind PLAN_COMPLETE -> BIRTHED: Clear birth date and revert plan status
-          targetPhase: "BIRTHED",
-          clearFields: {
-            birthDateActual: null,
-            status: BreedingPlanStatus.BIRTHED,
-          },
-          validation: async () => {
-            // Cannot rewind if offspring exist for this plan
-            const offspringCount = await prisma.offspring.count({
-              where: { tenantId, breedingPlanId: id },
-            });
-            if (offspringCount > 0) {
-              return {
-                blocked: true,
-                error: "offspring_exist",
-                detail: "Cannot rewind because offspring have been recorded for this plan. Remove all offspring first.",
-                blockers: { hasOffspring: true },
-              };
-            }
-            return { blocked: false };
-          },
-        },
+      // One-step-back map: currentStatus → targetStatus
+      // CYCLE → PLANNING also clears lock fields so the plan can be re-committed.
+      type RewindTarget = {
+        toStatus: string;
+        extraClearFields?: Record<string, null | false>;
       };
 
-      const config = rewindConfig[currentPhase];
-      if (!config) {
+      // Shared clear-fields for any transition that lands on PLANNING
+      const CYCLE_TO_PLANNING_CLEARS: Record<string, null | false> = {
+        cycleStartDateActual: null,
+        cycleStartDateUnknown: false,
+        lockedCycleStart: null,
+        lockedOvulationDate: null,
+        lockedDueDate: null,
+        lockedPlacementStartDate: null,
+        committedAt: null,
+        committedByUserId: null,
+      };
+
+      const REWIND_MAP: Record<string, RewindTarget> = {
+        // Legacy alias
+        COMMITTED:           { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
+        CYCLE:               { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
+        // Rewinding from BRED (Breeding phase) goes directly to PLANNING for all species.
+        //
+        // For induced ovulators (CAT, RABBIT) the CYCLE status is not a visible phase
+        // in the UI journey, so BRED → CYCLE → PLANNING would require two invisible clicks.
+        //
+        // For cyclic ovulators (HORSE, DOG, GOAT, SHEEP) CYCLE is a visible intermediate
+        // phase, but breeders expect "undo a breeding attempt" to land in Planning — not
+        // in an intermediate cycle-monitoring state. The cycle lock fields are cleared so
+        // the plan can be fully re-committed when they advance again.
+        BRED:                { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
+        BIRTHED:             { toStatus: "BRED" },
+        BORN:                { toStatus: "BIRTHED", extraClearFields: { birthDateActual: null, expectedWeaned: null, expectedPlacementStart: null, expectedPlacementCompleted: null } },
+        WEANED:              { toStatus: "BIRTHED" },
+        // DB status PLACEMENT is used for both PLACEMENT_STARTED and PLACEMENT_COMPLETED display phases.
+        // Clearing placementStartDateActual ensures the plan displays as PLACEMENT_STARTED after rewind.
+        PLACEMENT:           { toStatus: "WEANED", extraClearFields: { placementStartDateActual: null } },
+        PLACEMENT_STARTED:   { toStatus: "WEANED", extraClearFields: { placementStartDateActual: null } },   // dead code (not a real DB enum value, kept for safety)
+        PLACEMENT_COMPLETED: { toStatus: "PLACEMENT_STARTED" },   // dead code (not a real DB enum value, kept for safety)
+        // Rewinding from PLAN_COMPLETE goes back to PLACEMENT (displays as PLACEMENT_COMPLETED since
+        // placementStartDateActual is still set). Clears completedDateActual so the date can be re-entered.
+        PLAN_COMPLETE:       { toStatus: "PLACEMENT", extraClearFields: { completedDateActual: null } },
+      };
+
+      const target = REWIND_MAP[currentStatus];
+      if (!target) {
         return reply.code(400).send({
           error: "cannot_rewind",
-          detail: `Cannot rewind from phase: ${currentPhase}`,
+          detail: `Cannot rewind from status: ${currentStatus}`,
         });
       }
 
-      // Run validation if defined
-      if (config.validation) {
-        const validationResult = await config.validation();
-        if (validationResult.blocked) {
-          if (validationResult.blockers) {
-            return reply.code(409).send({ blockers: validationResult.blockers });
-          }
-          return reply.code(400).send({
-            error: validationResult.error || "validation_failed",
-            detail: validationResult.detail,
-          });
-        }
-      }
+      // Build the update payload: only status changes, plus lock fields for CYCLE → PLANNING
+      const updateData: Record<string, any> = {
+        status: target.toStatus,
+        ...(target.extraClearFields ?? {}),
+      };
 
-      // Execute the rewind in a transaction
-      const result = await prisma.$transaction(async (tx) => {
-        // Update plan with cleared fields
-        const updated = await tx.breedingPlan.update({
-          where: { id: plan.id },
-          data: config.clearFields as any,
+      await prisma.$transaction(async (tx) => {
+        await tx.breedingPlan.update({
+          where: { id: plan.id, tenantId },
+          data: updateData,
         });
 
-        // Create audit event
         await tx.breedingPlanEvent.create({
           data: {
             tenantId: plan.tenantId,
             planId: plan.id,
             type: "PLAN_PHASE_REWOUND",
             occurredAt: new Date(),
-            label: `Phase rewound from ${currentPhase} to ${config.targetPhase}`,
+            label: `Phase rewound from ${currentStatus} to ${target.toStatus}`,
             data: {
-              fromPhase: currentPhase,
-              toPhase: config.targetPhase,
-              clearedFields: Object.keys(config.clearFields),
+              fromPhase: currentStatus,
+              toPhase: target.toStatus,
+              clearedFields: target.extraClearFields ? Object.keys(target.extraClearFields) : [],
             },
             recordedByUserId: userId,
           },
         });
-
-        return { plan: updated, targetPhase: config.targetPhase };
       });
 
       // Sync animal breeding statuses after rewind
@@ -2444,15 +2294,15 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         entityId: id,
         kind: "plan_phase_rewound",
         category: "status",
-        title: "Breeding plan phase rewound",
+        title: `Breeding plan phase rewound from ${currentStatus} to ${target.toStatus}`,
         actorId: String((req as any).userId ?? "unknown"),
         actorName: (req as any).userName,
       });
 
       reply.send({
         ok: true,
-        fromPhase: currentPhase,
-        toPhase: result.targetPhase,
+        fromPhase: currentStatus,
+        toPhase: target.toStatus,
       });
     } catch (err) {
       req.log.error({ err }, "rewind failed");
@@ -2673,7 +2523,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Perform update within transaction
       const result = await prisma.$transaction(async (tx) => {
         const updated = await tx.breedingPlan.update({
-          where: { id },
+          where: { id, tenantId },
           data: updateData,
         });
 
@@ -2947,7 +2797,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Perform update within transaction
       const result = await prisma.$transaction(async (tx) => {
         const updated = await tx.breedingPlan.update({
-          where: { id },
+          where: { id, tenantId },
           data: updateData,
         });
 
@@ -3065,7 +2915,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Clear ovulation fields and revert to CYCLE_START
       const updated = await prisma.breedingPlan.update({
-        where: { id },
+        where: { id, tenantId },
         data: {
           ovulationConfirmed: null,
           ovulationConfirmedMethod: null,
@@ -3110,7 +2960,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
-      await prisma.breedingPlan.update({ where: { id }, data: { archived: true } });
+      await prisma.breedingPlan.updateMany({ where: { id, tenantId }, data: { archived: true } });
 
       // Sync animal breeding statuses (they may revert from BREEDING if no other active plans)
       if (plan.damId) await syncAnimalBreedingStatus(plan.damId, tenantId);
@@ -3163,8 +3013,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       await prisma.$transaction(async (tx) => {
         const restoreStatus = "PLAN_COMPLETE";
 
-        await tx.breedingPlan.update({
-          where: { id },
+        await tx.breedingPlan.updateMany({
+          where: { id, tenantId },
           data: {
             archived: false,
             archiveReason: null,
@@ -3299,8 +3149,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Archive the plan in a transaction
       await prisma.$transaction(async (tx) => {
-        await tx.breedingPlan.update({
-          where: { id },
+        await tx.breedingPlan.updateMany({
+          where: { id, tenantId },
           data: {
             archived: true,
             archiveReason,
@@ -3361,6 +3211,103 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (err.message === "Plan not found") {
         return reply.code(404).send({ error: "not_found" });
       }
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────── *
+   * GET /breeding/plans/:id/dependencies                                     *
+   * Pre-flight check used by EndPlanModal to surface all linked data before  *
+   * the user confirms Delete or Reset. Returns counts per category and a     *
+   * hasHardBlocker flag when cross-tenant lineage links exist (those cannot  *
+   * be deleted/reset under any circumstances).                                *
+   * ─────────────────────────────────────────────────────────────────────── */
+  app.get("/breeding/plans/:id/dependencies", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const id = idNum((req.params as any).id);
+      if (!id) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id, tenantId },
+        select: { id: true, birthDateActual: true },
+      });
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+
+      // Run all counts in parallel for performance
+      const [
+        offspringCount,
+        buyersCount,
+        invoiceCount,
+        contractCount,
+        documentCount,
+        waitlistCount,
+        examCount,
+        neonatalCount,
+      ] = await Promise.all([
+        prisma.offspring.count({ where: { tenantId, breedingPlanId: id } }).catch(() => 0),
+        prisma.breedingPlanBuyer.count({ where: { tenantId, planId: id } }).catch(() => 0),
+        prisma.invoice.count({ where: { tenantId, offspring: { breedingPlanId: id } } }).catch(() => 0),
+        prisma.offspringContract.count({ where: { tenantId, offspring: { breedingPlanId: id } } }).catch(() => 0),
+        prisma.offspringDocument.count({ where: { tenantId, offspring: { breedingPlanId: id } } }).catch(() => 0),
+        prisma.waitlistEntry.count({ where: { tenantId, planId: id } }).catch(() => 0),
+        prisma.testResult.count({ where: { tenantId, planId: id } }).catch(() => 0),
+        prisma.neonatalCareEntry.count({ where: { tenantId, offspring: { breedingPlanId: id } } }).catch(() => 0),
+      ]);
+
+      // Check for cross-tenant lineage on promoted offspring — this is the only hard block
+      let crossTenantLinkCount = 0;
+      try {
+        const promotedOffspring = await prisma.offspring.findMany({
+          where: { tenantId, breedingPlanId: id, promotedAnimalId: { not: null } },
+          select: { promotedAnimalId: true },
+        });
+        const promotedAnimalIds = promotedOffspring
+          .map((o) => o.promotedAnimalId)
+          .filter((animalId): animalId is number => animalId !== null);
+
+        if (promotedAnimalIds.length > 0) {
+          crossTenantLinkCount = await prisma.crossTenantAnimalLink.count({
+            where: {
+              active: true,
+              OR: [
+                { childAnimalId: { in: promotedAnimalIds } },
+                { parentAnimalId: { in: promotedAnimalIds } },
+              ],
+            },
+          });
+        }
+      } catch {
+        // CrossTenantAnimalLink table may not exist in older schemas — non-blocking
+      }
+
+      // Hard blockers (in priority order):
+      // 1. Registered offspring — plan has real breeding data, delete is inappropriate
+      // 2. Cross-tenant lineage — links cannot be severed
+      const hasRegisteredOffspring = offspringCount > 0;
+      const hasCrossTenantLinks = crossTenantLinkCount > 0;
+      const hasHardBlocker = hasRegisteredOffspring || hasCrossTenantLinks;
+      const hardBlockerReason = hasCrossTenantLinks
+        ? "One or more offspring from this plan have cross-tenant lineage links. This plan cannot be deleted until those links are removed."
+        : hasRegisteredOffspring
+        ? `${offspringCount} offspring are registered on this plan. Plans with registered offspring cannot be deleted — use Cancel or Archive instead.`
+        : null;
+
+      return reply.send({
+        offspring: { count: offspringCount },
+        buyers: { count: buyersCount },
+        invoices: { count: invoiceCount },
+        contracts: { count: contractCount },
+        documents: { count: documentCount },
+        waitlistEntries: { count: waitlistCount },
+        examResults: { count: examCount },
+        neonatalCareEntries: { count: neonatalCount },
+        crossTenantLineageLinks: { count: crossTenantLinkCount },
+        hasHardBlocker,
+        hardBlockerReason,
+      });
+    } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
     }
@@ -3504,8 +3451,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const now = new Date();
 
       // Safe to delete - no dependencies exist
-      await prisma.breedingPlan.update({
-        where: { id },
+      await prisma.breedingPlan.updateMany({
+        where: { id, tenantId },
         data: { deletedAt: now, archived: true },
       });
 
@@ -3559,8 +3506,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const result = await prisma.$transaction(async (tx) => {
         // Clear ovulation anchor FK so the linked exam can be deleted
         if (plan.ovulationTestResultId) {
-          await tx.breedingPlan.update({
-            where: { id: plan.id },
+          await tx.breedingPlan.updateMany({
+            where: { id: plan.id, tenantId },
             data: { ovulationTestResultId: null },
           });
         }
@@ -3694,7 +3641,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.status !== undefined) data.status = b.status;
       if (b.notes !== undefined) data.notes = b.notes;
 
-      const updated = await prisma.reproductiveCycle.update({ where: { id }, data });
+      const updated = await prisma.reproductiveCycle.update({ where: { id, tenantId }, data });
 
       logEntityActivity({
         tenantId,
@@ -3870,8 +3817,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         orderBy: { attemptAt: "asc" },
         select: { attemptAt: true },
       });
-      await prisma.breedingPlan.update({
-        where: { id: planId },
+      await prisma.breedingPlan.updateMany({
+        where: { id: planId, tenantId },
         data: { breedDateActual: earliest?.attemptAt ?? null },
       });
 
@@ -3935,8 +3882,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Delete the attempt if one exists
       if (latestAttempt) {
-        await prisma.breedingAttempt.delete({
-          where: { id: latestAttempt.id },
+        await prisma.breedingAttempt.deleteMany({
+          where: { id: latestAttempt.id, tenantId },
         });
       }
 
@@ -3946,8 +3893,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         orderBy: { attemptAt: "asc" },
         select: { attemptAt: true },
       });
-      await prisma.breedingPlan.update({
-        where: { id: planId },
+      await prisma.breedingPlan.updateMany({
+        where: { id: planId, tenantId },
         data: { breedDateActual: earliest?.attemptAt ?? null },
       });
 
@@ -3996,7 +3943,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (b.success !== undefined) data.success = b.success;
 
       const updated = await prisma.breedingAttempt.update({
-        where: { id: attemptId },
+        where: { id: attemptId, tenantId },
         data,
         include: {
           dam: { select: { id: true, name: true } },
@@ -4041,8 +3988,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const planId = existing.planId;
 
-      await prisma.breedingAttempt.delete({
-        where: { id: attemptId },
+      await prisma.breedingAttempt.deleteMany({
+        where: { id: attemptId, tenantId },
       });
 
       // Recalculate breedDateActual from remaining attempts (earliest date, or null if none)
@@ -4052,8 +3999,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           orderBy: { attemptAt: "asc" },
           select: { attemptAt: true },
         });
-        await prisma.breedingPlan.update({
-          where: { id: planId },
+        await prisma.breedingPlan.updateMany({
+          where: { id: planId, tenantId },
           data: { breedDateActual: earliest?.attemptAt ?? null },
         });
       }
@@ -4323,7 +4270,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       ];
       for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
 
-      const updated = await prisma.litter.update({ where: { id }, data });
+      const updated = await prisma.litter.update({ where: { id, tenantId }, data });
 
       logEntityActivity({
         tenantId,
@@ -4515,7 +4462,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         for (const a of assignments) {
           updates.push(
             tx.animal.update({
-              where: { id: Number(a.animalId) },
+              where: { id: Number(a.animalId), tenantId },
               data: {
                 collarColorId: a.colorId ?? null,
                 collarColorName: a.colorName ?? null,
@@ -5192,8 +5139,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           });
           if (milestone) {
-            await prisma.breedingMilestone.update({
-              where: { id: milestone.id },
+            await prisma.breedingMilestone.updateMany({
+              where: { id: milestone.id, tenantId },
               data: { completedDate: new Date(), isCompleted: true, updatedAt: new Date() },
             });
           }
@@ -5613,8 +5560,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
       // Update plan marketplace status
-      await prisma.breedingPlan.update({
-        where: { id: planId },
+      await prisma.breedingPlan.updateMany({
+        where: { id: planId, tenantId },
         data: { marketplaceStatus: "LIVE" },
       });
 
@@ -5627,7 +5574,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let listedCount = 0;
       if (eligibleOffspring.length > 0) {
         await prisma.offspring.updateMany({
-          where: { id: { in: eligibleOffspring.map((o) => o.id) } },
+          where: { id: { in: eligibleOffspring.map((o) => o.id) }, tenantId },
           data: { marketplaceListed: true },
         });
         listedCount = eligibleOffspring.length;
@@ -5672,8 +5619,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       if (!plan) return reply.code(404).send({ error: "not_found" });
 
       // Update plan marketplace status
-      await prisma.breedingPlan.update({
-        where: { id: planId },
+      await prisma.breedingPlan.updateMany({
+        where: { id: planId, tenantId },
         data: { marketplaceStatus: "DRAFT" },
       });
 
@@ -5731,6 +5678,303 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       reply.status(201).send({ entries: results });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // ============================================================================
+  // FOAL WEAN CHECK (horse-only foal weaning assessment)
+  // ============================================================================
+
+  // GET /breeding/plans/:id/wean-check - Get all wean check records for a plan (one per foal)
+  app.get("/breeding/plans/:id/wean-check", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const records = await prisma.weanCheck.findMany({
+        where: { breedingPlanId: Number(id), tenantId },
+      });
+
+      reply.send(records);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // GET /animals/:id/wean-check - Get wean check for a specific foal
+  app.get("/animals/:id/wean-check", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const tenantId = (req as any).tenantId;
+
+      const record = await prisma.weanCheck.findUnique({
+        where: { animalId: Number(id) },
+      });
+
+      if (record && record.tenantId !== tenantId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      reply.send(record ?? null);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  // PUT /animals/:id/wean-check - Upsert wean check for a specific foal
+  app.put("/animals/:id/wean-check", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as any;
+      const tenantId = (req as any).tenantId;
+
+      const data = {
+        weaningMethod: body.weaningMethod ?? null,
+        stressRating: body.stressRating ?? null,
+        behaviorSigns: body.behaviorSigns ?? [],
+        daysToSettle: body.daysToSettle != null ? Number(body.daysToSettle) : null,
+        vetAssessmentDone: body.vetAssessmentDone ?? null,
+        vetName: body.vetName ?? null,
+        vetNotes: body.vetNotes ?? null,
+        vaccinationsUpToDate: body.vaccinationsUpToDate ?? null,
+        dewormingDone: body.dewormingDone ?? null,
+        cogginsPulled: body.cogginsPulled ?? null,
+        eatingHayIndependently: body.eatingHayIndependently ?? null,
+        eatingGrainIndependently: body.eatingGrainIndependently ?? null,
+        supplementStarted: body.supplementStarted ?? null,
+        notes: body.notes ?? null,
+        updatedAt: new Date(),
+      };
+
+      const record = await prisma.weanCheck.upsert({
+        where: { animalId: Number(id) },
+        create: {
+          animalId: Number(id),
+          breedingPlanId: Number(body.breedingPlanId),
+          tenantId,
+          ...data,
+        },
+        update: data,
+      });
+
+      logEntityActivity({
+        tenantId,
+        entityType: "ANIMAL",
+        entityId: Number(id),
+        kind: "wean_check_updated",
+        category: "health",
+        title: "Foal wean check updated",
+        actorId: String((req as any).userId ?? "unknown"),
+        actorName: (req as any).userName,
+      });
+
+      reply.send(record);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Plan Attachments  (documents tab — health certs, registration paperwork)
+   * GET    /breeding/plans/:id/attachments
+   * POST   /breeding/plans/:id/attachments
+   * DELETE /breeding/plans/:id/attachments/:attachmentId
+   * ─────────────────────────────────────────────────────────────────────── */
+
+  app.get("/breeding/plans/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const items = await prisma.attachment.findMany({
+        where: { tenantId, planId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, kind: true, storageKey: true, filename: true, mime: true, bytes: true, createdAt: true },
+      });
+
+      reply.send(items);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/plans/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as any;
+      if (!b.kind || !b.storageKey || !b.filename || !b.mime) {
+        return reply.code(400).send({ error: "kind, storageKey, filename, mime are required" });
+      }
+
+      await getPlanInTenant(planId, tenantId);
+
+      const created = await prisma.attachment.create({
+        data: {
+          tenantId,
+          planId,
+          kind: b.kind,
+          storageProvider: b.storageProvider ?? "s3",
+          storageKey: b.storageKey,
+          filename: b.filename,
+          mime: b.mime,
+          bytes: Number(b.bytes) || 0,
+          createdByUserId: (req as any).user?.id ?? null,
+        },
+        select: { id: true, kind: true, storageKey: true, filename: true, mime: true, bytes: true, createdAt: true },
+      });
+
+      reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.delete("/breeding/plans/:id/attachments/:attachmentId", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      const attachmentId = idNum((req.params as any).attachmentId);
+      if (!planId || !attachmentId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const existing = await prisma.attachment.findFirst({
+        where: { id: attachmentId, planId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      await prisma.attachment.delete({ where: { id: attachmentId } });
+
+      reply.code(204).send();
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Plan Media / Documents  (media gallery tab)
+   * GET    /breeding/plans/:id/documents
+   * POST   /breeding/plans/:id/documents
+   * DELETE /breeding/plans/:id/documents/:documentId
+   * Uses the Document model (breedingPlanId FK already exists).
+   * ─────────────────────────────────────────────────────────────────────── */
+
+  const PLAN_DOC_SELECT = {
+    id: true,
+    title: true,
+    originalFileName: true,
+    mimeType: true,
+    sizeBytes: true,
+    bytes: true,
+    storageKey: true,
+    url: true,
+    visibility: true,
+    watermarkEnabled: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
+  app.get("/breeding/plans/:id/documents", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const items = await prisma.document.findMany({
+        where: { tenantId, breedingPlanId: planId },
+        select: PLAN_DOC_SELECT,
+        orderBy: { createdAt: "desc" },
+      });
+
+      reply.send(items.map(d => ({
+        ...d,
+        sizeBytes: d.sizeBytes ?? d.bytes ?? null,
+        createdAt: d.createdAt.toISOString(),
+        updatedAt: d.updatedAt.toISOString(),
+      })));
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/plans/:id/documents", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as any;
+      if (!b.storageKey || !b.title) {
+        return reply.code(400).send({ error: "storageKey and title are required" });
+      }
+
+      await getPlanInTenant(planId, tenantId);
+
+      const created = await prisma.document.create({
+        data: {
+          tenantId,
+          breedingPlanId: planId,
+          scope: "animal", // closest valid enum value; filtered via breedingPlanId
+          title: b.title,
+          originalFileName: b.originalFileName ?? b.title,
+          mimeType: b.mimeType ?? null,
+          sizeBytes: b.sizeBytes ? Number(b.sizeBytes) : null,
+          storageKey: b.storageKey,
+          url: b.cdnUrl ?? null,
+          visibility: b.visibility ?? "PRIVATE",
+          watermarkEnabled: false,
+          data: { category: b.category ?? "media" },
+        },
+        select: PLAN_DOC_SELECT,
+      });
+
+      reply.code(201).send({
+        ...created,
+        sizeBytes: created.sizeBytes ?? created.bytes ?? null,
+        createdAt: created.createdAt.toISOString(),
+        updatedAt: created.updatedAt.toISOString(),
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.delete("/breeding/plans/:id/documents/:documentId", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      const documentId = idNum((req.params as any).documentId);
+      if (!planId || !documentId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const existing = await prisma.document.findFirst({
+        where: { id: documentId, breedingPlanId: planId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      await prisma.document.delete({ where: { id: documentId } });
+
+      reply.code(204).send();
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

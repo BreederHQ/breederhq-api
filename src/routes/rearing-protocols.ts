@@ -2,7 +2,6 @@
 // Rearing Protocols API - Protocol template CRUD
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import prisma from "../prisma.js";
-import { activeOnly } from "../utils/query-helpers.js";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -59,7 +58,7 @@ const rearingProtocolsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const { page, limit, skip } = parsePaging(q);
 
       // Filters
-      const species = trimToNull(q.species);
+      const species = trimToNull(q.species)?.toUpperCase();
       const activeOnly = q.active === "true" || q.active === true;
 
       // Build where clause: (tenantId OR benchmark) AND optional filters

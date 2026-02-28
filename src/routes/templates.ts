@@ -200,8 +200,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (name !== undefined) updateData.name = name;
     if (isActive !== undefined) updateData.status = isActive ? "active" : "draft";
 
-    await prisma.template.update({
-      where: { id },
+    await prisma.template.updateMany({
+      where: { id, tenantId },
       data: updateData,
     });
 
@@ -217,6 +217,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (bodyText !== undefined) contentUpdate.bodyText = bodyText;
         if (bodyHtml !== undefined) contentUpdate.bodyHtml = bodyHtml;
 
+        // content fetched from tenant-verified template include
         await prisma.templateContent.update({
           where: { id: existing.content[0].id },
           data: contentUpdate,
@@ -248,8 +249,8 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     // Soft delete by setting status to archived
-    await prisma.template.update({
-      where: { id },
+    await prisma.template.updateMany({
+      where: { id, tenantId },
       data: { status: "archived" },
     });
 

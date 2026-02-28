@@ -208,7 +208,7 @@ export async function sendTemplatedEmail(
     return { ok: false, error: "template_not_active" };
   }
 
-  const rendered = await renderTemplate({ prisma, templateId, context });
+  const rendered = await renderTemplate({ prisma, tenantId: template.tenantId, templateId, context });
 
   return sendEmail({
     tenantId,

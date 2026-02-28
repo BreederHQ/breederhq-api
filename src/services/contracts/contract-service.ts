@@ -41,6 +41,7 @@ import {
   sendContractDeclinedEmail,
   sendContractVoidedEmail,
 } from "../email-service.js";
+import { extractComplianceRequirements } from "../compliance-extraction.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Contract Creation
@@ -121,7 +122,7 @@ export async function buildRenderContext(
   contractId: number
 ): Promise<ContractRenderContext> {
   const contract = await prisma.contract.findUniqueOrThrow({
-    where: { id: contractId },
+    where: { id: contractId, tenantId },
     include: {
       tenant: true,
       parties: {
@@ -243,7 +244,7 @@ export async function renderAndStoreContractContent(
   contractId: number
 ): Promise<void> {
   const contract = await prisma.contract.findUniqueOrThrow({
-    where: { id: contractId },
+    where: { id: contractId, tenantId },
     include: { template: true },
   });
 
@@ -511,6 +512,20 @@ export async function signContract(
         signedAt: new Date(),
       },
     });
+
+    // Extract compliance requirements for HEALTH_GUARANTEE contracts
+    try {
+      const contractData = await prisma.contract.findUnique({
+        where: { id: contractId },
+        select: { offspringId: true, template: { select: { category: true } } },
+      });
+      if (contractData?.offspringId && contractData.template?.category === "HEALTH_GUARANTEE") {
+        await extractComplianceRequirements(contractId, tenantId, contractData.offspringId);
+      }
+    } catch (err) {
+      // Don't fail the signing flow if compliance extraction fails
+      console.error(`[contract-service] Compliance extraction failed for contract ${contractId}:`, err);
+    }
   } else {
     // Update contract status to viewed if still in sent
     await prisma.contract.updateMany({
@@ -582,7 +597,7 @@ export async function declineContract(
 ): Promise<void> {
   // Get contract and party info before updating
   const contract = await prisma.contract.findUniqueOrThrow({
-    where: { id: contractId },
+    where: { id: contractId, tenantId },
     include: {
       tenant: true,
       parties: { where: { signer: true } },

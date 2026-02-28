@@ -446,7 +446,7 @@ export async function createBreedingMilestones(
     },
   ];
 
-  return await Promise.all(
+  const createdScheduled = await Promise.all(
     milestones.map((m) =>
       prisma.breedingMilestone.create({
         data: {
@@ -458,6 +458,26 @@ export async function createBreedingMilestones(
       })
     )
   );
+
+  // Create pre-foaling sign milestones (scheduled 7 days before due date)
+  const preBirthSigns = SPECIES_PRE_BIRTH_SIGNS["HORSE"] || [];
+  const dueDate = addDays(anchor.anchorDate, GESTATION_DAYS);
+  const preBirthDate = addDays(dueDate, -7);
+
+  const createdSigns = await Promise.all(
+    preBirthSigns.map((type) =>
+      prisma.breedingMilestone.create({
+        data: {
+          tenantId,
+          breedingPlanId,
+          milestoneType: type as any,
+          scheduledDate: preBirthDate,
+        },
+      })
+    )
+  );
+
+  return [...createdScheduled, ...createdSigns];
 }
 
 /**

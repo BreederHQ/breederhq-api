@@ -6,10 +6,10 @@
 //   GET    /api/v1/business-hours      - Read business hours settings
 //   PUT    /api/v1/business-hours      - Update business hours settings
 
-import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
-import { getActorId } from "../utils/session.js";
+import { requirePermission } from "../middleware/require-permission.js";
 
 // ============================================================================
 // Types
@@ -64,27 +64,6 @@ const DEFAULT_TIMEZONE = "America/New_York";
 // Helpers
 // ============================================================================
 
-async function requireTenantMemberOrAdmin(req: FastifyRequest, tenantId: number) {
-  const actorId = getActorId(req);
-  if (!actorId) return { ok: false as const, code: 401 as const };
-
-  const user = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { isSuperAdmin: true },
-  });
-  if (user?.isSuperAdmin) return { ok: true as const, role: "OWNER" as const };
-
-  const mem = await prisma.tenantMembership.findUnique({
-    where: { userId_tenantId: { userId: actorId, tenantId } },
-    select: { role: true },
-  });
-  if (!mem) return { ok: false as const, code: 403 as const };
-  return { ok: true as const, role: mem.role };
-}
-
-function isAdminLike(role?: string | null) {
-  return role === "OWNER" || role === "ADMIN";
-}
 
 /**
  * Validate time format (HH:mm)
@@ -288,22 +267,8 @@ const businessHoursRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
   // --------------------------------------------------------------------------
   // GET /business-hours - Read business hours settings
   // --------------------------------------------------------------------------
-  app.get("/business-hours", async (req, reply) => {
-    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
-
-    if (!tenantId) {
-      return reply.code(400).send({
-        error: "tenant_required",
-        message: "X-Tenant-Id header required",
-      });
-    }
-
-    const gate = await requireTenantMemberOrAdmin(req, tenantId);
-    if (!gate.ok) {
-      return reply.code(gate.code).send({
-        error: gate.code === 401 ? "unauthorized" : "forbidden",
-      });
-    }
+  app.get("/business-hours", { preHandler: requirePermission("contacts.view") }, async (req, reply) => {
+    const tenantId = req.tenantId!;
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -362,26 +327,8 @@ const businessHoursRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       timeZone?: string;
       resetToDefaults?: boolean;
     };
-  }>("/business-hours", async (req, reply) => {
-    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
-
-    if (!tenantId) {
-      return reply.code(400).send({
-        error: "tenant_required",
-        message: "X-Tenant-Id header required",
-      });
-    }
-
-    const gate = await requireTenantMemberOrAdmin(req, tenantId);
-    if (!gate.ok) {
-      return reply.code(gate.code).send({
-        error: gate.code === 401 ? "unauthorized" : "forbidden",
-      });
-    }
-
-    if (!isAdminLike(gate.role)) {
-      return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
-    }
+  }>("/business-hours", { preHandler: requirePermission("staff.*") }, async (req, reply) => {
+    const tenantId = req.tenantId!;
 
     const { schedule, timeZone, resetToDefaults } = req.body ?? {};
 

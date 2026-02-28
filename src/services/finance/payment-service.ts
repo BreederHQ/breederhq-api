@@ -18,14 +18,16 @@ import type { PrismaClient } from "@prisma/client";
  *
  * @param prisma - Prisma client instance (transaction client)
  * @param invoiceId - The invoice ID to recalculate
+ * @param tenantId - The tenant ID for isolation
  */
 export async function recalculateInvoiceBalance(
   prisma: PrismaClient | any,
-  invoiceId: number
+  invoiceId: number,
+  tenantId: number
 ): Promise<void> {
-  // Get invoice with all successful payments
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
+  // Get invoice with all successful payments (tenant-scoped)
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, tenantId },
     include: {
       Payments: {
         where: {
@@ -36,7 +38,7 @@ export async function recalculateInvoiceBalance(
   });
 
   if (!invoice) {
-    throw new Error(`Invoice ${invoiceId} not found`);
+    return;
   }
 
   // Sum all successful payments
@@ -96,6 +98,14 @@ export async function createPaymentAndRecalculate(
     data?: any;
   }
 ): Promise<any> {
+  // Verify the invoice belongs to this tenant before creating a payment
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: data.invoiceId, tenantId: data.tenantId },
+  });
+  if (!invoice) {
+    throw new Error("Invoice not found");
+  }
+
   // Create the payment
   const payment = await prisma.payment.create({
     data: {
@@ -113,7 +123,7 @@ export async function createPaymentAndRecalculate(
   });
 
   // Recalculate invoice balance and status
-  await recalculateInvoiceBalance(prisma, data.invoiceId);
+  await recalculateInvoiceBalance(prisma, data.invoiceId, data.tenantId);
 
   return payment;
 }

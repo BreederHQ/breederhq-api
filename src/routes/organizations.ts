@@ -391,9 +391,9 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
       const [updatedParty, updatedOrg] = await prisma.$transaction(async (tx) => {
         const party = hasPartyUpdates
-          ? await tx.party.update({ where: { id: org.partyId }, data: partyData })
+          ? await tx.party.update({ where: { id: org.partyId, tenantId }, data: partyData }) // tenant-isolated
           : org.party;
-        const organization = hasOrgUpdates ? await tx.organization.update({ where: { id }, data: orgData }) : org;
+        const organization = hasOrgUpdates ? await tx.organization.update({ where: { id, tenantId }, data: orgData }) : org; // tenant-isolated mutation
         return [party, organization];
       });
 
@@ -436,7 +436,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
         }
 
-        await tx.organization.update({ where: { id: org.id }, data: { archived: true } });
+        await tx.organization.updateMany({ where: { id: org.id, tenantId }, data: { archived: true } });
       });
       reply.send({ ok: true });
     } catch (e: any) {
@@ -465,7 +465,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           throw Object.assign(new Error("org_missing_party"), { statusCode: 500 });
         }
 
-        await tx.organization.update({ where: { id: org.id }, data: { archived: false } });
+        await tx.organization.updateMany({ where: { id: org.id, tenantId }, data: { archived: false } });
       });
       reply.send({ ok: true });
     } catch (e: any) {
@@ -528,7 +528,7 @@ const organizationsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           .send({ error: "cannot_delete_org_with_dependents", contacts: contactRefCount, animals: animalRefCount });
       }
 
-      await prisma.organization.delete({ where: { id } });
+      await prisma.organization.deleteMany({ where: { id, tenantId } });
       reply.send({ ok: true });
     } catch (e: any) {
       const { status, payload } = errorReply(e);

@@ -146,7 +146,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Get breeding plans from these bookings
       const planIds = bookings.filter((b) => b.breedingPlanId).map((b) => b.breedingPlanId!);
       const plans = await prisma.breedingPlan.findMany({
-        where: { id: { in: planIds } },
+        where: { id: { in: planIds }, tenantId },
         select: {
           id: true,
           name: true,
@@ -160,6 +160,7 @@ const routes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Get offspring from these plans
       const offspringFromPlans = await prisma.animal.findMany({
         where: {
+          tenantId,
           OR: [
             { damId: listing.animal?.id },
             { sireId: listing.animal?.id },

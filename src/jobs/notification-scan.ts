@@ -59,6 +59,7 @@ export async function runNotificationScanJob(): Promise<void> {
     console.log(`[notification-scan-job] Summary:
   - Notifications created: ${scanResults.total + contractResults.total + microchipResults.notificationsCreated}
     - Vaccinations: ${scanResults.vaccinations}
+    - Client vaccinations (portal): ${scanResults.clientVaccinations}
     - Breeding: ${scanResults.breeding}
     - Contract reminders: ${contractResults.reminders}
     - Contract expirations: ${contractResults.expired}

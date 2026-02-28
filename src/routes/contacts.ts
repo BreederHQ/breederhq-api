@@ -812,13 +812,13 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
 
         if (partyId && existing.partyId && Object.keys(partyData).length > 0) {
-          await tx.party.update({ where: { id: partyId }, data: partyData });
+          await tx.party.update({ where: { id: partyId, tenantId }, data: partyData }); // tenant-isolated
         }
 
         // Only update contact if we have changes to make
         if (Object.keys(dataCore).length > 0) {
           return tx.contact.update({
-            where: { id: existing.id },
+            where: { id: existing.id, tenantId }, // tenant-isolated mutation
             data: dataCore,
             select: {
               id: true,
@@ -1095,19 +1095,19 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       documentCount, messageCount, contractPartyCount, offspringContractCount,
       planPartyCount, planBuyerCount, expenseCount, buyerRecord, breedingAttemptCount,
     ] = await Promise.all([
-      prisma.animalOwner.count({ where: { partyId } }),
+      prisma.animalOwner.count({ where: { partyId, animal: { tenantId } } }),
       prisma.invoice.count({ where: { clientPartyId: partyId, tenantId } }),
       prisma.payment.count({ where: { tenantId, invoice: { clientPartyId: partyId } } }),
       prisma.waitlistEntry.count({ where: { clientPartyId: partyId, tenantId } }),
       prisma.portalAccess.count({ where: { partyId, tenantId } }),
       prisma.attachment.count({ where: { attachmentPartyId: partyId, tenantId } }),
-      prisma.message.count({ where: { senderPartyId: partyId } }),
+      prisma.message.count({ where: { senderPartyId: partyId, thread: { tenantId } } }),
       prisma.contractParty.count({ where: { partyId, tenantId } }),
       prisma.offspringContract.count({ where: { buyerPartyId: partyId, tenantId } }),
       prisma.planParty.count({ where: { partyId, tenantId } }),
       prisma.breedingPlanBuyer.count({ where: { partyId, tenantId } }),
       prisma.expense.count({ where: { vendorPartyId: partyId, tenantId } }),
-      prisma.buyer.findUnique({ where: { partyId }, select: { id: true } }),
+      prisma.buyer.findFirst({ where: { partyId, tenantId }, select: { id: true } }),
       prisma.breedingAttempt.count({ where: { studOwnerPartyId: partyId, tenantId } }),
     ]);
 
@@ -1198,13 +1198,13 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           ]);
 
           // Delete contact first (Party has onDelete: Restrict from Contact side)
-          await tx.contact.delete({ where: { id: contactId } });
+          await tx.contact.deleteMany({ where: { id: contactId, tenantId } });
           // Delete party (cascades to PartyNote, PartyEvent, PartyEmail, etc.)
-          await tx.party.delete({ where: { id: contact.partyId! } });
+          await tx.party.deleteMany({ where: { id: contact.partyId!, tenantId } });
         });
       } else {
         // Contact without a party — just delete the contact
-        await prisma.contact.delete({ where: { id: contactId } });
+        await prisma.contact.deleteMany({ where: { id: contactId, tenantId } });
       }
 
       await updateUsageSnapshot(tenantId, "CONTACT_COUNT");
@@ -1245,7 +1245,10 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     const ownerships = await prisma.animalOwner.findMany({
-      where: { partyId: contact.partyId },
+      where: {
+        partyId: contact.partyId,
+        animal: { tenantId },
+      },
       orderBy: [{ isPrimary: "desc" }, { percent: "desc" }],
       select: {
         id: true,
@@ -1258,7 +1261,6 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         animal: {
           select: {
             id: true,
-            tenantId: true,
             name: true,
             species: true,
             sex: true,
@@ -1273,9 +1275,8 @@ const contactsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       },
     });
 
-    // Filter to only animals in this tenant
     const animals = ownerships
-      .filter((o) => o.animal && o.animal.tenantId === tenantId)
+      .filter((o) => o.animal)
       .map((o) => ({
         ...o.animal,
         owners: [

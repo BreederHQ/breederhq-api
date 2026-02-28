@@ -345,6 +345,7 @@ export async function* streamHelpResponse(opts: {
         modelUsed: "claude-haiku-4-5-20251001",
         tokenCount,
         latencyMs,
+        mode: "assistant",
       },
     });
     queryLogId = log.id;

@@ -39,8 +39,8 @@ export async function transferMicrochipOwnership(
 
   try {
     // Get offspring with buyer party and microchip registrations
-    const offspring = await prisma.offspring.findUnique({
-      where: { id: offspringId },
+    const offspring = await prisma.offspring.findFirst({
+      where: { id: offspringId, tenantId },
       include: {
         buyerParty: {
           include: {

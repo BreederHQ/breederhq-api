@@ -456,7 +456,7 @@ class FiberProductionService {
     const totalShearings = shearings.length;
     if (totalShearings === 0) {
       // Remove history if no shearings
-      await prisma.fiberProductionHistory.deleteMany({ where: { animalId } });
+      await prisma.fiberProductionHistory.deleteMany({ where: { animalId, tenantId } });
       return;
     }
 

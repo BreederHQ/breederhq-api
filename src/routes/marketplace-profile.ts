@@ -10,6 +10,7 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import prisma from "../prisma.js";
 import { getActorId } from "../utils/session.js";
+import { requirePermission } from "../middleware/require-permission.js";
 import {
   validateLegalAcceptancePayload,
   writeLegalAcceptance,
@@ -339,23 +340,8 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
   // --------------------------------------------------------------------------
   // GET /profile - Read marketplace profile (draft + published)
   // --------------------------------------------------------------------------
-  app.get("/profile", async (req, reply) => {
-    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
-
-    // For marketplace surface (no tenant context), return 400
-    if (!tenantId) {
-      return reply.code(400).send({
-        error: "tenant_required",
-        message: "X-Tenant-Id header required for profile endpoints",
-      });
-    }
-
-    const gate = await requireTenantMemberOrAdmin(req, tenantId);
-    if (!gate.ok) {
-      return reply.code(gate.code).send({
-        error: gate.code === 401 ? "unauthorized" : "forbidden",
-      });
-    }
+  app.get("/profile", { preHandler: requirePermission("contacts.view") }, async (req, reply) => {
+    const tenantId = req.tenantId!;
 
     const data = await readProfileSetting(tenantId);
 
@@ -370,26 +356,8 @@ const marketplaceProfileRoutes: FastifyPluginAsync = async (app: FastifyInstance
   // --------------------------------------------------------------------------
   // PUT /profile/draft - Save draft marketplace profile
   // --------------------------------------------------------------------------
-  app.put<{ Body: Record<string, unknown> }>("/profile/draft", async (req, reply) => {
-    const tenantId = (req as unknown as { tenantId: number | null }).tenantId;
-
-    if (!tenantId) {
-      return reply.code(400).send({
-        error: "tenant_required",
-        message: "X-Tenant-Id header required for profile endpoints",
-      });
-    }
-
-    const gate = await requireTenantMemberOrAdmin(req, tenantId);
-    if (!gate.ok) {
-      return reply.code(gate.code).send({
-        error: gate.code === 401 ? "unauthorized" : "forbidden",
-      });
-    }
-
-    if (!isAdminLike(gate.role)) {
-      return reply.code(403).send({ error: "forbidden", message: "Admin role required" });
-    }
+  app.put<{ Body: Record<string, unknown> }>("/profile/draft", { preHandler: requirePermission("staff.*") }, async (req, reply) => {
+    const tenantId = req.tenantId!;
 
     const draftPayload = req.body ?? {};
     if (typeof draftPayload !== "object") {

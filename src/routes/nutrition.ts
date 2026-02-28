@@ -203,7 +203,9 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!tenantId) return;
 
     const body = req.body as {
-      animalId: number;
+      animalId?: number;
+      breedingPlanId?: number;
+      planId?: number; // alias for breedingPlanId (sent by breeding plan UI)
       foodProductId: number;
       portionOz: number;
       feedingsPerDay?: number;
@@ -213,8 +215,9 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       notes?: string;
     };
 
-    if (!body.animalId) {
-      return reply.code(400).send({ error: { code: "animal_id_required", message: "animalId is required" } });
+    const breedingPlanId = body.breedingPlanId ?? body.planId;
+    if (!body.animalId && !breedingPlanId) {
+      return reply.code(400).send({ error: { code: "target_required", message: "Either animalId or breedingPlanId is required" } });
     }
     if (!body.foodProductId) {
       return reply.code(400).send({ error: { code: "food_product_id_required", message: "Food product ID is required" } });
@@ -227,7 +230,7 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     try {
-      const plan = await nutritionService.createFeedingPlan(tenantId, body);
+      const plan = await nutritionService.createFeedingPlan(tenantId, { ...body, breedingPlanId });
       return reply.code(201).send(plan);
     } catch (e: any) {
       if (e.statusCode === 404) {
@@ -371,7 +374,9 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (!tenantId) return;
 
     const body = req.body as {
-      animalId: number;
+      animalId?: number;
+      breedingPlanId?: number;
+      planId?: number; // alias for breedingPlanId (sent by breeding plan UI)
       feedingPlanId?: number;
       foodProductId?: number;
       fedAt: string;
@@ -382,15 +387,19 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       notes?: string;
     };
 
-    if (!body.animalId) {
-      return reply.code(400).send({ error: { code: "animal_id_required", message: "animalId is required" } });
+    const breedingPlanId = body.breedingPlanId ?? body.planId;
+    if (!body.animalId && !breedingPlanId) {
+      return reply.code(400).send({ error: { code: "target_required", message: "Either animalId or breedingPlanId is required" } });
     }
     if (!body.fedAt) {
       return reply.code(400).send({ error: { code: "fed_at_required", message: "Feeding time is required" } });
     }
 
     try {
-      const record = await nutritionService.logFeeding(tenantId, body);
+      const record = await nutritionService.logFeeding(tenantId, {
+        ...body,
+        breedingPlanId,
+      });
       return reply.code(201).send(record);
     } catch (e: any) {
       if (e.statusCode === 404) {
@@ -501,6 +510,71 @@ const nutritionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       throw e;
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BREEDING-PLAN-SPECIFIC ROUTES
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/v1/breeding/plans/:planId/nutrition/plan
+  // Get the active feeding plan for a breeding plan (dam nutrition during gestation)
+  app.get("/breeding/plans/:planId/nutrition/plan", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const breedingPlanId = parseIntStrict((req.params as { planId: string }).planId);
+    if (!breedingPlanId) {
+      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid breeding plan ID" } });
+    }
+
+    const plan = await nutritionService.getActivePlanForBreedingPlan(tenantId, breedingPlanId);
+    return reply.send(plan);
+  });
+
+  // GET /api/v1/breeding/plans/:planId/nutrition/records
+  // List feeding records for a breeding plan
+  app.get("/breeding/plans/:planId/nutrition/records", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const breedingPlanId = parseIntStrict((req.params as { planId: string }).planId);
+    if (!breedingPlanId) {
+      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid breeding plan ID" } });
+    }
+
+    const query = req.query as {
+      dateFrom?: string;
+      dateTo?: string;
+      skipped?: string;
+      page?: string;
+      limit?: string;
+    };
+
+    const result = await nutritionService.listFeedingRecords(tenantId, {
+      breedingPlanId,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      skipped: parseBool(query.skipped),
+      page: query.page ? parseInt(query.page, 10) : undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+    });
+
+    return reply.send(result);
+  });
+
+  // GET /api/v1/breeding/plans/:planId/nutrition/changes
+  // Get food change history for a breeding plan
+  app.get("/breeding/plans/:planId/nutrition/changes", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const breedingPlanId = parseIntStrict((req.params as { planId: string }).planId);
+    if (!breedingPlanId) {
+      return reply.code(400).send({ error: { code: "invalid_id", message: "Invalid breeding plan ID" } });
+    }
+
+    const history = await nutritionService.getFoodChangeHistoryForBreedingPlan(tenantId, breedingPlanId);
+    return reply.send({ changes: history });
   });
 
   // ══════════════════════════════════════════════════════════════════════════
