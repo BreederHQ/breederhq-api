@@ -1433,6 +1433,191 @@ export async function createGeneticTestNotifications(alerts: GeneticTestAlert[])
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Medication Scanning (overdue doses, withdrawal countdowns)
+// ────────────────────────────────────────────────────────────────────────────
+
+interface MedicationAlert {
+  courseId: number;
+  animalId: number;
+  animalName: string;
+  medicationName: string;
+  tenantId: number;
+  alertType: "overdue" | "withdrawal_expiring" | "withdrawal_cleared";
+  daysValue: number; // days overdue or days until withdrawal expires
+  withdrawalExpiryDate?: Date;
+}
+
+/**
+ * Scan for medication alerts:
+ * 1. Overdue doses: ACTIVE courses with nextDueDate < NOW()
+ * 2. Withdrawal expiring soon: withdrawalExpiryDate within 7 days
+ * 3. Withdrawal cleared: withdrawalExpiryDate just passed (for one-time notification)
+ */
+export async function scanMedicationAlerts(): Promise<MedicationAlert[]> {
+  const today = startOfDay(new Date());
+  const sevenDaysFromNow = addDays(today, 7);
+  const oneDayAgo = addDays(today, -1);
+
+  const alerts: MedicationAlert[] = [];
+
+  // 1. Overdue doses (ACTIVE courses where nextDueDate < NOW)
+  const overdueRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT c."id" AS "courseId", c."animalId", c."medicationName", c."tenantId", c."nextDueDate",
+            a."name" AS "animalName", a."status" AS "animalStatus"
+     FROM "public"."MedicationCourse" c
+     JOIN "public"."Animal" a ON a."id" = c."animalId"
+     WHERE c."status" = 'ACTIVE' AND c."deletedAt" IS NULL
+       AND c."nextDueDate" IS NOT NULL AND c."nextDueDate" < NOW()
+       AND a."status" != 'DECEASED'`,
+  );
+
+  for (const row of overdueRows) {
+    const daysOverdue = differenceInDays(today, startOfDay(new Date(row.nextDueDate)));
+    // Alert at thresholds: 1, 3, 7 days overdue
+    if (daysOverdue === 1 || daysOverdue === 3 || daysOverdue === 7) {
+      alerts.push({
+        courseId: row.courseId,
+        animalId: row.animalId,
+        animalName: row.animalName,
+        medicationName: row.medicationName,
+        tenantId: row.tenantId,
+        alertType: "overdue",
+        daysValue: daysOverdue,
+      });
+    }
+  }
+
+  // 2. Withdrawal expiring within 7 days
+  const withdrawalRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT c."id" AS "courseId", c."animalId", c."medicationName", c."tenantId", c."withdrawalExpiryDate",
+            a."name" AS "animalName"
+     FROM "public"."MedicationCourse" c
+     JOIN "public"."Animal" a ON a."id" = c."animalId"
+     WHERE c."deletedAt" IS NULL
+       AND c."withdrawalExpiryDate" IS NOT NULL
+       AND c."withdrawalExpiryDate" BETWEEN $1 AND $2
+       AND a."status" != 'DECEASED'`,
+    today,
+    sevenDaysFromNow,
+  );
+
+  for (const row of withdrawalRows) {
+    const daysRemaining = differenceInDays(startOfDay(new Date(row.withdrawalExpiryDate)), today);
+    // Alert at 7, 3, 1 days before
+    if (daysRemaining === 7 || daysRemaining === 3 || daysRemaining === 1) {
+      alerts.push({
+        courseId: row.courseId,
+        animalId: row.animalId,
+        animalName: row.animalName,
+        medicationName: row.medicationName,
+        tenantId: row.tenantId,
+        alertType: "withdrawal_expiring",
+        daysValue: daysRemaining,
+        withdrawalExpiryDate: new Date(row.withdrawalExpiryDate),
+      });
+    }
+  }
+
+  // 3. Withdrawal just cleared (expired yesterday — one-time "all clear" notification)
+  const clearedRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT c."id" AS "courseId", c."animalId", c."medicationName", c."tenantId", c."withdrawalExpiryDate",
+            a."name" AS "animalName"
+     FROM "public"."MedicationCourse" c
+     JOIN "public"."Animal" a ON a."id" = c."animalId"
+     WHERE c."deletedAt" IS NULL
+       AND c."withdrawalExpiryDate" IS NOT NULL
+       AND c."withdrawalExpiryDate" BETWEEN $1 AND $2
+       AND a."status" != 'DECEASED'`,
+    oneDayAgo,
+    today,
+  );
+
+  for (const row of clearedRows) {
+    alerts.push({
+      courseId: row.courseId,
+      animalId: row.animalId,
+      animalName: row.animalName,
+      medicationName: row.medicationName,
+      tenantId: row.tenantId,
+      alertType: "withdrawal_cleared",
+      daysValue: 0,
+      withdrawalExpiryDate: new Date(row.withdrawalExpiryDate),
+    });
+  }
+
+  return alerts;
+}
+
+/**
+ * Create notification records for medication alerts
+ */
+export async function createMedicationNotifications(alerts: MedicationAlert[]): Promise<number> {
+  const today = startOfDay(new Date());
+  let created = 0;
+
+  for (const alert of alerts) {
+    let type: string;
+    let priority: string;
+    let title: string;
+    let message: string;
+
+    switch (alert.alertType) {
+      case "overdue":
+        type = "medication_overdue";
+        priority = alert.daysValue >= 3 ? "HIGH" : "MEDIUM";
+        title = `Medication Dose Overdue (${alert.daysValue}d)`;
+        message = `${alert.animalName}'s ${alert.medicationName} dose is ${alert.daysValue} day${alert.daysValue !== 1 ? "s" : ""} overdue. Administer or update the course.`;
+        break;
+      case "withdrawal_expiring":
+        type = "medication_withdrawal_expiring_7d";
+        priority = alert.daysValue <= 1 ? "HIGH" : "MEDIUM";
+        title = `Withdrawal Clearing ${alert.daysValue === 1 ? "Tomorrow" : `in ${alert.daysValue} Days`}`;
+        message = `${alert.animalName}'s withdrawal period for ${alert.medicationName} clears ${alert.withdrawalExpiryDate ? `on ${alert.withdrawalExpiryDate.toLocaleDateString()}` : `in ${alert.daysValue} days`}. Competition eligibility approaching.`;
+        break;
+      case "withdrawal_cleared":
+        type = "medication_withdrawal_cleared";
+        priority = "LOW";
+        title = "Withdrawal Period Cleared";
+        message = `${alert.animalName} is now clear from ${alert.medicationName} withdrawal. Eligible for competition.`;
+        break;
+    }
+
+    const idempotencyKey = `${type}:MedicationCourse:${alert.courseId}:${today.toISOString().split("T")[0]}`;
+
+    const existing = await prisma.notification.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing) continue;
+
+    await prisma.notification.create({
+      data: {
+        tenantId: alert.tenantId,
+        userId: null,
+        type: type as any,
+        priority: priority as any,
+        title,
+        message,
+        linkUrl: `/animals/${alert.animalId}/health`,
+        status: "UNREAD",
+        idempotencyKey,
+        metadata: {
+          courseId: alert.courseId,
+          animalId: alert.animalId,
+          animalName: alert.animalName,
+          medicationName: alert.medicationName,
+          alertType: alert.alertType,
+          daysValue: alert.daysValue,
+        },
+      },
+    });
+
+    created++;
+  }
+
+  return created;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main Scanner Function
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1446,6 +1631,7 @@ export async function runNotificationScan(): Promise<{
   guarantees: number;
   geneticTests: number;
   clientVaccinations: number;
+  medications: number;
   total: number;
 }> {
   console.log("[notification-scanner] Starting notification scan...");
@@ -1485,7 +1671,14 @@ export async function runNotificationScan(): Promise<{
   const clientVaxCreated = await createClientVaccinationNotifications(clientVaxAlerts);
   console.log(`[notification-scanner] Created ${clientVaxCreated} client vaccination notifications`);
 
-  const total = vaccinationsCreated + breedingCreated + guaranteesCreated + geneticTestsCreated + clientVaxCreated;
+  // Scan medication alerts (overdue doses, withdrawal countdowns)
+  const medicationAlerts = await scanMedicationAlerts();
+  console.log(`[notification-scanner] Found ${medicationAlerts.length} medication alerts`);
+
+  const medicationsCreated = await createMedicationNotifications(medicationAlerts);
+  console.log(`[notification-scanner] Created ${medicationsCreated} medication notifications`);
+
+  const total = vaccinationsCreated + breedingCreated + guaranteesCreated + geneticTestsCreated + clientVaxCreated + medicationsCreated;
   console.log(`[notification-scanner] Scan complete. Created ${total} total notifications`);
 
   return {
@@ -1494,6 +1687,7 @@ export async function runNotificationScan(): Promise<{
     guarantees: guaranteesCreated,
     geneticTests: geneticTestsCreated,
     clientVaccinations: clientVaxCreated,
+    medications: medicationsCreated,
     total,
   };
 }

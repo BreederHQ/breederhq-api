@@ -5,7 +5,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages.js";
 
 /**
- * All 10 copilot tools.
+ * All 12 copilot tools.
  * The `name` field doubles as the key into the handler map (copilot-handlers.ts).
  */
 export const COPILOT_TOOLS: Tool[] = [
@@ -53,7 +53,7 @@ export const COPILOT_TOOLS: Tool[] = [
   {
     name: "get_animal_details",
     description:
-      "Get the full profile for a specific animal by ID. Returns: basic info (name, DOB, microchip, breed, sex, status), parents (dam/sire with breed), vaccination records (protocol, date administered, expiry, vet/clinic), earned titles (abbreviation, full name, organization, date earned), and genetics data (test provider, health panel results, breed composition, coat color). Use this for detailed animal lookups, vet visit prep, health summaries, or any question about a specific animal's history.",
+      "Get the full profile for a specific animal by ID. Returns: basic info (name, DOB, microchip, breed, sex, status), parents (dam/sire with breed), vaccination records (protocol, date administered, expiry, vet/clinic), active medications with withdrawal status and compliance, earned titles (abbreviation, full name, organization, date earned), and genetics data (test provider, health panel results, breed composition, coat color). Use this for detailed animal lookups, vet visit prep, health summaries, competition eligibility checks, or any question about a specific animal's history.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -249,6 +249,31 @@ export const COPILOT_TOOLS: Tool[] = [
         },
       },
       required: ["plan_id"],
+    },
+  },
+
+  {
+    name: "get_medication_history",
+    description:
+      "Get medication history for a specific animal. Returns active and past medication courses with dose history, withdrawal status, and compliance tracking. Use when the user asks about an animal's medications, treatments, withdrawal periods, or competition eligibility.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        animal_id: {
+          type: "number",
+          description: "The animal's ID",
+        },
+        category: {
+          type: "string",
+          enum: ["ANTIBIOTIC", "NSAID", "ANTIPARASITIC", "ANTIFUNGAL", "STEROID", "HORMONE", "SUPPLEMENT", "SEDATIVE", "ANESTHETIC", "OTHER"],
+          description: "Filter by medication category",
+        },
+        active_only: {
+          type: "boolean",
+          description: "If true, only return ACTIVE courses (default false)",
+        },
+      },
+      required: ["animal_id"],
     },
   },
 

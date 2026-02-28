@@ -36,6 +36,7 @@ type AgendaItemKind =
   | "contract"
   | "reminder"
   | "vaccination"
+  | "medication"
   | "weigh_in";
 
 type AgendaItem = {
@@ -470,6 +471,66 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             severity: isExpired ? "critical" : daysRemaining < 7 ? "important" : "normal",
           });
         }
+      }
+
+      // Medication overdue + withdrawal countdowns (30-day lookahead)
+      const thirtyDaysFromNowMed = addDays(new Date(), 30);
+      try {
+        // Overdue medication doses
+        const overdueMeds = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT c."id", c."animalId", c."medicationName", c."nextDueDate", c."status",
+                  a."name" AS "animalName"
+           FROM "public"."MedicationCourse" c
+           JOIN "public"."Animal" a ON a."id" = c."animalId"
+           WHERE c."tenantId" = $1 AND c."status" = 'ACTIVE' AND c."deletedAt" IS NULL
+             AND c."nextDueDate" IS NOT NULL AND c."nextDueDate" < NOW()
+             AND a."archived" = false AND a."status" != 'DECEASED'`,
+          tenantId,
+        );
+
+        for (const med of overdueMeds) {
+          const daysOverdue = Math.floor((new Date().getTime() - new Date(med.nextDueDate).getTime()) / (1000 * 60 * 60 * 24));
+          agenda.push({
+            id: `medication-overdue-${med.id}`,
+            kind: "medication",
+            title: `${med.animalName}: ${med.medicationName} dose overdue (${daysOverdue}d)`,
+            scheduledAt: new Date(med.nextDueDate).toISOString(),
+            entityType: "animal",
+            entityId: String(med.animalId),
+            completed: false,
+            severity: daysOverdue >= 3 ? "critical" : "important",
+          });
+        }
+
+        // Withdrawal countdowns (expiring within 30 days)
+        const withdrawalMeds = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT c."id", c."animalId", c."medicationName", c."withdrawalExpiryDate",
+                  a."name" AS "animalName"
+           FROM "public"."MedicationCourse" c
+           JOIN "public"."Animal" a ON a."id" = c."animalId"
+           WHERE c."tenantId" = $1 AND c."deletedAt" IS NULL
+             AND c."withdrawalExpiryDate" IS NOT NULL
+             AND c."withdrawalExpiryDate" BETWEEN NOW() AND $2
+             AND a."archived" = false AND a."status" != 'DECEASED'`,
+          tenantId,
+          thirtyDaysFromNowMed,
+        );
+
+        for (const med of withdrawalMeds) {
+          const daysUntil = Math.ceil((new Date(med.withdrawalExpiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          agenda.push({
+            id: `medication-withdrawal-${med.id}`,
+            kind: "medication",
+            title: `${med.animalName}: ${med.medicationName} withdrawal clears in ${daysUntil}d`,
+            scheduledAt: new Date(med.withdrawalExpiryDate).toISOString(),
+            entityType: "animal",
+            entityId: String(med.animalId),
+            completed: false,
+            severity: daysUntil <= 3 ? "important" : "normal",
+          });
+        }
+      } catch {
+        // MedicationCourse table may not exist yet — silently skip
       }
 
       // Sort by scheduled time
@@ -1503,6 +1564,98 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     } catch (err) {
       req.log?.error?.({ err }, "Failed to get gun dog aptitude data");
       return reply.code(500).send({ error: "get_gun_dog_aptitude_failed" });
+    }
+  });
+
+  /**
+   * GET /api/v1/dashboard/medication-overview
+   * Tenant-wide medication summary: active courses, withdrawal countdowns,
+   * overdue doses, and upcoming due dates. Powers the Medication Overview widget.
+   */
+  app.get("/dashboard/medication-overview", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      if (!tenantId) return reply.code(401).send({ error: "unauthorized" });
+
+      const now = new Date();
+
+      // Fetch active + scheduled courses with latest dose info — single query
+      const courses = await prisma.medicationCourse.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          status: { in: ["ACTIVE", "SCHEDULED"] },
+          Animal: { archived: false, status: { not: "DECEASED" } },
+        },
+        include: {
+          Animal: { select: { id: true, name: true, species: true } },
+        },
+        orderBy: [{ nextDueDate: "asc" }, { startDate: "desc" }],
+        take: 50, // Dashboard widget limit — not paginated
+      });
+
+      // Enrich with computed fields
+      const items = courses.map((c) => {
+        const isOverdue = c.nextDueDate
+          ? new Date(c.nextDueDate) < now && c.status === "ACTIVE"
+          : false;
+        const withdrawalActive = c.withdrawalExpiryDate
+          ? new Date(c.withdrawalExpiryDate) > now
+          : false;
+        const withdrawalDaysRemaining = c.withdrawalExpiryDate
+          ? Math.max(0, Math.ceil((new Date(c.withdrawalExpiryDate).getTime() - now.getTime()) / 86_400_000))
+          : null;
+        const daysOverdue = isOverdue && c.nextDueDate
+          ? Math.floor((now.getTime() - new Date(c.nextDueDate).getTime()) / 86_400_000)
+          : 0;
+        const nextDueDays = c.nextDueDate && !isOverdue
+          ? Math.ceil((new Date(c.nextDueDate).getTime() - now.getTime()) / 86_400_000)
+          : null;
+
+        return {
+          courseId: c.id,
+          animalId: c.animalId,
+          animalName: c.Animal?.name || `Animal #${c.animalId}`,
+          species: c.Animal?.species || null,
+          medicationName: c.medicationName,
+          category: c.category,
+          isControlledSubstance: c.isControlledSubstance,
+          frequency: c.frequency,
+          status: c.status,
+          nextDueDate: c.nextDueDate?.toISOString() || null,
+          withdrawalExpiryDate: c.withdrawalExpiryDate?.toISOString() || null,
+          completedDoses: c.completedDoses,
+          totalDoses: c.totalDoses,
+          isOverdue,
+          daysOverdue,
+          withdrawalActive,
+          withdrawalDaysRemaining,
+          nextDueDays,
+        };
+      });
+
+      // Summary counts
+      const activeCount = items.filter((i) => i.status === "ACTIVE").length;
+      const withdrawalActiveCount = items.filter((i) => i.withdrawalActive).length;
+      const overdueCount = items.filter((i) => i.isOverdue).length;
+      const controlledCount = items.filter((i) => i.isControlledSubstance).length;
+      const dueTodayCount = items.filter((i) => i.nextDueDays === 0).length;
+      const dueTomorrowCount = items.filter((i) => i.nextDueDays === 1).length;
+
+      return reply.send({
+        items,
+        summary: {
+          activeCount,
+          withdrawalActiveCount,
+          overdueCount,
+          controlledCount,
+          dueTodayCount,
+          dueTomorrowCount,
+        },
+      });
+    } catch (err) {
+      req.log?.error?.({ err }, "Failed to get medication overview");
+      return reply.code(500).send({ error: "get_medication_overview_failed" });
     }
   });
 };

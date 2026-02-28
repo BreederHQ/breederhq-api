@@ -637,6 +637,7 @@ import contractsRoutes from "./routes/contracts.js"; // Contract e-signatures (p
 import contractTemplatesRoutes from "./routes/contract-templates.js"; // Contract templates management
 import portalContractsRoutes from "./routes/portal-contracts.js"; // Contract signing (portal)
 import portalHealthRoutes from "./routes/portal-health.js"; // Portal health records & vaccinations
+import portalMedicationsRoutes from "./routes/portal-medications.js"; // Portal medication viewing (read-only)
 import breederHealthRoutes from "./routes/breeder-health.js"; // Breeder-side shared health data
 import communicationsRoutes from "./routes/communications.js"; // Communications Hub inbox
 import draftsRoutes from "./routes/drafts.js"; // Draft messages/emails
@@ -652,6 +653,8 @@ import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding 
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
 import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
+import animalMedicationsRoutes from "./routes/animal-medications.js"; // Medication/treatment tracking (courses, doses, batch)
+import animalHealthExportRoutes, { publicHealthReportSharedRoutes } from "./routes/animal-health-export.js"; // Health report PDF export, stall card, email, share link
 import supplementRoutes from "./routes/supplements.js"; // Supplement tracking (protocols, schedules, administrations)
 import nutritionRoutes from "./routes/nutrition.js"; // Nutrition & food tracking (products, plans, records, changes)
 import dairyRoutes from "./routes/dairy.js"; // Dairy production tracking (lactations, milking, DHIA, appraisals)
@@ -1244,6 +1247,8 @@ app.register(
     api.register(animalDocumentsRoutes); // /api/v1/animals/:animalId/documents
     api.register(contactDocumentsRoutes); // /api/v1/contacts/:contactId/documents
     api.register(animalVaccinationsRoutes); // /api/v1/animals/:animalId/vaccinations, /api/v1/vaccinations/protocols
+    api.register(animalMedicationsRoutes); // /api/v1/animals/:animalId/medications/*, /api/v1/medications/*, /api/v1/medication-doses/*
+    api.register(animalHealthExportRoutes); // /api/v1/animals/:animalId/health-report/*, /api/v1/health-report/shared/*
     api.register(supplementRoutes); // /api/v1/supplement-protocols/*, /api/v1/supplement-schedules/*, /api/v1/supplements/*
     api.register(nutritionRoutes); // /api/v1/nutrition/*, /api/v1/animals/:id/nutrition/*
     api.register(dairyRoutes); // /api/v1/dairy/*, /api/v1/animals/:id/dairy/*
@@ -1304,6 +1309,7 @@ app.register(
     api.register(portalContractsRoutes); // /api/v1/portal/contracts/* Portal contract signing
     api.register(portalProtocolsRoutes); // /api/v1/portal/protocols/* Portal training protocol continuation
     api.register(portalHealthRoutes);    // /api/v1/portal/offspring/:id/health* Portal health records & vaccinations
+    api.register(portalMedicationsRoutes); // /api/v1/portal/offspring/:id/medications Portal medication viewing (read-only)
     api.register(breederHealthRoutes);   // /api/v1/offspring/:id/health-feed, /api/v1/animals/:id/offspring-health-summary
     api.register(notificationsRoutes); // /api/v1/notifications/* Health & breeding notifications
     api.register(geneticPreferencesRoutes); // /api/v1/users/me/genetic-notification-preferences, /api/v1/genetic-notifications/snooze/*
@@ -1318,6 +1324,7 @@ app.register(
     api.register(portalContractsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/contracts/*
     api.register(portalProtocolsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/protocols/*
     api.register(portalHealthRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/offspring/:id/health*
+    api.register(portalMedicationsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/offspring/:id/medications
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
@@ -1414,6 +1421,9 @@ app.register(
   async (api) => {
     // Share code preview — returns non-sensitive animal data for marketing landing page
     api.register(publicSharePreviewRoutes); // /api/v1/public/share-codes/:code/preview
+
+    // Health report shared link — PIN-secured, no auth required
+    api.register(publicHealthReportSharedRoutes); // /api/v1/public/health-report/shared/:code?pin=XXXX
 
     // SECURITY: Public marketplace routes have been REMOVED to prevent unauthenticated scraping.
     // All marketplace data is now served exclusively via /api/v1/marketplace/* which requires:

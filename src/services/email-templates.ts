@@ -915,3 +915,78 @@ Reminder emails have been sent to the respective clients.
 
   return { subject, html, text };
 }
+
+// ---------- Health Report Email Template ----------
+
+export interface HealthReportEmailParams {
+  animalName: string;
+  organizationName: string;
+  recipientName?: string;
+  message?: string;
+  activeMedicationCount: number;
+  hasActiveWithdrawals: boolean;
+}
+
+/**
+ * Email sent to a vet or other recipient with an attached health report PDF.
+ * Subject: "Health Report: [Animal Name] — from [Organization Name]"
+ */
+export function renderHealthReportEmail(params: HealthReportEmailParams): { subject: string; html: string; text: string } {
+  const { animalName, organizationName, recipientName, message, activeMedicationCount, hasActiveWithdrawals } = params;
+
+  const subject = `Health Report: ${animalName} — from ${organizationName}`;
+
+  const greeting = recipientName ? `Hi ${recipientName},` : "Hello,";
+  const medSummary = activeMedicationCount > 0
+    ? `${activeMedicationCount} active medication${activeMedicationCount !== 1 ? "s" : ""}`
+    : "No active medications";
+  const withdrawalNote = hasActiveWithdrawals ? " (withdrawal period active)" : "";
+
+  const text = `
+${greeting}
+
+${organizationName} has shared a health report for ${animalName}.
+
+Summary: ${medSummary}${withdrawalNote}
+${message ? `\nMessage: ${message}\n` : ""}
+The full report is attached as a PDF.
+
+This report was shared with you via BreederHQ.
+
+— ${organizationName}
+`.trim();
+
+  const html = wrapEmailLayout({
+    title: "Animal Health Report",
+    footerOrgName: organizationName,
+    body: [
+      recipientName ? emailGreeting(recipientName) : emailParagraph("Hello,"),
+      emailParagraph(
+        `${emailAccent(organizationName)} has shared a health report for ${emailAccent(animalName)}.`
+      ),
+      emailInfoCard(
+        [
+          `<p style="color: #f97316; margin: 0 0 12px 0; font-size: 18px; font-weight: 600;">${animalName}</p>`,
+          `<p style="color: #e5e5e5; margin: 8px 0;"><strong style="color: #ffffff;">Active Medications:</strong> ${medSummary}${withdrawalNote}</p>`,
+        ].join("\n"),
+        { borderColor: hasActiveWithdrawals ? "red" : "green" },
+      ),
+      message
+        ? emailInfoCard(
+            [
+              emailHeading("Message"),
+              `<p style="color: #e5e5e5; margin: 0; white-space: pre-wrap;">${message}</p>`,
+            ].join("\n"),
+            { borderColor: "gray" },
+          )
+        : "",
+      emailParagraph("The full health report is attached as a PDF."),
+      emailParagraph(
+        '<span style="color: #737373; font-size: 13px;">This report was shared with you via BreederHQ. ' +
+        "For informational purposes only — not a substitute for veterinary medical records.</span>"
+      ),
+    ].join("\n"),
+  });
+
+  return { subject, html, text };
+}

@@ -157,11 +157,52 @@ async function getAnimalDetails(
 
   if (!animal) return { error: "Animal not found" };
 
+  // Fetch active medications + withdrawal status via raw SQL (table may not exist yet)
+  let activeMedications: any[] = [];
+  try {
+    activeMedications = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT c."id", c."medicationName", c."category", c."dosageAmount", c."dosageUnit",
+              c."frequency", c."status", c."isControlledSubstance",
+              c."withdrawalPeriodDays", c."withdrawalExpiryDate", c."nextDueDate",
+              c."completedDoses", c."totalDoses", c."startDate"
+       FROM "public"."MedicationCourse" c
+       WHERE c."tenantId" = $1 AND c."animalId" = $2
+         AND c."deletedAt" IS NULL AND c."status" = 'ACTIVE'
+       ORDER BY c."startDate" DESC
+       LIMIT 10`,
+      tenantId,
+      animalId,
+    );
+  } catch {
+    // MedicationCourse table may not exist yet — skip gracefully
+  }
+
+  const now = new Date();
+  const medications = activeMedications.map((m: any) => ({
+    id: m.id,
+    medicationName: m.medicationName,
+    category: m.category,
+    dosage: m.dosageAmount ? `${Number(m.dosageAmount)} ${m.dosageUnit ?? ""}`.trim() : null,
+    frequency: m.frequency,
+    isControlledSubstance: m.isControlledSubstance,
+    withdrawalActive: m.withdrawalExpiryDate ? new Date(m.withdrawalExpiryDate) > now : false,
+    withdrawalDaysRemaining: m.withdrawalExpiryDate
+      ? Math.ceil((new Date(m.withdrawalExpiryDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : null,
+    isOverdue: m.nextDueDate ? new Date(m.nextDueDate) < now : false,
+    completedDoses: m.completedDoses,
+    totalDoses: m.totalDoses,
+  }));
+
   // Rename Prisma PascalCase relation to camelCase for cleaner AI output
   const { VaccinationRecord, ...rest } = animal;
   return {
     ...rest,
     vaccinationRecords: VaccinationRecord,
+    activeMedications: medications,
+    withdrawalStatus: medications.some((m: any) => m.withdrawalActive)
+      ? "WITHDRAWAL_ACTIVE"
+      : "CLEAR",
   };
 }
 
@@ -753,6 +794,94 @@ async function getFarmOverview(
   };
 }
 
+async function getMedicationHistory(
+  tenantId: number,
+  input: Record<string, unknown>
+) {
+  const animalId = Number(input.animal_id);
+  if (!animalId) return { error: "animal_id is required" };
+
+  const category = input.category as string | undefined;
+  const activeOnly = input.active_only === true;
+
+  const animal = await prisma.animal.findFirst({
+    where: { id: animalId, tenantId, deletedAt: null },
+    select: { id: true, name: true, species: true },
+  });
+  if (!animal) return { error: "Animal not found" };
+
+  // Build WHERE clauses
+  const conditions = [
+    `c."tenantId" = $1`,
+    `c."animalId" = $2`,
+    `c."deletedAt" IS NULL`,
+  ];
+  const params: any[] = [tenantId, animalId];
+  let idx = 3;
+
+  if (activeOnly) {
+    conditions.push(`c."status" = 'ACTIVE'`);
+  }
+  if (category) {
+    conditions.push(`c."category" = $${idx}`);
+    params.push(category);
+    idx++;
+  }
+
+  const courses = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT c.*, (
+       SELECT json_agg(json_build_object(
+         'id', d."id", 'doseNumber', d."doseNumber", 'administeredAt', d."administeredAt",
+         'actualDosage', d."actualDosage", 'givenBy', d."givenBy",
+         'adverseReaction', d."adverseReaction", 'notes', d."notes"
+       ) ORDER BY d."administeredAt" DESC)
+       FROM "public"."MedicationDose" d WHERE d."courseId" = c."id"
+     ) AS "doses"
+     FROM "public"."MedicationCourse" c
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY c."status" = 'ACTIVE' DESC, c."startDate" DESC
+     LIMIT 30`,
+    ...params,
+  );
+
+  const now = new Date();
+  return {
+    animalName: animal.name,
+    species: animal.species,
+    courses: courses.map((c: any) => ({
+      id: c.id,
+      medicationName: c.medicationName,
+      category: c.category,
+      isControlledSubstance: c.isControlledSubstance,
+      dosageAmount: c.dosageAmount ? Number(c.dosageAmount) : null,
+      dosageUnit: c.dosageUnit,
+      administrationRoute: c.administrationRoute,
+      frequency: c.frequency,
+      startDate: c.startDate,
+      endDate: c.endDate,
+      status: c.status,
+      completedDoses: c.completedDoses,
+      totalDoses: c.totalDoses,
+      prescribingVet: c.prescribingVet,
+      clinic: c.clinic,
+      withdrawalPeriodDays: c.withdrawalPeriodDays,
+      withdrawalExpiryDate: c.withdrawalExpiryDate,
+      withdrawalActive: c.withdrawalExpiryDate ? new Date(c.withdrawalExpiryDate) > now : false,
+      withdrawalDaysRemaining: c.withdrawalExpiryDate
+        ? Math.ceil((new Date(c.withdrawalExpiryDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        : null,
+      isOverdue: c.nextDueDate && new Date(c.nextDueDate) < now && c.status === "ACTIVE",
+      doses: c.doses ?? [],
+      notes: c.notes,
+    })),
+    summary: {
+      activeCourses: courses.filter((c: any) => c.status === "ACTIVE").length,
+      withdrawalActive: courses.filter((c: any) => c.withdrawalExpiryDate && new Date(c.withdrawalExpiryDate) > now).length,
+      totalCourses: courses.length,
+    },
+  };
+}
+
 // ── Handler Map ──────────────────────────────────────────────────────────
 
 export const toolHandlers: Record<string, ToolHandler> = {
@@ -766,6 +895,7 @@ export const toolHandlers: Record<string, ToolHandler> = {
   get_financial_summary: getFinancialSummary,
   search_help_articles: searchHelpArticles,
   get_litter_health_summary: getLitterHealthSummary,
+  get_medication_history: getMedicationHistory,
   get_farm_overview: getFarmOverview,
 };
 
@@ -793,6 +923,10 @@ export function generateToolSummary(
       return r.name ? `Retrieved plan "${r.name}"` : "Retrieved plan details";
     case "get_financial_summary":
       return `${r.totalInvoices ?? 0} invoices, $${((r.outstandingCents ?? 0) / 100).toFixed(2)} outstanding`;
+    case "get_medication_history": {
+      const count = (r.courses as any[])?.length ?? 0;
+      return `${r.animalName ?? "Animal"}: ${count} medication course${count !== 1 ? "s" : ""}`;
+    }
     case "get_farm_overview": {
       const total = (r.animalsBySpecies ?? []).reduce(
         (sum: number, g: any) => sum + (g.count ?? 0),
