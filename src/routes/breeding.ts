@@ -2175,7 +2175,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: true,
           damId: true,
           sireId: true,
-          // Lock fields — only cleared when rewinding CYCLE → PLANNING
+          // Lock fields — only cleared when rewinding CYCLE/BRED → PLANNING
           lockedCycleStart: true,
           lockedOvulationDate: true,
           lockedDueDate: true,
@@ -2207,11 +2207,33 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         toStatus: string;
         extraClearFields?: Record<string, null | false>;
       };
+
+      // Shared clear-fields for any transition that lands on PLANNING
+      const CYCLE_TO_PLANNING_CLEARS: Record<string, null | false> = {
+        cycleStartDateActual: null,
+        cycleStartDateUnknown: false,
+        lockedCycleStart: null,
+        lockedOvulationDate: null,
+        lockedDueDate: null,
+        lockedPlacementStartDate: null,
+        committedAt: null,
+        committedByUserId: null,
+      };
+
       const REWIND_MAP: Record<string, RewindTarget> = {
         // Legacy alias
-        COMMITTED:           { toStatus: "PLANNING", extraClearFields: { cycleStartDateActual: null, cycleStartDateUnknown: false, lockedCycleStart: null, lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null, committedAt: null, committedByUserId: null } },
-        CYCLE:               { toStatus: "PLANNING", extraClearFields: { cycleStartDateActual: null, cycleStartDateUnknown: false, lockedCycleStart: null, lockedOvulationDate: null, lockedDueDate: null, lockedPlacementStartDate: null, committedAt: null, committedByUserId: null } },
-        BRED:                { toStatus: "CYCLE" },
+        COMMITTED:           { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
+        CYCLE:               { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
+        // Rewinding from BRED (Breeding phase) goes directly to PLANNING for all species.
+        //
+        // For induced ovulators (CAT, RABBIT) the CYCLE status is not a visible phase
+        // in the UI journey, so BRED → CYCLE → PLANNING would require two invisible clicks.
+        //
+        // For cyclic ovulators (HORSE, DOG, GOAT, SHEEP) CYCLE is a visible intermediate
+        // phase, but breeders expect "undo a breeding attempt" to land in Planning — not
+        // in an intermediate cycle-monitoring state. The cycle lock fields are cleared so
+        // the plan can be fully re-committed when they advance again.
+        BRED:                { toStatus: "PLANNING", extraClearFields: CYCLE_TO_PLANNING_CLEARS },
         BIRTHED:             { toStatus: "BRED" },
         BORN:                { toStatus: "BIRTHED", extraClearFields: { birthDateActual: null, expectedWeaned: null, expectedPlacementStart: null, expectedPlacementCompleted: null } },
         WEANED:              { toStatus: "BIRTHED" },
@@ -5752,6 +5774,207 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
 
       reply.send(record);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Plan Attachments  (documents tab — health certs, registration paperwork)
+   * GET    /breeding/plans/:id/attachments
+   * POST   /breeding/plans/:id/attachments
+   * DELETE /breeding/plans/:id/attachments/:attachmentId
+   * ─────────────────────────────────────────────────────────────────────── */
+
+  app.get("/breeding/plans/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const items = await prisma.attachment.findMany({
+        where: { tenantId, planId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, kind: true, storageKey: true, filename: true, mime: true, bytes: true, createdAt: true },
+      });
+
+      reply.send(items);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/plans/:id/attachments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as any;
+      if (!b.kind || !b.storageKey || !b.filename || !b.mime) {
+        return reply.code(400).send({ error: "kind, storageKey, filename, mime are required" });
+      }
+
+      await getPlanInTenant(planId, tenantId);
+
+      const created = await prisma.attachment.create({
+        data: {
+          tenantId,
+          planId,
+          kind: b.kind,
+          storageProvider: b.storageProvider ?? "s3",
+          storageKey: b.storageKey,
+          filename: b.filename,
+          mime: b.mime,
+          bytes: Number(b.bytes) || 0,
+          createdByUserId: (req as any).user?.id ?? null,
+        },
+        select: { id: true, kind: true, storageKey: true, filename: true, mime: true, bytes: true, createdAt: true },
+      });
+
+      reply.code(201).send(created);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.delete("/breeding/plans/:id/attachments/:attachmentId", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      const attachmentId = idNum((req.params as any).attachmentId);
+      if (!planId || !attachmentId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const existing = await prisma.attachment.findFirst({
+        where: { id: attachmentId, planId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      await prisma.attachment.delete({ where: { id: attachmentId } });
+
+      reply.code(204).send();
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Plan Media / Documents  (media gallery tab)
+   * GET    /breeding/plans/:id/documents
+   * POST   /breeding/plans/:id/documents
+   * DELETE /breeding/plans/:id/documents/:documentId
+   * Uses the Document model (breedingPlanId FK already exists).
+   * ─────────────────────────────────────────────────────────────────────── */
+
+  const PLAN_DOC_SELECT = {
+    id: true,
+    title: true,
+    originalFileName: true,
+    mimeType: true,
+    sizeBytes: true,
+    bytes: true,
+    storageKey: true,
+    url: true,
+    visibility: true,
+    watermarkEnabled: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
+  app.get("/breeding/plans/:id/documents", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const items = await prisma.document.findMany({
+        where: { tenantId, breedingPlanId: planId },
+        select: PLAN_DOC_SELECT,
+        orderBy: { createdAt: "desc" },
+      });
+
+      reply.send(items.map(d => ({
+        ...d,
+        sizeBytes: d.sizeBytes ?? d.bytes ?? null,
+        createdAt: d.createdAt.toISOString(),
+        updatedAt: d.updatedAt.toISOString(),
+      })));
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.post("/breeding/plans/:id/documents", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const b = (req.body || {}) as any;
+      if (!b.storageKey || !b.title) {
+        return reply.code(400).send({ error: "storageKey and title are required" });
+      }
+
+      await getPlanInTenant(planId, tenantId);
+
+      const created = await prisma.document.create({
+        data: {
+          tenantId,
+          breedingPlanId: planId,
+          scope: "animal", // closest valid enum value; filtered via breedingPlanId
+          title: b.title,
+          originalFileName: b.originalFileName ?? b.title,
+          mimeType: b.mimeType ?? null,
+          sizeBytes: b.sizeBytes ? Number(b.sizeBytes) : null,
+          storageKey: b.storageKey,
+          url: b.cdnUrl ?? null,
+          visibility: b.visibility ?? "PRIVATE",
+          watermarkEnabled: false,
+          data: { category: b.category ?? "media" },
+        },
+        select: PLAN_DOC_SELECT,
+      });
+
+      reply.code(201).send({
+        ...created,
+        sizeBytes: created.sizeBytes ?? created.bytes ?? null,
+        createdAt: created.createdAt.toISOString(),
+        updatedAt: created.updatedAt.toISOString(),
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  app.delete("/breeding/plans/:id/documents/:documentId", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      const documentId = idNum((req.params as any).documentId);
+      if (!planId || !documentId) return reply.code(400).send({ error: "bad_id" });
+
+      await getPlanInTenant(planId, tenantId);
+
+      const existing = await prisma.document.findFirst({
+        where: { id: documentId, breedingPlanId: planId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+
+      await prisma.document.delete({ where: { id: documentId } });
+
+      reply.code(204).send();
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);
