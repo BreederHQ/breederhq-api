@@ -1,9 +1,12 @@
 // src/routes/offspring-documents.ts
 // Document CRUD for offspring media (photos, videos, files).
+// Also: Puppy Packet PDF generation endpoint.
 // Mirrors animal-documents.ts but without trait-linking logic.
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
+import { generatePuppyPacketPdf } from "../services/puppy-packet-pdf-builder.js";
+import type { PuppyPacketData } from "../services/puppy-packet-pdf-builder.js";
 
 function parseIntStrict(v: unknown): number | null {
   const n = Number(v);
@@ -201,6 +204,143 @@ const offspringDocumentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
     await prisma.document.delete({ where: { id: documentId } });
 
     return reply.code(204).send();
+  });
+
+  // ── Generate Puppy Packet PDF ─────────────────────────────────────
+  app.get("/offspring/individuals/:offspringId/puppy-packet/pdf", async (req, reply) => {
+    const tenantId = await assertTenant(req, reply);
+    if (!tenantId) return;
+
+    const offspringId = parseIntStrict((req.params as { offspringId: string }).offspringId);
+    if (!offspringId) return reply.code(400).send({ error: "offspring_id_invalid" });
+
+    // Fetch offspring with all related data in ONE query
+    const offspring = await prisma.offspring.findFirst({
+      where: { id: offspringId, tenantId },
+      select: {
+        id: true,
+        name: true,
+        species: true,
+        breed: true,
+        sex: true,
+        bornAt: true,
+        color: true,
+        collarColorName: true,
+        dam: { select: { id: true, name: true } },
+        sire: { select: { id: true, name: true } },
+        // Health events
+        HealthLogs: {
+          select: { kind: true, notes: true, occurredAt: true, vetClinic: true, vaccineCode: true, result: true },
+          orderBy: { occurredAt: "desc" },
+        },
+        // Vaccination records
+        ClientVaccinationRecord: {
+          select: { protocolKey: true, administeredAt: true, expiresAt: true },
+          orderBy: { administeredAt: "desc" },
+        },
+        // Assessment results
+        rearingAssessments: {
+          select: { assessmentType: true, assessedAt: true, assessedBy: true, scores: true, notes: true },
+          orderBy: { assessedAt: "desc" },
+        },
+        // Microchip registrations
+        microchipRegistrations: {
+          select: { microchipNumber: true, registrationDate: true, registry: { select: { name: true } } },
+        },
+        tenant: {
+          select: {
+            id: true,
+            organizations: {
+              select: { name: true, email: true, phone: true, website: true },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+    if (!offspring) {
+      return reply.code(404).send({ error: "offspring_not_found" });
+    }
+
+    // Fetch protocol assignments for this offspring separately (relation name differs)
+    const protocolAssignments = await prisma.rearingProtocolAssignment.findMany({
+      where: { offspringId, tenantId },
+      select: {
+        completedActivities: true,
+        totalActivities: true,
+        status: true,
+        startDate: true,
+        protocol: { select: { name: true } },
+      },
+    });
+
+    // Check for registration number on the offspring data JSON
+    const dataJson = offspring as any;
+    const registrationNumber = dataJson?.data?.registrationNumber ?? null;
+
+    const org = offspring.tenant?.organizations?.[0];
+
+    const packetData: PuppyPacketData = {
+      offspring: {
+        id: offspring.id,
+        name: offspring.name || `Offspring #${offspring.id}`,
+        species: offspring.species,
+        breed: offspring.breed,
+        sex: offspring.sex,
+        dateOfBirth: offspring.bornAt?.toISOString() ?? null,
+        color: offspring.color,
+        collarColorName: offspring.collarColorName,
+        registrationNumber,
+        damName: offspring.dam?.name ?? null,
+        sireName: offspring.sire?.name ?? null,
+      },
+      healthEvents: (offspring.HealthLogs ?? []).map((e: any) => ({
+        eventType: e.kind ?? "General",
+        description: [e.vaccineCode, e.result, e.notes].filter(Boolean).join(" — ") || "—",
+        eventDate: e.occurredAt?.toISOString() ?? "",
+        veterinarian: e.vetClinic ?? null,
+      })),
+      vaccinations: (offspring.ClientVaccinationRecord ?? []).map((v: any) => ({
+        protocolName: v.protocolKey ?? "Unknown",
+        administeredDate: v.administeredAt?.toISOString() ?? "",
+        nextDueDate: v.expiresAt?.toISOString() ?? null,
+      })),
+      assessments: (offspring.rearingAssessments ?? []).map((a: any) => ({
+        assessmentType: a.assessmentType,
+        assessedAt: a.assessedAt?.toISOString() ?? "",
+        assessedBy: a.assessedBy ?? "",
+        scores: typeof a.scores === "object" && a.scores !== null ? a.scores : {},
+        notes: a.notes ?? null,
+      })),
+      protocolAssignments: protocolAssignments.map((p) => ({
+        protocolName: p.protocol.name,
+        startDate: p.startDate?.toISOString() ?? "",
+        completedActivities: p.completedActivities,
+        totalActivities: p.totalActivities,
+        status: p.status,
+      })),
+      microchips: (offspring.microchipRegistrations ?? []).map((m: any) => ({
+        chipNumber: m.microchipNumber,
+        registryName: m.registry?.name ?? null,
+        implantDate: m.registrationDate?.toISOString() ?? null,
+      })),
+      breederContact: {
+        organizationName: org?.name ?? "Unknown Breeder",
+        contactName: null,
+        email: org?.email ?? null,
+        phone: org?.phone ?? null,
+        website: org?.website ?? null,
+      },
+      generatedAt: new Date(),
+    };
+
+    const { buffer, filename } = await generatePuppyPacketPdf(packetData);
+
+    return reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .send(Buffer.from(buffer));
   });
 };
 

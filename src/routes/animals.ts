@@ -4093,13 +4093,14 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
     if (!animal) return reply.code(404).send({ error: "animal_not_found" });
 
-    // Query Offspring table where this animal is dam or sire
+    // Query Offspring table where this animal is dam, sire, or geneticDam (ET offspring)
     const offspring = await prisma.offspring.findMany({
       where: {
         tenantId,
         OR: [
           { damId: animalId },
           { sireId: animalId },
+          { geneticDamId: animalId }, // geneticDamId for ET plans
         ],
       },
       select: {
@@ -4114,8 +4115,11 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         keeperIntent: true,
         damId: true,
         sireId: true,
+        geneticDamId: true,
+        recipientDamId: true,
         dam: { select: { id: true, name: true } },
         sire: { select: { id: true, name: true } },
+        Animal_Offspring_recipientDamIdToAnimal: { select: { id: true, name: true } },
         BreedingPlan: {
           select: {
             id: true,
@@ -4151,6 +4155,12 @@ const animalsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           birthDate: o.BreedingPlan.birthDateActual?.toISOString() ?? o.BreedingPlan.expectedBirthDate?.toISOString() ?? null,
         } : null,
         collarColor: o.collarColorName || o.collarColorHex || null,
+        // Embryo Transfer fields
+        geneticDamId: o.geneticDamId ?? null,
+        recipientDamId: o.recipientDamId ?? null,
+        recipientDam: o.Animal_Offspring_recipientDamIdToAnimal
+          ? { id: o.Animal_Offspring_recipientDamIdToAnimal.id, name: o.Animal_Offspring_recipientDamIdToAnimal.name }
+          : null,
       })),
     });
   });

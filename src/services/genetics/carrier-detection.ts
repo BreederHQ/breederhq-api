@@ -346,6 +346,7 @@ export async function checkBreedingPlanCarrierRisk(
   createNotification = true
 ): Promise<CarrierDetectionResult & { notificationCreated: boolean }> {
   // 1. Load breeding plan with dam and sire
+  // geneticDamId for ET plans, damId for standard — see EMBRYO-TRANSFER spec FR-4
   const plan = await prisma.breedingPlan.findFirst({
     where: { id: breedingPlanId, tenantId },
     select: {
@@ -354,7 +355,23 @@ export async function checkBreedingPlanCarrierRisk(
       species: true,
       damId: true,
       sireId: true,
+      geneticDamId: true,
       dam: {
+        select: {
+          id: true,
+          name: true,
+          species: true,
+          genetics: {
+            select: {
+              healthGeneticsData: true,
+              coatColorData: true,
+              physicalTraitsData: true,
+            },
+          },
+        },
+      },
+      // geneticDam relation for ET plans — the donor mare's genetics
+      Animal_BreedingPlan_geneticDamIdToAnimal: {
         select: {
           id: true,
           name: true,
@@ -397,16 +414,20 @@ export async function checkBreedingPlanCarrierRisk(
     return emptyResult;
   }
 
-  // Need both dam and sire to check for carrier pairings
-  if (!plan.dam || !plan.sire) {
+  // Resolve the genetic dam: geneticDamId for ET plans, damId for standard
+  const geneticDamAnimal = plan.Animal_BreedingPlan_geneticDamIdToAnimal ?? plan.dam;
+
+  // Need both genetic dam and sire to check for carrier pairings
+  if (!geneticDamAnimal || !plan.sire) {
     return emptyResult;
   }
 
   // 2. Build combined genetics data for each animal
+  // Always use the genetic dam (donor for ET plans, dam for standard)
   const damGenetics = {
-    health: plan.dam.genetics?.healthGeneticsData as unknown[],
-    coatColor: plan.dam.genetics?.coatColorData as unknown[],
-    physicalTraits: plan.dam.genetics?.physicalTraitsData as unknown[],
+    health: geneticDamAnimal.genetics?.healthGeneticsData as unknown[],
+    coatColor: geneticDamAnimal.genetics?.coatColorData as unknown[],
+    physicalTraits: geneticDamAnimal.genetics?.physicalTraitsData as unknown[],
   };
 
   const sireGenetics = {
@@ -416,7 +437,7 @@ export async function checkBreedingPlanCarrierRisk(
   };
 
   // 3. Detect carrier pairings
-  const species = plan.species || plan.dam.species || "HORSE";
+  const species = plan.species || geneticDamAnimal.species || "HORSE";
   const detection = detectCarrierPairings(damGenetics, sireGenetics, species);
 
   // 4. Create notification if lethal risk detected
@@ -441,15 +462,15 @@ export async function checkBreedingPlanCarrierRisk(
           type: "genetic_test_carrier_warning",
           priority: "URGENT",
           title: "Lethal Pairing Risk Detected",
-          message: `Both ${plan.dam.name} and ${plan.sire.name} are carriers of ${lethalWarning.geneName}. Breeding has a ${lethalWarning.riskPercentage}% chance of producing affected offspring.`,
+          message: `Both ${geneticDamAnimal.name} and ${plan.sire.name} are carriers of ${lethalWarning.geneName}. Breeding has a ${lethalWarning.riskPercentage}% chance of producing affected offspring.`,
           linkUrl: `/breeding/plans/${breedingPlanId}`,
           status: "UNREAD",
           idempotencyKey,
           metadata: {
             breedingPlanId,
             planName: plan.name,
-            damId: plan.dam.id,
-            damName: plan.dam.name,
+            damId: geneticDamAnimal.id,
+            damName: geneticDamAnimal.name,
             sireId: plan.sire.id,
             sireName: plan.sire.name,
             gene: lethalWarning.gene,

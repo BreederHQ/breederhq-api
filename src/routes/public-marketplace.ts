@@ -769,8 +769,26 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         prisma.mktListingIndividualAnimal.count({ where }),
       ]);
 
+      // Batch query: which tenants have buyer-visible assessments? (for "Temperament Tested" badge)
+      const tenantIds = [...new Set(listings.map((l) => l.tenantId).filter(Boolean))];
+      const tenantsWithAssessments = new Set<number>();
+      if (tenantIds.length > 0) {
+        const assessmentCounts = await prisma.assessmentResult.groupBy({
+          by: ["tenantId"],
+          where: {
+            tenantId: { in: tenantIds },
+            buyerVisible: true,
+          } as any,
+          _count: true,
+        });
+        for (const row of assessmentCounts) {
+          if (row._count > 0) tenantsWithAssessments.add(row.tenantId);
+        }
+      }
+
       const rawItems = listings.map((listing) => {
         const org = listing.tenant?.organizations?.[0];
+        const isDog = listing.animal?.species === "DOG";
         return {
           id: listing.id,
           slug: listing.slug,
@@ -793,6 +811,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           animalBreed: listing.animal?.breed || null,
           animalSex: listing.animal?.sex || null,
           animalBirthDate: listing.animal?.birthDate?.toISOString() || null,
+          hasTemperamentTesting: isDog && tenantsWithAssessments.has(listing.tenantId),
           breeder: {
             id: listing.tenant?.id,
             slug: listing.tenant?.slug || org?.programSlug,
@@ -1012,6 +1031,19 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
             privacy
           );
           response.dataDrawerConfig = config;
+        }
+
+        // Check if breeder has buyer-visible assessments (for "Temperament Tested" badge, dogs only)
+        if (animal.species === "DOG") {
+          const assessmentCount = await prisma.assessmentResult.count({
+            where: {
+              tenantId: tenant.id,
+              buyerVisible: true,
+            } as any,
+          });
+          response.hasTemperamentTesting = assessmentCount > 0;
+        } else {
+          response.hasTemperamentTesting = false;
         }
 
         // Increment view count asynchronously
@@ -1285,12 +1317,12 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   );
 
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/offspring-groups - List offspring groups - REQUIRES ENTITLEMENT
+  // GET /programs/:programSlug/litters - List litters for a breeding program - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{
     Params: { programSlug: string };
     Querystring: { species?: string; page?: string; limit?: string };
-  }>("/programs/:programSlug/offspring-groups", async (req, reply) => {
+  }>("/programs/:programSlug/litters", async (req, reply) => {
     // SECURITY: Require entitlement before returning any data
     if (!(await requireMarketplaceEntitlement(req, reply))) return;
 
@@ -1392,11 +1424,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     return reply.send({ items, total, page, limit });
   });
 
+  // DEPRECATED: /offspring-groups alias — use /litters instead
+  app.get<{
+    Params: { programSlug: string };
+    Querystring: { species?: string; page?: string; limit?: string };
+  }>("/programs/:programSlug/offspring-groups", async (req, reply) => {
+    // Redirect internally by rewriting URL to the canonical /litters route
+    const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+    return reply.redirect(`/programs/${req.params.programSlug}/litters${qs}`, 301);
+  });
+
   // --------------------------------------------------------------------------
-  // GET /programs/:programSlug/offspring-groups/:listingSlug - Listing detail - REQUIRES ENTITLEMENT
+  // GET /programs/:programSlug/litters/:listingSlug - Litter detail - REQUIRES ENTITLEMENT
   // --------------------------------------------------------------------------
   app.get<{ Params: { programSlug: string; listingSlug: string } }>(
-    "/programs/:programSlug/offspring-groups/:listingSlug",
+    "/programs/:programSlug/litters/:listingSlug",
     async (req, reply) => {
       // SECURITY: Require entitlement before returning any data
       if (!(await requireMarketplaceEntitlement(req, reply))) return;
@@ -1412,7 +1454,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "not_found" });
       }
 
-      // OGC-05: Resolve listing slug to breedingPlan
+      // Resolve listing slug to breedingPlan
       const plan = await prisma.breedingPlan.findFirst({
         where: {
           tenantId: resolved.tenantId,
@@ -1441,6 +1483,13 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
               placementState: true,
               marketplaceListed: true,
               marketplacePriceCents: true,
+              _count: {
+                select: {
+                  rearingAssessments: {
+                    where: { buyerVisible: true },
+                  },
+                },
+              },
             },
             orderBy: { name: "asc" },
           },
@@ -1484,6 +1533,14 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       );
 
       return reply.send({ ...listing, offspring });
+    }
+  );
+
+  // DEPRECATED: /offspring-groups/:listingSlug alias — use /litters/:listingSlug instead
+  app.get<{ Params: { programSlug: string; listingSlug: string } }>(
+    "/programs/:programSlug/offspring-groups/:listingSlug",
+    async (req, reply) => {
+      return reply.redirect(`/programs/${req.params.programSlug}/litters/${req.params.listingSlug}`, 301);
     }
   );
 
@@ -1678,7 +1735,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
     Body: {
       programSlug: string;
       listingSlug?: string;
-      listingType?: "offspring_group" | "animal";
+      listingType?: "offspring_group" | "litter" | "animal";
       message: string;
       offspringId?: number;
       // Guest fields - not implemented for MVP (auth required)
@@ -1752,8 +1809,8 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         return reply.code(404).send({ error: "listing_not_found" });
       }
 
-      if (listingType === "offspring_group") {
-        // OGC-05: Resolve listing slug via breedingPlan
+      if (listingType === "offspring_group" || listingType === "litter") {
+        // Resolve listing slug via breedingPlan ("offspring_group" kept for DB-persisted values)
         const plan = await prisma.breedingPlan.findFirst({
           where: {
             tenantId: resolved.tenantId,
@@ -2138,7 +2195,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
   });
 
   // --------------------------------------------------------------------------
-  // GET /offspring-groups - Browse all published offspring groups - PUBLIC
+  // GET /litters - Browse all published litters - PUBLIC
   // --------------------------------------------------------------------------
   app.get<{
     Querystring: {
@@ -2149,7 +2206,7 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       page?: string;
       limit?: string;
     };
-  }>("/offspring-groups", async (req, reply) => {
+  }>("/litters", async (req, reply) => {
     // PUBLIC: No auth required - this is a public browsing endpoint
 
     const { species, breed, search, location } = req.query;
@@ -2308,6 +2365,21 @@ const publicMarketplaceRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       page,
       limit,
     });
+  });
+
+  // DEPRECATED: /offspring-groups alias — use /litters instead
+  app.get<{
+    Querystring: {
+      species?: string;
+      breed?: string;
+      search?: string;
+      location?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>("/offspring-groups", async (req, reply) => {
+    const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+    return reply.redirect(`/litters${qs}`, 301);
   });
 
   // --------------------------------------------------------------------------

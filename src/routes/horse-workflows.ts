@@ -188,7 +188,11 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const sortOrder = String(query.sortOrder || "desc") as "asc" | "desc";
 
       // Get all female horses for this tenant.
-      // If a stallion filter is set, restrict to mares with active plans for that stallion.
+      // If a stallion filter is set, restrict to mares with active plans for that stallion
+      // (as dam or as recipient on an ET plan).
+      const terminalStatuses: string[] = ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"];
+      const activeStatusFilter = { notIn: terminalStatuses };
+
       const mares = await prisma.animal.findMany({
         where: {
           tenantId,
@@ -200,12 +204,24 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
             name: { contains: searchFilter, mode: "insensitive" as const },
           }),
           ...(stallionIdFilter && {
-            breedingPlansAsDam: {
-              some: {
-                sireId: stallionIdFilter,
-                status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+            OR: [
+              {
+                breedingPlansAsDam: {
+                  some: {
+                    sireId: stallionIdFilter,
+                    status: activeStatusFilter as any,
+                  },
+                },
               },
-            },
+              {
+                BreedingPlan_BreedingPlan_recipientDamIdToAnimal: {
+                  some: {
+                    sireId: stallionIdFilter,
+                    status: activeStatusFilter as any,
+                  },
+                },
+              },
+            ],
           }),
         },
         include: {
@@ -218,6 +234,20 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
             orderBy: { updatedAt: "desc" },
             include: {
               sire: { select: { id: true, name: true } },
+              Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true } },
+            },
+          },
+          // ET: also fetch plans where this mare is the recipient
+          BreedingPlan_BreedingPlan_recipientDamIdToAnimal: {
+            where: {
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+              ...(stallionIdFilter && { sireId: stallionIdFilter }),
+            },
+            orderBy: { updatedAt: "desc" },
+            include: {
+              sire: { select: { id: true, name: true } },
+              dam: { select: { id: true, name: true } },
+              Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true } },
             },
           },
         },
@@ -247,7 +277,22 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
       // Process mares: derive status from breeding plans (plan-driven approach)
       const processedMares = mares.map((mare) => {
-        const plan = pickActivePlan(mare.breedingPlansAsDam);
+        const recipientPlan = pickActivePlan(mare.BreedingPlan_BreedingPlan_recipientDamIdToAnimal);
+        const damPlan = pickActivePlan(mare.breedingPlansAsDam);
+
+        // ET logic: if this mare is a recipient on an ET plan, use that plan for her
+        // pregnancy status. If she is ONLY a genetic dam (damId) on an ET plan but NOT
+        // the recipient, that plan does NOT make her pregnant — skip it.
+        const isRecipientOnET = !!recipientPlan;
+        const isDamOnlyET = damPlan?.recipientDamId != null && damPlan?.recipientDamId !== mare.id;
+        const plan = isRecipientOnET ? recipientPlan : (isDamOnlyET ? null : damPlan);
+        const isET = isRecipientOnET;
+
+        // For ET plans, resolve the genetic dam name for "Carrying for:" display
+        const geneticDam = isET
+          ? (recipientPlan.Animal_BreedingPlan_geneticDamIdToAnimal ?? recipientPlan.dam)
+          : undefined;
+
         const reproductiveStatus = deriveMareWorkflowStatus(
           plan,
           mare.breedingAvailability,
@@ -306,6 +351,11 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           lastUterineEdema,
           lastExamDate,
           noteCount: 0,
+          // Embryo Transfer fields
+          isEmbryoTransfer: isET || undefined,
+          geneticDamId: geneticDam?.id,
+          geneticDamName: geneticDam?.name,
+          sireName: plan?.sire?.name,
         };
       });
 
@@ -608,6 +658,15 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           sire: {
             select: { id: true, name: true },
           },
+          // ET: include recipient and genetic dam for ET plans
+          Animal_BreedingPlan_recipientDamIdToAnimal: {
+            include: {
+              AnimalReproductiveHistory: true,
+            },
+          },
+          Animal_BreedingPlan_geneticDamIdToAnimal: {
+            select: { id: true, name: true },
+          },
           breedingMilestones: {
             where: {
               milestoneType: { in: fetchedMilestoneTypes },
@@ -624,7 +683,16 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       let highUrgencyCount = 0;
 
       const mares = plans.map((plan) => {
-        if (!plan.dam || !plan.expectedBirthDate) {
+        // ET: for ET plans, the recipient is the pregnant animal being monitored
+        const isET = plan.recipientDamId != null;
+        const monitoredMare = isET
+          ? plan.Animal_BreedingPlan_recipientDamIdToAnimal
+          : plan.dam;
+        const geneticDam = isET
+          ? (plan.Animal_BreedingPlan_geneticDamIdToAnimal ?? plan.dam)
+          : undefined;
+
+        if (!monitoredMare || !plan.expectedBirthDate) {
           return null;
         }
 
@@ -712,9 +780,9 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
           )[0];
 
         return {
-          id: plan.dam.id,
-          name: plan.dam.name,
-          photoUrl: plan.dam.photoUrl || undefined,
+          id: monitoredMare.id,
+          name: monitoredMare.name,
+          photoUrl: monitoredMare.photoUrl || undefined,
           breedingPlanId: plan.id,
 
           // Breeding info
@@ -752,8 +820,14 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
 
           // Extra fields (not in PreFoalingEntry but useful for UI)
           urgencyScore,
-          riskScore: plan.dam.AnimalReproductiveHistory?.riskScore || 0,
-          riskFactors: plan.dam.AnimalReproductiveHistory?.riskFactors || [],
+          riskScore: monitoredMare.AnimalReproductiveHistory?.riskScore || 0,
+          riskFactors: monitoredMare.AnimalReproductiveHistory?.riskFactors || [],
+
+          // Embryo Transfer fields
+          isEmbryoTransfer: isET || undefined,
+          geneticDamId: geneticDam?.id,
+          geneticDamName: geneticDam?.name,
+          sireName: plan.sire?.name,
         };
       }).filter((m): m is NonNullable<typeof m> => m !== null);
 
@@ -818,11 +892,14 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const body = req.body as { onWatch: boolean; watchNotes?: string };
       const { onWatch } = body;
 
-      // Find the active PREGNANT plan for this mare
+      // Find the active PREGNANT plan for this mare (as dam or ET recipient)
       const plan = await prisma.breedingPlan.findFirst({
         where: {
           tenantId,
-          damId: mareId,
+          OR: [
+            { damId: mareId },
+            { recipientDamId: mareId },
+          ],
           status: "PREGNANT",
           archived: false,
         },
@@ -906,11 +983,14 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const checkedAt = body.checkedAt ? new Date(body.checkedAt) : new Date();
       const userId = (req as any).userId as string | undefined;
 
-      // Find the active PREGNANT plan for this mare
+      // Find the active PREGNANT plan for this mare (as dam or ET recipient)
       const plan = await prisma.breedingPlan.findFirst({
         where: {
           tenantId,
-          damId: mareId,
+          OR: [
+            { damId: mareId },
+            { recipientDamId: mareId },
+          ],
           status: "PREGNANT",
           archived: false,
         },
@@ -1028,11 +1108,14 @@ const horseWorkflowRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       const limit = Math.min(Number(query.limit || 20), 100);
       const offset = Number(query.offset || 0);
 
-      // Find the active PREGNANT plan for this mare
+      // Find the active PREGNANT plan for this mare (as dam or ET recipient)
       const plan = await prisma.breedingPlan.findFirst({
         where: {
           tenantId,
-          damId: mareId,
+          OR: [
+            { damId: mareId },
+            { recipientDamId: mareId },
+          ],
           status: "PREGNANT",
           archived: false,
         },

@@ -181,6 +181,11 @@ function mapOffspringToAnimalLite(o: any) {
         : String((o as any).collarAssignedAt))
       : null,
     collarLocked: (o as any).collarLocked ?? false,
+
+    // Assessment types (populated when rearingAssessments is included)
+    assessmentTypes: Array.isArray((o as any).rearingAssessments)
+      ? (o as any).rearingAssessments.map((a: any) => a.assessmentType as string)
+      : [],
   };
 }
 
@@ -606,8 +611,12 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         bornAt,
 
         // Auto-link parents from the plan
+        // For ET plans: damId = geneticDamId (genetic parent, backward compat)
         damId: plan.damId ?? null,
         sireId: plan.sireId ?? null,
+        // Embryo Transfer: inherit geneticDamId and recipientDamId from plan
+        geneticDamId: (plan as any).geneticDamId ?? null,
+        recipientDamId: (plan as any).recipientDamId ?? null,
 
         notes: body.notes ?? null,
         data,
@@ -693,6 +702,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const sharedSpecies = plan.species ?? "DOG";
     const sharedDamId = plan.damId ?? null;
     const sharedSireId = plan.sireId ?? null;
+    // Embryo Transfer: inherit from plan
+    const sharedGeneticDamId = (plan as any).geneticDamId ?? null;
+    const sharedRecipientDamId = (plan as any).recipientDamId ?? null;
 
     // Build create operations for each individual
     const createOps = individuals.map((ind: any) => {
@@ -748,6 +760,9 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
           damId: sharedDamId,
           sireId: sharedSireId,
+          // Embryo Transfer: inherit geneticDamId and recipientDamId from plan
+          geneticDamId: sharedGeneticDamId,
+          recipientDamId: sharedRecipientDamId,
 
           notes,
 
@@ -846,7 +861,13 @@ const offspringRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where,
           take: limit,
           orderBy: { id: "asc" },
-          include: OFFSPRING_PLAN_INCLUDE,
+          include: {
+            ...OFFSPRING_PLAN_INCLUDE,
+            rearingAssessments: {
+              select: { assessmentType: true },
+              distinct: ["assessmentType"],
+            },
+          },
         }),
         prisma.offspring.count({ where }),
       ]);

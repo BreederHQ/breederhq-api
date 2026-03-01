@@ -129,44 +129,48 @@ async function syncBreedingPrograms(tenantId: number, profileData: any): Promise
 
     if (existing) {
       // Update existing
+      const updateData: any = {
+        name: program.name,
+        species: program.species,
+        breedText: program.breedText || null,
+        breedId: program.breedId || null,
+        description: program.description || null,
+        programStory: program.programStory || null,
+        coverImageUrl: program.coverImageUrl || null,
+        showCoverImage: program.showCoverImage !== false,
+        status: 'LIVE',
+        acceptInquiries: program.acceptInquiries !== false,
+        openWaitlist: program.openWaitlist === true,
+        acceptReservations: program.acceptReservations === true,
+        comingSoon: program.comingSoon === true,
+      };
+      if (program.programType) updateData.programType = program.programType;
       await prisma.mktListingBreedingProgram.update({
         where: { id: existing.id },
-        data: {
-          name: program.name,
-          species: program.species,
-          breedText: program.breedText || null,
-          breedId: program.breedId || null,
-          description: program.description || null,
-          programStory: program.programStory || null,
-          coverImageUrl: program.coverImageUrl || null,
-          showCoverImage: program.showCoverImage !== false,
-          status: 'LIVE',
-          acceptInquiries: program.acceptInquiries !== false,
-          openWaitlist: program.openWaitlist === true,
-          acceptReservations: program.acceptReservations === true,
-          comingSoon: program.comingSoon === true,
-        },
+        data: updateData,
       });
     } else {
       // Create new
+      const createData: any = {
+        tenantId,
+        slug,
+        name: program.name,
+        species: program.species,
+        breedText: program.breedText || null,
+        breedId: program.breedId || null,
+        description: program.description || null,
+        programStory: program.programStory || null,
+        coverImageUrl: program.coverImageUrl || null,
+        showCoverImage: program.showCoverImage !== false,
+        status: 'LIVE',
+        acceptInquiries: program.acceptInquiries !== false,
+        openWaitlist: program.openWaitlist === true,
+        acceptReservations: program.acceptReservations === true,
+        comingSoon: program.comingSoon === true,
+      };
+      if (program.programType) createData.programType = program.programType;
       await prisma.mktListingBreedingProgram.create({
-        data: {
-          tenantId,
-          slug,
-          name: program.name,
-          species: program.species,
-          breedText: program.breedText || null,
-          breedId: program.breedId || null,
-          description: program.description || null,
-          programStory: program.programStory || null,
-          coverImageUrl: program.coverImageUrl || null,
-          showCoverImage: program.showCoverImage !== false,
-          status: 'LIVE',
-          acceptInquiries: program.acceptInquiries !== false,
-          openWaitlist: program.openWaitlist === true,
-          acceptReservations: program.acceptReservations === true,
-          comingSoon: program.comingSoon === true,
-        },
+        data: createData,
       });
     }
   }

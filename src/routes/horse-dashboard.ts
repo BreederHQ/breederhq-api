@@ -39,6 +39,10 @@ interface MareStatusItem {
   riskScore?: number;
   riskFactors?: string[];
   breedingPlanId?: number;
+  // Embryo Transfer fields
+  isEmbryoTransfer?: boolean;
+  geneticDamId?: number;
+  geneticDamName?: string;
 }
 
 interface PreFoalingSign {
@@ -178,6 +182,21 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
             take: 1,
             include: {
               sire: { select: { id: true, name: true } },
+              // ET: include genetic dam info when this mare is a standard dam
+              Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true } },
+            },
+          },
+          // ET: also fetch plans where this mare is the recipient
+          BreedingPlan_BreedingPlan_recipientDamIdToAnimal: {
+            where: {
+              status: { notIn: ["PLAN_COMPLETE", "COMPLETE", "UNSUCCESSFUL", "CANCELED"] },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: {
+              sire: { select: { id: true, name: true } },
+              dam: { select: { id: true, name: true } },
+              Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true } },
             },
           },
           reproductiveCycles: {
@@ -211,11 +230,31 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       };
 
       for (const mare of mares) {
-        const plan = mare.breedingPlansAsDam[0];
+        const recipientPlan = mare.BreedingPlan_BreedingPlan_recipientDamIdToAnimal[0];
+        const damPlan = mare.breedingPlansAsDam[0];
+
+        // ET logic: if this mare is a recipient on an ET plan, use that plan for her
+        // pregnancy status. If she is ONLY a genetic dam (damId) on an ET plan but NOT
+        // the recipient, that plan does NOT make her pregnant — skip it.
+        const isRecipientOnET = !!recipientPlan;
+        const isDamOnlyET = damPlan?.recipientDamId != null && damPlan?.recipientDamId !== mare.id;
+
+        // Pick the plan that determines this mare's pregnancy status:
+        // - If recipient on ET plan → use that (she's carrying)
+        // - If dam on a NON-ET plan → use that (standard plan)
+        // - If dam ONLY on an ET plan (she's the donor, not carrying) → no active pregnancy plan
+        const plan = isRecipientOnET ? recipientPlan : (isDamOnlyET ? null : damPlan);
+        const isET = isRecipientOnET;
+
         const reproHistory = mare.AnimalReproductiveHistory;
         const hasCycle = mare.reproductiveCycles.length > 0;
 
         const { status, daysInStatus } = deriveMareStatus(plan, reproHistory, hasCycle);
+
+        // For ET plans, resolve the genetic dam name for "Carrying for:" display
+        const geneticDam = isET
+          ? (recipientPlan.Animal_BreedingPlan_geneticDamIdToAnimal ?? recipientPlan.dam)
+          : undefined;
 
         const item: MareStatusItem = {
           id: mare.id,
@@ -231,6 +270,10 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           riskScore: reproHistory?.riskScore ?? undefined,
           riskFactors: reproHistory?.riskFactors ?? undefined,
           breedingPlanId: plan?.id,
+          // ET fields
+          isEmbryoTransfer: isET || undefined,
+          geneticDamId: geneticDam?.id,
+          geneticDamName: geneticDam?.name,
         };
 
         byStatus[status].push(item);
@@ -304,6 +347,10 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
           dam: {
             select: { id: true, name: true },
           },
+          // ET: include recipient for pre-foaling monitoring
+          Animal_BreedingPlan_recipientDamIdToAnimal: {
+            select: { id: true, name: true },
+          },
           breedingMilestones: {
             where: {
               milestoneType: {
@@ -326,7 +373,11 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       let highUrgencyCount = 0;
 
       for (const plan of plans) {
-        if (!plan.dam || !plan.expectedBirthDate) continue;
+        // ET: use recipient mare for pre-foaling monitoring, dam for standard plans
+        const monitoredMare = plan.recipientDamId != null
+          ? plan.Animal_BreedingPlan_recipientDamIdToAnimal
+          : plan.dam;
+        if (!monitoredMare || !plan.expectedBirthDate) continue;
 
         const daysUntilDue = daysBetween(now, new Date(plan.expectedBirthDate));
 
@@ -375,8 +426,8 @@ const horseDashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         }
 
         mares.push({
-          id: plan.dam.id,
-          name: plan.dam.name,
+          id: monitoredMare.id,
+          name: monitoredMare.name,
           daysUntilDue,
           expectedDue: plan.expectedBirthDate.toISOString(),
           signs,

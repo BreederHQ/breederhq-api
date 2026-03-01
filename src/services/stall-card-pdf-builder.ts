@@ -11,6 +11,7 @@
  */
 
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
+import { getBrandLogoPng } from "../assets/brand-logo.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -69,7 +70,23 @@ export async function generateStallCardPdf(
   const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   let y = PAGE_HEIGHT - MARGIN;
 
-  // ── Header: Animal Name (big, bold) ──
+  // ── Header: Logo (top-right) + Animal Name (big, bold) ──
+  try {
+    const logoPng = getBrandLogoPng();
+    const logoImage = await pdfDoc.embedPng(logoPng);
+    const logoDisplayHeight = 40;
+    const logoScale = logoDisplayHeight / logoImage.height;
+    const logoDisplayWidth = logoImage.width * logoScale;
+    page.drawImage(logoImage, {
+      x: PAGE_WIDTH - MARGIN - logoDisplayWidth,
+      y: y - logoDisplayHeight + 28, // align with animal name
+      width: logoDisplayWidth,
+      height: logoDisplayHeight,
+    });
+  } catch {
+    // Logo embedding is non-critical — continue without it
+  }
+
   page.drawText(data.animal.name, {
     x: MARGIN,
     y,

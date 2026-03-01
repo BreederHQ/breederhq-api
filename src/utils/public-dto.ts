@@ -94,6 +94,7 @@ export interface PublicOffspringDTO {
   collarColorHex: string | null;
   priceCents: number | null;
   status: "available" | "reserved" | "placed";
+  hasAssessments?: boolean;
 }
 
 type OffspringWithFields = Pick<
@@ -107,7 +108,9 @@ type OffspringWithFields = Pick<
   | "keeperIntent"
   | "placementState"
   | "marketplacePriceCents"
->;
+> & {
+  _count?: { rearingAssessments?: number };
+};
 
 export function toPublicOffspringDTO(
   offspring: OffspringWithFields
@@ -136,6 +139,7 @@ export function toPublicOffspringDTO(
     collarColorHex: offspring.collarColorHex || null,
     priceCents: derivedPrice,
     status,
+    hasAssessments: (offspring._count?.rearingAssessments ?? 0) > 0,
   };
 }
 
@@ -355,7 +359,7 @@ export function toAnimalListingSummaryDTO(
   // Derive price display
   const priceDisplay = derivePriceDisplay(listing);
 
-  // Derive price range for consistency with offspring group format
+  // Derive price range for consistency with litter format
   let priceRange: { min: number; max: number } | null = null;
   if (listing.priceModel === "range" && listing.priceMinCents != null && listing.priceMaxCents != null) {
     priceRange = { min: listing.priceMinCents, max: listing.priceMaxCents };

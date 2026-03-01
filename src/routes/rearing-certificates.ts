@@ -102,7 +102,7 @@ const rearingCertificatesRoutes: FastifyPluginAsync = async (app: FastifyInstanc
         });
       }
 
-      // Get assignment with protocol and offspring group details
+      // Get assignment with protocol and breeding plan details
       const assignment = await prisma.rearingProtocolAssignment.findFirst({
         where: { id: assignmentId, tenantId },
         include: {

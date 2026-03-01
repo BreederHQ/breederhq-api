@@ -28,6 +28,8 @@ export interface PedigreeNode {
   hasVerifiedTitles: boolean;
   dam: PedigreeNode | null;
   sire: PedigreeNode | null;
+  // Embryo Transfer — only populated when this animal was born via ET
+  recipientDam?: { id: number; name: string } | null;
 }
 
 export interface COIResult {
@@ -313,6 +315,8 @@ async function calculateCOI(
 
 /**
  * Build descendant tree (children, grandchildren, etc.)
+ * For dams, also finds offspring where this animal is the geneticDam (ET offspring)
+ * via the Offspring table, then resolves promoted Animal records.
  */
 async function buildDescendantTree(
   animalId: number,
@@ -322,18 +326,48 @@ async function buildDescendantTree(
 ): Promise<DescendantNode[]> {
   if (depth <= 0) return [];
 
+  // Standard query: find Animal records where damId/sireId = this animal
   const whereClause =
     parentRole === "dam" ? { damId: animalId, tenantId } : { sireId: animalId, tenantId };
 
-  const children = await prisma.animal.findMany({
+  const childSelect = {
+    ...animalSelect,
+    dam: { select: { id: true, name: true } },
+    sire: { select: { id: true, name: true } },
+  } as const;
+
+  const allChildren = await prisma.animal.findMany({
     where: whereClause,
-    select: {
-      ...animalSelect,
-      dam: { select: { id: true, name: true } },
-      sire: { select: { id: true, name: true } },
-    },
+    select: childSelect,
     orderBy: { birthDate: "desc" },
   });
+
+  // For dams, also find ET offspring where this animal is geneticDamId but
+  // the promoted Animal's damId may differ (defensive — covers edge cases)
+  if (parentRole === "dam") {
+    const childIds = new Set(allChildren.map((c) => c.id));
+    const etOffspring = await prisma.offspring.findMany({
+      where: {
+        tenantId,
+        geneticDamId: animalId,
+        promotedAnimalId: { not: null },
+      },
+      select: { promotedAnimalId: true },
+    });
+    const missingIds = etOffspring
+      .map((o) => o.promotedAnimalId!)
+      .filter((id) => !childIds.has(id));
+    if (missingIds.length > 0) {
+      const etChildren = await prisma.animal.findMany({
+        where: { id: { in: missingIds }, tenantId },
+        select: childSelect,
+        orderBy: { birthDate: "desc" },
+      });
+      allChildren.push(...etChildren);
+    }
+  }
+
+  const children = allChildren;
 
   const results: DescendantNode[] = [];
 
@@ -379,6 +413,24 @@ export async function getPedigree(
   // Calculate COI for this animal
   const animal = cache.get(animalId);
   const coi = await calculateCOI(animal?.damId ?? null, animal?.sireId ?? null, tenantId, generations);
+
+  // Check if this animal was born via ET — look up Offspring record where this animal was promoted
+  // If recipientDamId is set, the animal was carried by a surrogate (ET birth)
+  if (pedigree) {
+    const offspringRecord = await prisma.offspring.findFirst({
+      where: { promotedAnimalId: animalId, tenantId, recipientDamId: { not: null } },
+      select: {
+        recipientDamId: true,
+        Animal_Offspring_recipientDamIdToAnimal: { select: { id: true, name: true } },
+      },
+    });
+    if (offspringRecord?.Animal_Offspring_recipientDamIdToAnimal) {
+      pedigree.recipientDam = {
+        id: offspringRecord.Animal_Offspring_recipientDamIdToAnimal.id,
+        name: offspringRecord.Animal_Offspring_recipientDamIdToAnimal.name,
+      };
+    }
+  }
 
   return { pedigree, coi };
 }

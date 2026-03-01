@@ -1386,6 +1386,8 @@ const kvsGunDogProtocol: ProtocolSeed = {
 // ─────────────────────────────────────────────────────────────────────────────
 // All Benchmark Protocols (14 total)
 // ─────────────────────────────────────────────────────────────────────────────
+// NOTE: Volhard PAT was removed — temperament assessments are now a first-class
+// offspring feature (decoupled from rearing protocols). See AssessmentResult table.
 
 const BENCHMARK_PROTOCOLS: ProtocolSeed[] = [
   // Dogs (8)

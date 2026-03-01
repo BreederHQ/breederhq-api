@@ -558,6 +558,8 @@ import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
 import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
 import breedingGroupsRoutes from "./routes/breeding-groups.js";
+import flushEventsRoutes from "./routes/flush-events.js";
+import recipientPoolRoutes from "./routes/recipient-pool.js";
 import animalTraitsRoutes from "./routes/animal-traits.js";
 import animalDocumentsRoutes from "./routes/animal-documents.js";
 import contactDocumentsRoutes from "./routes/contact-documents.js";
@@ -651,7 +653,7 @@ import messagingHubRoutes from "./routes/messaging-hub.js"; // MessagingHub - se
 import websocketRoutes from "./routes/websocket.js"; // WebSocket for real-time messaging
 import breedingProgramsRoutes from "./routes/breeding-programs.js"; // Breeding Programs (marketplace)
 import publicBreedingProgramsRoutes from "./routes/public-breeding-programs.js"; // Public Breeding Programs (marketplace)
-import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, offspring-groups, inquiries)
+import breederMarketplaceRoutes from "./routes/breeder-marketplace.js"; // Breeder Marketplace Management (animal-listings, plan-litters, inquiries)
 import animalVaccinationsRoutes from "./routes/animal-vaccinations.js"; // Animal vaccinations tracking
 import animalMedicationsRoutes from "./routes/animal-medications.js"; // Medication/treatment tracking (courses, doses, batch)
 import animalHealthExportRoutes, { publicHealthReportSharedRoutes } from "./routes/animal-health-export.js"; // Health report PDF export, stall card, email, share link
@@ -711,7 +713,7 @@ import auditLogRoutes from "./routes/audit-log.js"; // Audit Log & Entity Activi
 
 // Rearing Protocols (Offspring Module)
 import rearingProtocolsRoutes from "./routes/rearing-protocols.js"; // Rearing Protocols CRUD
-import rearingAssignmentsRoutes from "./routes/rearing-assignments.js"; // Protocol assignments to offspring groups
+import rearingAssignmentsRoutes from "./routes/rearing-assignments.js"; // Protocol assignments to breeding plans
 import rearingCompletionsRoutes from "./routes/rearing-completions.js"; // Activity completions
 import rearingExceptionsRoutes from "./routes/rearing-exceptions.js"; // Per-offspring exceptions
 import rearingCommunityRoutes from "./routes/rearing-community.js"; // Community sharing and discovery
@@ -934,12 +936,14 @@ app.register(
       // These endpoints allow anonymous browsing of marketplace listings
       const publicBrowsePatterns = [
         // Exact matches and prefixes for list endpoints
-        "/marketplace/offspring-groups",
+        "/marketplace/plan-litters",
+        "/marketplace/offspring-groups", // deprecated alias
         "/marketplace/animal-programs",
         "/marketplace/animals",
         "/marketplace/services",
         "/marketplace/mkt-listing-individual-animals",
-        "/api/v1/marketplace/offspring-groups",
+        "/api/v1/marketplace/plan-litters",
+        "/api/v1/marketplace/offspring-groups", // deprecated alias
         "/api/v1/marketplace/animal-programs",
         "/api/v1/marketplace/animals",
         "/api/v1/marketplace/services",
@@ -1233,11 +1237,13 @@ app.register(
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
     api.register(breedingGroupsRoutes); // /api/v1/breeding/groups/* (livestock group breeding)
+    api.register(flushEventsRoutes);   // /api/v1/flush-events/*, /api/v1/animals/:id/flush-history
+    api.register(recipientPoolRoutes); // /api/v1/recipient-pool
     api.register(breedingProgramsRoutes); // /api/v1/breeding/programs/*
     api.register(breedingProgramRulesRoutes); // /api/v1/breeding/programs/rules/* (cascading automation rules)
     api.register(studVisibilityRoutes); // /api/v1/stud-visibility/* (stud listing visibility rules - P11)
     api.register(publicBreedingProgramsRoutes); // /api/v1/public/breeding-programs/* (public marketplace)
-    api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/offspring-groups/*, /api/v1/inquiries/*
+    api.register(breederMarketplaceRoutes); // /api/v1/animal-listings/*, /api/v1/plan-litters/*, /api/v1/inquiries/*
     api.register(breederMarketplaceRoutes, { prefix: "/marketplace/breeder" }); // /api/v1/marketplace/breeder/* (dashboard stats)
     api.register(marketplaceImageUploadRoutes, { prefix: "/marketplace/images" }); // /api/v1/marketplace/images/* (S3 presigned URL upload - moved from mixed-auth for proper userId)
     api.register(mediaRoutes, { prefix: "/media" }); // /api/v1/media/* (Unified media upload/access - moved from public for proper auth)
@@ -1275,7 +1281,7 @@ app.register(
 
     // Rearing Protocols
     api.register(rearingProtocolsRoutes);   // /api/v1/rearing-protocols/*
-    api.register(rearingAssignmentsRoutes); // /api/v1/offspring-groups/:groupId/rearing-assignments/*, /api/v1/rearing-assignments/*
+    api.register(rearingAssignmentsRoutes); // /api/v1/plans/:planId/rearing-assignments/*, /api/v1/rearing-assignments/*
     api.register(rearingCompletionsRoutes); // /api/v1/rearing-assignments/:id/completions/*, /api/v1/rearing-completions/*
     api.register(rearingExceptionsRoutes);  // /api/v1/rearing-assignments/:id/exceptions/*, /api/v1/rearing-exceptions/*
     api.register(rearingCommunityRoutes);   // /api/v1/rearing-protocols/community/*

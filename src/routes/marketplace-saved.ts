@@ -21,8 +21,16 @@ import prisma from "../prisma.js";
 
 // Valid listing types
 // - individual_animal: Individual animal listings (MktListingIndividualAnimal table)
-const VALID_LISTING_TYPES = ["offspring_group", "individual_animal", "service", "animal_program", "breeder_storefront"] as const;
+// - "offspring_group" is the persisted DB value. "litter" is accepted as an alias
+//   for API consumers but stored as "offspring_group".
+const VALID_LISTING_TYPES = ["offspring_group", "individual_animal", "service", "animal_program", "breeder_storefront", "litter"] as const;
 type ListingType = typeof VALID_LISTING_TYPES[number];
+
+/** Normalize API aliases to their persisted DB values. */
+function normalizeListingType(type: ListingType): string {
+  if (type === "litter") return "offspring_group";
+  return type;
+}
 
 // Types that use string identifiers (slugs) instead of numeric IDs
 const STRING_ID_LISTING_TYPES = ["breeder_storefront"] as const;
@@ -126,7 +134,7 @@ export default async function marketplaceSavedRoutes(
     try {
       const where: any = { bhqUserId };
       if (typeFilter && isValidListingType(typeFilter)) {
-        where.listingType = typeFilter;
+        where.listingType = normalizeListingType(typeFilter);
       }
 
       const [items, total] = await Promise.all([
@@ -312,10 +320,13 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
+    // Normalize alias to persisted DB value
+    const normalizedType = normalizeListingType(listingType);
+
     // Validate listingId based on type
     // breeder_storefront accepts string slugs (resolved to tenant ID), others use numeric IDs
     let listingId: number;
-    if (usesStringId(listingType)) {
+    if (usesStringId(normalizedType as ListingType)) {
       // For breeder_storefront, accept slug and resolve to tenant ID
       if (!rawListingId || (typeof rawListingId !== "string" && typeof rawListingId !== "number")) {
         return reply.code(400).send({
@@ -339,33 +350,33 @@ export default async function marketplaceSavedRoutes(
       // Verify listing exists based on type
       let listingExists = false;
 
-      if (listingType === "service") {
+      if (normalizedType === "service") {
         const listing = await prisma.mktListingBreederService.findUnique({
           where: { id: listingId },
           select: { id: true, deletedAt: true },
         });
         listingExists = !!listing && !listing.deletedAt;
-      } else if (listingType === "offspring_group") {
+      } else if (normalizedType === "offspring_group") {
         // OGC-05: offspring_group listings now backed by breedingPlan
         const listing = await prisma.breedingPlan.findUnique({
           where: { id: listingId },
           select: { id: true },
         });
         listingExists = !!listing;
-      } else if (listingType === "individual_animal") {
+      } else if (normalizedType === "individual_animal") {
         // Individual animal listings - lookup in MktListingIndividualAnimal table
         const listing = await prisma.mktListingIndividualAnimal.findUnique({
           where: { id: listingId },
           select: { id: true },
         });
         listingExists = !!listing;
-      } else if (listingType === "animal_program") {
+      } else if (normalizedType === "animal_program") {
         const listing = await prisma.mktListingAnimalProgram.findUnique({
           where: { id: listingId },
           select: { id: true },
         });
         listingExists = !!listing;
-      } else if (listingType === "breeder_storefront") {
+      } else if (normalizedType === "breeder_storefront") {
         // breeder_storefront: look up by slug or ID, store tenant ID
         let tenant: { id: number } | null = null;
         if (typeof rawListingId === "string") {
@@ -392,9 +403,9 @@ export default async function marketplaceSavedRoutes(
         });
       }
 
-      // Check if already saved
+      // Check if already saved (always query with normalized type)
       const existing = await prisma.marketplaceSavedListing.findFirst({
-        where: { bhqUserId, listingType, listingId },
+        where: { bhqUserId, listingType: normalizedType, listingId },
       });
 
       if (existing) {
@@ -404,9 +415,9 @@ export default async function marketplaceSavedRoutes(
         });
       }
 
-      // Create saved listing
+      // Create saved listing (persist normalized type)
       const saved = await prisma.marketplaceSavedListing.create({
-        data: { bhqUserId, listingType, listingId },
+        data: { bhqUserId, listingType: normalizedType, listingId },
         select: { id: true, listingType: true, listingId: true, savedAt: true },
       });
 
@@ -423,7 +434,7 @@ export default async function marketplaceSavedRoutes(
         message: "Listing saved successfully.",
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingType, listingId }, "Failed to save listing");
+      req.log?.error?.({ err, listingType: normalizedType, listingId }, "Failed to save listing");
       return reply.code(500).send({ error: "save_failed", message: "Failed to save listing." });
     }
   });
@@ -450,9 +461,11 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
+    const normalizedType = normalizeListingType(listingType);
+
     // Resolve listingId - for breeder_storefront, accept slug and resolve to tenant ID
     let listingId: number;
-    if (usesStringId(listingType)) {
+    if (usesStringId(normalizedType as ListingType)) {
       // Try to parse as number first (in case they pass the ID directly)
       const parsedId = parseInt(rawListingId, 10);
       if (!isNaN(parsedId)) {
@@ -482,9 +495,9 @@ export default async function marketplaceSavedRoutes(
     }
 
     try {
-      // Check if saved
+      // Check if saved (query with normalized type)
       const existing = await prisma.marketplaceSavedListing.findFirst({
-        where: { bhqUserId, listingType, listingId },
+        where: { bhqUserId, listingType: normalizedType, listingId },
       });
 
       if (!existing) {
@@ -505,7 +518,7 @@ export default async function marketplaceSavedRoutes(
         message: "Listing removed from saved items.",
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingType, listingId }, "Failed to unsave listing");
+      req.log?.error?.({ err, listingType: normalizedType, listingId }, "Failed to unsave listing");
       return reply.code(500).send({ error: "unsave_failed", message: "Failed to unsave listing." });
     }
   });
@@ -534,9 +547,11 @@ export default async function marketplaceSavedRoutes(
       });
     }
 
+    const normalizedType = normalizeListingType(listingType);
+
     // Resolve listingId - for breeder_storefront, accept slug and resolve to tenant ID
     let listingId: number;
-    if (usesStringId(listingType)) {
+    if (usesStringId(normalizedType as ListingType)) {
       const parsedId = parseInt(rawListingId, 10);
       if (!isNaN(parsedId)) {
         listingId = parsedId;
@@ -564,7 +579,7 @@ export default async function marketplaceSavedRoutes(
 
     try {
       const existing = await prisma.marketplaceSavedListing.findFirst({
-        where: { bhqUserId, listingType, listingId },
+        where: { bhqUserId, listingType: normalizedType, listingId },
         select: { id: true },
       });
 
@@ -573,7 +588,7 @@ export default async function marketplaceSavedRoutes(
         saved: !!existing,
       });
     } catch (err: any) {
-      req.log?.error?.({ err, listingType, listingId }, "Failed to check saved status");
+      req.log?.error?.({ err, listingType: normalizedType, listingId }, "Failed to check saved status");
       return reply.code(500).send({ error: "check_failed", message: "Failed to check saved status." });
     }
   });

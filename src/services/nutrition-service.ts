@@ -427,7 +427,7 @@ export async function createFeedingPlan(
   tenantId: number,
   input: CreateFeedingPlanInput
 ): Promise<FeedingPlan & { foodProduct: FoodProduct }> {
-  // Verify target (animal OR offspring group) belongs to tenant
+  // Verify target (animal OR breeding plan) belongs to tenant
   if (input.animalId) {
     const animal = await prisma.animal.findFirst({
       where: { id: input.animalId, tenantId },
@@ -583,7 +583,7 @@ export async function logFeeding(
   tenantId: number,
   input: LogFeedingInput
 ): Promise<FeedingRecord> {
-  // Verify target (animal OR offspring group) belongs to tenant
+  // Verify target (animal OR breeding plan) belongs to tenant
   if (input.animalId) {
     const animal = await prisma.animal.findFirst({
       where: { id: input.animalId, tenantId },
@@ -926,7 +926,7 @@ export async function getCostByAnimal(
   const records = await prisma.feedingRecord.findMany({
     where: {
       tenantId,
-      animalId: { not: null }, // Only animal records, not offspring groups
+      animalId: { not: null }, // Only animal records, not litters
       fedAt: { gte: period.start, lte: period.end },
       costCents: { not: null },
     },

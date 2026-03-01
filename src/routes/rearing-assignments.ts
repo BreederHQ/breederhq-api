@@ -1,5 +1,5 @@
 // src/routes/rearing-assignments.ts
-// Rearing Protocols API - Protocol assignments to offspring groups
+// Rearing Protocols API - Protocol assignments to breeding plans
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
@@ -43,6 +43,7 @@ const BENCHMARK_STRING_ID_TO_NAME: Record<string, string> = {
   benchmark_crate: "Crate Introduction",
   benchmark_gun_conditioning: "Gun Conditioning for Hunting Dogs",
   benchmark_kvs_gundog: "BreederHQ Gun Dog Development Protocol",
+  // NOTE: Volhard PAT removed — assessments are now a first-class offspring feature
   // Cats
   benchmark_cat_socialization: "Kitten Socialization",
   benchmark_cat_litter: "Litter Training",
@@ -86,31 +87,31 @@ const assignmentInclude = {
 
 const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ─────────────────────────────────────────────────────────────────────────────
-  // GET /offspring-groups/:groupId/rearing-assignments - List assignments for group (breedingPlan)
+  // GET /plans/:planId/rearing-assignments - List assignments for a breeding plan
   // ─────────────────────────────────────────────────────────────────────────────
-  app.get("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
+  async function planRearingAssignmentsGet(req: any, reply: any) {
     try {
-      const tenantId = Number((req as any).tenantId);
-      const groupId = idNum((req.params as any).groupId);
+      const tenantId = Number(req.tenantId);
+      const planId = idNum(req.params.planId);
 
       if (!tenantId) {
         return reply.code(401).send({ error: "unauthorized" });
       }
-      if (!groupId) {
-        return reply.code(400).send({ error: "invalid_group_id" });
+      if (!planId) {
+        return reply.code(400).send({ error: "invalid_plan_id" });
       }
 
-      // Verify breedingPlan belongs to tenant (groupId now maps to breedingPlanId)
+      // Verify breedingPlan belongs to tenant
       const plan = await prisma.breedingPlan.findFirst({
-        where: { id: groupId, tenantId },
+        where: { id: planId, tenantId },
       });
 
       if (!plan) {
-        return reply.code(404).send({ error: "group_not_found" });
+        return reply.code(404).send({ error: "plan_not_found" });
       }
 
       const assignments = await prisma.rearingProtocolAssignment.findMany({
-        where: { breedingPlanId: groupId, tenantId },
+        where: { breedingPlanId: planId, tenantId },
         include: assignmentInclude,
         orderBy: { createdAt: "desc" },
       });
@@ -120,21 +121,29 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       const { status, payload } = errorReply(err);
       return reply.status(status).send(payload);
     }
+  }
+
+  app.get("/plans/:planId/rearing-assignments", planRearingAssignmentsGet);
+
+  // Deprecated alias — remove after frontend migrates
+  app.get("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
+    (req.params as any).planId = (req.params as any).groupId;
+    return planRearingAssignmentsGet(req, reply);
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // POST /offspring-groups/:groupId/rearing-assignments - Assign protocol to group (breedingPlan)
+  // POST /plans/:planId/rearing-assignments - Assign protocol to a breeding plan
   // ─────────────────────────────────────────────────────────────────────────────
-  app.post("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
+  async function planRearingAssignmentsPost(req: any, reply: any) {
     try {
-      const tenantId = Number((req as any).tenantId);
-      const groupId = idNum((req.params as any).groupId);
+      const tenantId = Number(req.tenantId);
+      const planId = idNum(req.params.planId);
 
       if (!tenantId) {
         return reply.code(401).send({ error: "unauthorized" });
       }
-      if (!groupId) {
-        return reply.code(400).send({ error: "invalid_group_id" });
+      if (!planId) {
+        return reply.code(400).send({ error: "invalid_plan_id" });
       }
 
       const body = req.body as any;
@@ -166,13 +175,13 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(400).send({ error: "invalid_protocol_id" });
       }
 
-      // Verify breedingPlan belongs to tenant (groupId now maps to breedingPlanId)
+      // Verify breedingPlan belongs to tenant
       const plan = await prisma.breedingPlan.findFirst({
-        where: { id: groupId, tenantId },
+        where: { id: planId, tenantId },
       });
 
       if (!plan) {
-        return reply.code(404).send({ error: "group_not_found" });
+        return reply.code(404).send({ error: "plan_not_found" });
       }
 
       // Get protocol (own or benchmark)
@@ -219,7 +228,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
 
       // Check for existing assignment (use protocol.id which is always the numeric id)
       const existingAssignment = await prisma.rearingProtocolAssignment.findFirst({
-        where: { breedingPlanId: groupId, protocolId: protocol.id },
+        where: { breedingPlanId: planId, protocolId: protocol.id },
       });
 
       if (existingAssignment) {
@@ -248,7 +257,7 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return tx.rearingProtocolAssignment.create({
           data: {
             tenantId,
-            breedingPlanId: groupId,
+            breedingPlanId: planId,
             protocolId: protocol.id,
             protocolVersion: protocol.version,
             protocolSnapshot: protocol as any, // Store full protocol JSON
@@ -266,6 +275,14 @@ const rearingAssignmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
       const { status, payload } = errorReply(err);
       return reply.status(status).send(payload);
     }
+  }
+
+  app.post("/plans/:planId/rearing-assignments", planRearingAssignmentsPost);
+
+  // Deprecated alias — remove after frontend migrates
+  app.post("/offspring-groups/:groupId/rearing-assignments", async (req, reply) => {
+    (req.params as any).planId = (req.params as any).groupId;
+    return planRearingAssignmentsPost(req, reply);
   });
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -43,6 +43,20 @@ const VOLHARD_FIELDS = [
   "stability",
 ];
 
+// Gun Dog Aptitude score fields (each scored 1-5)
+const GUN_DOG_FIELDS = [
+  "birdDrive",
+  "waterEntry",
+  "markingAbility",
+  "retrieveDesire",
+  "cooperation",
+  "wingReaction",
+  "soundSensitivity",
+  "preyPersistence",
+  "focusUnderDistraction",
+  "overallDrive",
+];
+
 function validateVolhardScores(scores: Record<string, any>): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
@@ -52,6 +66,21 @@ function validateVolhardScores(scores: Record<string, any>): { valid: boolean; e
       errors.push(`Missing field: ${field}`);
     } else if (typeof val !== "number" || val < 1 || val > 6) {
       errors.push(`${field} must be a number between 1 and 6`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+function validateGunDogScores(scores: Record<string, any>): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  for (const field of GUN_DOG_FIELDS) {
+    const val = scores[field];
+    if (val === undefined || val === null) {
+      errors.push(`Missing field: ${field}`);
+    } else if (typeof val !== "number" || val < 1 || val > 5) {
+      errors.push(`${field} must be a number between 1 and 5`);
     }
   }
 
@@ -126,8 +155,17 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "offspring_not_found" });
       }
 
+      // Optional filter: ?buyerVisible=true returns only buyer-visible results (for portal)
+      const query = req.query as any;
+      const buyerVisibleFilter = query.buyerVisible === "true" ? true : undefined;
+
+      const whereClause: { offspringId: number; tenantId: number; buyerVisible?: boolean } = { offspringId, tenantId };
+      if (buyerVisibleFilter !== undefined) {
+        whereClause.buyerVisible = buyerVisibleFilter;
+      }
+
       const results = await prisma.assessmentResult.findMany({
-        where: { offspringId, tenantId },
+        where: whereClause,
         orderBy: { assessedAt: "desc" },
         include: {
           assignment: {
@@ -219,12 +257,20 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(400).send({ error: "scores_required" });
       }
 
-      // Validate Volhard scores if applicable
+      // Validate scores based on assessment type
       if (assessmentType === "VOLHARD_PAT") {
         const validation = validateVolhardScores(scores);
         if (!validation.valid) {
           return reply.code(400).send({
             error: "invalid_volhard_scores",
+            details: validation.errors,
+          });
+        }
+      } else if (assessmentType === "GUN_DOG_APTITUDE") {
+        const validation = validateGunDogScores(scores);
+        if (!validation.valid) {
+          return reply.code(400).send({
+            error: "invalid_gun_dog_scores",
             details: validation.errors,
           });
         }
@@ -258,6 +304,96 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
           notes: trimToNull(body.notes),
           assessedAt: body.assessedAt ? new Date(body.assessedAt) : new Date(),
           assessedBy: userId,
+          buyerVisible: body.buyerVisible === true,
+        },
+        include: {
+          offspring: {
+            select: { id: true, name: true },
+          },
+        },
+      });
+
+      return reply.code(201).send(result);
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      return reply.status(status).send(payload);
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /offspring/:id/assessments - Record standalone assessment (no assignment required)
+  // ─────────────────────────────────────────────────────────────────────────────
+  app.post("/offspring/:id/assessments", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const userId = (req as any).userId as string;
+      const offspringId = idNum((req.params as any).id);
+
+      if (!tenantId) {
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+      if (!offspringId) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      const body = req.body as any;
+      const assessmentType = body.assessmentType || "VOLHARD_PAT";
+      const scores = body.scores;
+      const assignmentId = idNum(body.assignmentId); // optional
+
+      if (!scores || typeof scores !== "object") {
+        return reply.code(400).send({ error: "scores_required" });
+      }
+
+      // Validate scores based on assessment type
+      if (assessmentType === "VOLHARD_PAT") {
+        const validation = validateVolhardScores(scores);
+        if (!validation.valid) {
+          return reply.code(400).send({
+            error: "invalid_volhard_scores",
+            details: validation.errors,
+          });
+        }
+      } else if (assessmentType === "GUN_DOG_APTITUDE") {
+        const validation = validateGunDogScores(scores);
+        if (!validation.valid) {
+          return reply.code(400).send({
+            error: "invalid_gun_dog_scores",
+            details: validation.errors,
+          });
+        }
+      }
+
+      // Verify offspring belongs to tenant
+      const offspring = await prisma.offspring.findFirst({
+        where: { id: offspringId, tenantId },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "offspring_not_found" });
+      }
+
+      // If assignmentId provided, verify it belongs to tenant
+      if (assignmentId) {
+        const assignment = await prisma.rearingProtocolAssignment.findFirst({
+          where: { id: assignmentId, tenantId },
+        });
+        if (!assignment) {
+          return reply.code(404).send({ error: "assignment_not_found" });
+        }
+      }
+
+      const result = await prisma.assessmentResult.create({
+        data: {
+          tenantId,
+          assignmentId: assignmentId ?? null,
+          offspringId,
+          assessmentType: assessmentType as any,
+          scores,
+          notes: trimToNull(body.notes),
+          assessedAt: body.assessedAt ? new Date(body.assessedAt) : new Date(),
+          assessedBy: userId,
+          buyerVisible: body.buyerVisible === true,
         },
         include: {
           offspring: {
@@ -299,14 +435,24 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
         return reply.code(404).send({ error: "not_found" });
       }
 
-      // Validate Volhard scores if updating them
-      if (body.scores && existing.assessmentType === "VOLHARD_PAT") {
-        const validation = validateVolhardScores(body.scores);
-        if (!validation.valid) {
-          return reply.code(400).send({
-            error: "invalid_volhard_scores",
-            details: validation.errors,
-          });
+      // Validate scores if updating them
+      if (body.scores) {
+        if (existing.assessmentType === "VOLHARD_PAT") {
+          const validation = validateVolhardScores(body.scores);
+          if (!validation.valid) {
+            return reply.code(400).send({
+              error: "invalid_volhard_scores",
+              details: validation.errors,
+            });
+          }
+        } else if ((existing.assessmentType as string) === "GUN_DOG_APTITUDE") {
+          const validation = validateGunDogScores(body.scores);
+          if (!validation.valid) {
+            return reply.code(400).send({
+              error: "invalid_gun_dog_scores",
+              details: validation.errors,
+            });
+          }
         }
       }
 
@@ -317,6 +463,7 @@ const rearingAssessmentsRoutes: FastifyPluginAsync = async (app: FastifyInstance
           scores: body.scores ?? existing.scores,
           notes: body.notes !== undefined ? trimToNull(body.notes) : existing.notes,
           assessedAt: body.assessedAt ? new Date(body.assessedAt) : existing.assessedAt,
+          ...(body.buyerVisible !== undefined && { buyerVisible: body.buyerVisible === true }),
         },
         include: {
           offspring: {
