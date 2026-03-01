@@ -349,7 +349,7 @@ const TAG_MODULE_INFO: Record<string, { label: string; path: string }> = {
   ORGANIZATION: { label: "Organizations", path: "/contacts" },
   ANIMAL: { label: "Animals", path: "/animals" },
   WAITLIST_ENTRY: { label: "Waitlist", path: "/waitlist" },
-  OFFSPRING_GROUP: { label: "Offspring", path: "/offspring" },
+  OFFSPRING_GROUP: { label: "Offspring", path: "/offspring" }, // Legacy DB enum value (TagModule) — kept for backward compatibility with persisted tags
   OFFSPRING: { label: "Offspring", path: "/offspring" },
   MESSAGE_THREAD: { label: "Messages", path: "/marketing/messages" },
   DRAFT: { label: "Drafts", path: "/marketing/messages" },

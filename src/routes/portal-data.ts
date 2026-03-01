@@ -228,7 +228,7 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * GET /api/v1/portal/documents/:id/download
    * Returns a presigned URL for downloading a document
-   * Access: Party must be a buyer linked to the offspring group containing this document
+   * Access: Party must be a buyer linked to the breeding plan containing this document
    * Note: :id is the Attachment ID (file.id) as returned by /portal/documents
    */
   app.get<{ Params: { id: string } }>("/portal/documents/:id/download", async (req, reply) => {
@@ -1351,6 +1351,62 @@ const portalDataRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     } catch (err: any) {
       req.log?.error?.({ err }, "Failed to update portal microchip registration");
       return reply.code(500).send({ error: "update_failed" });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Assessment Results (Buyer Portal)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/portal/offspring/:id/assessments
+   * Returns buyer-visible assessment results for an offspring owned by the portal user.
+   * Only returns assessments where buyerVisible = true.
+   */
+  app.get<{ Params: { id: string } }>("/portal/offspring/:id/assessments", async (req, reply) => {
+    try {
+      const { tenantId, partyId } = await requireClientPartyScope(req);
+      const offspringId = parseInt(req.params.id, 10);
+
+      if (isNaN(offspringId)) {
+        return reply.code(400).send({ error: "invalid_id" });
+      }
+
+      // Verify the offspring belongs to this buyer
+      const offspring = await prisma.offspring.findFirst({
+        where: {
+          id: offspringId,
+          tenantId,
+          buyerPartyId: partyId,
+        },
+        select: { id: true },
+      });
+
+      if (!offspring) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Fetch only buyer-visible assessments
+      const results = await prisma.assessmentResult.findMany({
+        where: {
+          offspringId,
+          tenantId,
+          buyerVisible: true,
+        },
+        orderBy: { assessedAt: "desc" },
+        select: {
+          id: true,
+          assessmentType: true,
+          scores: true,
+          notes: true,
+          assessedAt: true,
+        },
+      });
+
+      return reply.send({ results });
+    } catch (err: any) {
+      req.log?.error?.({ err }, "Failed to load portal offspring assessments");
+      return reply.code(500).send({ error: "failed_to_load" });
     }
   });
 

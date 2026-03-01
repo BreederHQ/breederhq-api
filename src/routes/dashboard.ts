@@ -4,7 +4,8 @@
 // GET /api/v1/dashboard/counts           - Core metrics (animals, active plans, etc.)
 // GET /api/v1/dashboard/alerts           - Critical action items
 // GET /api/v1/dashboard/agenda           - Today's scheduled items
-// GET /api/v1/dashboard/offspring-summary - Active offspring groups
+// GET /api/v1/dashboard/active-litters   - Plans with active offspring (placement in progress)
+// GET /api/v1/dashboard/offspring-summary - (deprecated alias → active-litters)
 // GET /api/v1/dashboard/waitlist-pressure - Waitlist demand vs supply
 // GET /api/v1/dashboard/kpis             - Program KPIs
 // GET /api/v1/dashboard/feed             - Recent activity feed
@@ -544,12 +545,12 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   /**
-   * GET /api/v1/dashboard/offspring-summary
-   * Active offspring groups with placement progress
+   * GET /api/v1/dashboard/active-litters
+   * Plans with active offspring — placement in progress
    */
-  app.get("/dashboard/offspring-summary", async (req, reply) => {
+  async function activeLittersHandler(req: any, reply: any) {
     try {
-      const tenantId = Number((req as any).tenantId);
+      const tenantId = Number(req.tenantId);
       if (!tenantId) {
         return reply.code(400).send({ error: "missing_tenant" });
       }
@@ -590,7 +591,7 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           ageWeeks = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 7));
         }
 
-        // Determine status
+        // Determine litter status
         let status: "in_care" | "placement_active" | "nearly_complete" = "in_care";
         if (placed > 0 && placed < total) status = "placement_active";
         if (placed >= total * 0.8) status = "nearly_complete";
@@ -615,10 +616,15 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       return reply.send(summaries);
     } catch (err) {
-      req.log?.error?.({ err }, "Failed to get offspring summary");
-      return reply.code(500).send({ error: "get_offspring_summary_failed" });
+      req.log?.error?.({ err }, "Failed to get active litters");
+      return reply.code(500).send({ error: "get_active_litters_failed" });
     }
-  });
+  }
+
+  app.get("/dashboard/active-litters", activeLittersHandler);
+
+  /** @deprecated Use /dashboard/active-litters instead */
+  app.get("/dashboard/offspring-summary", activeLittersHandler);
 
   /**
    * GET /api/v1/dashboard/waitlist-pressure
@@ -1343,15 +1349,13 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: "missing_tenant" });
       }
 
-      // Get assessment results - look for gun dog aptitude assessments
-      // These could be CUSTOM type with gun dog scores or a dedicated assessment type
+      // Get assessment results - gun dog aptitude and Volhard PAT (for fallback gun dog potential)
       const assessments = await prisma.assessmentResult.findMany({
         where: {
           tenantId,
-          // Look for assessments with gun dog aptitude indicators in scores
           OR: [
-            { assessmentType: "CUSTOM" },
-            { assessmentType: "VOLHARD_PAT" }, // Volhard can indicate gun dog potential
+            { assessmentType: "GUN_DOG_APTITUDE" as any },
+            { assessmentType: "VOLHARD_PAT" },
           ],
         },
         include: {
@@ -1393,36 +1397,44 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       );
 
       // Calculate placement recommendation based on scores
-      const calculatePlacement = (scores: any): string => {
-        if (!scores || typeof scores !== "object") return "UNKNOWN";
+      // Returns frontend-matching kebab-case labels
+      const calculatePlacement = (scores: any, assessmentType: string): string => {
+        if (!scores || typeof scores !== "object") return "companion";
 
-        // Check for gun dog specific scores
+        // Canonical Gun Dog Aptitude field names (1-5 scale)
         const gunDogFields = [
           "birdDrive",
-          "retrievingInstinct",
-          "waterWillingness",
-          "pointingInstinct",
-          "searchPattern",
-          "boldness",
-          "trainability",
+          "waterEntry",
+          "markingAbility",
+          "retrieveDesire",
+          "cooperation",
+          "wingReaction",
+          "soundSensitivity",
+          "preyPersistence",
+          "focusUnderDistraction",
+          "overallDrive",
         ];
 
         const hasGunDogScores = gunDogFields.some((f) => scores[f] !== undefined);
 
-        if (hasGunDogScores) {
-          // Calculate average of gun dog scores (1-5 scale typically)
-          const gunDogValues = gunDogFields
+        if (hasGunDogScores || assessmentType === "GUN_DOG_APTITUDE") {
+          // Exclude soundSensitivity from avg (inverted scale — lower = better for gun dogs)
+          const huntingFields = gunDogFields.filter((f) => f !== "soundSensitivity");
+          const huntingValues = huntingFields
             .map((f) => scores[f])
-            .filter((v) => typeof v === "number");
+            .filter((v): v is number => typeof v === "number");
 
-          if (gunDogValues.length === 0) return "UNKNOWN";
+          if (huntingValues.length === 0) return "companion";
 
-          const avg = gunDogValues.reduce((a, b) => a + b, 0) / gunDogValues.length;
+          const avg = huntingValues.reduce((a, b) => a + b, 0) / huntingValues.length;
+          const soundSensitivity = scores.soundSensitivity ?? 3;
+          const isSoundSensitive = soundSensitivity >= 4;
 
-          if (avg >= 4.5) return "COMPETITION";
-          if (avg >= 3.5) return "HUNTING";
-          if (avg >= 2.5) return "PET_ACTIVE";
-          return "PET_COMPANION";
+          if (avg >= 4.5 && !isSoundSensitive) return "competition";
+          if (avg >= 4 && !isSoundSensitive) return "serious-hunter";
+          if (avg >= 3) return "casual-hunter";
+          if (avg >= 2) return "pet-with-potential";
+          return "companion";
         }
 
         // Fall back to Volhard PAT interpretation for gun dog potential
@@ -1442,29 +1454,30 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         const hasVolhardScores = volhardFields.some((f) => scores[f] !== undefined);
 
         if (hasVolhardScores) {
-          // For gun dogs: high retrieving, moderate stability, good sound tolerance
           const retrieving = scores.retrieving || 3;
           const stability = scores.stability || 3;
           const soundSensitivity = scores.soundSensitivity || 3;
 
-          // Lower scores in Volhard = better (1-2 is ideal for most traits)
-          // Except for retrieving where 1 is best (eager retriever)
+          // Volhard: lower = more dominant/driven (1-2 ideal for working dogs)
+          if (retrieving <= 2 && stability <= 2 && soundSensitivity <= 3) {
+            return "serious-hunter";
+          }
           if (retrieving <= 2 && stability <= 3 && soundSensitivity <= 3) {
-            return "HUNTING";
+            return "casual-hunter";
           }
           if (retrieving <= 3 && stability <= 4) {
-            return "PET_ACTIVE";
+            return "pet-with-potential";
           }
-          return "PET_COMPANION";
+          return "companion";
         }
 
-        return "UNKNOWN";
+        return "companion";
       };
 
       // Process assessments into results
       const results = dogAssessments.map((assessment) => {
         const scores = assessment.scores as any;
-        const placement = calculatePlacement(scores);
+        const placement = calculatePlacement(scores, assessment.assessmentType);
 
         // Calculate an overall score (0-100)
         let overallScore = 50;
@@ -1533,13 +1546,13 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           : null,
       }));
 
-      // Calculate placement distribution
+      // Calculate placement distribution (frontend-matching kebab-case labels)
       const placementCounts: Record<string, number> = {
-        COMPETITION: 0,
-        HUNTING: 0,
-        PET_ACTIVE: 0,
-        PET_COMPANION: 0,
-        UNKNOWN: 0,
+        competition: 0,
+        "serious-hunter": 0,
+        "casual-hunter": 0,
+        "pet-with-potential": 0,
+        companion: 0,
       };
 
       for (const r of results) {
@@ -1551,15 +1564,37 @@ const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         .sort((a, b) => b.overallScore - a.overallScore)
         .slice(0, 5);
 
+      // Build top performers with gun dog score fields
+      const topPerformersWithScores = topPerformers.map((r) => ({
+        offspringId: r.offspringId,
+        offspringName: r.offspringName,
+        groupName: r.groupName,
+        overallScore: r.overallScore,
+        birdDrive: r.scores?.birdDrive ?? 0,
+        waterEntry: r.scores?.waterEntry ?? 0,
+        retrieveDesire: r.scores?.retrieveDesire ?? 0,
+      }));
+
       return reply.send({
-        results,
-        awaitingAssessment,
-        summary: {
-          totalAssessed: results.length,
-          awaitingCount: awaitingAssessment.length,
-          placementDistribution: placementCounts,
-        },
-        topPerformers,
+        totalAssessed: results.length,
+        placements: placementCounts,
+        recentAssessments: results.slice(0, 10).map((r) => ({
+          offspringId: r.offspringId,
+          offspringName: r.offspringName,
+          groupId: r.groupId,
+          groupName: r.groupName,
+          placement: r.placement,
+          overallScore: r.overallScore,
+          assessedAt: r.assessedAt,
+        })),
+        topPerformers: topPerformersWithScores,
+        awaitingAssessment: awaitingAssessment.map((o) => ({
+          groupId: o.groupId,
+          groupName: o.groupName,
+          offspringCount: 1,
+          assessedCount: 0,
+          ageWeeks: o.ageInDays ? Math.floor(o.ageInDays / 7) : 0,
+        })),
       });
     } catch (err) {
       req.log?.error?.({ err }, "Failed to get gun dog aptitude data");

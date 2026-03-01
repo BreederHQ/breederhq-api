@@ -12,8 +12,8 @@
  *   GET  /animal-listings/:id          - Get single animal listing
  *   GET  /animals/:animalId/public-listing  - Get listing for a specific animal
  *   GET  /marketplace/listings/:id/stats    - Get statistics for a listing
- *   GET  /offspring-groups             - List breeder's offspring groups
- *   GET  /offspring-groups/:id         - Get single offspring group
+ *   GET  /plan-litters                 - List breeder's plan litters
+ *   GET  /plan-litters/:id            - Get single plan litter
  *   GET  /inquiries                    - List inquiries received by breeder
  *   GET  /inquiries/:id                - Get single inquiry
  */
@@ -505,10 +505,10 @@ export default async function breederMarketplaceRoutes(
     }
   });
 
-  /* ─────────────────────── Offspring Groups ─────────────────────── */
+  /* ─────────────────────── Plan Litters ─────────────────────── */
 
   /**
-   * GET /offspring-groups - List breeder's offspring groups (litters)
+   * GET /plan-litters - List breeder's plan litters (plan offspring)
    *
    * Query params:
    *   - published: Filter by published status ("true", "false")
@@ -522,7 +522,7 @@ export default async function breederMarketplaceRoutes(
       page?: string;
       limit?: string;
     };
-  }>("/offspring-groups", async (req, reply) => {
+  }>("/plan-litters", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -623,20 +623,25 @@ export default async function breederMarketplaceRoutes(
         hasMore: skip + items.length < total,
       });
     } catch (err: any) {
-      req.log?.error?.({ err, tenantId }, "Failed to list offspring groups");
+      req.log?.error?.({ err, tenantId }, "Failed to list plan litters");
       return reply.code(500).send({
         error: "list_failed",
-        message: "Failed to list offspring groups. Please try again.",
+        message: "Failed to list plan litters. Please try again.",
       });
     }
   });
 
+  /** @deprecated Use GET /plan-litters instead */
+  app.get("/offspring-groups", async (req, reply) => {
+    return reply.redirect(`/plan-litters?${new URLSearchParams(req.query as Record<string, string>).toString()}`);
+  });
+
   /**
-   * GET /offspring-groups/:id - Get single offspring group (now backed by breedingPlan)
+   * GET /plan-litters/:id - Get single plan litter by plan ID
    */
   app.get<{
     Params: { id: string };
-  }>("/offspring-groups/:id", async (req, reply) => {
+  }>("/plan-litters/:id", async (req, reply) => {
     const tenantId = await assertTenant(req, reply);
     if (!tenantId) return;
 
@@ -706,12 +711,17 @@ export default async function breederMarketplaceRoutes(
         animals,
       });
     } catch (err: any) {
-      req.log?.error?.({ err, id }, "Failed to get offspring group");
+      req.log?.error?.({ err, id }, "Failed to get plan litter");
       return reply.code(500).send({
         error: "get_failed",
-        message: "Failed to get offspring group. Please try again.",
+        message: "Failed to get plan litter. Please try again.",
       });
     }
+  });
+
+  /** @deprecated Use GET /plan-litters/:id instead */
+  app.get<{ Params: { id: string } }>("/offspring-groups/:id", async (req, reply) => {
+    return reply.redirect(`/plan-litters/${req.params.id}`);
   });
 
   /* ─────────────────────── Inquiries ─────────────────────── */
@@ -1047,8 +1057,8 @@ export default async function breederMarketplaceRoutes(
    *
    * Returns counts of:
    *   - Animal Listings (direct listings)
-   *   - Animal Programs (offspring groups)
-   *   - Breeding Programs (offspring group listings)
+   *   - Animal Programs (plan litters)
+   *   - Breeding Programs (plan litter listings)
    *   - Service Listings (professional breeder services)
    *   - Breeding Listings (breeding service listings - stud, seeking, lease, arrangement)
    */

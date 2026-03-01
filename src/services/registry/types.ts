@@ -10,6 +10,42 @@ export type VerificationConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 export type VerificationMethod = 'API' | 'MANUAL' | 'DOCUMENT';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ET Registry Export Data
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structured ET registry data for breed registration submission.
+ * Covers requirements for AQHA, ADGA, and similar registries.
+ */
+export interface ETRegistryExportData {
+  // AQHA requirements
+  donorPermitNumber?: string;
+  enrollmentFee?: string;
+  // Common fields
+  geneticDamName: string;
+  geneticDamRegistration: string;
+  geneticDamDNA?: string;
+  sireName: string;
+  sireRegistration: string;
+  sireDNA?: string;
+  recipientDamName: string;
+  recipientDamRegistration?: string;
+  flushDate: string;
+  transferDate: string;
+  embryoType: "FRESH" | "FROZEN";
+  // ADGA requirements
+  dnaVerificationStatus?: "PENDING" | "VERIFIED" | "FAILED";
+  parentVerificationMethod?: "DNA_TYPING" | "BLOOD_TYPING" | "HAIR_SAMPLE";
+  // Offspring
+  offspring?: {
+    name: string;
+    sex?: string;
+    dateOfBirth?: string;
+    registrationNumber?: string;
+  }[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registry Lookup Results
 // ─────────────────────────────────────────────────────────────────────────────
 

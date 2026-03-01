@@ -10,6 +10,7 @@
  */
 
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
+import { getBrandLogoPng } from "../assets/brand-logo.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -104,8 +105,8 @@ export async function generateHealthReportPdf(
     pageNumber: 1,
   };
 
-  // 1. Header
-  drawHeader(ctx, data);
+  // 1. Header (async — embeds logo image)
+  await drawHeader(ctx, data);
 
   // 2. Animal info card
   drawAnimalInfo(ctx, data.animal);
@@ -237,7 +238,24 @@ function calculateAge(dob: string | null | undefined): string {
 // Section Renderers
 // ────────────────────────────────────────────────────────────────────────────
 
-function drawHeader(ctx: DrawContext, data: HealthReportData): void {
+async function drawHeader(ctx: DrawContext, data: HealthReportData): Promise<void> {
+  // Embed logo in top-right corner
+  try {
+    const logoPng = getBrandLogoPng();
+    const logoImage = await ctx.doc.embedPng(logoPng);
+    const logoDisplayHeight = 36;
+    const logoScale = logoDisplayHeight / logoImage.height;
+    const logoDisplayWidth = logoImage.width * logoScale;
+    ctx.page.drawImage(logoImage, {
+      x: PAGE_WIDTH - MARGIN - logoDisplayWidth,
+      y: ctx.y - logoDisplayHeight + 18, // align with title baseline
+      width: logoDisplayWidth,
+      height: logoDisplayHeight,
+    });
+  } catch {
+    // Logo embedding is non-critical — continue without it
+  }
+
   drawText(ctx.page, "Animal Health Report", MARGIN, ctx.y, ctx.bold, 18);
   ctx.y -= 20;
   const dateStr = data.generatedAt.toLocaleString("en-US", {

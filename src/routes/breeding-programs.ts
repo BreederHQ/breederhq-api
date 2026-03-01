@@ -283,6 +283,12 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         return reply.code(400).send({ error: "invalid_species" });
       }
 
+      // Validate programType if provided
+      const validProgramTypes = ["COMPANION", "WORKING_SERVICE", "SPORT_COMPETITION", "GUN_DOG", "SHOW_CONFORMATION", "GENERAL"];
+      if (b.programType && !validProgramTypes.includes(b.programType)) {
+        return reply.code(400).send({ error: "invalid_program_type" });
+      }
+
       // Generate unique slug
       const slug = await generateUniqueSlug(tenantId, name);
 
@@ -321,6 +327,7 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           showWhatsIncluded: b.showWhatsIncluded ?? true,
           typicalWaitTime: b.typicalWaitTime ?? null,
           showWaitTime: b.showWaitTime ?? true,
+          programType: validProgramTypes.includes(b.programType) ? b.programType : "GENERAL",
         },
       });
 
@@ -399,6 +406,13 @@ const breedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       if (b.showWhatsIncluded !== undefined) data.showWhatsIncluded = Boolean(b.showWhatsIncluded);
       if (b.typicalWaitTime !== undefined) data.typicalWaitTime = b.typicalWaitTime;
       if (b.showWaitTime !== undefined) data.showWaitTime = Boolean(b.showWaitTime);
+      if (b.programType !== undefined) {
+        const validProgramTypes = ["COMPANION", "WORKING_SERVICE", "SPORT_COMPETITION", "GUN_DOG", "SHOW_CONFORMATION", "GENERAL"];
+        if (!validProgramTypes.includes(b.programType)) {
+          return reply.code(400).send({ error: "invalid_program_type" });
+        }
+        data.programType = b.programType;
+      }
 
       const updated = await prisma.mktListingBreedingProgram.update({
         where: { id },

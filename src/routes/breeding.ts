@@ -46,6 +46,7 @@ import {
 } from "../services/neonatal-care-service.js";
 import { checkArchiveReadiness } from "../services/archive-validation-service.js";
 import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detection.js";
+import { generateETCertificatePdf, type ETCertificateData } from "../services/et-certificate-pdf-builder.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
 import { logEntityActivity } from "../services/activity-log.js";
 import {
@@ -317,10 +318,31 @@ function includeFlags(qInclude: any) {
     Attachments: has("attachments") ? { orderBy: { id: "desc" as const }, take: 100 } : false,
     dam: has("parents") ? true : false,
     sire: has("parents") ? true : false,
+    // ET parent relations — geneticDam and recipientDam as AnimalSummary objects
+    Animal_BreedingPlan_geneticDamIdToAnimal: has("parents") ? true : false,
+    Animal_BreedingPlan_recipientDamIdToAnimal: has("parents") ? true : false,
     organization: has("org") ? true : false,
     program: has("program") ? true : false,
     breedingMilestones: has("milestones") ? { orderBy: { scheduledDate: "asc" as const } } : false,
   };
+}
+
+/**
+ * Remap auto-generated Prisma relation names to friendlier API field names.
+ * Prisma names like "Animal_BreedingPlan_geneticDamIdToAnimal" become "geneticDam".
+ */
+function remapETRelations(plan: any): any {
+  if (!plan) return plan;
+  const out = { ...plan };
+  if ("Animal_BreedingPlan_geneticDamIdToAnimal" in out) {
+    out.geneticDam = out.Animal_BreedingPlan_geneticDamIdToAnimal;
+    delete out.Animal_BreedingPlan_geneticDamIdToAnimal;
+  }
+  if ("Animal_BreedingPlan_recipientDamIdToAnimal" in out) {
+    out.recipientDam = out.Animal_BreedingPlan_recipientDamIdToAnimal;
+    delete out.Animal_BreedingPlan_recipientDamIdToAnimal;
+  }
+  return out;
 }
 
 /* ───────────────────────── normalization ───────────────────────── */
@@ -786,6 +808,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         status: string;
         damId: string;
         sireId: string;
+        recipientDamId: string;
         q: string;
         include: string;
         page: string;
@@ -810,6 +833,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       if (q.damId) where.damId = Number(q.damId);
       if (q.sireId) where.sireId = Number(q.sireId);
+      // Filter by recipient dam (ET plans only)
+      if (q.recipientDamId) where.recipientDamId = Number(q.recipientDamId);
       const search = String(q.q || "").trim();
       if (search) {
         where.OR = [
@@ -822,7 +847,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const { page, limit, skip } = parsePaging(q);
       const expand = includeFlags(q.include);
 
-      const [items, total] = await prisma.$transaction([
+      const [rawItems, total] = await prisma.$transaction([
         prisma.breedingPlan.findMany({
           where,
           orderBy: { createdAt: "desc" },
@@ -832,6 +857,9 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }),
         prisma.breedingPlan.count({ where }),
       ]);
+
+      // Remap auto-generated Prisma ET relation names to friendly API names
+      const items = rawItems.map(remapETRelations);
 
       reply.send({ items, total, page, limit });
     } catch (err) {
@@ -850,11 +878,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const expand = includeFlags(query?.include);
       const checkCarrierRisk = query?.checkCarrierRisk === "true";
 
-      const plan = await prisma.breedingPlan.findFirst({ where: { id, tenantId }, include: expand });
-      if (!plan) return reply.code(404).send({ error: "not_found" });
+      const rawPlan = await prisma.breedingPlan.findFirst({ where: { id, tenantId }, include: expand });
+      if (!rawPlan) return reply.code(404).send({ error: "not_found" });
+
+      // Remap auto-generated Prisma ET relation names to friendly API names
+      const plan = remapETRelations(rawPlan);
 
       // Optionally check for carrier warnings (add ?checkCarrierRisk=true)
-      if (checkCarrierRisk && plan.damId && plan.sireId) {
+      // Use geneticDamId for ET plans, damId for standard — genetics always uses genetic parent
+      const geneticDamForCheck = plan.geneticDamId ?? plan.damId;
+      if (checkCarrierRisk && geneticDamForCheck && plan.sireId) {
         const carrierRisk = await checkBreedingPlanCarrierRisk(prisma, plan.id, tenantId, null, false);
         reply.send({
           ...plan,
@@ -932,6 +965,72 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         if (!program) return reply.code(400).send({ error: "program_not_found" });
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // EMBRYO TRANSFER (ET) VALIDATION
+      // When geneticDamId + recipientDamId are provided, the plan is an ET plan.
+      // Both fields are required together; damId is set to geneticDamId for backward compat.
+      // ═══════════════════════════════════════════════════════════════════════════
+      const geneticDamIdVal = idNum(b.geneticDamId);
+      const recipientDamIdVal = idNum(b.recipientDamId);
+      const isET = Boolean(geneticDamIdVal || recipientDamIdVal);
+
+      if (isET) {
+        // Both geneticDamId and recipientDamId are required for ET plans
+        if (!geneticDamIdVal || !recipientDamIdVal) {
+          return reply.code(400).send({
+            error: "et_fields_required",
+            message: "Genetic dam and recipient are required for embryo transfer plans",
+          });
+        }
+
+        // Donor and recipient must be different animals
+        if (geneticDamIdVal === recipientDamIdVal) {
+          return reply.code(409).send({
+            error: "donor_recipient_same",
+            message: "Donor and recipient must be different animals",
+          });
+        }
+
+        // Block ET on group breeding plans (BreedingGroup link not possible at creation,
+        // but defensively reject if somehow attempted)
+        // Group member linking happens via BreedingGroupMember after plan creation,
+        // so this is validated at update time. No-op here.
+
+        // Validate geneticDam: must exist, be female, same species, same tenant
+        const geneticDam = await prisma.animal.findFirst({
+          where: { id: geneticDamIdVal, tenantId },
+          select: { species: true, sex: true },
+        });
+        if (!geneticDam) return reply.code(400).send({ error: "genetic_dam_not_found" });
+        if (String(geneticDam.species) !== String(b.species)) {
+          return reply.code(400).send({ error: "genetic_dam_species_mismatch", message: "Donor and recipient must be the same species" });
+        }
+        if (String(geneticDam.sex) !== "FEMALE") {
+          return reply.code(400).send({ error: "genetic_dam_sex_mismatch", message: "Both donor and recipient must be female" });
+        }
+
+        // Validate recipientDam: must exist, be female, same species, same tenant
+        const recipientDam = await prisma.animal.findFirst({
+          where: { id: recipientDamIdVal, tenantId },
+          select: { species: true, sex: true },
+        });
+        if (!recipientDam) return reply.code(400).send({ error: "recipient_dam_not_found" });
+        if (String(recipientDam.species) !== String(b.species)) {
+          return reply.code(400).send({ error: "recipient_dam_species_mismatch", message: "Donor and recipient must be the same species" });
+        }
+        if (String(recipientDam.sex) !== "FEMALE") {
+          return reply.code(400).send({ error: "recipient_dam_sex_mismatch", message: "Both donor and recipient must be female" });
+        }
+      } else {
+        // Not an ET plan — reject ET-only fields if provided
+        if (b.geneticDamId !== undefined && b.geneticDamId !== null) {
+          return reply.code(400).send({ error: "et_fields_not_allowed", message: "geneticDamId is only valid for embryo transfer plans (provide both geneticDamId and recipientDamId)" });
+        }
+        if (b.recipientDamId !== undefined && b.recipientDamId !== null) {
+          return reply.code(400).send({ error: "et_fields_not_allowed", message: "recipientDamId is only valid for embryo transfer plans (provide both geneticDamId and recipientDamId)" });
+        }
+      }
+
       const normalizedStatus = normalizePlanStatus(b.status ?? "PLANNING");
       if (!normalizedStatus) return reply.code(400).send({ error: "bad_status" });
 
@@ -961,9 +1060,16 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         nickname: b.nickname ?? null,
         species: b.species,
         breedText: b.breedText ?? null,
-        damId: damId ?? null,
+        // For ET plans: damId = geneticDamId (backward compat — damId always = genetic dam)
+        damId: isET ? geneticDamIdVal : (damId ?? null),
         sireId: b.sireId ?? null,
         programId: b.programId ? Number(b.programId) : null, // Breeding Program (marketplace)
+        // Embryo Transfer fields
+        geneticDamId: isET ? geneticDamIdVal : null,
+        recipientDamId: isET ? recipientDamIdVal : null,
+        flushDate: b.flushDate ? new Date(b.flushDate) : null,
+        embryoTransferDate: b.embryoTransferDate ? new Date(b.embryoTransferDate) : null,
+        embryoType: isET ? (b.embryoType ?? null) : null,
         expectedCycleStart: b.expectedCycleStart ? new Date(b.expectedCycleStart) : null,
         expectedHormoneTestingStart: b.expectedHormoneTestingStart ? new Date(b.expectedHormoneTestingStart) : null,
         expectedBreedDate: b.expectedBreedDate ? new Date(b.expectedBreedDate) : null,
@@ -1083,6 +1189,8 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: true,
           damId: true,
           sireId: true,
+          geneticDamId: true,
+          recipientDamId: true,
           // Fields needed for immutability validation
           reproAnchorMode: true,
           lockedCycleStart: true,
@@ -1230,6 +1338,101 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           });
         }
       }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // EMBRYO TRANSFER (ET) FIELD HANDLING
+      // geneticDamId and recipientDamId together make a plan an ET plan.
+      // On update, validate the same rules as create. If changing to/from ET,
+      // handle the transition cleanly.
+      // ═══════════════════════════════════════════════════════════════════════════
+      if (b.geneticDamId !== undefined || b.recipientDamId !== undefined) {
+        // Determine effective values after update
+        const effectiveGeneticDamId = b.geneticDamId !== undefined
+          ? idNum(b.geneticDamId)
+          : existing.geneticDamId;
+        const effectiveRecipientDamId = b.recipientDamId !== undefined
+          ? idNum(b.recipientDamId)
+          : existing.recipientDamId;
+
+        const becomingET = Boolean(effectiveGeneticDamId || effectiveRecipientDamId);
+
+        if (becomingET) {
+          // Both must be set for ET plans
+          if (!effectiveGeneticDamId || !effectiveRecipientDamId) {
+            return reply.code(400).send({
+              error: "et_fields_required",
+              message: "Genetic dam and recipient are required for embryo transfer plans",
+            });
+          }
+
+          // Donor and recipient must be different
+          if (effectiveGeneticDamId === effectiveRecipientDamId) {
+            return reply.code(409).send({
+              error: "donor_recipient_same",
+              message: "Donor and recipient must be different animals",
+            });
+          }
+
+          // Block ET on group breeding plans
+          const groupMember = await prisma.breedingGroupMember.findFirst({
+            where: { breedingPlanId: id },
+            select: { id: true },
+          });
+          if (groupMember) {
+            return reply.code(400).send({
+              error: "et_group_breeding_blocked",
+              message: "Embryo transfer is not available for group breeding plans",
+            });
+          }
+
+          // Validate geneticDam if being changed
+          if (b.geneticDamId !== undefined && effectiveGeneticDamId) {
+            const geneticDam = await prisma.animal.findFirst({
+              where: { id: effectiveGeneticDamId, tenantId },
+              select: { species: true, sex: true },
+            });
+            if (!geneticDam) return reply.code(400).send({ error: "genetic_dam_not_found" });
+            if (String(geneticDam.species) !== String(targetSpecies)) {
+              return reply.code(400).send({ error: "genetic_dam_species_mismatch", message: "Donor and recipient must be the same species" });
+            }
+            if (String(geneticDam.sex) !== "FEMALE") {
+              return reply.code(400).send({ error: "genetic_dam_sex_mismatch", message: "Both donor and recipient must be female" });
+            }
+          }
+
+          // Validate recipientDam if being changed
+          if (b.recipientDamId !== undefined && effectiveRecipientDamId) {
+            const recipientDam = await prisma.animal.findFirst({
+              where: { id: effectiveRecipientDamId, tenantId },
+              select: { species: true, sex: true },
+            });
+            if (!recipientDam) return reply.code(400).send({ error: "recipient_dam_not_found" });
+            if (String(recipientDam.species) !== String(targetSpecies)) {
+              return reply.code(400).send({ error: "recipient_dam_species_mismatch", message: "Donor and recipient must be the same species" });
+            }
+            if (String(recipientDam.sex) !== "FEMALE") {
+              return reply.code(400).send({ error: "recipient_dam_sex_mismatch", message: "Both donor and recipient must be female" });
+            }
+          }
+
+          // Set the fields
+          if (b.geneticDamId !== undefined) {
+            data.geneticDamId = effectiveGeneticDamId;
+            // damId = geneticDamId for backward compat
+            data.damId = effectiveGeneticDamId;
+          }
+          if (b.recipientDamId !== undefined) data.recipientDamId = effectiveRecipientDamId;
+        } else {
+          // Clearing ET fields (transitioning FROM ET to standard)
+          if (b.geneticDamId === null) data.geneticDamId = null;
+          if (b.recipientDamId === null) data.recipientDamId = null;
+        }
+      }
+
+      // Handle ET optional date/type fields on update
+      if (b.flushDate !== undefined) data.flushDate = b.flushDate ? new Date(b.flushDate) : null;
+      if (b.embryoTransferDate !== undefined) data.embryoTransferDate = b.embryoTransferDate ? new Date(b.embryoTransferDate) : null;
+      if (b.embryoType !== undefined) data.embryoType = b.embryoType ?? null;
 
       const dateKeys = [
         "lockedCycleStart",
@@ -3791,6 +3994,26 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Get the plan to extract damId and sireId for historical persistence
       const plan = await getPlanInTenant(planId, tenantId);
 
+      // For ET attempts: if plan has a flushEventId, auto-populate flushDate from FlushEvent
+      let attemptData = b.data ?? null;
+      if (b.method === "EMBRYO_TRANSFER") {
+        const etPlan = await prisma.breedingPlan.findFirst({
+          where: { id: planId, tenantId },
+          select: { flushEventId: true },
+        });
+        if (etPlan?.flushEventId) {
+          const flushEvent = await prisma.flushEvent.findUnique({
+            where: { id: etPlan.flushEventId },
+            select: { flushDate: true },
+          });
+          if (flushEvent && attemptData && typeof attemptData === "object") {
+            if (!(attemptData as any).flushDate) {
+              (attemptData as any).flushDate = flushEvent.flushDate.toISOString();
+            }
+          }
+        }
+      }
+
       const created = await prisma.breedingAttempt.create({
         data: {
           tenantId,
@@ -3807,7 +4030,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           success: b.success ?? null,
           notes: b.notes ?? null,
           location: b.location ?? null,
-          data: b.data ?? null,
+          data: attemptData,
         },
       });
 
@@ -3821,6 +4044,21 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         where: { id: planId, tenantId },
         data: { breedDateActual: earliest?.attemptAt ?? null },
       });
+
+      // Auto-sync ET procedure details from attempt to plan
+      if (b.method === "EMBRYO_TRANSFER" && b.data) {
+        const etData = b.data as { flushDate?: string; transferDate?: string; embryoType?: string };
+        const planUpdate: Record<string, unknown> = {};
+        if (etData.flushDate) planUpdate.flushDate = new Date(etData.flushDate);
+        if (etData.transferDate) planUpdate.embryoTransferDate = new Date(etData.transferDate);
+        if (etData.embryoType) planUpdate.embryoType = etData.embryoType;
+        if (Object.keys(planUpdate).length > 0) {
+          await prisma.breedingPlan.updateMany({
+            where: { id: planId, tenantId },
+            data: planUpdate,
+          });
+        }
+      }
 
       logEntityActivity({
         tenantId,
@@ -3952,6 +4190,22 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         },
       });
 
+      // Re-sync ET procedure details if this is an ET attempt
+      const finalMethod = updated.method ?? existing.method;
+      if (finalMethod === "EMBRYO_TRANSFER" && updated.planId) {
+        const finalData = (updated.data as any) || {};
+        const planUpdate: Record<string, unknown> = {};
+        if (finalData.flushDate) planUpdate.flushDate = new Date(finalData.flushDate);
+        if (finalData.transferDate) planUpdate.embryoTransferDate = new Date(finalData.transferDate);
+        if (finalData.embryoType) planUpdate.embryoType = finalData.embryoType;
+        if (Object.keys(planUpdate).length > 0) {
+          await prisma.breedingPlan.updateMany({
+            where: { id: updated.planId, tenantId },
+            data: planUpdate,
+          });
+        }
+      }
+
       logEntityActivity({
         tenantId,
         entityType: "BREEDING_PLAN",
@@ -4003,6 +4257,40 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           where: { id: planId, tenantId },
           data: { breedDateActual: earliest?.attemptAt ?? null },
         });
+
+        // If deleted attempt was ET, check if any ET attempts remain; if not, clear plan ET fields
+        if (existing.method === "EMBRYO_TRANSFER") {
+          const remainingET = await prisma.breedingAttempt.count({
+            where: { planId, tenantId, method: "EMBRYO_TRANSFER" },
+          });
+          if (remainingET === 0) {
+            await prisma.breedingPlan.updateMany({
+              where: { id: planId, tenantId },
+              data: { flushDate: null, embryoTransferDate: null, embryoType: null },
+            });
+          } else {
+            // Re-sync from the latest remaining ET attempt
+            const latestET = await prisma.breedingAttempt.findFirst({
+              where: { planId, tenantId, method: "EMBRYO_TRANSFER" },
+              orderBy: { createdAt: "desc" },
+              select: { data: true },
+            });
+            if (latestET?.data) {
+              const etData = latestET.data as any;
+              const planUpdate: Record<string, unknown> = {};
+              if (etData.flushDate) planUpdate.flushDate = new Date(etData.flushDate);
+              else planUpdate.flushDate = null;
+              if (etData.transferDate) planUpdate.embryoTransferDate = new Date(etData.transferDate);
+              else planUpdate.embryoTransferDate = null;
+              if (etData.embryoType) planUpdate.embryoType = etData.embryoType;
+              else planUpdate.embryoType = null;
+              await prisma.breedingPlan.updateMany({
+                where: { id: planId, tenantId },
+                data: planUpdate,
+              });
+            }
+          }
+        }
       }
 
       logEntityActivity({
@@ -5952,6 +6240,141 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         createdAt: created.createdAt.toISOString(),
         updatedAt: created.updatedAt.toISOString(),
       });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────────────────── ET Registry Export ───────────────────────── */
+
+  app.get("/breeding/plans/:id/registry-export", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: planId, tenantId, deletedAt: null },
+        include: {
+          dam: { select: { id: true, name: true, breed: true } },
+          sire: { select: { id: true, name: true, breed: true } },
+          Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true, breed: true } },
+          Animal_BreedingPlan_recipientDamIdToAnimal: { select: { id: true, name: true } },
+          FlushEvent: { select: { flushDate: true, embryoType: true } },
+        },
+      });
+
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+      if (!plan.geneticDamId) {
+        return reply.code(400).send({ error: "not_et_plan", message: "Registry export is only available for embryo transfer plans" });
+      }
+
+      const offspring = await prisma.offspring.findMany({
+        where: { breedingPlanId: planId, tenantId },
+        select: { name: true, sex: true, bornAt: true },
+      });
+
+      const donorDam = plan.Animal_BreedingPlan_geneticDamIdToAnimal || plan.dam;
+      const recipientDam = plan.Animal_BreedingPlan_recipientDamIdToAnimal;
+
+      reply.send({
+        geneticDamName: donorDam?.name ?? "",
+        geneticDamRegistration: "",
+        sireName: plan.sire?.name ?? "",
+        sireRegistration: "",
+        recipientDamName: recipientDam?.name ?? plan.dam?.name ?? "",
+        flushDate: plan.FlushEvent?.flushDate?.toISOString() ?? plan.flushDate?.toISOString() ?? "",
+        transferDate: plan.embryoTransferDate?.toISOString() ?? "",
+        embryoType: plan.FlushEvent?.embryoType ?? plan.embryoType ?? "FRESH",
+        offspring: offspring.map((o) => ({
+          name: o.name ?? "",
+          sex: o.sex ?? undefined,
+          dateOfBirth: o.bornAt?.toISOString() ?? undefined,
+        })),
+      });
+    } catch (err) {
+      const { status, payload } = errorReply(err);
+      reply.status(status).send(payload);
+    }
+  });
+
+  /* ───────────────────────── ET Certificate PDF ───────────────────────── */
+
+  app.get("/breeding/plans/:id/et-certificate", async (req, reply) => {
+    try {
+      const tenantId = Number((req as any).tenantId);
+      const planId = idNum((req.params as any).id);
+      if (!planId) return reply.code(400).send({ error: "bad_id" });
+
+      const plan = await prisma.breedingPlan.findFirst({
+        where: { id: planId, tenantId, deletedAt: null },
+        include: {
+          dam: { select: { id: true, name: true, breed: true } },
+          sire: { select: { id: true, name: true, breed: true } },
+          Animal_BreedingPlan_geneticDamIdToAnimal: { select: { id: true, name: true, breed: true } },
+          Animal_BreedingPlan_recipientDamIdToAnimal: { select: { id: true, name: true } },
+          FlushEvent: { select: { flushDate: true, embryosRecovered: true, embryosViable: true, embryoType: true, vetName: true } },
+          tenant: { select: { name: true } },
+        },
+      });
+
+      if (!plan) return reply.code(404).send({ error: "not_found" });
+      if (!plan.geneticDamId) {
+        return reply.code(400).send({ error: "not_et_plan", message: "ET certificate is only available for embryo transfer plans" });
+      }
+
+      // Fetch offspring linked to this plan
+      const offspring = await prisma.offspring.findMany({
+        where: { breedingPlanId: planId, tenantId },
+        select: { id: true, name: true, sex: true, bornAt: true },
+      });
+
+      const donorDam = plan.Animal_BreedingPlan_geneticDamIdToAnimal || plan.dam;
+      const recipientDam = plan.Animal_BreedingPlan_recipientDamIdToAnimal;
+      const certData: ETCertificateData = {
+        organizationName: plan.tenant?.name ?? "",
+        geneticDam: {
+          name: donorDam?.name ?? "Unknown",
+          registrationNumber: undefined,
+          breed: donorDam?.breed ?? undefined,
+          dnaNumber: undefined,
+        },
+        sire: {
+          name: plan.sire?.name ?? "Unknown",
+          registrationNumber: undefined,
+          breed: plan.sire?.breed ?? undefined,
+          dnaNumber: undefined,
+        },
+        recipientDam: {
+          name: recipientDam?.name ?? plan.dam?.name ?? "Unknown",
+          registrationNumber: undefined,
+        },
+        flushDate: plan.FlushEvent?.flushDate?.toISOString() ?? plan.flushDate?.toISOString() ?? undefined,
+        transferDate: plan.embryoTransferDate?.toISOString() ?? undefined,
+        embryoType: plan.FlushEvent?.embryoType ?? plan.embryoType ?? undefined,
+        vetName: plan.FlushEvent?.vetName ?? undefined,
+        offspring: offspring.map((o) => ({
+          name: o.name ?? "Unnamed",
+          sex: o.sex ?? undefined,
+          dateOfBirth: o.bornAt?.toISOString() ?? undefined,
+        })),
+        flushSummary: plan.FlushEvent
+          ? {
+              embryosRecovered: plan.FlushEvent.embryosRecovered ?? undefined,
+              embryosViable: plan.FlushEvent.embryosViable ?? undefined,
+            }
+          : undefined,
+        planName: plan.name ?? undefined,
+        generatedDate: new Date().toISOString(),
+      };
+
+      const { buffer, filename } = await generateETCertificatePdf(certData);
+
+      reply
+        .header("Content-Type", "application/pdf")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(Buffer.from(buffer));
     } catch (err) {
       const { status, payload } = errorReply(err);
       reply.status(status).send(payload);

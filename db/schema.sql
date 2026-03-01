@@ -317,7 +317,8 @@ CREATE TYPE public."AnimalStatus" AS ENUM (
 
 CREATE TYPE public."AssessmentType" AS ENUM (
     'VOLHARD_PAT',
-    'CUSTOM'
+    'CUSTOM',
+    'GUN_DOG_APTITUDE'
 );
 
 
@@ -2210,6 +2211,20 @@ CREATE TYPE public."ProductType" AS ENUM (
     'SUBSCRIPTION',
     'ADD_ON',
     'ONE_TIME'
+);
+
+
+--
+-- Name: ProgramType; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public."ProgramType" AS ENUM (
+    'COMPANION',
+    'WORKING_SERVICE',
+    'SPORT_COMPETITION',
+    'GUN_DOG',
+    'SHOW_CONFORMATION',
+    'GENERAL'
 );
 
 
@@ -5158,7 +5173,7 @@ ALTER SEQUENCE public."Animal_id_seq" OWNED BY public."Animal".id;
 CREATE TABLE public."AssessmentResult" (
     id integer NOT NULL,
     "tenantId" integer NOT NULL,
-    "assignmentId" integer NOT NULL,
+    "assignmentId" integer,
     "offspringId" integer NOT NULL,
     "assessmentType" public."AssessmentType" NOT NULL,
     scores jsonb NOT NULL,
@@ -5166,8 +5181,16 @@ CREATE TABLE public."AssessmentResult" (
     "assessedAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "assessedBy" text NOT NULL,
     "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(3) without time zone NOT NULL
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    "buyerVisible" boolean DEFAULT false NOT NULL
 );
+
+
+--
+-- Name: COLUMN "AssessmentResult"."buyerVisible"; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public."AssessmentResult"."buyerVisible" IS 'Whether this assessment result is visible to the buyer in the client portal';
 
 
 --
@@ -6270,7 +6293,14 @@ CREATE TABLE public."BreedingPlan" (
     "depositAmountCents" integer,
     "coverImageUrl" text,
     "themeName" text,
-    "placementSchedulingPolicy" jsonb
+    "placementSchedulingPolicy" jsonb,
+    "geneticDamId" integer,
+    "recipientDamId" integer,
+    "flushDate" timestamp(3) without time zone,
+    "embryoTransferDate" timestamp(3) without time zone,
+    "embryoType" text,
+    "flushEventId" integer,
+    CONSTRAINT "BreedingPlan_donor_ne_recipient_chk" CHECK ((("geneticDamId" IS NULL) OR ("recipientDamId" IS NULL) OR ("geneticDamId" <> "recipientDamId")))
 );
 
 
@@ -6618,8 +6648,16 @@ CREATE TABLE public.mkt_listing_breeding_program (
     "offspringDisplayMode" text DEFAULT 'curated'::text NOT NULL,
     "showOffspringPhotos" boolean DEFAULT true NOT NULL,
     "showParentPhotos" boolean DEFAULT true NOT NULL,
-    "showPricing" boolean DEFAULT true NOT NULL
+    "showPricing" boolean DEFAULT true NOT NULL,
+    "programType" public."ProgramType" DEFAULT 'GENERAL'::public."ProgramType" NOT NULL
 );
+
+
+--
+-- Name: COLUMN mkt_listing_breeding_program."programType"; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.mkt_listing_breeding_program."programType" IS 'Primary focus of this breeding program. Determines which working-dog role recommendations are highlighted in temperament assessments.';
 
 
 --
@@ -8324,6 +8362,49 @@ ALTER SEQUENCE public."FiberProductionHistory_id_seq" OWNED BY public."FiberProd
 
 
 --
+-- Name: FlushEvent; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."FlushEvent" (
+    id integer NOT NULL,
+    "tenantId" integer NOT NULL,
+    "geneticDamId" integer NOT NULL,
+    "sireId" integer,
+    "flushDate" timestamp(3) without time zone NOT NULL,
+    "embryosRecovered" integer,
+    "embryosViable" integer,
+    "embryoGrades" jsonb,
+    "embryoType" text,
+    "vetName" text,
+    location text,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL,
+    CONSTRAINT "FlushEvent_embryoType_check" CHECK (("embryoType" = ANY (ARRAY['FRESH'::text, 'FROZEN'::text])))
+);
+
+
+--
+-- Name: FlushEvent_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."FlushEvent_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: FlushEvent_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."FlushEvent_id_seq" OWNED BY public."FlushEvent".id;
+
+
+--
 -- Name: FoalingCheck; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10002,7 +10083,9 @@ CREATE TABLE public."Offspring" (
     "isExtraNeeds" boolean DEFAULT false NOT NULL,
     "neonatalFeedingMethod" public."NeonatalFeedingMethod",
     "neonatalHealthStatus" public."NeonatalHealthStatus",
-    "breedingPlanId" integer NOT NULL
+    "breedingPlanId" integer NOT NULL,
+    "geneticDamId" integer,
+    "recipientDamId" integer
 );
 
 
@@ -14371,6 +14454,13 @@ ALTER TABLE ONLY public."FiberProductionHistory" ALTER COLUMN id SET DEFAULT nex
 
 
 --
+-- Name: FlushEvent id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FlushEvent" ALTER COLUMN id SET DEFAULT nextval('public."FlushEvent_id_seq"'::regclass);
+
+
+--
 -- Name: FoalingCheck id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -16112,6 +16202,14 @@ ALTER TABLE ONLY public."FiberLabTest"
 
 ALTER TABLE ONLY public."FiberProductionHistory"
     ADD CONSTRAINT "FiberProductionHistory_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: FlushEvent FlushEvent_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FlushEvent"
+    ADD CONSTRAINT "FlushEvent_pkey" PRIMARY KEY (id);
 
 
 --
@@ -19376,6 +19474,20 @@ CREATE INDEX "BreedingPlan_expectedWeaned_idx" ON public."BreedingPlan" USING bt
 
 
 --
+-- Name: BreedingPlan_flushEventId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlan_flushEventId_idx" ON public."BreedingPlan" USING btree ("flushEventId");
+
+
+--
+-- Name: BreedingPlan_geneticDamId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlan_geneticDamId_idx" ON public."BreedingPlan" USING btree ("geneticDamId");
+
+
+--
 -- Name: BreedingPlan_organizationId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19422,6 +19534,13 @@ CREATE INDEX "BreedingPlan_primaryAnchor_idx" ON public."BreedingPlan" USING btr
 --
 
 CREATE INDEX "BreedingPlan_programId_idx" ON public."BreedingPlan" USING btree ("programId");
+
+
+--
+-- Name: BreedingPlan_recipientDamId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlan_recipientDamId_idx" ON public."BreedingPlan" USING btree ("recipientDamId");
 
 
 --
@@ -20741,6 +20860,27 @@ CREATE INDEX "FiberProductionHistory_tenantId_idx" ON public."FiberProductionHis
 
 
 --
+-- Name: FlushEvent_flushDate_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FlushEvent_flushDate_idx" ON public."FlushEvent" USING btree ("flushDate");
+
+
+--
+-- Name: FlushEvent_geneticDamId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FlushEvent_geneticDamId_idx" ON public."FlushEvent" USING btree ("geneticDamId");
+
+
+--
+-- Name: FlushEvent_tenantId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "FlushEvent_tenantId_idx" ON public."FlushEvent" USING btree ("tenantId");
+
+
+--
 -- Name: FoalingCheck_breedingPlanId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21777,10 +21917,24 @@ CREATE INDEX "Offspring_buyerPartyId_idx" ON public."Offspring" USING btree ("bu
 
 
 --
+-- Name: Offspring_geneticDamId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Offspring_geneticDamId_idx" ON public."Offspring" USING btree ("geneticDamId");
+
+
+--
 -- Name: Offspring_placedAt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Offspring_placedAt_idx" ON public."Offspring" USING btree ("placedAt");
+
+
+--
+-- Name: Offspring_recipientDamId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Offspring_recipientDamId_idx" ON public."Offspring" USING btree ("recipientDamId");
 
 
 --
@@ -24988,7 +25142,7 @@ ALTER TABLE ONLY public."Animal"
 --
 
 ALTER TABLE ONLY public."AssessmentResult"
-    ADD CONSTRAINT "AssessmentResult_assignmentId_fkey" FOREIGN KEY ("assignmentId") REFERENCES public."RearingProtocolAssignment"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "AssessmentResult_assignmentId_fkey" FOREIGN KEY ("assignmentId") REFERENCES public."RearingProtocolAssignment"(id) ON DELETE SET NULL;
 
 
 --
@@ -25624,6 +25778,22 @@ ALTER TABLE ONLY public."BreedingPlan"
 
 
 --
+-- Name: BreedingPlan BreedingPlan_flushEventId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlan"
+    ADD CONSTRAINT "BreedingPlan_flushEventId_fkey" FOREIGN KEY ("flushEventId") REFERENCES public."FlushEvent"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: BreedingPlan BreedingPlan_geneticDamId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlan"
+    ADD CONSTRAINT "BreedingPlan_geneticDamId_fkey" FOREIGN KEY ("geneticDamId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
 -- Name: BreedingPlan BreedingPlan_organizationId_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25645,6 +25815,14 @@ ALTER TABLE ONLY public."BreedingPlan"
 
 ALTER TABLE ONLY public."BreedingPlan"
     ADD CONSTRAINT "BreedingPlan_programId_fkey" FOREIGN KEY ("programId") REFERENCES public.mkt_listing_breeding_program(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: BreedingPlan BreedingPlan_recipientDamId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlan"
+    ADD CONSTRAINT "BreedingPlan_recipientDamId_fkey" FOREIGN KEY ("recipientDamId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -26600,6 +26778,30 @@ ALTER TABLE ONLY public."FiberProductionHistory"
 
 
 --
+-- Name: FlushEvent FlushEvent_geneticDamId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FlushEvent"
+    ADD CONSTRAINT "FlushEvent_geneticDamId_fkey" FOREIGN KEY ("geneticDamId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: FlushEvent FlushEvent_sireId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FlushEvent"
+    ADD CONSTRAINT "FlushEvent_sireId_fkey" FOREIGN KEY ("sireId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: FlushEvent FlushEvent_tenantId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."FlushEvent"
+    ADD CONSTRAINT "FlushEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES public."Tenant"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: FoalingCheck FoalingCheck_breedingPlanId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27384,11 +27586,27 @@ ALTER TABLE ONLY public."Offspring"
 
 
 --
+-- Name: Offspring Offspring_geneticDamId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Offspring"
+    ADD CONSTRAINT "Offspring_geneticDamId_fkey" FOREIGN KEY ("geneticDamId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
 -- Name: Offspring Offspring_promotedAnimalId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."Offspring"
     ADD CONSTRAINT "Offspring_promotedAnimalId_fkey" FOREIGN KEY ("promotedAnimalId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: Offspring Offspring_recipientDamId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Offspring"
+    ADD CONSTRAINT "Offspring_recipientDamId_fkey" FOREIGN KEY ("recipientDamId") REFERENCES public."Animal"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -28900,4 +29118,11 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260227192732'),
     ('20260227202724'),
     ('20260227205859'),
-    ('20260228150356');
+    ('20260228150356'),
+    ('20260301150226'),
+    ('20260301151943'),
+    ('20260301164206'),
+    ('20260301165448'),
+    ('20260301184716'),
+    ('20260301200718'),
+    ('20260301202010');

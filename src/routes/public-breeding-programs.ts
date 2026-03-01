@@ -54,7 +54,8 @@ function toLinkedPlanDTO(plan: any) {
     actualBirthDate: plan.birthDateActual || null,
     dam: toParentSummaryDTO(plan.dam),
     sire: toParentSummaryDTO(plan.sire),
-    offspringGroup: countBorn > 0 ? {
+    // TODO: Frontend consumers must update from offspringGroup → litter
+    litter: countBorn > 0 ? {
       id: plan.id,
       countBorn,
       countAvailable: Math.max(0, countLive - countPlaced),
@@ -310,7 +311,7 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
 
       // Filter by availability
       if (q.hasAvailable === "true") {
-        // TODO: Need to join with offspring groups to filter properly
+        // TODO: Need to join with breeding plans with offspring to filter properly
         // For now, skip this filter
       }
 
@@ -632,7 +633,8 @@ const publicBreedingProgramsRoutes: FastifyPluginAsync = async (app: FastifyInst
         timeline,
         media,
         offspring,
-        offspringGroup: (plan.countBorn ?? 0) > 0 ? {
+        // TODO: Frontend consumers must update from offspringGroup → litter
+        litter: (plan.countBorn ?? 0) > 0 ? {
           id: plan.id,
           countBorn: plan.countBorn ?? 0,
           countAvailable: Math.max(0, (plan.countBorn ?? 0) - (plan.countPlaced ?? 0)),

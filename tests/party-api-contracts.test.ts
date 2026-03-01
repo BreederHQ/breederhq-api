@@ -82,38 +82,6 @@ async function mkBreedingPlan(tenantId: number, damId: number, name = "Test Plan
   });
 }
 
-async function mkOffspringGroup(tenantId: number, planId: number, name = "Test Group") {
-  return prisma.offspringGroup.create({
-    data: {
-      tenantId,
-      planId,
-      species: "DOG",
-      name,
-    },
-  });
-}
-
-async function mkOffspring(
-  tenantId: number,
-  groupId: number,
-  name = "Test Offspring"
-) {
-  return prisma.offspring.create({
-    data: {
-      tenantId,
-      groupId,
-      name,
-      species: "DOG",
-      sex: "MALE",
-      lifeState: "ALIVE",
-      placementState: "UNASSIGNED",
-      keeperIntent: "AVAILABLE",
-      financialState: "NONE",
-      paperworkState: "NONE",
-    },
-  });
-}
-
 // ============================================================================
 // Test Context
 // ============================================================================
@@ -125,7 +93,6 @@ type TestContext = {
   animalId: number;
   planId: number;
   waitlistId?: number;
-  offspringId?: number;
   breedingAttemptId?: number;
   animalOwnerId?: number;
 };
@@ -270,48 +237,6 @@ describe("Phase 6: Party-Native API Contract Tests", () => {
 
         assert.strictEqual(noContactId, undefined, "contactId should not exist");
         assert.strictEqual(noOrgId, undefined, "organizationId should not exist");
-      }
-    });
-  });
-
-  describe("Offspring Buyer - Party-Native", () => {
-    it("should assign offspring buyer using buyerPartyId", async () => {
-      // Create offspring group first using factory
-      const group = await mkOffspringGroup(ctx.tenantId, ctx.planId);
-
-      // Create offspring using factory (includes required species field)
-      const offspring = await mkOffspring(ctx.tenantId, group.id);
-      ctx.offspringId = offspring.id;
-
-      // Assign buyer using buyerPartyId
-      const updated = await prisma.offspring.update({
-        where: { id: offspring.id },
-        data: {
-          buyerPartyId: ctx.contactPartyId,
-          placementState: "PLACED",
-        },
-        select: {
-          id: true,
-          buyerPartyId: true,
-        },
-      });
-
-      assert.strictEqual(updated.buyerPartyId, ctx.contactPartyId, "buyerPartyId should be set");
-    });
-
-    it("offspring schema should not have legacy buyer fields", async () => {
-      const offspring = await prisma.offspring.findFirst({
-        where: { tenantId: ctx.tenantId },
-      });
-
-      if (offspring) {
-        // @ts-expect-error - buyerContactId should not exist
-        const noBuyerContactId = offspring.buyerContactId;
-        // @ts-expect-error - buyerOrganizationId should not exist
-        const noBuyerOrgId = offspring.buyerOrganizationId;
-
-        assert.strictEqual(noBuyerContactId, undefined, "buyerContactId should not exist");
-        assert.strictEqual(noBuyerOrgId, undefined, "buyerOrganizationId should not exist");
       }
     });
   });

@@ -306,7 +306,7 @@ const portalSchedulingRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
    * GET /api/v1/portal/scheduling/breeding-plans/:breedingPlanId/events
    * Discovery endpoint: lists bookable scheduling events for a breeding plan.
    * Party must be linked as a buyer (BreedingPlanBuyer) to access.
-   * (Previously /offspring-groups/:id/events, now uses breedingPlanId)
+   * Route: /portal/scheduling/breeding-plans/:breedingPlanId/events
    */
   app.get<{ Params: { breedingPlanId: string } }>(
     "/portal/scheduling/breeding-plans/:breedingPlanId/events",

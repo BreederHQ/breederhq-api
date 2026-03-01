@@ -493,6 +493,31 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
 
   const totalBorn = totalOffspring + totalDeceased;
 
+  // ── ET Donor Stats ──
+  // Plans where this animal is the genetic dam via embryo transfer (distinct from plans she carried herself)
+  const etPlans = await prisma.breedingPlan.findMany({
+    where: {
+      geneticDamId: animalId,
+      tenantId,
+      status: { notIn: ["CANCELED"] },
+    },
+    select: {
+      id: true,
+      status: true,
+      birthDateActual: true,
+      countLive: true,
+      flushDate: true,
+    },
+  });
+
+  const successStatuses = ["BIRTHED", "WEANED", "PLACEMENT", "COMPLETE"];
+  const etTotalFlushes = etPlans.length;
+  const etSuccessfulTransfers = etPlans.filter((p) => successStatuses.includes(p.status)).length;
+  const etOffspringProduced = etPlans.reduce((sum, p) => sum + (p.countLive ?? 0), 0);
+  const etFlushSuccessRate = etTotalFlushes > 0
+    ? Math.round((etSuccessfulTransfers / etTotalFlushes) * 1000) / 10
+    : 0;
+
   return {
     totalPregnancies,
     liveLitters,
@@ -508,6 +533,11 @@ async function computeFemaleBreedingStats(animalId: number, tenantId: number) {
     mostRecentMilkProduction,
     mastitisOccurrences,
     mastitisTotal,
+    // ET Donor stats (only non-zero if the dam has been a genetic donor)
+    etTotalFlushes,
+    etSuccessfulTransfers,
+    etOffspringProduced,
+    etFlushSuccessRate,
   };
 }
 
