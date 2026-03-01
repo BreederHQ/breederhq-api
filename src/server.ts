@@ -866,6 +866,14 @@ app.register(
       const pathOnly = full.split("?")[0] || "/";
       const m = req.method.toUpperCase();
 
+      // Help article indexing — verified via ADMIN_TOKEN in route handler, not session auth
+      if (pathOnly.endsWith("/help/index") && m === "POST") {
+        (req as any).tenantId = null;
+        (req as any).userId = null;
+        (req as any).actorContext = "PUBLIC";
+        return;
+      }
+
       // Stripe webhook is public — verified via Stripe signature, not session auth
       if (pathOnly.endsWith("/billing/webhooks/stripe")) {
         (req as any).tenantId = null;
