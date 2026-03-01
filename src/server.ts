@@ -557,8 +557,10 @@ import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
 import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
-import breedingPlanPricingRoutes from "./routes/breeding-plan-pricing.js";
-import placementSchedulingRoutes from "./routes/placement-scheduling.js";
+// TODO: uncomment when pricing/placement/draft-board migrations are on main
+// import breedingPlanPricingRoutes from "./routes/breeding-plan-pricing.js";
+// import placementSchedulingRoutes from "./routes/placement-scheduling.js";
+// import draftBoardRoutes from "./routes/draft-board.js";
 import breedingGroupsRoutes from "./routes/breeding-groups.js";
 import flushEventsRoutes from "./routes/flush-events.js";
 import recipientPoolRoutes from "./routes/recipient-pool.js";
@@ -1246,8 +1248,10 @@ app.register(
     api.register(orgSettingsRoutes);   // /api/v1/org/settings (tenant-verified org preferences)
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
-    api.register(breedingPlanPricingRoutes); // /api/v1/breeding/plans/:planId/pricing/*
-    api.register(placementSchedulingRoutes); // /api/v1/breeding/plans/:planId/placement-scheduling-policy, placement-status
+    // TODO: uncomment when pricing/placement/draft-board migrations are on main
+    // api.register(breedingPlanPricingRoutes);
+    // api.register(placementSchedulingRoutes);
+    // api.register(draftBoardRoutes);
     api.register(breedingGroupsRoutes); // /api/v1/breeding/groups/* (livestock group breeding)
     api.register(flushEventsRoutes);   // /api/v1/flush-events/*, /api/v1/animals/:id/flush-history
     api.register(recipientPoolRoutes); // /api/v1/recipient-pool
@@ -1343,6 +1347,7 @@ app.register(
     api.register(portalProtocolsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/protocols/*
     api.register(portalHealthRoutes, { prefix: "/t/:tenantSlug" });    // /api/v1/t/:slug/portal/offspring/:id/health*
     api.register(portalMedicationsRoutes, { prefix: "/t/:tenantSlug" }); // /api/v1/t/:slug/portal/offspring/:id/medications
+    // api.register(draftBoardRoutes, { prefix: "/t/:tenantSlug" }); // TODO: uncomment with migrations
     api.register(messagesRoutes, { prefix: "/t/:tenantSlug" });      // /api/v1/t/:slug/messages/*
     api.register(schedulingRoutes);       // /api/v1/scheduling/* Staff scheduling (calendar)
     api.register(businessHoursRoutes);    // /api/v1/business-hours/* Business hours settings
