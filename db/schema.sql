@@ -6300,7 +6300,21 @@ CREATE TABLE public."BreedingPlan" (
     "embryoTransferDate" timestamp(3) without time zone,
     "embryoType" text,
     "flushEventId" integer,
-    CONSTRAINT "BreedingPlan_donor_ne_recipient_chk" CHECK ((("geneticDamId" IS NULL) OR ("recipientDamId" IS NULL) OR ("geneticDamId" <> "recipientDamId")))
+    "pricingStrategy" character varying(20) DEFAULT NULL::character varying,
+    "groupPriceCents" integer,
+    "malePriceCents" integer,
+    "femalePriceCents" integer,
+    "draftMode" character varying(10) DEFAULT NULL::character varying,
+    "draftStatus" character varying(15) DEFAULT NULL::character varying,
+    "draftStartedAt" timestamp with time zone,
+    "draftTimePerPickMinutes" integer,
+    "draftWindowExpiryBehavior" character varying(25) DEFAULT NULL::character varying,
+    "draftCurrentPickNumber" integer,
+    CONSTRAINT "BreedingPlan_donor_ne_recipient_chk" CHECK ((("geneticDamId" IS NULL) OR ("recipientDamId" IS NULL) OR ("geneticDamId" <> "recipientDamId"))),
+    CONSTRAINT "BreedingPlan_draftMode_check" CHECK ((("draftMode")::text = ANY ((ARRAY['MANUAL'::character varying, 'ASSISTED'::character varying, 'AUTO'::character varying])::text[]))),
+    CONSTRAINT "BreedingPlan_draftStatus_check" CHECK ((("draftStatus")::text = ANY ((ARRAY['NOT_STARTED'::character varying, 'ACTIVE'::character varying, 'PAUSED'::character varying, 'COMPLETE'::character varying])::text[]))),
+    CONSTRAINT "BreedingPlan_draftWindowExpiryBehavior_check" CHECK ((("draftWindowExpiryBehavior")::text = ANY ((ARRAY['DEFER_TO_END'::character varying, 'AUTO_PICK_PREFERENCE'::character varying, 'PAUSE_FOR_BREEDER'::character varying])::text[]))),
+    CONSTRAINT "BreedingPlan_pricingStrategy_check" CHECK ((("pricingStrategy")::text = ANY ((ARRAY['PROGRAM_DEFAULT'::character varying, 'FIXED'::character varying, 'BY_SEX'::character varying, 'INDIVIDUAL'::character varying])::text[])))
 );
 
 
@@ -6329,8 +6343,48 @@ CREATE TABLE public."BreedingPlanBuyer" (
     "optedOutAt" timestamp with time zone,
     "optedOutReason" text,
     "optedOutBy" character varying(20),
-    "depositDisposition" character varying(30)
+    "depositDisposition" character varying(30),
+    "draftPickNumber" integer,
+    "draftPickedAt" timestamp with time zone,
+    "draftPickStatus" character varying(15) DEFAULT NULL::character varying,
+    "draftSelectedOffspringId" integer,
+    CONSTRAINT "BreedingPlanBuyer_draftPickStatus_check" CHECK ((("draftPickStatus")::text = ANY ((ARRAY['WAITING'::character varying, 'ON_THE_CLOCK'::character varying, 'PICK_PENDING'::character varying, 'PICKED'::character varying, 'TIMED_OUT'::character varying, 'SKIPPED'::character varying])::text[])))
 );
+
+
+--
+-- Name: BreedingPlanBuyerPreference; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."BreedingPlanBuyerPreference" (
+    id integer NOT NULL,
+    "planBuyerId" integer NOT NULL,
+    "offspringId" integer NOT NULL,
+    rank integer NOT NULL,
+    notes text,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+--
+-- Name: BreedingPlanBuyerPreference_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."BreedingPlanBuyerPreference_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: BreedingPlanBuyerPreference_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."BreedingPlanBuyerPreference_id_seq" OWNED BY public."BreedingPlanBuyerPreference".id;
 
 
 --
@@ -14139,6 +14193,13 @@ ALTER TABLE ONLY public."BreedingPlanBuyer" ALTER COLUMN id SET DEFAULT nextval(
 
 
 --
+-- Name: BreedingPlanBuyerPreference id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference" ALTER COLUMN id SET DEFAULT nextval('public."BreedingPlanBuyerPreference_id_seq"'::regclass);
+
+
+--
 -- Name: BreedingPlanEvent id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -15826,6 +15887,30 @@ ALTER TABLE ONLY public."BreedingListing"
 
 ALTER TABLE ONLY public."BreedingMilestone"
     ADD CONSTRAINT "BreedingMilestone_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: BreedingPlanBuyerPreference BreedingPlanBuyerPreference_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference"
+    ADD CONSTRAINT "BreedingPlanBuyerPreference_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: BreedingPlanBuyerPreference BreedingPlanBuyerPreference_planBuyerId_offspringId_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference"
+    ADD CONSTRAINT "BreedingPlanBuyerPreference_planBuyerId_offspringId_key" UNIQUE ("planBuyerId", "offspringId");
+
+
+--
+-- Name: BreedingPlanBuyerPreference BreedingPlanBuyerPreference_planBuyerId_rank_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference"
+    ADD CONSTRAINT "BreedingPlanBuyerPreference_planBuyerId_rank_key" UNIQUE ("planBuyerId", rank);
 
 
 --
@@ -19320,10 +19405,31 @@ CREATE INDEX "BreedingMilestone_tenantId_idx" ON public."BreedingMilestone" USIN
 
 
 --
+-- Name: BreedingPlanBuyerPreference_offspringId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanBuyerPreference_offspringId_idx" ON public."BreedingPlanBuyerPreference" USING btree ("offspringId");
+
+
+--
+-- Name: BreedingPlanBuyerPreference_planBuyerId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanBuyerPreference_planBuyerId_idx" ON public."BreedingPlanBuyerPreference" USING btree ("planBuyerId");
+
+
+--
 -- Name: BreedingPlanBuyer_buyerId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "BreedingPlanBuyer_buyerId_idx" ON public."BreedingPlanBuyer" USING btree ("buyerId");
+
+
+--
+-- Name: BreedingPlanBuyer_draftSelectedOffspringId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "BreedingPlanBuyer_draftSelectedOffspringId_idx" ON public."BreedingPlanBuyer" USING btree ("draftSelectedOffspringId");
 
 
 --
@@ -25682,11 +25788,35 @@ ALTER TABLE ONLY public."BreedingMilestone"
 
 
 --
+-- Name: BreedingPlanBuyerPreference BreedingPlanBuyerPreference_offspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference"
+    ADD CONSTRAINT "BreedingPlanBuyerPreference_offspringId_fkey" FOREIGN KEY ("offspringId") REFERENCES public."Offspring"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: BreedingPlanBuyerPreference BreedingPlanBuyerPreference_planBuyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyerPreference"
+    ADD CONSTRAINT "BreedingPlanBuyerPreference_planBuyerId_fkey" FOREIGN KEY ("planBuyerId") REFERENCES public."BreedingPlanBuyer"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: BreedingPlanBuyer BreedingPlanBuyer_buyerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."BreedingPlanBuyer"
     ADD CONSTRAINT "BreedingPlanBuyer_buyerId_fkey" FOREIGN KEY ("buyerId") REFERENCES public."Buyer"(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: BreedingPlanBuyer BreedingPlanBuyer_draftSelectedOffspringId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BreedingPlanBuyer"
+    ADD CONSTRAINT "BreedingPlanBuyer_draftSelectedOffspringId_fkey" FOREIGN KEY ("draftSelectedOffspringId") REFERENCES public."Offspring"(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --
@@ -29125,4 +29255,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260301165448'),
     ('20260301184716'),
     ('20260301200718'),
-    ('20260301202010');
+    ('20260301202010'),
+    ('20260301222438'),
+    ('20260301222717'),
+    ('20260301222923');

@@ -49,6 +49,7 @@ import { checkBreedingPlanCarrierRisk } from "../services/genetics/carrier-detec
 import { generateETCertificatePdf, type ETCertificateData } from "../services/et-certificate-pdf-builder.js";
 import { auditCreate, auditUpdate, auditDelete, type AuditContext } from "../services/audit-trail.js";
 import { logEntityActivity } from "../services/activity-log.js";
+import { resolveOffspringPrice } from "../services/commerce-pricing.js";
 import {
   advancePlanLifecycle,
   rewindPlanLifecycle,
@@ -5853,7 +5854,7 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         data: { marketplaceStatus: "LIVE" },
       });
 
-      // Find offspring linked to this plan and mark as listed
+      // Find offspring linked to this plan, mark as listed, and resolve pricing
       const eligibleOffspring = await prisma.offspring.findMany({
         where: { tenantId, breedingPlanId: planId, lifeState: "ALIVE" },
         select: { id: true },
@@ -5861,10 +5862,26 @@ const breedingRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       let listedCount = 0;
       if (eligibleOffspring.length > 0) {
-        await prisma.offspring.updateMany({
-          where: { id: { in: eligibleOffspring.map((o) => o.id) }, tenantId },
-          data: { marketplaceListed: true },
-        });
+        // Resolve price for each offspring via the pricing cascade and
+        // batch-update in a transaction to set both listing flag and price.
+        const updates = await Promise.all(
+          eligibleOffspring.map(async (o) => {
+            const resolved = await resolveOffspringPrice(o.id, prisma);
+            return { id: o.id, ...resolved };
+          }),
+        );
+
+        await prisma.$transaction(
+          updates.map(({ id, priceCents }) =>
+            prisma.offspring.update({
+              where: { id, tenantId },
+              data: {
+                marketplaceListed: true,
+                marketplacePriceCents: priceCents,
+              },
+            }),
+          ),
+        );
         listedCount = eligibleOffspring.length;
       }
 

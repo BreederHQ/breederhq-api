@@ -557,6 +557,8 @@ import accountRoutes from "./routes/account.js";
 import animalsRoutes from "./routes/animals.js";
 import breedingRoutes from "./routes/breeding.js";
 import breedingPlanBuyersRoutes from "./routes/breeding-plan-buyers.js";
+import buyerReconciliationRoutes from "./routes/buyer-reconciliation.js";
+import pickSheetsRoutes from "./routes/pick-sheets.js";
 // TODO: uncomment when pricing/placement/draft-board migrations are on main
 // import breedingPlanPricingRoutes from "./routes/breeding-plan-pricing.js";
 // import placementSchedulingRoutes from "./routes/placement-scheduling.js";
@@ -1248,6 +1250,8 @@ app.register(
     api.register(orgSettingsRoutes);   // /api/v1/org/settings (tenant-verified org preferences)
     api.register(breedingRoutes);      // /api/v1/breeding/*
     api.register(breedingPlanBuyersRoutes); // /api/v1/breeding/plans/:planId/buyers/*
+    api.register(buyerReconciliationRoutes); // /api/v1/breeding/plans/:planId/buyers/:buyerId/reconciliation
+    api.register(pickSheetsRoutes);            // /api/v1/breeding/plans/:planId/pick-sheets
     // TODO: uncomment when pricing/placement/draft-board migrations are on main
     // api.register(breedingPlanPricingRoutes);
     // api.register(placementSchedulingRoutes);

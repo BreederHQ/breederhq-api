@@ -1,5 +1,6 @@
 import { BreedingRuleLevel, BreedingProgramRule } from '@prisma/client';
 import prisma from '../prisma.js';
+import { resolveOffspringPrice } from '../services/commerce-pricing.js';
 
 /**
  * Represents a node in the inheritance chain
@@ -347,17 +348,27 @@ async function executeAutoListAvailable(
     };
   }
 
+  // Resolve price from cascade before listing
+  const resolved = await resolveOffspringPrice(entityId, prisma);
+
   await prisma.offspring.update({
     where: { id: entityId },
-    data: { marketplaceListed: true }
+    data: {
+      marketplaceListed: true,
+      marketplacePriceCents: resolved.priceCents,
+    }
   });
 
   return {
     success: true,
     action: 'set_marketplace_listed',
     changes: {
-      before: { marketplaceListed: false },
-      after: { marketplaceListed: true }
+      before: { marketplaceListed: false, marketplacePriceCents: null },
+      after: {
+        marketplaceListed: true,
+        marketplacePriceCents: resolved.priceCents,
+        priceSource: resolved.source,
+      }
     }
   };
 }
