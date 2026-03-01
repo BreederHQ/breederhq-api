@@ -2088,6 +2088,16 @@ model BreedingPlan {
   embryoTransferDate                         DateTime?
   embryoType                                 String?
   flushEventId                               Int?
+  pricingStrategy                            String?                       @db.VarChar(20)
+  groupPriceCents                            Int?
+  malePriceCents                             Int?
+  femalePriceCents                           Int?
+  draftMode                                  String?                       @db.VarChar(10)
+  draftStatus                                String?                       @db.VarChar(15)
+  draftStartedAt                             DateTime?                     @db.Timestamptz(6)
+  draftTimePerPickMinutes                    Int?
+  draftWindowExpiryBehavior                  String?                       @db.VarChar(25)
+  draftCurrentPickNumber                     Int?
   Animal_Animal_breedingPlanIdToBreedingPlan Animal[]                      @relation("Animal_breedingPlanIdToBreedingPlan")
   animalAccesses                             AnimalAccess[]                @relation("AnimalAccessBreedingPlan")
   Attachments                                Attachment[]
@@ -2163,33 +2173,39 @@ model BreedingPlan {
 }
 
 model BreedingPlanBuyer {
-  id                 Int                    @id @default(autoincrement())
-  tenantId           Int
-  planId             Int
-  waitlistEntryId    Int?
-  partyId            Int?
-  stage              BreedingPlanBuyerStage @default(POSSIBLE_MATCH)
-  matchScore         Int?
-  matchReasons       Json?
-  assignedAt         DateTime?
-  assignedByPartyId  Int?
-  priority           Int?
-  offspringId        Int?
-  notes              String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-  buyerId            Int?
-  placementRank      Int?
-  optedOutAt         DateTime?              @db.Timestamptz(6)
-  optedOutReason     String?
-  optedOutBy         String?                @db.VarChar(20)
-  depositDisposition String?                @db.VarChar(30)
-  buyer              Buyer?                 @relation("BreedingPlanBuyerCRM", fields: [buyerId], references: [id])
-  party              Party?                 @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id])
-  plan               BreedingPlan           @relation(fields: [planId], references: [id], onDelete: Cascade)
-  tenant             Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waitlistEntry      WaitlistEntry?         @relation(fields: [waitlistEntryId], references: [id])
-  Invoice            Invoice?
+  id                          Int                           @id @default(autoincrement())
+  tenantId                    Int
+  planId                      Int
+  waitlistEntryId             Int?
+  partyId                     Int?
+  stage                       BreedingPlanBuyerStage        @default(POSSIBLE_MATCH)
+  matchScore                  Int?
+  matchReasons                Json?
+  assignedAt                  DateTime?
+  assignedByPartyId           Int?
+  priority                    Int?
+  offspringId                 Int?
+  notes                       String?
+  createdAt                   DateTime                      @default(now())
+  updatedAt                   DateTime                      @updatedAt
+  buyerId                     Int?
+  placementRank               Int?
+  optedOutAt                  DateTime?                     @db.Timestamptz(6)
+  optedOutReason              String?
+  optedOutBy                  String?                       @db.VarChar(20)
+  depositDisposition          String?                       @db.VarChar(30)
+  draftPickNumber             Int?
+  draftPickedAt               DateTime?                     @db.Timestamptz(6)
+  draftPickStatus             String?                       @db.VarChar(15)
+  draftSelectedOffspringId    Int?
+  buyer                       Buyer?                        @relation("BreedingPlanBuyerCRM", fields: [buyerId], references: [id])
+  Offspring                   Offspring?                    @relation(fields: [draftSelectedOffspringId], references: [id])
+  party                       Party?                        @relation("BreedingPlanBuyerParty", fields: [partyId], references: [id])
+  plan                        BreedingPlan                  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  tenant                      Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  waitlistEntry               WaitlistEntry?                @relation(fields: [waitlistEntryId], references: [id])
+  BreedingPlanBuyerPreference BreedingPlanBuyerPreference[]
+  Invoice                     Invoice?
 
   @@index([tenantId])
   @@index([planId])
@@ -2197,6 +2213,7 @@ model BreedingPlanBuyer {
   @@index([waitlistEntryId])
   @@index([partyId])
   @@index([buyerId])
+  @@index([draftSelectedOffspringId])
   @@schema("public")
 }
 
@@ -2517,6 +2534,8 @@ model Offspring {
   rearingAssessments                      AssessmentResult[]
   rearingOverrides                        AssignmentOffspringOverride[]
   Attachments                             Attachment[]
+  BreedingPlanBuyer                       BreedingPlanBuyer[]
+  BreedingPlanBuyerPreference             BreedingPlanBuyerPreference[]
   CampaignAttribution                     CampaignAttribution[]
   ClientHealthRecord                      ClientHealthRecord[]
   ClientVaccinationRecord                 ClientVaccinationRecord[]
@@ -7444,6 +7463,24 @@ model FlushEvent {
   @@index([flushDate])
   @@index([geneticDamId])
   @@index([tenantId])
+  @@schema("public")
+}
+
+model BreedingPlanBuyerPreference {
+  id                Int               @id @default(autoincrement())
+  planBuyerId       Int
+  offspringId       Int
+  rank              Int
+  notes             String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime
+  Offspring         Offspring         @relation(fields: [offspringId], references: [id], onDelete: Cascade)
+  BreedingPlanBuyer BreedingPlanBuyer @relation(fields: [planBuyerId], references: [id], onDelete: Cascade)
+
+  @@unique([planBuyerId, offspringId])
+  @@unique([planBuyerId, rank])
+  @@index([offspringId])
+  @@index([planBuyerId])
   @@schema("public")
 }
 enum PartyType {
